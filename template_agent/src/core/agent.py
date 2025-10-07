@@ -48,7 +48,7 @@ async def get_template_agent(
         client = MultiServerMCPClient(
             {
                 "template-mcp-server": {
-                    "url": "http://localhost:8080/mcp/",
+                    "url": "http://localhost:5001/mcp/",
                     "transport": "streamable_http",
                     "headers": {"Authorization": f"Bearer {sso_token}"}
                     if sso_token
