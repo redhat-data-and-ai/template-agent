@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
 from template_agent.src.core.manager import AgentManager
 from template_agent.src.schema import (
     OpenAIChatRequest,
@@ -28,7 +29,22 @@ from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
 
 router = APIRouter()
-app_logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
+logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
+
+
+def _app_exception_to_http_exception(app_exception: AppException) -> HTTPException:
+    """Convert AppException to HTTPException for FastAPI compatibility.
+
+    Args:
+        app_exception: The AppException to convert.
+
+    Returns:
+        HTTPException with appropriate status code and detail.
+    """
+    return HTTPException(
+        status_code=app_exception.response_code,
+        detail=f"{app_exception.detail_message} (Error: {app_exception.error_code})",
+    )
 
 
 def _convert_openai_to_internal(openai_request: OpenAIChatRequest) -> StreamRequest:
@@ -43,7 +59,10 @@ def _convert_openai_to_internal(openai_request: OpenAIChatRequest) -> StreamRequ
     # Extract the last user message as the primary message
     user_messages = [msg for msg in openai_request.messages if msg.role == "user"]
     if not user_messages:
-        raise HTTPException(status_code=400, detail="No user message found in request")
+        app_exception = AppException(
+            "No user message found in request", AppExceptionCode.BAD_REQUEST_ERROR
+        )
+        raise _app_exception_to_http_exception(app_exception)
 
     last_user_message = user_messages[-1]
     message_content = last_user_message.content or ""
@@ -106,9 +125,10 @@ async def _stream_openai_response(
     auth_header = request.headers.get("Authorization", "")
     access_token = auth_header.replace("Bearer ", "") if auth_header else None
     if not access_token:
-        access_token = request.headers.get("X-Token")
+        x_token = request.headers.get("X-Token", "")
+        access_token = x_token if x_token else None
 
-    app_logger.info(f"OpenAI chat request with model: {openai_request.model}")
+    logger.info(f"OpenAI chat request with model: {openai_request.model}")
 
     # Initialize AgentManager
     agent_manager = AgentManager(redhat_sso_token=access_token)
@@ -172,7 +192,7 @@ async def _stream_openai_response(
                     break
 
     except Exception as e:
-        app_logger.error(f"Error in OpenAI streaming: {e}")
+        logger.error(f"Error in OpenAI streaming: {e}")
         error_chunk = OpenAIChatStreamResponse(
             id=completion_id,
             created=created_time,
@@ -211,9 +231,10 @@ async def _get_openai_response(
     auth_header = request.headers.get("Authorization", "")
     access_token = auth_header.replace("Bearer ", "") if auth_header else None
     if not access_token:
-        access_token = request.headers.get("X-Token")
+        x_token = request.headers.get("X-Token", "")
+        access_token = x_token if x_token else None
 
-    app_logger.info(
+    logger.info(
         f"OpenAI chat request (non-streaming) with model: {openai_request.model}"
     )
 
@@ -257,8 +278,12 @@ async def _get_openai_response(
         )
 
     except Exception as e:
-        app_logger.error(f"Error in OpenAI non-streaming: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error in OpenAI non-streaming: {e}")
+        app_exception = AppException(
+            "Internal server error during OpenAI non-streaming response",
+            AppExceptionCode.INTERNAL_SERVER_ERROR,
+        )
+        raise _app_exception_to_http_exception(app_exception)
 
 
 @router.post("/v1/chat/completions", response_model=None)
@@ -291,6 +316,13 @@ async def create_chat_completion(
         else:
             return await _get_openai_response(request_data, request)
 
+    except HTTPException:
+        # Re-raise HTTP exceptions to preserve status codes (400, 422, etc.)
+        raise
     except Exception as e:
-        app_logger.error(f"Error in chat completion: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error in chat completion: {e}")
+        app_exception = AppException(
+            "Internal server error during chat completion",
+            AppExceptionCode.INTERNAL_SERVER_ERROR,
+        )
+        raise _app_exception_to_http_exception(app_exception)
