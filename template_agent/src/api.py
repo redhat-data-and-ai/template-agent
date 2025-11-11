@@ -17,6 +17,7 @@ from template_agent.src.core.exceptions.exceptions import AppException, AppExcep
 from template_agent.src.routes.feedback import router as feedback_router
 from template_agent.src.routes.health import router as health_router
 from template_agent.src.routes.history import router as history_router
+from template_agent.src.routes.openai_chat import router as openai_chat_router
 from template_agent.src.routes.stream import router as stream_router
 from template_agent.src.routes.threads import router as threads_router
 from template_agent.src.settings import settings
@@ -73,6 +74,7 @@ app.include_router(stream_router)
 app.include_router(feedback_router)
 app.include_router(history_router)
 app.include_router(threads_router)
+app.include_router(openai_chat_router)
 
 
 @app.exception_handler(Exception)
