@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: template-agent-config
+  labels:
+    app: template-agent
+    component: agent
+data:
+  PYTHON_LOG_LEVEL: "INFO"
+  USE_INMEMORY_SAVER: "false"
+  LANGFUSE_TRACING_ENVIRONMENT: "production"
+  MCP_SERVER_NAME: "template-mcp-server"
+  MCP_SERVER_URL: "https://template-mcp-server.apps.int.spoke.preprod.us-west-2.aws.paas.redhat.com/mcp/"
+  MCP_TRANSPORT_PROTOCOL: "streamable_http"

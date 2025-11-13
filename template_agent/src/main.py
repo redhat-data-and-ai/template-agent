@@ -11,6 +11,7 @@ from typing import NoReturn
 import uvicorn
 
 from template_agent.src.api import app
+from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
 from template_agent.src.settings import settings
 from template_agent.src.settings import validate_config as validate_config_func
 from template_agent.utils.google_creds import initialize_google_genai
@@ -39,14 +40,18 @@ def validate_and_initialize_config() -> None:
 
         logger.info("Configuration validation and initialization passed")
 
-    except AttributeError as e:
+    except AttributeError:
         # Handle case where config object is not properly initialized
-        raise RuntimeError(
-            f"Configuration object is not properly initialized: {e}"
-        ) from e
-    except Exception as e:
+        raise AppException(
+            "Failed to properly initialize configurations",
+            AppExceptionCode.CONFIGURATION_INITIALIZATION_ERROR,
+        )
+    except Exception:
         # Re-raise as ValueError for consistent error handling
-        raise ValueError(f"Configuration validation failed: {e}") from e
+        raise AppException(
+            "Configuration validation failed",
+            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+        )
 
 
 def handle_startup_error(error: Exception, context: str = "server startup") -> NoReturn:

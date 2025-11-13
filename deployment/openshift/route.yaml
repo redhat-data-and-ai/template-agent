@@ -1,0 +1,16 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: template-agent
+  labels:
+    app: template-agent
+    component: agent
+spec:
+  to:
+    kind: Service
+    name: template-agent
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

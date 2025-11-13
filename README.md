@@ -215,7 +215,6 @@ curl "http://localhost:8081/health"
 #### Optional
 - `LANGFUSE_TRACING_ENVIRONMENT`: Langfuse environment (default: development)
 - `GOOGLE_SERVICE_ACCOUNT_FILE`: Google credentials
-- `SSO_CALLBACK_URL`: SSO callback URL
 - `AGENT_SSL_KEYFILE`: SSL private key path
 - `AGENT_SSL_CERTFILE`: SSL certificate path
 

@@ -51,7 +51,6 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
         - Authentication tokens are logged but not currently used for validation
         - In-memory storage mode returns empty history as conversations are not persisted
     """
-    # Get Snowflake token from request headers (sent by UI)
     access_token = request.headers.get("X-Token")
     logger.info(f"Retrieving history for thread_id: {thread_id}")
     logger.info(f"Access token present: {access_token is not None}")

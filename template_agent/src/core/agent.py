@@ -12,6 +12,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.prebuilt import create_react_agent
 
+from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
 from template_agent.src.core.prompt import get_system_prompt
 from template_agent.src.core.storage import get_global_checkpoint
 from template_agent.src.settings import settings
@@ -47,9 +48,9 @@ async def get_template_agent(
     try:
         client = MultiServerMCPClient(
             {
-                "template-mcp-server": {
-                    "url": "http://localhost:5001/mcp/",
-                    "transport": "streamable_http",
+                settings.MCP_SERVER_NAME: {
+                    "url": settings.MCP_SERVER_URL,
+                    "transport": settings.MCP_TRANSPORT_PROTOCOL,
                     "headers": {"Authorization": f"Bearer {sso_token}"}
                     if sso_token
                     else {},
@@ -67,7 +68,10 @@ async def get_template_agent(
             tools = []  # No tools for local development
         else:
             logger.error(f"Failed to connect to MCP server in production mode: {e}")
-            raise
+            raise AppException(
+                "Failed to connect to MCP server in production mode",
+                AppExceptionCode.PRODUCTION_MCP_CONNECTION_ERROR,
+            )
 
     # Initialize the language model
     model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)

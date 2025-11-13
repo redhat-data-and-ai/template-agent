@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: template-agent
+  labels:
+    app: template-agent
+    component: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: template-agent
+      component: agent
+  template:
+    metadata:
+      labels:
+        app: template-agent
+        component: agent
+    spec:
+      containers:
+        - name: template-agent
+          image: template-agent:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+              name: http
+              protocol: TCP
+          env:
+            - name: AGENT_HOST
+              value: "0.0.0.0"
+            - name: AGENT_PORT
+              value: "8081"
+            - name: PYTHON_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: template-agent-config
+                  key: PYTHON_LOG_LEVEL
+            - name: USE_INMEMORY_SAVER
+              valueFrom:
+                configMapKeyRef:
+                  name: template-agent-config
+                  key: USE_INMEMORY_SAVER
+            - name: LANGFUSE_TRACING_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: template-agent-config
+                  key: LANGFUSE_TRACING_ENVIRONMENT
+            - name: MCP_SERVER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: template-agent-config
+                  key: MCP_SERVER_NAME
+            - name: MCP_SERVER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: template-agent-config
+                  key: MCP_SERVER_URL
+            - name: MCP_TRANSPORT_PROTOCOL
+              valueFrom:
+                configMapKeyRef:
+                  name: template-agent-config
+                  key: MCP_TRANSPORT_PROTOCOL
+            - name: POSTGRES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: template-agent-secrets
+                  key: POSTGRES_HOST
+                  optional: true
+            - name: POSTGRES_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: template-agent-secrets
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: template-agent-secrets
+                  key: POSTGRES_DB
+                  optional: true
+            - name: SSO_CALLBACK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: template-agent-config
+                  key: SSO_CALLBACK_URL
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: template-agent-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: template-agent-secrets
+                  key: POSTGRES_PASSWORD
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: template-agent-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: template-agent-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+            - name: LANGFUSE_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: template-agent-secrets
+                  key: LANGFUSE_HOST
+                  optional: true
+            - name: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+              valueFrom:
+                secretKeyRef:
+                  name: template-agent-secrets
+                  key: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+                  optional: true
+          envFrom:
+            - secretRef:
+                name: template-agent-secrets
+                optional: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      restartPolicy: Always

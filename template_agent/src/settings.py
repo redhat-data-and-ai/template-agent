@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
+from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
 from template_agent.utils.pylogger import get_python_logger
 
 # Initialize logger
@@ -36,7 +37,7 @@ class Settings(BaseSettings):
     - Database Configuration: PostgreSQL connection parameters
     - Langfuse Configuration: Tracing and analytics settings
     - Google Configuration: Service account credentials
-    - SSO Configuration: Authentication settings
+    - MCP Configuration: MCP server connection settings
     """
 
     # Server Configuration
@@ -89,32 +90,24 @@ class Settings(BaseSettings):
         default="development", json_schema_extra={"env": "LANGFUSE_TRACING_ENVIRONMENT"}
     )
 
-    # Snowflake Configuration
-    SNOWFLAKE_ACCOUNT: Optional[str] = Field(
-        default=None, json_schema_extra={"env": "SNOWFLAKE_ACCOUNT"}
-    )
-
-    # SSO Configuration
-    SSO_CLIENT_ID: Optional[str] = Field(
-        default=None, json_schema_extra={"env": "SSO_CLIENT_ID"}
-    )
-    SSO_CLIENT_SECRET: Optional[str] = Field(
-        default=None, json_schema_extra={"env": "SSO_CLIENT_SECRET"}
-    )
-    SSO_CALLBACK_URL: str = Field(
-        default="http://0.0.0.0:8081/callback/",
-        json_schema_extra={"env": "SSO_CALLBACK_URL"},
-    )
-
-    # Session Configuration
-    SESSION_SECRET: Optional[str] = Field(
-        default=None, json_schema_extra={"env": "SESSION_SECRET"}
-    )
-
     # Google Application Credentials
     GOOGLE_APPLICATION_CREDENTIALS_CONTENT: Optional[str] = Field(
         default=None,
         json_schema_extra={"env": "GOOGLE_APPLICATION_CREDENTIALS_CONTENT"},
+    )
+
+    # MCP Server Configuration
+    MCP_SERVER_NAME: str = Field(
+        default="template-mcp-server",
+        json_schema_extra={"env": "MCP_SERVER_NAME"},
+    )
+    MCP_SERVER_URL: str = Field(
+        default="http://localhost:5001/mcp/",
+        json_schema_extra={"env": "MCP_SERVER_URL"},
+    )
+    MCP_TRANSPORT_PROTOCOL: str = Field(
+        default="streamable_http",
+        json_schema_extra={"env": "MCP_TRANSPORT_PROTOCOL"},
     )
 
     @property
@@ -146,15 +139,23 @@ def validate_config(settings: Settings) -> None:
     """
     # Validate port range
     if not (1024 <= settings.AGENT_PORT <= 65535):
-        raise ValueError(
-            f"MCP_PORT must be between 1024 and 65535, got {settings.MCP_PORT}"
+        logger.error(
+            f"AGENT_PORT must be between 1024 and 65535, got {settings.AGENT_PORT}"
+        )
+        raise AppException(
+            f"AGENT_PORT must be between 1024 and 65535, got {settings.AGENT_PORT}",
+            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
         )
 
     # Validate log level
     valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
     if settings.PYTHON_LOG_LEVEL.upper() not in valid_log_levels:
-        raise ValueError(
+        logger.error(
             f"PYTHON_LOG_LEVEL must be one of {valid_log_levels}, got {settings.PYTHON_LOG_LEVEL}"
+        )
+        raise AppException(
+            f"PYTHON_LOG_LEVEL must be one of {valid_log_levels}, got {settings.PYTHON_LOG_LEVEL}",
+            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
         )
 
 

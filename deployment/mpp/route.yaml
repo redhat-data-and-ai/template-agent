@@ -1,0 +1,18 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: template-agent
+  labels:
+    app: template-agent
+    component: agent
+    shard: internal
+spec:
+  host: template-agent.apps.int.spoke.preprod.us-west-2.aws.paas.redhat.com
+  to:
+    kind: Service
+    name: template-agent
+  port:
+    targetPort: https
+  tls:
+    termination: reencrypt
+    insecureEdgeTerminationPolicy: Redirect
