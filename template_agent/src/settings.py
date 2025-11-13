@@ -109,6 +109,47 @@ class Settings(BaseSettings):
         default="streamable_http",
         json_schema_extra={"env": "MCP_TRANSPORT_PROTOCOL"},
     )
+    MCP_CONNECTION_TIMEOUT: int = Field(
+        default=30,
+        json_schema_extra={"env": "MCP_CONNECTION_TIMEOUT"},
+    )
+    MCP_SSL_VERIFY: bool = Field(
+        default=False,
+        json_schema_extra={
+            "env": "MCP_SSL_VERIFY",
+            "description": "Enable SSL certificate verification for MCP connections",
+        },
+    )
+
+    # Request Logging Configuration
+    REQUEST_LOGGING_ENABLED: bool = Field(
+        default=True,
+        json_schema_extra={
+            "env": "REQUEST_LOGGING_ENABLED",
+            "description": "Enable request/response logging",
+        },
+    )
+    REQUEST_LOG_HEADERS: bool = Field(
+        default=True,
+        json_schema_extra={
+            "env": "REQUEST_LOG_HEADERS",
+            "description": "Include headers in request/response logs",
+        },
+    )
+    REQUEST_LOG_BODY: bool = Field(
+        default=False,
+        json_schema_extra={
+            "env": "REQUEST_LOG_BODY",
+            "description": "Include body content in request/response logs",
+        },
+    )
+    REQUEST_LOG_BODY_MAX_SIZE: int = Field(
+        default=10240,
+        json_schema_extra={
+            "env": "REQUEST_LOG_BODY_MAX_SIZE",
+            "description": "Maximum body size in bytes to log (0 for unlimited)",
+        },
+    )
 
     @property
     def database_uri(self) -> str:

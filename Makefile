@@ -3,34 +3,29 @@
 # OpenShift namespace (can be overridden: make deploy openshift NAMESPACE=my-project)
 NAMESPACE ?= $(shell oc project -q 2>/dev/null)
 
-local:
-	@echo "Setting up and starting Template Agent locally..."
-	@if [ ! -d ".venv" ]; then \
-		echo "Creating virtual environment..."; \
-		uv venv; \
-	fi
+# Dependency checks
+deps:
+	@which uv > /dev/null && echo "uv: $(shell uv --version)" || (echo "Error: uv not found. Please install uv." && exit 1)
+	@which podman > /dev/null && echo "podman: $(shell podman --version)" || (echo "Error: podman not found. Please install podman." && exit 1)
+	@which podman-compose > /dev/null && echo "podman-compose: $(shell podman-compose --version)" || (echo "Error: podman-compose not found. Please install podman-compose." && exit 1)
+	@which oc > /dev/null && echo "oc: $(shell oc version --client)" || (echo "Error: oc not found. Please install oc." && exit 1)
+
+# Install Python dependencies
+install:
+	@echo "Creating virtual environment..."
+	@test -d .venv || uv venv
+	@echo "Installing package with dev dependencies..."
+	@. .venv/bin/activate && uv pip install -e ".[dev]"
+	@echo "Installing pre-commit hooks..."
+	@. .venv/bin/activate && pre-commit install
+	@echo "Python dependencies installed successfully!"
 	@echo "Activating virtual environment..."
-	@source .venv/bin/activate && \
-	echo "Installing dependencies..." && \
-	uv pip install -e ".[dev]" && \
-	echo "Starting with in-memory storage..." && \
-	USE_INMEMORY_SAVER=true python -m template_agent.src.main
-
-dev:
-	@echo "Starting Template Agent with podman-compose..."
-	@podman-compose up --build
-
-test:
-	@echo "Running tests..."
-	@if [ ! -d ".venv" ]; then \
-		echo "Creating virtual environment..."; \
-		uv venv; \
-	fi
-	@source .venv/bin/activate && \
-	echo "Installing dependencies..." && \
-	uv pip install -e ".[dev]" && \
-	echo "Running pytest..." && \
-	pytest
+	@echo '#!/bin/bash' > /tmp/activate_and_shell.sh
+	@echo 'source .venv/bin/activate' >> /tmp/activate_and_shell.sh
+	@echo 'echo "Virtual environment activated! Type exit to return to your original shell."' >> /tmp/activate_and_shell.sh
+	@echo 'exec "$$SHELL"' >> /tmp/activate_and_shell.sh
+	@chmod +x /tmp/activate_and_shell.sh
+	@exec /tmp/activate_and_shell.sh
 
 clean:
 	@echo "Cleaning up non-code artifacts..."
@@ -50,6 +45,25 @@ clean:
 	@find . -type f -name "*.pyo" -delete 2>/dev/null || true
 	@find . -type f -name ".DS_Store" -delete 2>/dev/null || true
 	@echo "Cleanup complete"
+
+test:
+	@if [ ! -d ".venv" ]; then \
+		echo "Error: Virtual environment not found. Run 'make install' first to set up the environment."; \
+		exit 1; \
+	fi
+	.venv/bin/python -m pytest
+
+local:
+	@echo "Setting up local environment..."
+	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
+	@echo "Starting MCP server locally on port 5002..."
+	@echo "Health check available at: http://localhost:5002/health"
+	@echo "Press Ctrl+C to stop the server"
+	@. .venv/bin/activate && USE_INMEMORY_SAVER=true python -m template_agent.src.main
+
+container:
+	export PODMAN_COMPOSE_SILENT=true
+	podman-compose --no-ansi up --build --force-recreate --remove-orphans  --timeout=60
 
 # Deployment targets
 deploy:
@@ -77,7 +91,16 @@ openshift:
 	oc apply -f deployment/openshift/buildconfig.yaml; \
 	oc apply -f deployment/openshift/imagestream.yaml; \
 	echo "Building container image from source..."; \
-	oc start-build template-agent --from-dir=. --follow || (mv deployment/openshift/deployment.yaml.bak deployment/openshift/deployment.yaml 2>/dev/null; mv deployment/openshift/kustomization.yaml.bak deployment/openshift/kustomization.yaml 2>/dev/null; exit 1); \
+	oc start-build template-agent --from-dir=. \
+		--exclude='(^|/)\.venv(/|$$)' \
+		--exclude='(^|/)__pycache__(/|$$)' \
+		--exclude='(^|/)\.pytest_cache(/|$$)' \
+		--exclude='(^|/)tests(/|$$)' \
+		--exclude='(^|/)examples(/|$$)' \
+		--exclude='(^|/)\.mypy_cache(/|$$)' \
+		--exclude='(^|/)\.ruff_cache(/|$$)' \
+		--exclude='.*\.log$$' \
+		--follow || (mv deployment/openshift/deployment.yaml.bak deployment/openshift/deployment.yaml 2>/dev/null; mv deployment/openshift/kustomization.yaml.bak deployment/openshift/kustomization.yaml 2>/dev/null; exit 1); \
 	echo "Deploying resources to OpenShift..."; \
 	oc apply -k deployment/openshift/ || (mv deployment/openshift/deployment.yaml.bak deployment/openshift/deployment.yaml 2>/dev/null; mv deployment/openshift/kustomization.yaml.bak deployment/openshift/kustomization.yaml 2>/dev/null; exit 1); \
 	rm -f deployment/openshift/deployment.yaml.bak deployment/openshift/kustomization.yaml.bak; \
@@ -125,7 +148,16 @@ mpp:
 	oc apply -f deployment/mpp/buildconfig.yaml; \
 	oc apply -f deployment/mpp/imagestream.yaml; \
 	echo "Building container image from source..."; \
-	oc start-build template-agent --from-dir=. --follow || (mv deployment/mpp/tenant.yaml.bak deployment/mpp/tenant.yaml 2>/dev/null; exit 1); \
+	oc start-build template-agent --from-dir=. \
+		--exclude='(^|/)\.venv(/|$$)' \
+		--exclude='(^|/)__pycache__(/|$$)' \
+		--exclude='(^|/)\.pytest_cache(/|$$)' \
+		--exclude='(^|/)tests(/|$$)' \
+		--exclude='(^|/)examples(/|$$)' \
+		--exclude='(^|/)\.mypy_cache(/|$$)' \
+		--exclude='(^|/)\.ruff_cache(/|$$)' \
+		--exclude='.*\.log$$' \
+		--follow || (mv deployment/mpp/tenant.yaml.bak deployment/mpp/tenant.yaml 2>/dev/null; exit 1); \
 	echo "Deploying resources to MPP..."; \
 	oc apply -k deployment/mpp/ || (mv deployment/mpp/tenant.yaml.bak deployment/mpp/tenant.yaml 2>/dev/null; exit 1); \
 	rm -f deployment/mpp/tenant.yaml.bak; \
@@ -142,15 +174,20 @@ undeploy:
 	@if [ "$(filter openshift,$(MAKECMDGOALS))" = "openshift" ]; then \
 		echo "Checking for oc CLI..."; \
 		which oc > /dev/null || (echo "Error: oc CLI not found. Please install OpenShift CLI." && exit 1); \
+		oc project $(NAMESPACE) || (echo "Error: Cannot switch to namespace '$(NAMESPACE)'" && exit 1); \
 		echo "Removing OpenShift deployment..."; \
 		oc delete deployment,service,route,configmap,secret,pvc,buildconfig,imagestream -l app=template-agent 2>/dev/null || true; \
 		echo "Undeployment complete!"; \
+		exit 1; \
 	elif [ "$(filter mpp,$(MAKECMDGOALS))" = "mpp" ]; then \
 		echo "Checking for oc CLI..."; \
+		RUNTIME_NAMESPACE="$(TENANT)--template"; \
 		which oc > /dev/null || (echo "Error: oc CLI not found. Please install OpenShift CLI." && exit 1); \
+		oc project $$RUNTIME_NAMESPACE || (echo "Error: Cannot switch to runtime namespace '$$RUNTIME_NAMESPACE'" && exit 1); \
 		echo "Removing MPP deployment..."; \
 		oc delete deployment,service,route,configmap,secret,pvc,buildconfig,imagestream -l app=template-agent 2>/dev/null || true; \
 		echo "Undeployment complete!"; \
+		exit 1; \
 	else \
 		echo "Usage: make undeploy [openshift|mpp]"; \
 		echo "Available undeployment targets: openshift, mpp"; \

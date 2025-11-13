@@ -34,7 +34,7 @@ from template_agent.utils.pylogger import get_python_logger
 
 # Initialize Langfuse CallbackHandler for Langchain (tracing)
 langfuse_handler = CallbackHandler(
-    trace_name="agent-redhat", environment=settings.LANGFUSE_TRACING_ENVIRONMENT
+    trace_name="template-agent", environment=settings.LANGFUSE_TRACING_ENVIRONMENT
 )
 
 app_logger = get_python_logger(settings.PYTHON_LOG_LEVEL)

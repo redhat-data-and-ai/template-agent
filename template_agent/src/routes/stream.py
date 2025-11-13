@@ -8,7 +8,7 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from template_agent.src.core.manager import AgentManager
@@ -21,17 +21,18 @@ app_logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
 
 async def message_generator(
-    user_input: StreamRequest, request: Request
+    user_input: StreamRequest, agent_manager: AgentManager
 ) -> AsyncGenerator[str, None]:
     """Generate a stream of messages from the agent using the simplified format.
 
-    This function now uses the AgentManager to handle streaming with features like SSO authentication, tracing, and error handling.
+    This function uses the AgentManager to handle streaming with features like
+    SSO authentication, tracing, and error handling. The AgentManager is
+    initialized before streaming begins to allow proper HTTP error responses.
 
     Args:
         user_input: The streaming input from the user containing the message
             and configuration.
-        request: FastAPI request object to extract headers like authentication
-            tokens.
+        agent_manager: Pre-initialized AgentManager instance.
 
     Yields:
         JSON-formatted SSE messages as strings in the simplified event format.
@@ -39,15 +40,9 @@ async def message_generator(
     Note:
         - Uses simplified event format: {"type": "message"|"token"|"error", "content": ...}
         - Preserves enterprise features: SSO auth, Langfuse tracing, error handling
-        - Maintains backward compatibility with existing clients
+        - Errors during streaming are sent as error events in the stream
+        - Initialization errors are handled before streaming starts
     """
-    # Get token from request headers
-    access_token = request.headers.get("X-Token")
-    app_logger.info(f"Received token: {'Yes' if access_token else 'No'}")
-
-    # Initialize AgentManager with SSO token
-    agent_manager = AgentManager(redhat_sso_token=access_token)
-
     try:
         app_logger.info(f"Starting stream for message: {user_input.message[:100]}...")
 
@@ -140,9 +135,25 @@ async def stream(user_input: StreamRequest, request: Request) -> StreamingRespon
         {"type": "token", "content": "world"}
         [DONE]
         ```
+
+    Raises:
+        HTTPException: If initialization fails (returns 500 status code).
     """
+    # Get token from request headers
+    access_token = request.headers.get("X-Token")
+    app_logger.info(f"Received token: {'Yes' if access_token else 'No'}")
+
+    # Initialize AgentManager BEFORE streaming to catch initialization errors
+    try:
+        agent_manager = AgentManager(redhat_sso_token=access_token)
+    except Exception as e:
+        app_logger.error(f"Failed to initialize AgentManager: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to initialize agent: {str(e)}"
+        )
+
     return StreamingResponse(
-        message_generator(user_input, request),
+        message_generator(user_input, agent_manager),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

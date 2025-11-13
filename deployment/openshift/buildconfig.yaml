@@ -21,9 +21,9 @@ spec:
       dockerfilePath: Containerfile
   resources:
     requests:
-      memory: "4Gi"
-      cpu: "2000m"
+      memory: "2Gi"
+      cpu: "1000m"
     limits:
-      memory: "8Gi"
-      cpu: "8"
+      memory: "4Gi"
+      cpu: "4"
   triggers: []

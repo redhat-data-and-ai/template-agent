@@ -57,7 +57,10 @@ async def list_threads(user_id: str) -> List[str]:
             return thread_ids
         except Exception as e:
             app_logger.error(f"Error accessing thread registry for user {user_id}: {e}")
-            return []
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to retrieve threads from registry: {str(e)}",
+            )
 
     try:
         # Connect to the PostgreSQL database

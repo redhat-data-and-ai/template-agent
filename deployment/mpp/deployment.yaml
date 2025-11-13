@@ -115,9 +115,14 @@ spec:
               value: '/run/secrets/tls/tls.key'
             - name: AGENT_SSL_CERTFILE
               value: '/run/secrets/tls/tls.crt'
+            - name: SSL_CERT_FILE
+              value: '/etc/pki/ca-trust/router-ca-bundle.crt'
           volumeMounts:
             - name: tls-certs
               mountPath: /run/secrets/tls
+            - name: router-ca-bundle
+              mountPath: /etc/pki/ca-trust
+              readOnly: true
           envFrom:
             - secretRef:
                 name: template-agent-secrets
@@ -152,3 +157,9 @@ spec:
         - name: tls-certs
           secret:
             secretName: template-agent-tls
+        - name: router-ca-bundle
+          configMap:
+            name: router-ca-bundle
+            items:
+              - key: ca-bundle.crt
+                path: router-ca-bundle.crt

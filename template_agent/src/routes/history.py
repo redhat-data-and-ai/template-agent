@@ -7,7 +7,7 @@ allowing users to view previous conversations and continue ongoing threads.
 from typing import List
 
 import psycopg2
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from langchain_core.runnables import RunnableConfig
 
 from template_agent.src.core.agent_utils import langchain_to_chat_message
@@ -483,5 +483,6 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
         logger.error(
             f"Database error while fetching history for thread {thread_id}: {e}"
         )
-        # Return empty history instead of raising error for better UX
-        return ChatHistoryResponse(messages=[])
+        raise HTTPException(
+            status_code=500, detail=f"Failed to retrieve chat history: {str(e)}"
+        )

@@ -1,0 +1,84 @@
+# Virtual environments (LARGEST - exclude first!)
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Git and version control
+.git/
+.gitignore
+.gitlab-ci.yml
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+*.so
+*.egg
+*.whl
+
+# IDE and editor files
+.cursor/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Development and documentation
+README.md
+LICENSE
+Makefile
+.pre-commit-config.yaml
+deployment/
+examples/
+docs/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+
+# Test files
+tests/
+
+# Type checking and linting caches
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+build.log
+
+# Lock files (use pyproject.toml instead)
+uv.lock
+poetry.lock
+Pipfile.lock
+
+# Security scan reports
+bandit-report.json
+safety-report.json
+.safety-project.ini
+
+# Container files themselves
+Containerfile
+.containerignore
+compose.yaml
+docker-compose.yml
