@@ -83,8 +83,8 @@ class Settings(BaseSettings):
     LANGFUSE_SECRET_KEY: Optional[str] = Field(
         default=None, json_schema_extra={"env": "LANGFUSE_SECRET_KEY"}
     )
-    LANGFUSE_HOST: Optional[str] = Field(
-        default=None, json_schema_extra={"env": "LANGFUSE_HOST"}
+    LANGFUSE_BASE_URL: Optional[str] = Field(
+        default=None, json_schema_extra={"env": "LANGFUSE_BASE_URL"}
     )
     LANGFUSE_TRACING_ENVIRONMENT: str = Field(
         default="development", json_schema_extra={"env": "LANGFUSE_TRACING_ENVIRONMENT"}

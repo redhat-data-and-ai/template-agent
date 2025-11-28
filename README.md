@@ -213,6 +213,9 @@ curl "http://localhost:8081/health"
 - `POSTGRES_PORT`: Database port (default: 5432)
 
 #### Optional
+- `LANGFUSE_PUBLIC_KEY`: Langfuse public key for tracing
+- `LANGFUSE_SECRET_KEY`: Langfuse secret key for tracing
+- `LANGFUSE_BASE_URL`: Langfuse host URL (e.g., https://cloud.langfuse.com)
 - `LANGFUSE_TRACING_ENVIRONMENT`: Langfuse environment (default: development)
 - `GOOGLE_SERVICE_ACCOUNT_FILE`: Google credentials
 - `AGENT_SSL_KEYFILE`: SSL private key path

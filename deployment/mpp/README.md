@@ -33,13 +33,15 @@ stringData:
   SESSION_SECRET: ""                   # Generate a secure random key
   LANGFUSE_PUBLIC_KEY: ""              # Optional: Langfuse public key
   LANGFUSE_SECRET_KEY: ""              # Optional: Langfuse secret key
-  LANGFUSE_HOST: ""                    # Optional: Langfuse host URL
+  LANGFUSE_BASE_URL: ""                # Optional: Langfuse host URL (e.g., https://cloud.langfuse.com)
   GOOGLE_SERVICE_ACCOUNT_FILE: ""      # Optional: Google service account path
   GOOGLE_APPLICATION_CREDENTIALS_CONTENT: ""  # Optional: Google credentials JSON
   SSO_CLIENT_ID: ""                    # Optional: SSO client ID
   SSO_CLIENT_SECRET: ""                # Optional: SSO client secret
   SNOWFLAKE_ACCOUNT: ""                # Optional: Snowflake account
 ```
+
+> **Migration Note:** If you have existing deployments using `LANGFUSE_HOST`, you must update your secrets to use `LANGFUSE_BASE_URL` instead. This change aligns with Langfuse SDK default environment variable names.
 
 ### ConfigMap Settings
 

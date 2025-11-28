@@ -99,11 +99,11 @@ spec:
                   name: template-agent-secrets
                   key: LANGFUSE_SECRET_KEY
                   optional: true
-            - name: LANGFUSE_HOST
+            - name: LANGFUSE_BASE_URL
               valueFrom:
                 secretKeyRef:
                   name: template-agent-secrets
-                  key: LANGFUSE_HOST
+                  key: LANGFUSE_BASE_URL
                   optional: true
             - name: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
               valueFrom:
