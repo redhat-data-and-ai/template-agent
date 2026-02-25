@@ -162,6 +162,7 @@ dependencies = [
     "yarl==1.20.0",
     "zstandard==0.23.0",
     "structlog>=24.1.0",
+    "a2a-sdk[http-server]>=0.3.0",
 ]
 
 [project.optional-dependencies]

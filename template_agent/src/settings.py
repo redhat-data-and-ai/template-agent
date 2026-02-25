@@ -121,6 +121,36 @@ class Settings(BaseSettings):
         },
     )
 
+    # A2A Protocol Configuration
+    A2A_AGENT_URL: str = Field(
+        default="http://localhost:8443/",
+        json_schema_extra={"env": "A2A_AGENT_URL"},
+    )
+    A2A_AGENT_NAME: str = Field(
+        default="Template Agent",
+        json_schema_extra={"env": "A2A_AGENT_NAME"},
+    )
+    A2A_AGENT_DESCRIPTION: str = Field(
+        default="A template A2A agent that processes tasks using MCP tools",
+        json_schema_extra={"env": "A2A_AGENT_DESCRIPTION"},
+    )
+    A2A_AGENT_VERSION: str = Field(
+        default="0.1.0",
+        json_schema_extra={"env": "A2A_AGENT_VERSION"},
+    )
+    A2A_SKILL_ID: str = Field(
+        default="template-agent",
+        json_schema_extra={"env": "A2A_SKILL_ID"},
+    )
+    A2A_SKILL_NAME: str = Field(
+        default="Template Agent",
+        json_schema_extra={"env": "A2A_SKILL_NAME"},
+    )
+    A2A_SKILL_DESCRIPTION: str = Field(
+        default="Processes tasks and returns results",
+        json_schema_extra={"env": "A2A_SKILL_DESCRIPTION"},
+    )
+
     # Request Logging Configuration
     REQUEST_LOGGING_ENABLED: bool = Field(
         default=True,

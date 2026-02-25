@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
+from template_agent.src.a2a.server import create_a2a_app
 from template_agent.src.core.agent import initialize_database
 from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
 from template_agent.src.routes.feedback import router as feedback_router
@@ -159,6 +160,9 @@ app.include_router(stream_router)
 app.include_router(feedback_router)
 app.include_router(history_router)
 app.include_router(threads_router)
+
+# Mount A2A protocol app on the same server
+app.mount("/", create_a2a_app())
 
 
 @app.exception_handler(Exception)
