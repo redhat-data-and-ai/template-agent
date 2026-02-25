@@ -1,3 +1,5 @@
+"""A2A protocol server configuration and application factory."""
+
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
@@ -11,6 +13,7 @@ logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
 
 def build_agent_card() -> AgentCard:
+    """Build the A2A agent card from settings."""
     skills = [
         AgentSkill(
             id=settings.A2A_SKILL_ID,
@@ -34,6 +37,7 @@ def build_agent_card() -> AgentCard:
 
 
 def create_a2a_app():
+    """Create and configure the A2A Starlette application."""
     agent_card = build_agent_card()
 
     request_handler = DefaultRequestHandler(

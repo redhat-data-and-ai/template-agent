@@ -1,3 +1,5 @@
+"""A2A agent executor that bridges A2A protocol requests to the template agent."""
+
 import logging
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -11,11 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 class TemplateAgentExecutor(AgentExecutor):
+    """Executor that routes A2A requests to the template agent's AgentManager."""
+
     async def execute(
         self,
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
+        """Execute an A2A request by forwarding it to the template agent."""
         query = context.get_user_input()
         logger.info("Executing A2A request for query: %s", query)
 
@@ -41,4 +46,5 @@ class TemplateAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
+        """Cancel a running A2A request."""
         raise Exception("cancel not supported")
