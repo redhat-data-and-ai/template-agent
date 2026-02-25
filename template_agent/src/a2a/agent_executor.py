@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class TemplateAgentExecutor(AgentExecutor):
-
     async def execute(
         self,
         context: RequestContext,
