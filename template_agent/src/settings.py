@@ -122,6 +122,13 @@ class Settings(BaseSettings):
     )
 
     # A2A Protocol Configuration
+    A2A_ENABLED: bool = Field(
+        default=False,
+        json_schema_extra={
+            "env": "A2A_ENABLED",
+            "description": "Enable A2A",
+        },
+    )
     A2A_AGENT_URL: str = Field(
         default="http://localhost:8443/",
         json_schema_extra={"env": "A2A_AGENT_URL"},

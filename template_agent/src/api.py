@@ -162,7 +162,8 @@ app.include_router(history_router)
 app.include_router(threads_router)
 
 # Mount A2A protocol app on the same server
-app.mount("/a2a", create_a2a_app())
+if settings.A2A_ENABLED:
+    app.mount("/a2a", create_a2a_app())
 
 
 @app.exception_handler(Exception)
