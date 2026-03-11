@@ -33,6 +33,7 @@ def get_system_prompt() -> str:
         f"Today's date is {current_date}.\n\n"
         "A few things to remember:\n"
         "- **Always use the same language as the user.**\n"
+        "- **Always send intermediate responses between tool calls to the user showing the reasoning and thought process.**\n"
         "- **If needed or requested by user, you can use Markdown to generate tables, code blocks, lists, etc.**\n"
         "- **You have access to mathematical tools:**\n"
         "    1. **multiply_numbers:** Use this tool to multiply two numbers together.\n"
