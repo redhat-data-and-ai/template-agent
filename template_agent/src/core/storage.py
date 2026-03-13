@@ -66,18 +66,4 @@ def get_user_threads(user_id: str) -> list[str]:
     return threads
 
 
-def reset_global_storage() -> None:
-    """Reset the global checkpoint instance.
-
-    This is useful for testing or when you want to clear all data.
-    """
-    global _global_checkpoint, _thread_registry
-    _global_checkpoint = None
-    _thread_registry = {}
-    logger.info("Reset global checkpoint instance and thread registry")
-
-
-# Backward compatibility aliases
 get_shared_checkpointer = get_global_checkpoint
-get_shared_store = get_global_checkpoint
-reset_shared_storage = reset_global_storage

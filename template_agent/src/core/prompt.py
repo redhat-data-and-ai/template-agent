@@ -1,7 +1,8 @@
 """System prompts and prompt utilities for the template agent.
 
 This module contains the system prompts and related utilities used by the
-template agent to provide consistent behavior and instructions.
+standard chat agent. For deep research prompts, see
+``template_agent.src.core.deep_research.prompts``.
 """
 
 from datetime import datetime

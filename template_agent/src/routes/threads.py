@@ -67,9 +67,9 @@ async def list_threads(user_id: str) -> List[str]:
         with psycopg2.connect(settings.database_uri) as conn:
             cur = conn.cursor()
 
-            # Query for distinct thread IDs where metadata contains the user_id
             cur.execute(
-                f"SELECT distinct thread_id FROM checkpoints where metadata->>'user_id'='{user_id}'"
+                "SELECT DISTINCT thread_id FROM checkpoints WHERE metadata->>'user_id' = %s",
+                (user_id,),
             )
             rows = cur.fetchall()
             thread_ids = [row[0] for row in rows]

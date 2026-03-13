@@ -4,16 +4,12 @@ This module provides endpoints for recording user feedback on agent responses
 using Langfuse for analytics and monitoring purposes.
 """
 
-from fastapi import APIRouter
-from langfuse import Langfuse
+from fastapi import APIRouter, HTTPException
 
 from template_agent.src.schema import FeedbackRequest, FeedbackResponse
-from template_agent.src.settings import settings
+from template_agent.utils.tracing import client
 
 router = APIRouter()
-
-# Initialize Langfuse client for feedback tracking
-client = Langfuse(environment=settings.LANGFUSE_TRACING_ENVIRONMENT)
 
 
 @router.post("/v1/feedback")
@@ -38,18 +34,23 @@ async def feedback(feedback: FeedbackRequest) -> FeedbackResponse:
         A FeedbackResponse indicating successful feedback recording.
 
     Raises:
-        Exception: If there are issues with the Langfuse API call.
+        HTTPException: If Langfuse is not configured.
 
     See Also:
         https://api.smith.langchain.com/redoc#tag/feedback/operation/create_feedback_api_v1_feedback_post
     """
+    if client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Langfuse is not configured; feedback cannot be recorded.",
+        )
+
     kwargs = feedback.kwargs or {}
 
-    # Langfuse uses different parameter names than our schema
     client.score(
-        trace_id=feedback.run_id,  # Assuming run_id maps to trace_id
-        name=feedback.key,  # 'key' becomes 'name' in Langfuse
-        value=feedback.score,  # 'score' becomes 'value' in Langfuse
+        trace_id=feedback.run_id,
+        name=feedback.key,
+        value=feedback.score,
         **kwargs,
     )
 

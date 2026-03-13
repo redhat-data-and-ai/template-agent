@@ -31,7 +31,11 @@ from template_agent.src.core.deep_research.prompts import (
     QueryType,
     build_data_aggregation_prompt,
     build_revision_prompt,
+    build_synthesis_completion_prompt,
+    build_synthesis_fact_check_prompt,
+    build_synthesis_plausibility_prompt,
     build_synthesis_prompt,
+    build_synthesis_stricter_retry_instruction,
 )
 from template_agent.src.core.deep_research.sentinel import check_loop_sentinel
 from template_agent.src.core.deep_research.state import (
@@ -122,13 +126,9 @@ async def _run_stage1_fact_check(
     source_numbers_parts: List[str],
 ) -> str:
     """Run stage 1 fact-check via LLM."""
+    sys_content, _ = build_synthesis_fact_check_prompt()
     messages = [
-        SystemMessage(
-            content="""You are a fact-checker for a research report. Your job is to silently FIX issues.
-Compare every number in the draft report against the source data numbers.
-For each number: if it matches a source, KEEP IT. If it contradicts, SILENTLY replace.
-Do NOT add tags like [UNVERIFIED]. Return the COMPLETE report."""
-        ),
+        SystemMessage(content=sys_content),
         HumanMessage(
             content=(
                 "SOURCE DATA NUMBERS:\n"
@@ -160,11 +160,9 @@ async def _apply_plausibility_pass(
     if not parts:
         return checked_draft
     try:
+        sys_content, _ = build_synthesis_plausibility_prompt()
         plausibility_messages = [
-            SystemMessage(
-                content="You are a report editor. Add appropriate uncertainty language "
-                "for flagged values. Do NOT remove numbers. Integrate caveats naturally."
-            ),
+            SystemMessage(content=sys_content),
             HumanMessage(
                 content="FLAGGED CONCERNS:\n"
                 + "\n".join(parts)
@@ -314,39 +312,37 @@ async def _run_synthesis_llm(
     findings: Dict[str, Finding],
 ) -> str:
     """Run synthesis LLM, retrying if tool recommendations detected."""
+    synthesis_kwargs = ctx.get_llm_kwargs(timeout=300)
     try:
         response = await tracked_invoke(
             ctx.base_model,
             synthesis_messages,
             ctx.token_tracker,
             "synthesis",
-            **ctx.llm_call_kwargs(),
+            **synthesis_kwargs,
         )
         draft_answer = str(response.content or "").strip()
 
         if _looks_like_tool_recommendation(draft_answer):
             logger.warning("Synthesis produced tool recommendations, retrying")
-            events.append(
+            ctx.emit_or_append(
                 emit_agent_message(
                     "Synthesizer",
                     "LLM",
                     "First attempt produced recommendations, retrying",
                     "request",
-                )
+                ),
+                events,
             )
             stricter = synthesis_messages + [
-                (
-                    "system",
-                    "IMPORTANT: You MUST synthesize the findings into a report. "
-                    "DO NOT recommend tools. If no data exists, state that clearly.",
-                )
+                ("system", build_synthesis_stricter_retry_instruction())
             ]
             response = await tracked_invoke(
                 ctx.base_model,
                 stricter,
                 ctx.token_tracker,
                 "synthesis",
-                **ctx.llm_call_kwargs(),
+                **synthesis_kwargs,
             )
             retry_draft = str(response.content or "").strip()
             if not _looks_like_tool_recommendation(retry_draft):
@@ -356,10 +352,11 @@ async def _run_synthesis_llm(
         logger.warning(
             "LLM synthesis failed (attempt 1): %s", error_detail, exc_info=True
         )
-        events.append(
+        ctx.emit_or_append(
             emit_agent_message(
                 "Synthesizer", "LLM", "Synthesis failed, retrying...", "request"
-            )
+            ),
+            events,
         )
         try:
             await asyncio.sleep(2)
@@ -368,7 +365,7 @@ async def _run_synthesis_llm(
                 synthesis_messages,
                 ctx.token_tracker,
                 "synthesis",
-                **ctx.llm_call_kwargs(),
+                **synthesis_kwargs,
             )
             draft_answer = str(response.content or "").strip()
         except Exception as e2:
@@ -398,10 +395,9 @@ async def _apply_structural_resynth_and_completion(
     )
     if not is_complete:
         try:
+            sys_content, _ = build_synthesis_completion_prompt()
             completion_messages = [
-                SystemMessage(
-                    content="Write ONLY the missing conclusion. Do NOT repeat existing content."
-                ),
+                SystemMessage(content=sys_content),
                 HumanMessage(content=f"Incomplete report:\n{draft_answer[-2000:]}"),
             ]
             completion = await tracked_invoke(
@@ -434,30 +430,34 @@ async def _run_first_pass_synthesis(
     transitions: int,
 ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """Execute full first-pass synthesis: aggregation, report gen, fact-check."""
-    events.append(
+    ctx.emit_or_append(
         emit_agent_thinking(
             "Synthesizer",
             f"Creating comprehensive answer from {len(findings)} research findings",
-        )
+        ),
+        events,
     )
 
-    events.append(emit_data_aggregation_start())
+    ctx.emit_or_append(emit_data_aggregation_start(), events)
     data_summary, agg_data_points, agg_conflicts = await _run_data_aggregation(
         ctx, state.get("query", ""), findings
     )
-    events.append(emit_data_aggregation_complete(agg_data_points, agg_conflicts))
+    ctx.emit_or_append(
+        emit_data_aggregation_complete(agg_data_points, agg_conflicts), events
+    )
 
-    events.append(emit_report_generation_start())
+    ctx.emit_or_append(emit_report_generation_start(), events)
     findings_text = _format_findings_for_synthesis(
         findings, active_board if findings_board else None
     )
 
     data_quality = _assess_data_quality(findings)
-    events.append(
+    ctx.emit_or_append(
         emit_agent_thinking(
             "Synthesizer",
             f"Stage 2: Generating report (data quality: {data_quality})",
-        )
+        ),
+        events,
     )
     query_type = _resolve_query_type(state)
     synthesis_prompt = build_synthesis_prompt(query_type)
@@ -505,7 +505,7 @@ async def _run_first_pass_synthesis(
     )
 
     draft_answer = await _run_synthesis_llm(ctx, synthesis_messages, events, findings)
-    events.append(emit_report_generation_complete())
+    ctx.emit_or_append(emit_report_generation_complete(), events)
 
     if draft_answer.startswith("Synthesis failed:"):
         logger.warning(
@@ -517,13 +517,14 @@ async def _run_first_pass_synthesis(
             state=state,
             mode_name=ctx.mode_config.name if ctx.mode_config else "fast",
         )
-        events.append(emit_synthesis_complete())
-        events.append(
+        ctx.emit_or_append(emit_synthesis_complete(), events)
+        ctx.emit_or_append(
             emit_agent_decision(
                 "Synthesizer",
                 "Draft answer created (fallback)",
                 f"Preview: {truncate_text(draft_answer, 200)}",
-            )
+            ),
+            events,
         )
         return {
             "draft_answer": draft_answer,
@@ -532,24 +533,25 @@ async def _run_first_pass_synthesis(
             "total_node_transitions": transitions,
         }, events
 
-    events.append(emit_fact_check_start())
+    ctx.emit_or_append(emit_fact_check_start(), events)
     try:
         draft_answer = await _fact_check_draft(ctx, draft_answer, findings)
     except Exception as e:
         logger.warning("Fact-checking failed: %s", e)
-    events.append(emit_fact_check_complete(1))
+    ctx.emit_or_append(emit_fact_check_complete(1), events)
 
     draft_answer = await _apply_structural_resynth_and_completion(
         ctx, state, draft_answer, findings_text, query_type, events
     )
 
-    events.append(emit_synthesis_complete())
-    events.append(
+    ctx.emit_or_append(emit_synthesis_complete(), events)
+    ctx.emit_or_append(
         emit_agent_decision(
             "Synthesizer",
             "Draft answer created",
             f"Preview: {truncate_text(draft_answer, 200)}",
-        )
+        ),
+        events,
     )
 
     return {
@@ -571,25 +573,28 @@ async def _run_revision_path(
     transitions: int,
 ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """Execute revision path: feedback + data aggregation + revision LLM."""
-    events.append(
+    ctx.emit_or_append(
         emit_agent_thinking(
             "Synthesizer",
             f"Revising answer based on reviewer feedback (iteration {iteration})",
-        )
+        ),
+        events,
     )
     feedback_text = _collect_reviewer_feedback(state.get("review_results") or [])
 
-    events.append(emit_data_aggregation_start())
+    ctx.emit_or_append(emit_data_aggregation_start(), events)
     data_summary, agg_data_points, agg_conflicts = await _run_data_aggregation(
         ctx, state.get("query", ""), findings, fallback_on_error=""
     )
-    events.append(emit_data_aggregation_complete(agg_data_points, agg_conflicts))
+    ctx.emit_or_append(
+        emit_data_aggregation_complete(agg_data_points, agg_conflicts), events
+    )
 
     findings_text = _format_findings_for_synthesis(
         findings, active_board if findings_board else None
     )
 
-    events.append(emit_revision_start(iteration))
+    ctx.emit_or_append(emit_revision_start(iteration), events)
     mode_synthesis_instruction = (
         ctx.mode_config.synthesis_instruction if ctx.mode_config else ""
     )
@@ -618,9 +623,9 @@ async def _run_revision_path(
         logger.warning("Revision failed: %s", e)
         draft_answer = state.get("draft_answer", "")
 
-    events.append(emit_revision_complete(iteration))
+    ctx.emit_or_append(emit_revision_complete(iteration), events)
     draft_answer = strip_annotation_tags(draft_answer)
-    events.append(emit_synthesis_complete())
+    ctx.emit_or_append(emit_synthesis_complete(), events)
 
     return {
         "draft_answer": draft_answer,
@@ -639,7 +644,7 @@ async def synthesize_node(
     First pass: aggregation (tool results), report generation, fact-check.
     Revision pass: uses reviewer feedback and data summary.
     """
-    cancelled = check_node_cancelled(state.get("thread_id"), "synthesize", state)
+    cancelled = await check_node_cancelled(state.get("thread_id"), "synthesize", state)
     if cancelled is not None:
         return cancelled, []
 
@@ -679,7 +684,7 @@ async def synthesize_node(
                 "total_node_transitions": transitions,
             }, events
 
-    events.append(emit_synthesis_start(iteration))
+    ctx.emit_or_append(emit_synthesis_start(iteration), events)
 
     findings_board = state.get("findings_board", {})
     findings = findings_from_board(findings_board)

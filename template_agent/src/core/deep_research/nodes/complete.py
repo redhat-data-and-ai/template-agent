@@ -10,7 +10,10 @@ from template_agent.src.core.deep_research.state import (
     DeepResearchState,
     ResearchContext,
 )
-from template_agent.src.core.utils import strip_annotation_tags
+from template_agent.src.core.utils import (
+    sanitize_markdown_tables,
+    strip_annotation_tags,
+)
 from template_agent.utils.pylogger import get_python_logger
 
 from ._cache import save_cached_findings, save_findings_in_memory
@@ -31,6 +34,7 @@ async def complete_node(
     events = []
     final_answer = state.get("draft_answer") or state.get("final_answer") or ""
     final_answer = strip_annotation_tags(final_answer)
+    final_answer = sanitize_markdown_tables(final_answer)
     visualizations = state.get("visualizations", [])
 
     # Save findings to cache for future follow-ups
@@ -66,13 +70,13 @@ async def complete_node(
     except Exception as e:
         logger.debug("Tracing client flush failed: %s", e)
 
-    events.append(emit_final_answer(final_answer, visualizations))
+    ctx.emit_or_append(emit_final_answer(final_answer, visualizations), events)
 
     if ctx.token_tracker is not None:
         usage_summary = ctx.token_tracker.get_summary()
         total = usage_summary.get("total", {})
         per_phase = usage_summary.get("per_phase", {})
-        events.append(
+        ctx.emit_or_append(
             emit_token_usage_update(
                 input_tokens=total.get("input_tokens", 0),
                 output_tokens=total.get("output_tokens", 0),
@@ -80,7 +84,8 @@ async def complete_node(
                 llm_calls=total.get("llm_calls", 0),
                 estimated_cost_usd=total.get("estimated_cost_usd", 0.0),
                 per_phase=per_phase,
-            )
+            ),
+            events,
         )
 
     import time as _time
@@ -91,11 +96,12 @@ async def complete_node(
     effective_elapsed = round(_time.time() - start_time, 2) if start_time > 0 else 0.0
     pre_plan = state.get("pre_plan_elapsed_seconds", 0.0)
 
-    events.append(
+    ctx.emit_or_append(
         emit_completed(
             effective_elapsed_seconds=effective_elapsed,
             pre_plan_elapsed_seconds=pre_plan,
-        )
+        ),
+        events,
     )
 
     return {

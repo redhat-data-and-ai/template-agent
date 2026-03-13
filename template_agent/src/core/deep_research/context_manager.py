@@ -28,28 +28,22 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, TypedDict
 
+from template_agent.src.core.deep_research.prompts import (
+    build_finding_compression_prompt,
+    build_finding_consolidation_prompt,
+)
 from template_agent.src.core.deep_research.state import Finding, ResearchContext
+from template_agent.src.core.deep_research.utils import get_setting as _get_setting
 from template_agent.src.core.utils import safe_json_parse, truncate_text
 from template_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-# Defaults when settings are not available
 _CONTEXT_WINDOW_SIZE = 8
 _CONTEXT_SLIDE_STEP = 4
 _RESEARCH_MEMORY_CONSOLIDATION_THRESHOLD = 10
 _FINDING_CARD_MAX_SUMMARY_WORDS = 80
 _FINDING_CARD_MAX_KEY_FACTS = 5
-
-
-def _get_setting(name: str, default: Any) -> Any:
-    """Get setting with fallback to default."""
-    try:
-        from template_agent.src.settings import settings
-
-        return getattr(settings, name, default)
-    except Exception:
-        return default
 
 
 class FindingCard(TypedDict, total=False):
@@ -443,54 +437,30 @@ class HierarchicalContextManager:
         answer: str,
         tool_results: list[str],
     ) -> list[dict[str, str]]:
-        """Build the LLM prompt for compressing a finding to a card."""
-        tool_text = "\n".join(
-            f"- {truncate_text(tr, 3000)}" for tr in tool_results[:10]
-        )
+        """Build the LLM prompt for compressing a finding to a card.
 
+        Delegates to the central prompts module.
+        """
         max_words = _get_setting(
             "FINDING_CARD_MAX_SUMMARY_WORDS", _FINDING_CARD_MAX_SUMMARY_WORDS
         )
         max_facts = _get_setting(
             "FINDING_CARD_MAX_KEY_FACTS", _FINDING_CARD_MAX_KEY_FACTS
         )
-
-        return [
-            {
-                "role": "system",
-                "content": f"""You compress research findings into compact summary cards.
-Extract the essential information while discarding verbose tool output.
-
-Output JSON with these fields:
-- summary: {max_words}-word summary capturing the key answer
-- key_facts: Up to {max_facts} bullet points of important facts/numbers
-- data_highlights: Key statistics as JSON (e.g., {{"total": 1500, "growth": "15%"}})
-- source_citations: List of tools/data sources used
-- quality_score: Confidence 0.0-1.0
-- has_visualization: true if charts were generated""",
-            },
-            {
-                "role": "user",
-                "content": f"""Compress this finding:
-
-SUBQUERY: {subquery}
-
-ANSWER:
-{answer}
-
-TOOL RESULTS:
-{tool_text}
-
-Respond with JSON only.""",
-            },
-        ]
+        truncated = [truncate_text(tr, 3000) for tr in tool_results[:10]]
+        return build_finding_compression_prompt(
+            subquery, answer, truncated, max_words, max_facts
+        )
 
     def _build_consolidation_prompt(
         self,
         cards: list[FindingCard],
         current_memory: ResearchMemory | None,
     ) -> list[dict[str, str]]:
-        """Build prompt for consolidating cards into research memory."""
+        """Build prompt for consolidating cards into research memory.
+
+        Delegates to the central prompts module.
+        """
         card_summaries = []
         for card in cards:
             sq = card.get("subquery", "")
@@ -506,28 +476,7 @@ Respond with JSON only.""",
                     f"- {i}" for i in existing_insights[:10]
                 )
 
-        return [
-            {
-                "role": "system",
-                "content": """You consolidate research findings into a high-level memory.
-Identify cross-cutting insights, emergent themes, and research gaps.
-
-Output JSON with:
-- plan_summary: Brief description of research scope
-- key_insights: Cross-subquery insights (not repetition of individual findings)
-- data_summary: Aggregated key numbers/statistics
-- themes: Emergent categories/patterns
-- failed_subqueries: List of failed/empty subqueries
-- access_denied_subqueries: List of access-denied subqueries""",
-            },
-            {
-                "role": "user",
-                "content": "Consolidate these research findings:\n\n"
-                + "\n".join(card_summaries)
-                + f"\n\n{existing_context}"
-                + "\n\nExtract cross-cutting insights and themes. Respond with JSON only.",
-            },
-        ]
+        return build_finding_consolidation_prompt(card_summaries, existing_context)
 
     def _create_fallback_card(self, finding: Finding) -> FindingCard:
         """Create a FindingCard without LLM when compression fails."""

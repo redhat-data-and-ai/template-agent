@@ -11,6 +11,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from template_agent.src.core.deep_research.cancel import get_cancel_store
+from template_agent.src.core.deep_research.utils import get_setting as _get_setting
 from template_agent.utils.pylogger import get_python_logger
 
 if TYPE_CHECKING:
@@ -21,24 +22,12 @@ if TYPE_CHECKING:
 
 logger = get_python_logger()
 
-# Reasonable defaults when settings are not available
 _DEEP_RESEARCH_MAX_SESSION_SECONDS = 600.0
 _DEEP_RESEARCH_MAX_TOTAL_SUBQUERIES = 50
 _DEEP_RESEARCH_MAX_NODE_TRANSITIONS = 100
-_DEEP_RESEARCH_MAX_TOKEN_BUDGET = 0  # 0 = disabled
-_DEEP_RESEARCH_MAX_COST_PER_SESSION = 0.0  # 0 = disabled
+_DEEP_RESEARCH_MAX_TOKEN_BUDGET = 0
+_DEEP_RESEARCH_MAX_COST_PER_SESSION = 0.0
 _DEEP_RESEARCH_STAGNATION_THRESHOLD = 3
-
-
-def _get_setting(name: str, default: Any) -> Any:
-    """Get setting with fallback to default."""
-    try:
-        from template_agent.src.settings import settings
-
-        return getattr(settings, name, default)
-    except Exception:
-        return default
-
 
 PHASE_SYNTHESIZE = "synthesize"
 PHASE_COMPLETE = "complete"

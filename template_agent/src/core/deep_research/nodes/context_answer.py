@@ -48,13 +48,14 @@ async def context_answer_node(
     context = state.get("context", "") or "None."
     cached_findings_text = state.get("cached_findings_text", "") or ""
 
-    events.append(
+    ctx.emit_or_append(
         emit_agent_thinking(
             "SynthesisAgent",
             "Answering from existing research data (no new queries needed)",
-        )
+        ),
+        events,
     )
-    events.append(emit_synthesis_start(iteration=1))
+    ctx.emit_or_append(emit_synthesis_start(iteration=1), events)
 
     cached_findings: Dict[str, Finding] = {}
     try:
@@ -87,13 +88,14 @@ async def context_answer_node(
 
     draft_answer = strip_annotation_tags(draft_answer)
 
-    events.append(emit_synthesis_complete())
-    events.append(
+    ctx.emit_or_append(emit_synthesis_complete(), events)
+    ctx.emit_or_append(
         emit_agent_decision(
             "SynthesisAgent",
             "Draft answer created from existing research",
             f"{len(draft_answer)} chars",
-        )
+        ),
+        events,
     )
 
     return {

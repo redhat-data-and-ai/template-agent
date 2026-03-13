@@ -9,10 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from .state import ResearchContext
+from template_agent.src.core.utils import truncate_text as _truncate_text
 
 
 def _simplify_error(error: str) -> str:
@@ -20,13 +19,6 @@ def _simplify_error(error: str) -> str:
     if len(error) <= 500:
         return error
     return error[:497] + "..."
-
-
-def _truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
-    """Truncate text to max_length, appending suffix if truncated."""
-    if len(text) <= max_length:
-        return text
-    return text[: max_length - len(suffix)] + suffix
 
 
 class DeepResearchEventType(str, Enum):
@@ -1571,45 +1563,3 @@ def emit_reliability_update(
         details=details,
         stage="review",
     )
-
-
-class NodeEventEmitter:
-    """Convenience wrapper that reduces per-node event boilerplate.
-
-    Instead of importing 10+ individual ``emit_*`` functions in every node,
-    a node can create a single emitter and call its methods::
-
-        emitter = NodeEventEmitter(ctx, events, "Supervisor")
-        emitter.thinking("Evaluating coverage...")
-        emitter.decision("Continue research", "3 gaps found")
-    """
-
-    __slots__ = ("ctx", "events", "node_name")
-
-    def __init__(
-        self,
-        ctx: ResearchContext,
-        events: list,
-        node_name: str,
-    ) -> None:
-        self.ctx = ctx
-        self.events = events
-        self.node_name = node_name
-
-    def thinking(self, message: str) -> None:
-        self.ctx.emit_or_append(
-            emit_agent_thinking(self.node_name, message),
-            self.events,
-        )
-
-    def decision(self, summary: str, detail: str = "") -> None:
-        self.ctx.emit_or_append(
-            emit_agent_decision(self.node_name, summary, detail),
-            self.events,
-        )
-
-    def message(self, message: str) -> None:
-        self.ctx.emit_or_append(
-            emit_agent_message(self.node_name, "", message),
-            self.events,
-        )

@@ -1,6 +1,8 @@
-"""Token usage tracking for deep research pipeline.
+"""Token usage tracking for the deep research pipeline.
 
-Re-exports token tracking utilities from the shared tracing module.
+Re-exports core tracking utilities from template_agent.utils.tracing and
+provides the deep-research-specific tracked_invoke that supports timeout,
+concurrency limiting, and Langfuse generation recording.
 """
 
 from template_agent.utils.tracing import (

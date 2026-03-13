@@ -6,6 +6,13 @@ from the dataverse agent for production use.
 
 from typing import Any, Dict
 
+from template_agent.src.core.deep_research.nodes._cache import (
+    format_cached_findings_for_triage,
+    format_conversation_for_prompt,
+    load_conversation_history,
+    save_cached_findings,
+    save_conversation_turn,
+)
 from template_agent.src.core.deep_research.state import Finding
 
 # ---------------------------------------------------------------------------
@@ -86,11 +93,6 @@ def _hash_subquery(subquery: str) -> str:
     return hashlib.sha256((subquery or "").lower().strip().encode()).hexdigest()[:16]
 
 
-from template_agent.src.core.deep_research.nodes._cache import (
-    save_cached_findings,
-)
-
-
 async def _aput_checkpoint(
     checkpointer: Any,
     config: Any,
@@ -159,9 +161,13 @@ from template_agent.src.core.deep_research.nodes.visualize import (
 
 __all__ = [
     "findings_from_board",
+    "format_cached_findings_for_triage",
+    "format_conversation_for_prompt",
     "format_full_cached_findings_for_triage",
     "load_cached_findings",
+    "load_conversation_history",
     "save_cached_findings",
+    "save_conversation_turn",
     "assess_complexity_node",
     "context_answer_node",
     "triage_node",

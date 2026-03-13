@@ -94,6 +94,8 @@ class Finding(TypedDict, total=False):
     data_quality_alert: bool
     low_quality_drop: bool
     data_quality_score: float | None
+    access_denied: bool
+    resources_used: list[str]
 
 
 class ReviewResult(TypedDict, total=False):
@@ -107,10 +109,12 @@ class ReviewResult(TypedDict, total=False):
 class AgentMessage(TypedDict, total=False):
     """Message exchanged between agents in the pipeline."""
 
-    role: str
+    from_agent: str
+    to_agent: str
+    message_type: str
     content: str
-    tool_calls: list[Any]
-    tool_call_id: str | None
+    metadata: dict[str, Any]
+    timestamp: str
 
 
 class FindingEntry(TypedDict, total=False):
@@ -122,11 +126,14 @@ class FindingEntry(TypedDict, total=False):
 
 
 class SupervisorRound(TypedDict, total=False):
-    """One round of supervisor review."""
+    """One round of supervisor-managed research."""
 
-    findings: list[FindingEntry]
-    decisions: list[str]
-    round_id: int
+    round_number: int
+    delegated_subqueries: list[str]
+    findings_received: int
+    gaps_identified: list[str]
+    follow_ups_spawned: list[str]
+    coverage_assessment: str
 
 
 class FindingCard(TypedDict, total=False):
@@ -261,6 +268,10 @@ class DeepResearchState(DeepResearchStateRequired, total=False):
     findings_count_history: list[int]
     coverage_history: list[float]
 
+    # Mode / fallback tracking
+    _mode_config: Any | None
+    fallback_count: int
+
     # Internal overrides
     _user_max_rounds_override: int | None
     _user_max_iterations_override: int | None
@@ -336,10 +347,10 @@ class ResearchContext:
                 self.emit({key: value})
 
     def llm_call_kwargs(self) -> dict[str, Any]:
-        """Default kwargs for LLM calls (timeout 120s, Langfuse callbacks if available)."""
+        """Default kwargs for LLM calls (timeout 120s, root_tracer if available)."""
         kwargs: dict[str, Any] = {"timeout": 120}
         if self.root_tracer is not None:
-            kwargs["callbacks"] = [self.root_tracer]
+            kwargs["root_tracer"] = self.root_tracer
         return kwargs
 
     def get_llm_kwargs(self, **overrides: Any) -> dict[str, Any]:

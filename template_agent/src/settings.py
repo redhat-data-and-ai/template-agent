@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     PYTHON_LOG_LEVEL: str = Field(
         default="INFO", json_schema_extra={"env": "PYTHON_LOG_LEVEL"}
     )
+    DEFAULT_AGENT_MODEL: str = Field(
+        default="gemini-2.5-flash",
+        json_schema_extra={
+            "env": "DEFAULT_AGENT_MODEL",
+            "description": "Default LLM model for the standard agent",
+        },
+    )
     USE_INMEMORY_SAVER: bool = Field(
         default=False, json_schema_extra={"env": "USE_INMEMORY_SAVER"}
     )
@@ -172,10 +179,10 @@ class Settings(BaseSettings):
         },
     )
     DEEP_RESEARCH_MAX_SESSION_SECONDS: int = Field(
-        default=600,
+        default=1800,
         json_schema_extra={
             "env": "DEEP_RESEARCH_MAX_SESSION_SECONDS",
-            "description": "Maximum session duration for deep research",
+            "description": "Maximum session duration in seconds for deep research (default 30 min)",
         },
     )
     DEEP_RESEARCH_LLM_CONCURRENCY: int = Field(
@@ -247,9 +254,9 @@ class Settings(BaseSettings):
 def validate_config(settings: Settings) -> None:
     """Validate configuration settings.
 
-    Performs comprehensive validation to ensure required settings are
-    present and values are within acceptable ranges. This function
-    validates port ranges, log levels, and transport protocols.
+    Performs validation to ensure required settings are present and
+    values are within acceptable ranges. Validates port ranges and
+    log levels.
 
     Args:
         settings: Settings instance to validate.

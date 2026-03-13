@@ -22,20 +22,10 @@ from template_agent.src.core.deep_research.state import (
     Finding,
     ResearchContext,
 )
+from template_agent.src.core.deep_research.utils import get_setting as _get_setting
 from template_agent.utils.pylogger import get_python_logger
 
 from ._helpers import findings_from_board
-
-
-def _get_setting(name: str, default: Any) -> Any:
-    """Get setting with fallback to default."""
-    try:
-        from template_agent.src.settings import settings
-
-        return getattr(settings, name, default)
-    except Exception:
-        return default
-
 
 logger = get_python_logger(_get_setting("PYTHON_LOG_LEVEL", "INFO"))
 

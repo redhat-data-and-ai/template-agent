@@ -60,7 +60,7 @@ def initialize_google_genai():
     elif os.path.exists(settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT):
         credentials_file = settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT
         logger.info(
-            f"Initialized Google Generative AI with service account file: {settings.GOOGLE_SERVICE_ACCOUNT_FILE}"
+            f"Initialized Google Generative AI with service account file: {settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT}"
         )
 
     # Check if credentials are provided as direct JSON content
@@ -91,8 +91,9 @@ def initialize_google_genai():
             return
 
     else:
+        cred_preview = (settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT or "")[:50]
         logger.warning(
-            f"Google service account credentials not found or invalid format: {settings.GOOGLE_SERVICE_ACCOUNT_FILE[:50]}..."
+            f"Google credentials not found or invalid format: {cred_preview}..."
         )
         return
 

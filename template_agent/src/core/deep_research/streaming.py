@@ -65,39 +65,20 @@ from template_agent.src.core.deep_research.state import (
     Finding,
     ResearchContext,
 )
-from template_agent.src.core.deep_research.token_tracker import tracked_invoke
 from template_agent.src.core.deep_research.utils import (
     GIBBERISH_RESPONSE,
-    _sanitize_messages_for_persistence,
     aput_checkpoint,
     classify_input_quality,
     get_raw_checkpointer,
-    safe_json_parse,
     sanitize_error_for_client,
-    truncate_text,
 )
+from template_agent.src.core.utils import safe_json_parse, truncate_text
+from template_agent.src.settings import settings as app_settings
 from template_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
 
-def _get_complexity_assessment_prompt(query: str) -> list:
-    """Build a message list asking the LLM to classify query complexity."""
-    return [
-        HumanMessage(
-            content=(
-                "You are a query complexity classifier. Determine if the following query "
-                "is simple (can be answered in one sentence with common knowledge) or "
-                "complex (requires multi-step research, data gathering, or analysis).\n\n"
-                f"Query: {query}\n\n"
-                "Respond with ONLY valid JSON: "
-                '{"complexity": "simple" or "complex", "answer": "direct answer if simple, empty string if complex"}'
-            )
-        )
-    ]
-
-
-# Deep research settings (use env vars or override in production)
 DEEP_RESEARCH_MAX_SELECTED_FINDINGS = 10
 DEEP_RESEARCH_FINDING_SELECTION_THRESHOLD = 8
 DEEP_RESEARCH_GRAPH_RECURSION_LIMIT = 100
@@ -106,7 +87,9 @@ DEEP_RESEARCH_MAX_ITERATIONS = 3
 DEEP_RESEARCH_MAX_SUBQUERIES = 10
 DEEP_RESEARCH_MAX_TOTAL_SUBQUERIES = 20
 DEEP_RESEARCH_MAX_NODE_TRANSITIONS = 50
-DEEP_RESEARCH_MAX_SESSION_SECONDS = 1800.0
+DEEP_RESEARCH_MAX_SESSION_SECONDS: float = float(
+    app_settings.DEEP_RESEARCH_MAX_SESSION_SECONDS
+)
 DEEP_RESEARCH_HEARTBEAT_INTERVAL_SECONDS = 30.0
 DEEP_RESEARCH_EVENT_QUEUE_MAXSIZE = 2000
 DEEP_RESEARCH_MAX_FULL_CONTEXT_MESSAGES = 6
@@ -252,23 +235,75 @@ def _node_error_updates(exc: Exception) -> dict[str, Any]:
     """Build error state updates for node failures."""
     logger.error("Deep research node error: %s", exc, exc_info=True)
     safe_msg = sanitize_error_for_client(exc)
+    error_event = emit_event(
+        DeepResearchEventType.ERROR,
+        f"Research error: {safe_msg}",
+        f"A research step failed: {safe_msg}",
+        ui_visible=True,
+    )
     return {
         "final_answer": f"Research encountered an error: {safe_msg}",
         "current_phase": PHASE_COMPLETE,
-        "_pending_events": [],
+        "_pending_events": [error_event],
     }
 
 
+def _span_open(ctx: ResearchContext, node_name: str, state: DeepResearchState) -> Any:
+    """Open a Langfuse span for a deep research node."""
+    root_tracer = getattr(ctx, "root_tracer", None)
+    if root_tracer is None or not hasattr(root_tracer, "span"):
+        return None
+    try:
+        return root_tracer.span(
+            name=f"deep_research.{node_name}",
+            input={
+                "query": state.get("query", ""),
+                "phase": state.get("current_phase", ""),
+            },
+        )
+    except Exception:
+        return None
+
+
+def _span_end_ok(span: Any, updates: dict[str, Any], start: float) -> None:
+    """End a Langfuse span with success status."""
+    if span is None:
+        return
+    try:
+        duration_ms = (time.monotonic() - start) * 1000
+        output_keys = [k for k in updates if k != "_pending_events"]
+        span.end(
+            output={"updated_keys": output_keys},
+            metadata={"duration_ms": round(duration_ms, 2)},
+        )
+    except Exception:
+        pass
+
+
+def _span_end_error(span: Any, exc: Exception) -> None:
+    """End a Langfuse span with error status."""
+    if span is None:
+        return
+    try:
+        span.update(level="ERROR", status_message=str(exc))
+        span.end()
+    except Exception:
+        pass
+
+
 def _wrap_node(node_fn: Any, ctx: ResearchContext, node_name: str) -> Any:
-    """Wrap a node with error boundary and event injection."""
+    """Wrap a node with error boundary, event injection, and Langfuse spans."""
 
     async def _wrapped(state: DeepResearchState) -> dict[str, Any]:
+        span = _span_open(ctx, node_name, state)
         start = time.monotonic()
         try:
             updates, events = await node_fn(state, ctx)
             updates["_pending_events"] = events
+            _span_end_ok(span, updates, start)
             return updates
         except Exception as e:
+            _span_end_error(span, e)
             return _node_error_updates(e)
 
     return _wrapped
@@ -407,27 +442,6 @@ def build_research_graph(
                     "current_phase": PHASE_COMPLETE,
                     "_pending_events": [],
                 }
-
-            try:
-                prompt = _get_complexity_assessment_prompt(query)
-                resp = await tracked_invoke(
-                    ctx.base_model, prompt, ctx.token_tracker, "router"
-                )
-                raw = resp.content if hasattr(resp, "content") else str(resp)
-                result = safe_json_parse(raw, {"complexity": "complex"})
-                if result.get("complexity") == "simple":
-                    logger.info(
-                        "Router: query classified as simple, skipping deep research"
-                    )
-                    return {
-                        "final_answer": f"This question can be answered directly without deep research.\n\n{result.get('answer', '')}",
-                        "current_phase": PHASE_COMPLETE,
-                        "_pending_events": [emit_started()],
-                    }
-            except Exception as exc:
-                logger.warning(
-                    f"Complexity assessment failed, defaulting to complex: {exc}"
-                )
 
             logger.info(f"Router: accepted query ({len(query)} chars)")
             return {
@@ -608,13 +622,23 @@ async def _run_graph_astream(
     sentinel: dict[str, Any],
     thread_id: str | None = None,
     callbacks: list | None = None,
+    extra_config: dict[str, Any] | None = None,
 ) -> None:
     try:
         config: dict[str, Any] = {
             "recursion_limit": DEEP_RESEARCH_GRAPH_RECURSION_LIMIT,
         }
+        configurable: dict[str, Any] = {}
         if thread_id:
-            config["configurable"] = {"thread_id": thread_id}
+            configurable["thread_id"] = thread_id
+        if extra_config:
+            if "configurable" in extra_config:
+                configurable.update(extra_config["configurable"])
+            for k, v in extra_config.items():
+                if k not in ("configurable", "callbacks"):
+                    config[k] = v
+        if configurable:
+            config["configurable"] = configurable
         if callbacks:
             config["callbacks"] = callbacks
         async for node_output in graph.astream(current_state, config=config):
@@ -1106,15 +1130,11 @@ class DeepResearchAgent:
         if visualizations:
             ai_kwargs["visualizations"] = visualizations
         if existing and existing.checkpoint:
-            return _sanitize_messages_for_persistence(
-                [AIMessage(content=final_answer, additional_kwargs=ai_kwargs)]
-            )
-        return _sanitize_messages_for_persistence(
-            [
-                HumanMessage(content=query, additional_kwargs={"run_id": run_id}),
-                AIMessage(content=final_answer, additional_kwargs=ai_kwargs),
-            ]
-        )
+            return [AIMessage(content=final_answer, additional_kwargs=ai_kwargs)]
+        return [
+            HumanMessage(content=query, additional_kwargs={"run_id": run_id}),
+            AIMessage(content=final_answer, additional_kwargs=ai_kwargs),
+        ]
 
     async def _persist_history(
         self,
@@ -1162,7 +1182,7 @@ class DeepResearchAgent:
                     if v is not None:
                         metadata[k] = v
             metadata["thread_updated_at"] = datetime.now(timezone.utc).isoformat()
-            await aput_checkpoint(self.checkpointer, config, checkpoint, metadata, {})
+            await aput_checkpoint(self.checkpointer, config, checkpoint, metadata)
             findings_list = list(findings.values())
             if findings_list:
                 await save_cached_findings(self.checkpointer, thread_id, findings_list)
@@ -1190,11 +1210,7 @@ class DeepResearchAgent:
                 "v": 1,
                 "id": str(uuid.uuid4()),
                 "ts": datetime.now(timezone.utc).isoformat(),
-                "channel_values": {
-                    "messages": _sanitize_messages_for_persistence(
-                        [HumanMessage(content=query)]
-                    )
-                },
+                "channel_values": {"messages": [HumanMessage(content=query)]},
                 "channel_versions": {},
                 "versions_seen": {},
                 "pending_sends": [],
@@ -1204,9 +1220,11 @@ class DeepResearchAgent:
                 for k, v in run_config_metadata.items():
                     if v is not None:
                         metadata[k] = v
-            await aput_checkpoint(self.checkpointer, config, checkpoint, metadata, {})
-        except Exception:
-            pass
+            await aput_checkpoint(self.checkpointer, config, checkpoint, metadata)
+        except Exception as exc:
+            logger.warning(
+                "Failed to ensure checkpoint for thread %s: %s", thread_id, exc
+            )
 
     async def astream(
         self,
@@ -1331,6 +1349,7 @@ class DeepResearchAgent:
         initial_state: DeepResearchState,
         thread_id: str | None,
         run_config_metadata: dict[str, Any] | None = None,
+        run_config: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any]]:
         current_state = dict(initial_state)
         event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
@@ -1348,7 +1367,9 @@ class DeepResearchAgent:
         relay_task = asyncio.create_task(
             _relay_events_to_output(event_queue, output_queue)
         )
-        callbacks = [self.ctx.root_tracer] if self.ctx.root_tracer else None
+        from template_agent.utils.tracing import langfuse_handler as _lf_handler
+
+        callbacks = [_lf_handler] if _lf_handler else None
         graph_task = asyncio.create_task(
             _run_graph_astream(
                 self.graph,
@@ -1359,6 +1380,7 @@ class DeepResearchAgent:
                 sentinel,
                 thread_id=thread_id,
                 callbacks=callbacks,
+                extra_config=run_config,
             )
         )
         final_answer_emitted = False

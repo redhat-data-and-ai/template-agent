@@ -44,6 +44,50 @@ def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
     return text[: max_length - len(suffix)] + suffix
 
 
+_TABLE_SEPARATOR_RE = re.compile(r"^\|[\s:|-]+\|$")
+_MAX_TABLE_CELL_LEN = 300
+_MAX_TABLE_ROW_LEN = 600
+
+
+def _rebuild_separator_row(line: str) -> str:
+    col_count = max(line.count("|") - 1, 2)
+    return "| " + " | ".join("---" for _ in range(col_count)) + " |"
+
+
+def _truncate_table_row(line: str) -> str:
+    parts = line.split("|")
+    truncated = [
+        f" {p.strip()[: _MAX_TABLE_CELL_LEN - 3]}... "
+        if len(p.strip()) > _MAX_TABLE_CELL_LEN
+        else f" {p.strip()} "
+        for p in parts
+    ]
+    return "|".join(truncated)
+
+
+def sanitize_markdown_tables(text: str) -> str:
+    """Clean up malformed markdown tables from LLM output.
+
+    Fixes excessively long separator rows, overlong table cells,
+    and rows that are too wide to render cleanly.
+    """
+    lines = text.split("\n")
+    cleaned: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        is_table_line = "|" in line and not stripped.startswith("```")
+
+        if not is_table_line:
+            cleaned.append(line)
+        elif _TABLE_SEPARATOR_RE.match(stripped) and len(line) > 200:
+            cleaned.append(_rebuild_separator_row(line))
+        elif len(line) > _MAX_TABLE_ROW_LEN and stripped.startswith("|"):
+            cleaned.append(_truncate_table_row(line))
+        else:
+            cleaned.append(line)
+    return "\n".join(cleaned)
+
+
 def strip_annotation_tags(text: str) -> str:
     """Remove annotation tags from text output.
 

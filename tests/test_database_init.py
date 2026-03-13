@@ -4,8 +4,9 @@ This module tests the database schema initialization to ensure the checkpoints
 table is created properly on application startup when using PostgreSQL storage.
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from template_agent.src.core.agent import initialize_database
 from template_agent.src.core.exceptions.exceptions import AppException

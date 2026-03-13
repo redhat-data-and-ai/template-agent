@@ -24,6 +24,7 @@ from template_agent.src.core.deep_research.prompts import (
 )
 from template_agent.src.core.deep_research.state import (
     PHASE_AWAIT_APPROVAL,
+    PHASE_SUPERVISOR,
     DeepResearchState,
     ResearchContext,
 )
@@ -43,7 +44,6 @@ from ._cache import (
     load_cached_findings,
 )
 from ._helpers import (
-    _format_enriched_plan,
     _is_identity_subquery,
     _parse_subqueries,
     _strip_sql_from_subqueries,
@@ -369,13 +369,14 @@ async def _validate_subqueries(
         new_subqueries, new_enriched, valid_count, reformulated_count, removed_count = (
             processed
         )
-        events.append(
+        ctx.emit_or_append(
             emit_subquery_validation(
                 total_subqueries=len(validated),
                 valid_count=valid_count,
                 reformulated_count=reformulated_count,
                 removed_count=removed_count,
-            )
+            ),
+            events,
         )
         return new_subqueries, new_enriched
 
@@ -406,6 +407,7 @@ def _apply_plan_improvements(
     redundant_indices: set[int],
     max_subqueries: int,
     events: List[Dict[str, Any]],
+    ctx: ResearchContext,
 ) -> tuple[List[str], List[Dict[str, Any]]]:
     """Apply redundant removal and missing additions."""
     if redundant_indices and len(subqueries) - len(redundant_indices) >= 2:
@@ -415,11 +417,12 @@ def _apply_plan_improvements(
         enriched_dicts = [
             ed for i, ed in enumerate(enriched_dicts) if i not in redundant_indices
         ]
-        events.append(
+        ctx.emit_or_append(
             emit_agent_thinking(
                 "Planner",
                 f"Removed {len(redundant_indices)} redundant subqueries",
-            )
+            ),
+            events,
         )
 
     for new_sq in missing_subqueries[:3]:
@@ -430,8 +433,9 @@ def _apply_plan_improvements(
             enriched_dicts.append(
                 {"query": new_sq, "data_products": [], "status": "ready"}
             )
-            events.append(
-                emit_agent_thinking("Planner", f"Added missing subquery: {new_sq}")
+            ctx.emit_or_append(
+                emit_agent_thinking("Planner", f"Added missing subquery: {new_sq}"),
+                events,
             )
     return subqueries, enriched_dicts
 
@@ -455,11 +459,12 @@ async def _run_persona_reviews(
     personas_info = [(pc["persona"], pc["focus"]) for pc in PLAN_REVIEWER_PERSONAS]
 
     for persona, focus in personas_info:
-        events.append(
+        ctx.emit_or_append(
             emit_agent_thinking(
                 f"PlanReviewer:{persona}",
                 f"Reviewing plan with focus on: {focus}",
-            )
+            ),
+            events,
         )
 
     async def _invoke_one(persona: str, focus: str) -> dict | None:
@@ -505,12 +510,13 @@ async def _run_persona_reviews(
             scores.append(score)
             missing_subqueries.extend(result.get("missing_subqueries", []))
             _add_redundant_indices_from_result(result, subqueries, redundant_indices)
-            events.append(
+            ctx.emit_or_append(
                 emit_agent_decision(
                     f"PlanReviewer:{persona}",
                     f"Score: {score}/100",
                     f"Issues: {len(result.get('issues', []))}, Suggestions: {len(result.get('suggestions', []))}",
-                )
+                ),
+                events,
             )
         else:
             scores.append(70)
@@ -549,14 +555,16 @@ async def _review_research_plan(
             redundant_indices,
             max_subqueries,
             events,
+            ctx,
         )
 
-    events.append(
+    ctx.emit_or_append(
         emit_agent_decision(
             "PlanReviewCoordinator",
             f"Plan review complete: {avg_score}/100",
             f"Final plan has {len(subqueries)} subqueries",
-        )
+        ),
+        events,
     )
 
     return subqueries, enriched_dicts, events
@@ -668,7 +676,6 @@ async def plan_node(
     events: list[dict[str, Any]] = []
     query = state.get("query", "")
     context = state.get("context", "") or "None."
-    thread_id = state.get("thread_id")
 
     ctx.emit_or_append(
         emit_agent_thinking(
@@ -755,15 +762,19 @@ async def plan_node(
 
     _apply_cache_matching(enriched_dicts, cached_findings, ctx, events)
 
-    enriched_display = _format_enriched_plan(enriched_dicts)
-
-    events.append(emit_plan_generated(subqueries))
-    events.append(
-        emit_plan_pending_enriched(
-            enriched_dicts,
-            discovered_products=[],
-            understanding=understanding,
+    ctx.emit_or_append(emit_plan_generated(subqueries), events)
+    if not state.get("plan_approved"):
+        ctx.emit_or_append(
+            emit_plan_pending_enriched(
+                enriched_dicts,
+                discovered_products=[],
+                understanding=understanding,
+            ),
+            events,
         )
+
+    next_phase = (
+        PHASE_AWAIT_APPROVAL if not state.get("plan_approved") else PHASE_SUPERVISOR
     )
 
     return {
@@ -775,5 +786,5 @@ async def plan_node(
         "discovered_data_products": [],
         "pending_subqueries": subqueries.copy(),
         "completed_subqueries": [],
-        "current_phase": PHASE_AWAIT_APPROVAL,
+        "current_phase": next_phase,
     }, events

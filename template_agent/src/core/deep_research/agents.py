@@ -18,17 +18,11 @@ from langgraph.prebuilt import create_react_agent
 from template_agent.src.core.deep_research.mode_config import resolve_mode
 from template_agent.src.core.deep_research.state import ResearchContext
 from template_agent.src.core.deep_research.token_tracker import TokenUsageTracker
+from template_agent.src.core.utils import truncate_text as _truncate_text
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
-
-
-def _truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
-    """Truncate text to max_length, appending suffix if truncated."""
-    if len(text) <= max_length:
-        return text
-    return text[: max_length - len(suffix)] + suffix
 
 
 def _get_message_content(msg: Any) -> str:
@@ -177,9 +171,11 @@ async def execute_with_research_agent(
     input_payload = {"messages": [HumanMessage(content=query)]}
     last_exception: Optional[Exception] = None
 
+    from template_agent.utils.tracing import langfuse_handler
+
     config: dict[str, Any] = {}
-    if ctx.root_tracer is not None:
-        config["callbacks"] = [ctx.root_tracer]
+    if langfuse_handler is not None:
+        config["callbacks"] = [langfuse_handler]
 
     for attempt in range(max_retries + 1):
         try:

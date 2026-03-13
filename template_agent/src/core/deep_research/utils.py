@@ -1,35 +1,29 @@
 """Utility functions for deep research pipeline."""
 
-import json
-import re
+import logging
 from typing import Any
 
+from template_agent.src.core.deep_research.prompts import (
+    INPUT_CLASSIFICATION_PROMPT,
+)
+from template_agent.src.core.utils import safe_json_parse
 
-def safe_json_parse(
-    text: str,
-    pattern: str = r"\[[\s\S]*\]",
-    default: Any = None,
-) -> Any:
-    """Extract and parse the first JSON object/array from text."""
-    if not text:
-        return default
+logger = logging.getLogger(__name__)
+
+__all__ = ["sanitize_error_for_client", "get_setting"]
+
+
+def get_setting(name: str, default: Any) -> Any:
+    """Get setting with fallback to default."""
     try:
-        match = re.search(pattern, text)
-        if match:
-            return json.loads(match.group())
-    except json.JSONDecodeError:
-        pass
-    return default
+        from template_agent.src.settings import settings
+
+        return getattr(settings, name, default)
+    except Exception:
+        return default
 
 
-def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
-    """Truncate text to max_length, appending suffix if truncated."""
-    if len(text) <= max_length:
-        return text
-    return text[: max_length - len(suffix)] + suffix
-
-
-def sanitize_error_for_client(exc: Exception) -> str:
+def sanitize_error_for_client(exc: BaseException) -> str:
     """Sanitize exception for safe display to client."""
     msg = str(exc)
     if len(msg) > 500:
@@ -49,21 +43,6 @@ GIBBERISH_RESPONSE = (
     "multi-step investigation for you!"
 )
 
-INPUT_CLASSIFICATION_PROMPT = """\
-You are an input classifier for a research system.
-
-Classify the user message into exactly ONE category:
-
-- **research_query**: A meaningful question or request that requires research.
-
-- **gibberish**: Random characters, keyboard mash, accidental input, or
-strings with no discernible meaning (e.g. "asdfghjkl", "3424fsdwsfgn", "qqqqqq").
-
-Respond with ONLY a JSON object, nothing else:
-{{"classification": "research_query"}} or {{"classification": "gibberish"}}
-
-User message: {message}"""
-
 
 def get_raw_checkpointer(checkpointer: Any) -> Any:
     """Return the underlying checkpointer if wrapped, else the checkpointer itself."""
@@ -72,17 +51,11 @@ def get_raw_checkpointer(checkpointer: Any) -> Any:
     return checkpointer
 
 
-def _sanitize_messages_for_persistence(messages: list) -> list:
-    """Sanitize messages for persistence (strip large content, etc.)."""
-    return messages
-
-
 async def aput_checkpoint(
     checkpointer: Any,
     config: Any,
     checkpoint: dict,
     metadata: dict,
-    channel_versions: dict,
 ) -> None:
     """Persist checkpoint with metadata."""
     try:
@@ -96,8 +69,8 @@ async def aput_checkpoint(
         )
         if hasattr(checkpointer, "aput_tuple"):
             await checkpointer.aput_tuple(new_tuple)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Checkpoint persistence failed: %s", exc)
 
 
 async def classify_input_quality(message: str, model: Any) -> str:
@@ -111,6 +84,6 @@ async def classify_input_quality(message: str, model: Any) -> str:
             classification = parsed.get("classification", "research_query")
             if classification in ("research_query", "gibberish"):
                 return classification
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Input classification failed: %s", exc)
     return "research_query"

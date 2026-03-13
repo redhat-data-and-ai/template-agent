@@ -35,8 +35,14 @@ from template_agent.src.core.deep_research.events import (
     emit_worker_self_evaluation,
 )
 from template_agent.src.core.deep_research.prompts import (
+    CONFLICT_DETECTOR_SYSTEM_PROMPT,
+    build_alternative_approach_prompt,
+    build_conflict_resolution_prompt,
     build_plausibility_check_prompt,
     build_supervisor_reflection_prompt,
+    build_worker_context_prefix,
+    build_worker_execution_instruction,
+    build_worker_mode_instruction,
     build_worker_self_evaluation_prompt,
 )
 from template_agent.src.core.deep_research.sentinel import (
@@ -378,13 +384,14 @@ def _retry_loop_handle_exception(
 
 
 def _build_context_prefix(cross_context: str, attempt: int) -> str:
-    """Build cross-context prefix for first attempt only."""
-    if not cross_context or attempt != 1:
+    """Build cross-context prefix for first attempt only.
+
+    Delegates to the central prompts module.
+    """
+    if attempt != 1:
         return ""
-    return (
-        f"\n\n## CONTEXT FROM OTHER RESEARCH\n"
-        f"Other research subqueries have found the following (use this context "
-        f"to ask better-targeted questions):\n{truncate_text(cross_context, 1000)}\n"
+    return build_worker_context_prefix(
+        truncate_text(cross_context, 1000) if cross_context else ""
     )
 
 
@@ -446,10 +453,11 @@ async def _try_reformulate_query(
 
 
 def _build_worker_mode_instruction(ctx: ResearchContext) -> str:
-    """Build mode-specific worker instruction string."""
-    if not ctx.mode_config or not getattr(ctx.mode_config, "worker_instruction", None):
-        return ""
-    return f"\n\n## ANALYSIS DEPTH GUIDANCE\n{ctx.mode_config.worker_instruction}"
+    """Build mode-specific worker instruction string.
+
+    Delegates to the central prompts module.
+    """
+    return build_worker_mode_instruction(ctx.mode_config)
 
 
 async def _execute_retry_loop(
@@ -600,19 +608,7 @@ async def _execute_research_subagent(
     Uses execute_with_research_agent with a self-reflection loop.
     """
     events: List[Dict[str, Any]] = []
-    execution_instruction = (
-        "\n\n## EXECUTION INSTRUCTIONS (MANDATORY)\n"
-        "1. Use the available tools to retrieve the ACTUAL data. Do NOT provide "
-        "recommendations, do NOT ask for confirmation.\n"
-        "2. If a single tool call cannot fully answer the question, run "
-        "MULTIPLE calls and combine the results.\n"
-        "3. For EVERY tool result you use, report the key findings.\n"
-        "4. Return numeric results as EXACT numbers when possible.\n"
-        "5. When computing percentages or ratios, show the calculation.\n"
-        "6. If a tool returns no results or errors, explain why and try "
-        "an alternative approach.\n"
-        "7. Format data results as tables when possible."
-    )
+    execution_instruction = build_worker_execution_instruction()
 
     worker_mode_instruction = _build_worker_mode_instruction(ctx)
     effective_retries = min(max_retries, DEEP_RESEARCH_SUBAGENT_MAX_RETRIES)
@@ -744,27 +740,12 @@ async def _generate_alternative_approach(
         for w in implausible_warnings
     )
 
+    sys_content, human_content = build_alternative_approach_prompt(
+        subquery, warnings_text
+    )
     messages = [
-        SystemMessage(
-            content=(
-                "You are a research investigation expert. A research query returned "
-                "implausible results. Your job is to suggest a FUNDAMENTALLY "
-                "DIFFERENT approach -- not just a rephrasing.\n\n"
-                "Strategies to consider:\n"
-                "1. Use a DIFFERENT tool or data source that might have the same metric\n"
-                "2. Use a DIFFERENT field or parameter\n"
-                "3. Change the aggregation or filtering approach\n"
-                "4. Run a DIAGNOSTIC query to understand what the data actually contains\n"
-                "5. Add filters to exclude obviously bad data\n\n"
-                "Return ONLY the alternative natural-language query. No JSON, no explanation."
-            )
-        ),
-        HumanMessage(
-            content=(
-                f"Original subquery: {subquery}\n\n"
-                f"Implausible results found:\n{warnings_text}"
-            )
-        ),
+        SystemMessage(content=sys_content),
+        HumanMessage(content=human_content),
     ]
 
     try:
@@ -915,36 +896,15 @@ async def _detect_and_resolve_conflicts(
             f"[{i + 1}] {sq} [Quality: {quality_scores.get(sq, 0.5):.2f}]:\n{truncate_text(ans, 500)}"
             for i, (sq, ans) in enumerate(answers.items())
         ]
-        findings_text = "\n".join(findings_with_quality)
-        conflict_prompt = f"""Analyze these research findings for conflicts or contradictions.
-When resolving conflicts, prefer findings with higher Quality scores.
-
-Original Query: {query}
-
-Findings:
-{findings_text}
-
-Check for:
-1. NUMERIC CONFLICTS: Same metric with different values
-2. SEMANTIC CONFLICTS: Contradictory conclusions about the same topic
-3. DATA INCONSISTENCIES: Numbers that don't add up across findings
-
-Return JSON only (finding_indices are 1-based):
-{{
-    "has_conflicts": true/false,
-    "conflicts": [
-        {{"type": "numeric|semantic|data", "finding_indices": [1, 2], "description": "brief description", "resolution": "which finding is more reliable and why"}}
-    ],
-    "confidence": 0.0-1.0
-}}"""
+        conflict_prompt_text = build_conflict_resolution_prompt(
+            query, findings_with_quality
+        )
 
         response = await tracked_invoke(
             ctx.base_model,
             [
-                SystemMessage(
-                    content="You are a research conflict detector. Identify contradictions between findings."
-                ),
-                HumanMessage(content=conflict_prompt),
+                SystemMessage(content=CONFLICT_DETECTOR_SYSTEM_PROMPT),
+                HumanMessage(content=conflict_prompt_text),
             ],
             ctx.token_tracker,
             "research",
@@ -956,11 +916,12 @@ Return JSON only (finding_indices are 1-based):
         if isinstance(result, dict) and result.get("has_conflicts"):
             conflicts = result.get("conflicts", [])
             if conflicts:
-                events.append(
+                ctx.emit_or_append(
                     emit_agent_thinking(
                         "ConflictResolver",
                         f"Detected {len(conflicts)} potential conflicts between findings",
-                    )
+                    ),
+                    events,
                 )
                 logger.info(
                     "Worker debate: detected %d conflicts in findings", len(conflicts)
@@ -969,12 +930,13 @@ Return JSON only (finding_indices are 1-based):
                     conflict_type = conflict.get("type", "unknown")
                     desc = conflict.get("description", "No description")
                     resolution = conflict.get("resolution", "")
-                    events.append(
+                    ctx.emit_or_append(
                         emit_agent_decision(
                             "ConflictResolver",
                             f"{conflict_type.upper()} conflict detected",
                             f"{desc} -> {resolution[:100]}",
-                        )
+                        ),
+                        events,
                     )
                 _apply_conflict_metadata(findings_board, answers, conflicts)
         else:

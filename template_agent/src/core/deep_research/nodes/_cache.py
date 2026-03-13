@@ -10,6 +10,7 @@ from template_agent.src.core.utils import truncate_text
 logger = None
 
 _in_memory_findings: Dict[str, Dict[str, Finding]] = {}
+_in_memory_conversation: Dict[str, list[dict]] = {}
 
 
 def _get_logger():
@@ -206,3 +207,66 @@ def load_findings_in_memory(thread_id: str) -> Dict[str, Finding]:
     if not thread_id:
         return {}
     return dict(_in_memory_findings.get(thread_id, {}))
+
+
+def save_conversation_turn(thread_id: str, query: str, answer: str) -> None:
+    """Append a user-assistant turn to the in-memory conversation history."""
+    if not thread_id or not query:
+        return
+    _in_memory_conversation.setdefault(thread_id, []).append(
+        {"query": query, "answer": answer or ""}
+    )
+
+
+def load_conversation_history(thread_id: str) -> list[dict]:
+    """Return all conversation turns for a thread."""
+    if not thread_id:
+        return []
+    return list(_in_memory_conversation.get(thread_id, []))
+
+
+def format_conversation_for_prompt(
+    history: list[dict],
+    max_chars: int = 4000,
+) -> str:
+    """Format conversation turns as ``User: ... / Assistant: ...`` text."""
+    if not history:
+        return ""
+    parts: list[str] = []
+    total = 0
+    for turn in history:
+        entry = f"User: {turn.get('query', '')}\nAssistant: {turn.get('answer', '')}"
+        if total + len(entry) > max_chars:
+            parts.append("... (earlier conversation truncated)")
+            break
+        parts.append(entry)
+        total += len(entry) + 1
+    return "\n\n".join(parts)
+
+
+def format_cached_findings_for_triage(
+    findings: Dict[str, Finding],
+    max_chars: int = 8000,
+) -> str:
+    """Format cached findings with full answers for follow-up routing.
+
+    Unlike ``format_cached_findings_for_prompt`` which truncates answers to
+    300 chars, this version keeps them intact so the routing LLM has enough
+    context to decide whether a follow-up can be answered directly.
+    """
+    if not findings:
+        return ""
+    parts: list[str] = []
+    total = 0
+    for finding in findings.values():
+        subquery = finding.get("subquery", "")
+        answer = finding.get("answer", "")
+        if not subquery:
+            continue
+        entry = f"### Subquery: {subquery}\n{answer}"
+        if total + len(entry) > max_chars:
+            parts.append("... (additional findings truncated)")
+            break
+        parts.append(entry)
+        total += len(entry) + 1
+    return "\n\n".join(parts)

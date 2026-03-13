@@ -10,23 +10,13 @@ from template_agent.src.core.deep_research.state import (
     Finding,
     FindingEntry,
 )
+from template_agent.src.core.deep_research.utils import get_setting as _get_setting
 from template_agent.src.core.utils import (
     safe_json_parse,
     simplify_error_for_display,
     truncate_text,
 )
 from template_agent.utils.pylogger import get_python_logger
-
-
-def _get_setting(name: str, default: Any) -> Any:
-    """Get setting with fallback to default."""
-    try:
-        from template_agent.src.settings import settings
-
-        return getattr(settings, name, default)
-    except Exception:
-        return default
-
 
 logger = get_python_logger(_get_setting("PYTHON_LOG_LEVEL", "INFO"))
 
@@ -167,7 +157,7 @@ def _format_enriched_plan(enriched_subqueries: List[Dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def check_node_cancelled(
+async def check_node_cancelled(
     thread_id: str | None,
     node_name: str,
     state: DeepResearchState,
@@ -180,10 +170,10 @@ def check_node_cancelled(
     if not thread_id:
         return None
     try:
-        from template_agent.src.routes.cancel import _get_store
+        from template_agent.src.core.deep_research.cancel import get_cancel_store
 
-        store = _get_store()
-        if not store.is_cancelled(thread_id):
+        store = get_cancel_store()
+        if not await store.is_cancelled(thread_id):
             return None
     except Exception:
         return None

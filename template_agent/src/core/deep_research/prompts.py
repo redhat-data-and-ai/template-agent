@@ -426,116 +426,6 @@ If no actual data was retrieved, state clearly: "Data could not be retrieved bec
     )
 
 
-def build_synthesis_prompt_legacy() -> ChatPromptTemplate:
-    """Build the legacy answer synthesis prompt for comprehensive reporting.
-
-    This is the original fixed-format prompt, kept for backward compatibility.
-    Use build_synthesis_prompt(query_type) for dynamic formatting.
-    """
-    return ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are a senior research analyst creating a comprehensive executive report.
-Synthesize all research findings into a professional, well-structured report.
-
-## CRITICAL RULES
-1. Use ONLY actual data from the findings - NO external knowledge or assumptions
-2. If findings contain errors or no data, report that clearly in Limitations
-3. DO NOT fabricate numbers, statistics, or data points
-4. DO NOT describe schemas as if they were actual results
-5. Include specific numbers and percentages from the actual data
-6. BE PROACTIVE: Include actionable insights DIRECTLY in the report, not as recommendations
-
-## PROACTIVE INSIGHTS RULE (IMPORTANT)
-When you identify patterns or outliers in the data, INCLUDE THE DETAILS directly:
-- BAD: "Investigate the 46 teams with 0% fulfillment" (vague recommendation)
-- GOOD: List those 46 teams with their names, departments, and metrics IN THE REPORT
-
-- BAD: "Analyze best practices from top-performing teams" (deferred action)
-- GOOD: Include a section showing what the top teams have in common FROM THE DATA
-
-- BAD: "Review estimation processes for large teams" (external action needed)
-- GOOD: Show the specific large teams and their performance metrics IN A TABLE
-
-If you can answer it from the data, PUT IT IN THE REPORT. Don't defer to recommendations.
-
-## REQUIRED REPORT STRUCTURE
-
-# [Topic] - Research Report
-
-## Executive Summary
-[2-3 sentence high-level summary of key findings]
-
-## Key Findings
-
-### [Finding Category 1]
-- **Metric**: [specific number or percentage]
-- **Insight**: [what this means]
-
-### [Finding Category 2]
-- **Metric**: [specific number or percentage]
-- **Insight**: [what this means]
-
-[Add more categories as needed based on data]
-
-## Detailed Data
-
-### [Data Section 1 - e.g., Geographic Distribution]
-| Category | Count | Percentage |
-|----------|-------|------------|
-| [Label 1] | [Value] | [%] |
-| [Label 2] | [Value] | [%] |
-
-### [Data Section 2 - e.g., Department Breakdown]
-[Similar table or bullet points with actual data]
-
-## Analysis & Insights
-[Observations derived from the data - trends, patterns, notable points]
-[INCLUDE specific examples, outliers, and notable entities BY NAME from the data]
-
-## Limitations & Data Quality
-[ONLY include if there were ACTUAL issues:]
-- If a query timed out, say: "Query X timed out"
-- If access was denied, say: "Access denied to [resource]"
-- If no data was found, say: "No data available for [topic]"
-- DO NOT mention technical implementation details (JSON, serialization, constraints)
-- DO NOT speculate about why data might be missing
-- If all queries succeeded, write: "No significant limitations."
-
-## Further Analysis (Optional)
-[ONLY include recommendations that GENUINELY require:]
-- Data NOT available in current resources (e.g., "Survey teams for qualitative feedback")
-- External systems or tools (e.g., "Schedule meetings with team leads")
-- Time-series data beyond current scope (e.g., "Track monthly trends over 12 months")
-- Human judgment or decisions (e.g., "Management to prioritize which teams to support")
-
-[DO NOT recommend things that could be answered by querying the data]
-[If all insights are covered in the report, write: "No further analysis required - all key insights included above."]
-
----
-
-## FORMATTING GUIDELINES
-- Use tables for comparative data (regions, departments, categories)
-- Use bullet points for lists of findings
-- Include specific numbers with proper formatting (e.g., 9,057 not 9057)
-- Use percentages where available (e.g., 36.7%)
-- Bold key metrics and findings
-- Use emojis sparingly for section headers only
-- When mentioning outliers (best/worst performers), LIST THEM BY NAME with their metrics
-
-If no actual data was retrieved, state clearly: "Data could not be retrieved because [reason]"
-""",
-            ),
-            ("human", _REPORT_DATE_TEMPLATE),
-            ("human", "Research Context:\n{context}"),
-            ("human", "Research Question: {query}"),
-            ("human", "Query Analysis:\n{understanding}"),
-            ("human", "Research Findings (USE THIS DATA ONLY):\n{findings}"),
-        ]
-    )
-
-
 def build_review_prompt() -> ChatPromptTemplate:
     """Build the reviewer prompt with per-dimension scoring."""
     return ChatPromptTemplate.from_messages(
@@ -1297,35 +1187,343 @@ def build_complexity_assessment_prompt() -> ChatPromptTemplate:
     )
 
 
-def build_supervisor_reflection_fixed_prompt() -> ChatPromptTemplate:
-    """Build the supervisor reflection prompt with FIXED decision values.
+# ============================================================================
+# CONSOLIDATED INLINE PROMPTS
+# Moved from supervisor.py, synthesize.py, context_manager.py, streaming.py,
+# utils.py to this central location for maintainability.
+# ============================================================================
 
-    This fixes the decision mismatch where the original prompt asked for
-    'spawn_follow_ups' but the code checked for 'continue_research'.
+INPUT_CLASSIFICATION_PROMPT = """\
+You are an input classifier for a research system.
+
+Classify the user message into exactly ONE category:
+
+- **research_query**: A meaningful question or request that requires research.
+
+- **gibberish**: Random characters, keyboard mash, accidental input, or
+strings with no discernible meaning (e.g. "asdfghjkl", "3424fsdwsfgn", "qqqqqq").
+
+Respond with ONLY a JSON object, nothing else:
+{{"classification": "research_query"}} or {{"classification": "gibberish"}}
+
+User message: {message}"""
+
+
+def build_finding_compression_prompt(
+    subquery: str,
+    answer: str,
+    tool_results: list[str],
+    max_summary_words: int = 80,
+    max_key_facts: int = 5,
+) -> list[dict[str, str]]:
+    """Build the LLM prompt for compressing a finding to a FindingCard.
+
+    Moved from context_manager.py HierarchicalContextManager._build_compression_prompt.
     """
-    return ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                "You are a research supervisor reflecting on collected findings.\n\n"
-                "Analyze the findings and assess coverage against the user's query.\n\n"
-                "DECISION VALUES (use EXACTLY one of these):\n"
-                "- continue_research: Gaps remain and follow-up subqueries are needed\n"
-                "- proceed_to_completeness: Coverage is sufficient or max rounds reached\n\n"
-                "Return JSON:\n"
-                '{{"coverage_pct": <0-100>, '
-                '"gaps": ["<gap1>", ...], '
-                '"conflicts": ["<conflict1>", ...], '
-                '"decision": "continue_research|proceed_to_completeness", '
-                '"follow_up_subqueries": ["<subquery1>", ...], '
-                '"reasoning": "<explanation>"}}',
+    tool_text = "\n".join(f"- {text[:3000]}" for text in tool_results[:10])
+    return [
+        {
+            "role": "system",
+            "content": (
+                f"You compress research findings into compact summary cards.\n"
+                f"Extract the essential information while discarding verbose tool output.\n\n"
+                f"Output JSON with these fields:\n"
+                f"- summary: {max_summary_words}-word summary capturing the key answer\n"
+                f"- key_facts: Up to {max_key_facts} bullet points of important facts/numbers\n"
+                f'- data_highlights: Key statistics as JSON (e.g., {{"total": 1500, "growth": "15%"}})\n'
+                f"- source_citations: List of tools/data sources used\n"
+                f"- quality_score: Confidence 0.0-1.0\n"
+                f"- has_visualization: true if charts were generated"
             ),
-            ("human", "Original query: {query}"),
-            ("human", "Round {round_number} of {max_rounds}"),
-            (
-                "human",
-                "Findings summary:\n{findings_summary}",
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Compress this finding:\n\n"
+                f"SUBQUERY: {subquery}\n\n"
+                f"ANSWER:\n{answer}\n\n"
+                f"TOOL RESULTS:\n{tool_text}\n\n"
+                f"Respond with JSON only."
             ),
-            ("human", "Completeness threshold: {completeness_threshold}%"),
-        ]
+        },
+    ]
+
+
+def build_finding_consolidation_prompt(
+    card_summaries: list[str],
+    existing_context: str = "",
+) -> list[dict[str, str]]:
+    """Build prompt for consolidating FindingCards into research memory.
+
+    Moved from context_manager.py HierarchicalContextManager._build_consolidation_prompt.
+    """
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You consolidate research findings into a high-level memory.\n"
+                "Identify cross-cutting insights, emergent themes, and research gaps.\n\n"
+                "Output JSON with:\n"
+                "- plan_summary: Brief description of research scope\n"
+                "- key_insights: Cross-subquery insights (not repetition of individual findings)\n"
+                "- data_summary: Aggregated key numbers/statistics\n"
+                "- themes: Emergent categories/patterns\n"
+                "- failed_subqueries: List of failed/empty subqueries\n"
+                "- access_denied_subqueries: List of access-denied subqueries"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Consolidate these research findings:\n\n"
+                + "\n".join(card_summaries)
+                + f"\n\n{existing_context}"
+                + "\n\nExtract cross-cutting insights and themes. Respond with JSON only."
+            ),
+        },
+    ]
+
+
+def build_worker_context_prefix(cross_context: str) -> str:
+    """Build cross-context prefix for workers on first attempt.
+
+    Moved from supervisor.py _build_context_prefix.
+    """
+    if not cross_context:
+        return ""
+    return (
+        f"\n\n## CONTEXT FROM OTHER RESEARCH\n"
+        f"Other research subqueries have found the following (use this context "
+        f"to ask better-targeted questions):\n{cross_context[:1000]}\n"
     )
+
+
+def build_worker_mode_instruction(mode_config: object | None) -> str:
+    """Build mode-specific worker instruction string.
+
+    Moved from supervisor.py _build_worker_mode_instruction.
+    """
+    if not mode_config or not getattr(mode_config, "worker_instruction", None):
+        return ""
+    return f"\n\n## ANALYSIS DEPTH GUIDANCE\n{mode_config.worker_instruction}"
+
+
+def build_worker_execution_instruction() -> str:
+    """Build mandatory execution instruction for research workers.
+
+    Moved from supervisor.py _execute_research_subagent inline.
+    """
+    return (
+        "\n\n## EXECUTION INSTRUCTIONS (MANDATORY)\n"
+        "1. Use the available tools to retrieve the ACTUAL data. Do NOT provide "
+        "recommendations, do NOT ask for confirmation.\n"
+        "2. If a single tool call cannot fully answer the question, run "
+        "MULTIPLE calls and combine the results.\n"
+        "3. For EVERY tool result you use, report the key findings.\n"
+        "4. Return numeric results as EXACT numbers when possible.\n"
+        "5. When computing percentages or ratios, show the calculation.\n"
+        "6. If a tool returns no results or errors, explain why and try "
+        "an alternative approach.\n"
+        "7. Format data results as tables when possible."
+    )
+
+
+def build_conflict_resolution_prompt(
+    query: str,
+    findings_with_quality: list[str],
+) -> str:
+    """Build conflict detection/resolution prompt.
+
+    Moved from supervisor.py _detect_and_resolve_conflicts inline.
+    """
+    findings_text = "\n".join(findings_with_quality)
+    return (
+        f"Analyze these research findings for conflicts or contradictions.\n"
+        f"When resolving conflicts, prefer findings with higher Quality scores.\n\n"
+        f"Original Query: {query}\n\n"
+        f"Findings:\n{findings_text}\n\n"
+        f"Check for:\n"
+        f"1. NUMERIC CONFLICTS: Same metric with different values\n"
+        f"2. SEMANTIC CONFLICTS: Contradictory conclusions about the same topic\n"
+        f"3. DATA INCONSISTENCIES: Numbers that don't add up across findings\n\n"
+        f"Return JSON only (finding_indices are 1-based):\n"
+        f"{{\n"
+        f'    "has_conflicts": true/false,\n'
+        f'    "conflicts": [\n'
+        f'        {{"type": "numeric|semantic|data", "finding_indices": [1, 2], '
+        f'"description": "brief description", '
+        f'"resolution": "which finding is more reliable and why"}}\n'
+        f"    ],\n"
+        f'    "confidence": 0.0-1.0\n'
+        f"}}"
+    )
+
+
+CONFLICT_DETECTOR_SYSTEM_PROMPT = (
+    "You are a research conflict detector. Identify contradictions between findings."
+)
+
+
+def build_alternative_approach_prompt(
+    subquery: str,
+    warnings_text: str,
+) -> tuple[str, str]:
+    """Build system/human messages for generating alternative research approaches.
+
+    Moved from supervisor.py _generate_alternative_approach inline.
+
+    Returns:
+        Tuple of (system_message_content, human_message_content).
+    """
+    system_content = (
+        "You are a research investigation expert. A research query returned "
+        "implausible results. Your job is to suggest a FUNDAMENTALLY "
+        "DIFFERENT approach -- not just a rephrasing.\n\n"
+        "Strategies to consider:\n"
+        "1. Use a DIFFERENT tool or data source that might have the same metric\n"
+        "2. Use a DIFFERENT field or parameter\n"
+        "3. Change the aggregation or filtering approach\n"
+        "4. Run a DIAGNOSTIC query to understand what the data actually contains\n"
+        "5. Add filters to exclude obviously bad data\n\n"
+        "Return ONLY the alternative natural-language query. No JSON, no explanation."
+    )
+    human_content = (
+        f"Original subquery: {subquery}\n\nImplausible results found:\n{warnings_text}"
+    )
+    return system_content, human_content
+
+
+def build_synthesis_fact_check_prompt() -> tuple[str, str]:
+    """Build system prompt for stage-1 fact-checking during synthesis.
+
+    Moved from synthesize.py _run_stage1_fact_check inline.
+
+    Returns:
+        Tuple of (system_message_content, human_template). The human_template
+        expects source_numbers and draft_report to be interpolated by the caller.
+    """
+    system_content = (
+        "You are a fact-checker for a research report. Your job is to silently FIX issues.\n"
+        "Compare every number in the draft report against the source data numbers.\n"
+        "For each number: if it matches a source, KEEP IT. If it contradicts, SILENTLY replace.\n"
+        "Do NOT add tags like [UNVERIFIED]. Return the COMPLETE report."
+    )
+    return (
+        system_content,
+        "SOURCE DATA NUMBERS:\n{source_numbers}\n\n---\n\nDRAFT REPORT TO FACT-CHECK:\n{draft_report}",
+    )
+
+
+def build_synthesis_plausibility_prompt() -> tuple[str, str]:
+    """Build system prompt for plausibility pass during synthesis.
+
+    Moved from synthesize.py _apply_plausibility_pass inline.
+
+    Returns:
+        Tuple of (system_message_content, human_template).
+    """
+    system_content = (
+        "You are a report editor. Add appropriate uncertainty language "
+        "for flagged values. Do NOT remove numbers. Integrate caveats naturally."
+    )
+    return system_content, "FLAGGED CONCERNS:\n{flagged_concerns}\n\nREPORT:\n{report}"
+
+
+def build_synthesis_completion_prompt() -> tuple[str, str]:
+    """Build system/human messages for auto-completing truncated reports.
+
+    Moved from synthesize.py _apply_structural_resynth_and_completion inline.
+
+    Returns:
+        Tuple of (system_message_content, human_template).
+    """
+    system_content = (
+        "Write ONLY the missing conclusion. Do NOT repeat existing content."
+    )
+    return system_content, "Incomplete report:\n{report_tail}"
+
+
+def build_synthesis_stricter_retry_instruction() -> str:
+    """Build the stricter retry system message appended when synthesis produces tool recommendations.
+
+    Moved from synthesize.py _run_synthesis_llm inline.
+    """
+    return (
+        "IMPORTANT: You MUST synthesize the findings into a report. "
+        "DO NOT recommend tools. If no data exists, state that clearly."
+    )
+
+
+def build_visualization_prompt(draft_answer: str) -> list[dict[str, str]]:
+    """Build prompt for the visualization node to generate Mermaid diagrams."""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a data visualization expert. "
+                "Your goal is to produce at least ONE chart that makes the report "
+                "easier to understand at a glance.\n\n"
+                "CHART TYPE SELECTION (follow strictly):\n"
+                "- BAR (xychart-beta): DEFAULT choice. Use for comparing values "
+                "across categories, rankings, distributions, counts, or any numeric "
+                "data across groups. ALWAYS prefer bar over pie when there are more "
+                "than 3 categories or when values don't represent parts of a single whole.\n"
+                "- PIE: ONLY for showing parts of a single whole that sum to ~100%. "
+                "Maximum 6 slices. NEVER use pie if there are more than 6 categories. "
+                "NEVER use pie for comparing independent quantities.\n"
+                "- LINE (xychart-beta with 'line'): For time-series or trends.\n"
+                "- FLOWCHART (graph TD): For processes, workflows, or relationships.\n\n"
+                "CRITICAL: If you produce 2 charts, they MUST use DIFFERENT chart types "
+                "(e.g., one bar + one pie, or one bar + one flowchart). "
+                "Never produce 2 charts of the same type.\n\n"
+                "Rules:\n"
+                "1. Produce 1-2 charts. Quality over quantity.\n"
+                "2. Each chart MUST be a valid Mermaid code block.\n"
+                "3. Keep labels concise (under 20 chars, no special characters).\n"
+                "4. Do NOT invent data — only use numbers from the report.\n"
+                "5. Do NOT repeat report text — output ONLY the chart section.\n"
+                "6. Output NO_CHARTS ONLY if the report has absolutely no numeric "
+                "data, comparisons, or relationships to visualize.\n\n"
+                "EXACT SYNTAX for each chart type:\n\n"
+                "A) BAR CHART (xychart-beta) — DEFAULT for comparisons:\n"
+                "```mermaid\n"
+                "xychart-beta\n"
+                '    title "Revenue by Quarter"\n'
+                "    x-axis [Q1, Q2, Q3, Q4]\n"
+                '    y-axis "Revenue (M)" 0 --> 50\n'
+                "    bar [12, 25, 37, 48]\n"
+                "```\n"
+                "xychart-beta rules:\n"
+                "- x-axis categories MUST be inline: x-axis [cat1, cat2, cat3]\n"
+                '- Multi-word categories use quotes: x-axis ["North America", "Europe"]\n'
+                '- y-axis range: y-axis "label" min --> max\n'
+                "- Data MUST be inline: bar [1, 2, 3] or line [1, 2, 3]\n"
+                "- NO curly braces, NO 'type category', NO 'categories' keyword\n"
+                "- NO 'bar series', use just 'bar' or 'line'\n\n"
+                "B) PIE CHART — ONLY for parts-of-a-whole (max 6 slices):\n"
+                "```mermaid\n"
+                'pie title "Market Share"\n'
+                '    "Chrome" : 65\n'
+                '    "Safari" : 19\n'
+                '    "Firefox" : 4\n'
+                '    "Other" : 12\n'
+                "```\n\n"
+                "C) FLOWCHART — for relationships/processes:\n"
+                "```mermaid\n"
+                "graph TD\n"
+                '    A["Input"] --> B["Process"]\n'
+                '    B --> C["Output"]\n'
+                "```\n\n"
+                "Output format (per chart):\n"
+                "## Chart Title\n"
+                "```mermaid\n<valid diagram code>\n```\n"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Find the best data to visualize and produce at least 1 chart "
+                f"(up to 2):\n\n{draft_answer}"
+            ),
+        },
+    ]

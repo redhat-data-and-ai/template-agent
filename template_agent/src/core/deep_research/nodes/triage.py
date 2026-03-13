@@ -11,6 +11,7 @@ from template_agent.src.core.deep_research.prompts import build_triage_prompt
 from template_agent.src.core.deep_research.state import (
     PHASE_PLAN,
     PHASE_PROBE,
+    PHASE_SYNTHESIZE,
     DeepResearchState,
     ResearchContext,
 )
@@ -41,13 +42,14 @@ async def triage_node(
 
     if not cached_findings_text and not context:
         logger.info("Triage: no cached findings or context, routing to full_research")
-        events.append(
+        ctx.emit_or_append(
             emit_triage_decision(
                 decision="full_research",
                 reasoning="No previous research data available — starting fresh.",
                 cached_findings_count=0,
                 context_message_count=0,
-            )
+            ),
+            events,
         )
         return {
             "triage_decision": "full_research",
@@ -57,12 +59,13 @@ async def triage_node(
     context_msg_count = context.count("User:") + context.count("Assistant:")
     findings_count = cached_findings_text.count("- Q: ")
 
-    events.append(
+    ctx.emit_or_append(
         emit_agent_thinking(
             "TriageAgent",
             f"Evaluating if follow-up can be answered from "
             f"{findings_count} cached findings and {context_msg_count} context messages",
-        )
+        ),
+        events,
     )
 
     triage_prompt = build_triage_prompt()
@@ -117,20 +120,21 @@ async def triage_node(
 
     logger.info("Triage decision: %s — %s", decision, reasoning)
 
-    events.append(
-        emit_agent_decision("TriageAgent", f"Decision: {decision}", reasoning)
+    ctx.emit_or_append(
+        emit_agent_decision("TriageAgent", f"Decision: {decision}", reasoning), events
     )
-    events.append(
+    ctx.emit_or_append(
         emit_triage_decision(
             decision=decision,
             reasoning=reasoning,
             cached_findings_count=findings_count,
             context_message_count=context_msg_count,
-        )
+        ),
+        events,
     )
 
     phase_map = {
-        "context_sufficient": PHASE_PLAN,
+        "context_sufficient": PHASE_SYNTHESIZE,
         "partial_research": PHASE_PLAN,
         "full_research": PHASE_PROBE,
     }

@@ -86,7 +86,13 @@ def _compute_quality_matrix(
     review_results: List[Dict],
     _mode_config: Any | None,
 ) -> Dict[str, Any]:
-    """Aggregate review scores into quality matrix (simplified, no SQL criteria)."""
+    """Aggregate review scores into quality matrix.
+
+    Gate results:
+        - "pass": weighted score >= 0.6 (answer is good enough)
+        - "revise": 0.4 <= weighted score < 0.6 (text needs revision)
+        - "research_more": weighted score < 0.4 (insufficient research)
+    """
     if not review_results:
         return {
             "dimensions": {},
@@ -98,7 +104,12 @@ def _compute_quality_matrix(
     scores = [r.get("score", 50) for r in review_results]
     avg = sum(scores) / len(scores) if scores else 50
     weighted_score = avg / 100.0
-    gate_result = "pass" if weighted_score >= 0.6 else "revise"
+    if weighted_score >= 0.6:
+        gate_result = "pass"
+    elif weighted_score >= 0.4:
+        gate_result = "revise"
+    else:
+        gate_result = "research_more"
     return {
         "dimensions": {},
         "weighted_score": round(weighted_score, 3),
@@ -154,9 +165,10 @@ async def _run_reviewer_loop(
     """Run multi-persona review loop in parallel."""
     personas_info = [(str(pc["persona"]), str(pc["focus"])) for pc in selected_personas]
     for persona, focus in personas_info:
-        events.append(emit_review_start(persona))
-        events.append(
-            emit_agent_thinking(f"Reviewer:{persona}", f"Evaluating: {focus}")
+        ctx.emit_or_append(emit_review_start(persona), events)
+        ctx.emit_or_append(
+            emit_agent_thinking(f"Reviewer:{persona}", f"Evaluating: {focus}"),
+            events,
         )
 
     llm_results = await asyncio.gather(
@@ -173,41 +185,46 @@ async def _run_reviewer_loop(
 
     for (persona, focus), result in zip(personas_info, llm_results):
         if isinstance(result, BaseException):
-            events.append(
+            ctx.emit_or_append(
                 emit_agent_thinking(
                     f"Reviewer:{persona}",
                     f"Review failed ({sanitize_error_for_client(result)})",
-                )
+                ),
+                events,
             )
             continue
         parsed, _, _ = result
         if parsed is None:
             continue
-        events.append(
+        ctx.emit_or_append(
             emit_reviewer_feedback(
                 persona,
                 parsed.get("reason", ""),
                 strengths=None,
-                weaknesses=parsed.get("follow_up_subqueries"),
-            )
+                weaknesses=parsed.get("weaknesses"),
+            ),
+            events,
         )
-        events.append(
-            emit_reviewer_score(persona, parsed.get("score", 50), max_score=100)
+        ctx.emit_or_append(
+            emit_reviewer_score(persona, parsed.get("score", 50), max_score=100),
+            events,
         )
-        events.append(
+        ctx.emit_or_append(
             emit_consensus_vote(
                 persona,
                 parsed.get("action", "approve"),
                 parsed.get("score", 70) / 100.0,
                 (parsed.get("feedback") or parsed.get("reason", ""))[:200],
-            )
+            ),
+            events,
         )
-        events.append(
+        ctx.emit_or_append(
             emit_review_complete(
                 parsed.get("action", "approve"),
                 parsed.get("score", 50),
                 parsed.get("reason", ""),
-            )
+            ),
+            events,
         )
         review_results.append(parsed)
         all_scores.append(parsed.get("score", 50))
@@ -265,7 +282,7 @@ async def review_node(
 
     Keeps reviewer personas and quality logic. No SQL/data product specific criteria.
     """
-    cancelled = check_node_cancelled(state.get("thread_id"), "review", state)
+    cancelled = await check_node_cancelled(state.get("thread_id"), "review", state)
     if cancelled is not None:
         return cancelled, []
 
@@ -309,11 +326,12 @@ async def review_node(
         }, events
 
     review_results = list(state.get("review_results", []))
-    events.append(
+    ctx.emit_or_append(
         emit_agent_thinking(
             "ReviewCoordinator",
             "Starting multi-persona review of the synthesized answer",
-        )
+        ),
+        events,
     )
 
     findings_board = state.get("findings_board", {})
@@ -425,7 +443,7 @@ async def review_node(
     weighted_matrix_score = quality_matrix.get("weighted_score", 0.5)
     confidence_score = min(0.95, weighted_matrix_score)
 
-    events.append(
+    ctx.emit_or_append(
         emit_consensus_result(
             approved=(overall_action == APPROVE),
             approve_count=approve_count,
@@ -433,32 +451,36 @@ async def review_node(
             revision_count=revision_count,
             overall_confidence=confidence_score,
             summary=f"Action: {overall_action} | Score: {avg_score}/100",
-        )
+        ),
+        events,
     )
 
     if overall_action == APPROVE:
-        events.append(
+        ctx.emit_or_append(
             emit_agent_decision(
                 "ReviewCoordinator",
                 "Answer approved by reviewers",
                 f"Score: {avg_score}/100 - Moving to completion",
-            )
+            ),
+            events,
         )
     elif overall_action == REVISE:
-        events.append(
+        ctx.emit_or_append(
             emit_agent_decision(
                 "ReviewCoordinator",
                 "Answer needs revision",
                 f"Score: {avg_score}/100 - Sending back to synthesis",
-            )
+            ),
+            events,
         )
     else:
-        events.append(
+        ctx.emit_or_append(
             emit_agent_decision(
                 "ReviewCoordinator",
                 "More research needed",
                 f"Adding {len(follow_ups[:3])} follow-up queries",
-            )
+            ),
+            events,
         )
 
     reliability_metrics = {
@@ -467,7 +489,7 @@ async def review_node(
         "quality_gate_result": gate_result,
         "total_reviewers": total_voters,
     }
-    events.append(emit_reliability_update(reliability_metrics, []))
+    ctx.emit_or_append(emit_reliability_update(reliability_metrics, []), events)
 
     return {
         "review_results": review_results,

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from template_agent.src.core.deep_research.state import Finding
+from template_agent.src.core.deep_research.utils import get_setting as _get_setting
 from template_agent.utils.pylogger import get_python_logger
 
 if TYPE_CHECKING:
@@ -22,18 +23,7 @@ if TYPE_CHECKING:
 
 logger = get_python_logger()
 
-# Default when settings are not available
 _CROSS_CHAT_MAX_FINDINGS = 10
-
-
-def _get_setting(name: str, default: Any) -> Any:
-    """Get setting with fallback to default."""
-    try:
-        from template_agent.src.settings import settings
-
-        return getattr(settings, name, default)
-    except Exception:
-        return default
 
 
 def _normalize_subquery(subquery: str) -> str:

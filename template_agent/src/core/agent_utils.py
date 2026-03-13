@@ -41,8 +41,8 @@ def convert_message_content_to_string(
         if isinstance(content_item, str):
             text.append(content_item)
             continue
-        if content_item["type"] == "text":
-            text.append(content_item["text"])
+        if content_item.get("type") == "text":
+            text.append(content_item.get("text", ""))
 
     return "".join(text)
 
@@ -104,10 +104,9 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
             if message.response_metadata:
                 ai_message.response_metadata = message.response_metadata
             if message.additional_kwargs:
-                if "response_metadata" in message.additional_kwargs:
-                    ai_message.response_metadata.update(
-                        message.additional_kwargs["response_metadata"]
-                    )
+                extra_metadata = message.additional_kwargs.get("response_metadata")
+                if isinstance(extra_metadata, dict):
+                    ai_message.response_metadata.update(extra_metadata)
                 ai_message.ai_call_id = message.additional_kwargs.get("ai_call_id")
             return ai_message
 
@@ -121,10 +120,11 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
 
         case LangchainChatMessage():
             if message.role == "custom":
+                custom_data = message.content[0] if message.content else {}
                 custom_message = ChatMessage(
                     type="custom",
                     content="",
-                    custom_data=message.content[0],
+                    custom_data=custom_data,
                 )
                 return custom_message
             else:
@@ -157,5 +157,5 @@ def remove_tool_calls(
     return [
         content_item
         for content_item in content
-        if isinstance(content_item, str) or content_item["type"] != "tool_use"
+        if isinstance(content_item, str) or content_item.get("type") != "tool_use"
     ]

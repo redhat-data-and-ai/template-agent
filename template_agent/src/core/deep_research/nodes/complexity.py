@@ -205,7 +205,7 @@ async def assess_complexity_node(
         "complexity_reasoning": reasoning,
         "max_rounds": assessed_rounds,
         "max_iterations": assessed_iters,
-        "max_total_subqueries": assessed_sq,
+        "max_total_subqueries": assessed_sq * assessed_rounds,
         "max_node_transitions": assessed_node_transitions,
         "max_session_seconds": assessed_session_seconds,
     }

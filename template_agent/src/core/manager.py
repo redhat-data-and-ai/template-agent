@@ -14,10 +14,8 @@ from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
     HumanMessage,
-    ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
-from langfuse.callback import CallbackHandler
 from langgraph.pregel import Pregel
 from langgraph.types import Command, Interrupt
 
@@ -27,15 +25,17 @@ from template_agent.src.core.agent_utils import (
     langchain_to_chat_message,
     remove_tool_calls,
 )
+from template_agent.src.core.deep_research.nodes._cache import (
+    format_cached_findings_for_triage,
+    format_conversation_for_prompt,
+    load_conversation_history,
+    save_conversation_turn,
+)
 from template_agent.src.core.storage import register_thread
 from template_agent.src.schema import StreamRequest
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
-
-# Initialize Langfuse CallbackHandler for Langchain (tracing)
-langfuse_handler = CallbackHandler(
-    trace_name="template-agent", environment=settings.LANGFUSE_TRACING_ENVIRONMENT
-)
+from template_agent.utils.tracing import langfuse_handler
 
 app_logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
@@ -49,13 +49,19 @@ class AgentManager:
     agent mode and deep research mode.
     """
 
-    def __init__(self, redhat_sso_token: str | None = None):
+    def __init__(
+        self,
+        redhat_sso_token: str | None = None,
+        root_tracer: Any = None,
+    ):
         """Initialize the AgentManager.
 
         Args:
             redhat_sso_token: Optional SSO token for enterprise authentication.
+            root_tracer: Optional AgentTracer for Langfuse tracing.
         """
         self.redhat_sso_token = redhat_sso_token
+        self.root_tracer = root_tracer
         self._agent: Pregel | None = None
         self._current_tool_call_id: str | None = None
 
@@ -68,6 +74,137 @@ class AgentManager:
         if getattr(request, "deep_research_resume", False):
             return True
         return False
+
+    async def _classify_follow_up(
+        self,
+        query: str,
+        findings_text: str,
+        conversation_text: str,
+        model_name: str | None = None,
+    ) -> str:
+        """Classify whether a follow-up can be answered from context.
+
+        Returns ``"answer_directly"`` or ``"needs_research"``.
+        Uses a lightweight model (gemini-2.5-flash) for speed.
+        """
+        from langchain_core.messages import HumanMessage as _HM
+        from langchain_core.messages import SystemMessage
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        system_prompt = (
+            "You are a routing classifier. Given a user's follow-up question, "
+            "previously researched findings, and the conversation history, decide "
+            "whether the question can be answered directly from the available "
+            "context or requires new research.\n\n"
+            "Respond with EXACTLY one of:\n"
+            "- answer_directly\n"
+            "- needs_research\n\n"
+            "Choose 'answer_directly' when the existing findings and conversation "
+            "history contain enough information to give a complete, accurate answer.\n"
+            "Choose 'needs_research' when the question asks about something not "
+            "covered by the findings, requires up-to-date data, or needs deeper "
+            "investigation.\n\n"
+            "## Previous Research Findings\n"
+            f"{findings_text}\n\n"
+            "## Conversation History\n"
+            f"{conversation_text or '(no prior conversation)'}"
+        )
+
+        classifier_model = model_name or "gemini-2.5-flash"
+        llm = ChatGoogleGenerativeAI(model=classifier_model, temperature=0.0)
+
+        try:
+            response = await llm.ainvoke(
+                [SystemMessage(content=system_prompt), _HM(content=query)]
+            )
+            decision = (response.content or "").strip().lower()
+            if decision not in ("answer_directly", "needs_research"):
+                app_logger.warning(
+                    "Follow-up classifier returned unexpected value '%s', defaulting to needs_research",
+                    decision,
+                )
+                return "needs_research"
+            app_logger.info("Follow-up classifier decision: %s", decision)
+            return decision
+        except Exception as exc:
+            app_logger.warning(
+                "Follow-up classification failed (%s), defaulting to needs_research",
+                exc,
+            )
+            return "needs_research"
+
+    async def _stream_follow_up_answer(
+        self,
+        request: StreamRequest,
+        findings_text: str,
+        conversation_text: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream a direct answer synthesized from cached findings and history.
+
+        Yields standard chat events (``message`` and ``token``) so the UI
+        renders this as a normal response rather than a deep-research run.
+        """
+        from langchain_core.messages import HumanMessage as _HM
+        from langchain_core.messages import SystemMessage
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        thread_id = request.thread_id or str(uuid4())
+        run_id = str(uuid4())
+        session_id = request.session_id or thread_id
+
+        model_name = (
+            getattr(request, "deep_research_model", None)
+            or settings.DEEP_RESEARCH_DEFAULT_MODEL
+        )
+        llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.3)
+
+        system_prompt = (
+            "You are a knowledgeable assistant. Answer the user's question "
+            "using ONLY the research findings and conversation history below. "
+            "Be thorough but concise. If the findings don't fully cover the "
+            "question, say so clearly.\n\n"
+            "## Research Findings\n"
+            f"{findings_text}\n\n"
+            "## Conversation History\n"
+            f"{conversation_text or '(first question in thread)'}"
+        )
+
+        collected_answer = ""
+        try:
+            async for chunk in llm.astream(
+                [SystemMessage(content=system_prompt), _HM(content=request.message)]
+            ):
+                token_text = chunk.content or ""
+                if token_text:
+                    collected_answer += token_text
+                    yield {
+                        "type": "token",
+                        "content": token_text,
+                    }
+
+            yield {
+                "type": "message",
+                "content": {
+                    "type": "ai",
+                    "content": collected_answer,
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "session_id": session_id,
+                },
+            }
+
+            save_conversation_turn(thread_id, request.message, collected_answer)
+
+        except Exception as exc:
+            app_logger.error("Follow-up direct answer failed: %s", exc, exc_info=True)
+            yield {
+                "type": "error",
+                "content": {
+                    "message": f"Failed to generate follow-up answer: {exc}",
+                    "recoverable": True,
+                    "error_type": "followup_error",
+                },
+            }
 
     async def _stream_deep_research(
         self, request: StreamRequest
@@ -96,11 +233,12 @@ class AgentManager:
             max_subqueries = getattr(request, "deep_research_max_subqueries", None)
             token_tracker = TokenUsageTracker(model_name=model_name or "")
 
-            require_approval = getattr(
-                request, "deep_research_require_plan_approval", False
-            )
-            plan_approved = not require_approval
+            require_approval = settings.DEEP_RESEARCH_REQUIRE_PLAN_APPROVAL
+            user_approved = bool(getattr(request, "deep_research_plan_approved", False))
+            plan_approved = (not require_approval) or user_approved
             user_plan = getattr(request, "deep_research_plan", None)
+            plan_override = user_plan if isinstance(user_plan, list) else None
+            is_resume = bool(plan_override and plan_approved)
 
             async with get_deep_research_agent(
                 model_name=model_name,
@@ -108,12 +246,12 @@ class AgentManager:
                 max_subqueries_override=max_subqueries,
                 max_mode=max_mode,
                 token_tracker=token_tracker,
-                root_tracer=langfuse_handler,
+                root_tracer=self.root_tracer,
             ) as dr_agent:
-                graph = dr_agent.graph
                 ctx = dr_agent.ctx
 
                 cached_findings_text = ""
+                cached_triage_text = ""
                 try:
                     from template_agent.src.core.deep_research.nodes._cache import (
                         format_cached_findings_for_prompt,
@@ -123,6 +261,7 @@ class AgentManager:
                     cached = load_findings_in_memory(thread_id)
                     if cached:
                         cached_findings_text = format_cached_findings_for_prompt(cached)
+                        cached_triage_text = format_cached_findings_for_triage(cached)
                         app_logger.info(
                             "Loaded %d cached findings for thread %s",
                             len(cached),
@@ -131,64 +270,73 @@ class AgentManager:
                 except Exception as e:
                     app_logger.warning("Failed to load cached findings: %s", e)
 
+                if cached_triage_text and not is_resume:
+                    conversation_history = load_conversation_history(thread_id)
+                    conversation_text = format_conversation_for_prompt(
+                        conversation_history
+                    )
+
+                    decision = await self._classify_follow_up(
+                        request.message, cached_triage_text, conversation_text
+                    )
+                    if decision == "answer_directly":
+                        async for event in self._stream_follow_up_answer(
+                            request, cached_triage_text, conversation_text
+                        ):
+                            yield event
+                        return
+
                 initial = await create_initial_state(
                     query=request.message,
                     thread_id=thread_id,
-                    plan_override=user_plan if isinstance(user_plan, list) else None,
+                    plan_override=plan_override,
                     plan_approved=plan_approved,
+                    skip_to_research=is_resume,
                     user_id=request.user_id,
                     cached_findings_text=cached_findings_text,
                 )
 
-                langfuse_config = {
-                    "callbacks": [langfuse_handler],
+                from template_agent.src.core.deep_research.events import (
+                    emit_token_usage_update,
+                )
+                from template_agent.src.core.deep_research.streaming import (
+                    _should_pause_for_plan_approval,
+                )
+
+                dr_final_answer: str | None = None
+                run_config = {
                     "run_id": run_id,
-                    "recursion_limit": 100,
                     "configurable": {
-                        "thread_id": thread_id,
                         "langfuse_session_id": session_id,
+                        "langfuse_user_id": effective_user_id,
                     },
                 }
+                run_config_metadata = {"user_id": effective_user_id}
 
-                async for stream_event in graph.astream(
+                async for event in dr_agent._run_graph_with_events(
                     initial,
-                    stream_mode=["updates"],
-                    config=langfuse_config,
+                    thread_id,
+                    run_config_metadata,
+                    run_config=run_config,
                 ):
-                    if not isinstance(stream_event, tuple):
-                        continue
-
-                    stream_mode_name, event = stream_event
-
-                    if stream_mode_name == "updates":
-                        for _node_name, updates in event.items():
-                            if not updates:
-                                continue
-
-                            pending = updates.get("_pending_events", [])
-                            for evt in pending:
-                                yield evt
-
-                            final_answer = updates.get("final_answer")
-                            if final_answer:
-                                yield {
-                                    "type": "message",
-                                    "content": {
-                                        "type": "ai",
-                                        "content": final_answer,
-                                        "run_id": run_id,
-                                        "thread_id": thread_id,
-                                        "session_id": session_id,
-                                    },
-                                }
+                    if event.get("type") == "message":
+                        content = event.get("content", {})
+                        if isinstance(content, dict) and content.get("type") == "ai":
+                            dr_final_answer = content.get("content", "")
+                            content["run_id"] = run_id
+                            content["thread_id"] = thread_id
+                            content["session_id"] = session_id
+                        yield event
+                    else:
+                        yield event
+                        if _should_pause_for_plan_approval(
+                            event, require_approval, plan_approved
+                        ):
+                            break
 
                 if ctx.token_tracker:
                     total = ctx.token_tracker.get_total()
                     if total.llm_calls > 0:
-                        from template_agent.src.core.deep_research.events import (
-                            emit_token_usage_update,
-                        )
-
                         yield emit_token_usage_update(
                             input_tokens=total.input_tokens,
                             output_tokens=total.output_tokens,
@@ -197,26 +345,50 @@ class AgentManager:
                             estimated_cost_usd=total.estimated_cost_usd,
                         )
 
-            app_logger.info(f"Deep research completed for thread {thread_id}")
+            if dr_final_answer:
+                save_conversation_turn(thread_id, request.message, dr_final_answer)
+
+            app_logger.info("Deep research completed for thread %s", thread_id)
 
         except ImportError as e:
             app_logger.error(f"Deep research module not available: {e}")
-            yield {
-                "type": "error",
-                "content": {
-                    "message": f"Deep research not available: {e}",
-                    "recoverable": False,
-                    "error_type": "import_error",
-                },
-            }
+            from template_agent.src.core.deep_research.events import (
+                DeepResearchEventType as _DREventType,
+            )
+            from template_agent.src.core.deep_research.events import (
+                emit_event as _emit_event,
+            )
+
+            yield _emit_event(
+                _DREventType.ERROR,
+                f"Deep research not available: {e}",
+                ui_visible=True,
+            )
         except Exception as e:
             app_logger.error(f"Deep research error: {e}", exc_info=True)
+            try:
+                from template_agent.src.core.deep_research.events import (
+                    DeepResearchEventType as _DREventType,
+                )
+                from template_agent.src.core.deep_research.events import (
+                    emit_event as _emit_event,
+                )
+
+                yield _emit_event(
+                    _DREventType.ERROR,
+                    f"Deep research encountered an error: {e}",
+                    ui_visible=True,
+                )
+            except Exception:
+                pass
             yield {
-                "type": "error",
+                "type": "message",
                 "content": {
-                    "message": "Deep research encountered an error",
-                    "recoverable": False,
-                    "error_type": "deep_research_error",
+                    "type": "ai",
+                    "content": "Deep research encountered an error. Please try again.",
+                    "run_id": "",
+                    "thread_id": "",
+                    "session_id": "",
                 },
             }
 
@@ -336,10 +508,14 @@ class AgentManager:
             "langfuse_observation_id": thread_id,
         }
 
+        callbacks = []
+        if langfuse_handler:
+            callbacks.append(langfuse_handler)
+
         config = RunnableConfig(
             configurable=configurable,
             run_id=run_id,
-            callbacks=[langfuse_handler],
+            callbacks=callbacks if callbacks else None,
         )
 
         # Check for interrupts that need to be resumed (preserved from original)
@@ -366,72 +542,6 @@ class AgentManager:
             f"AgentManager configured with run_id: {run_id}, thread_id: {thread_id}, session_id: {effective_session_id}"
         )
         return kwargs, str(run_id), thread_id
-
-    async def _prepare_streaming_input_with_history(
-        self, request: StreamRequest, existing_state, run_id: str, thread_id: str
-    ) -> Dict[str, Any]:
-        """Prepare streaming input with conversation history for non-checkpointing agent."""
-        from langchain_core.messages import HumanMessage
-        from langchain_core.runnables import RunnableConfig
-
-        # Get existing messages from state
-        existing_messages = existing_state.values.get("messages", [])
-
-        # Create new message list with history + current user message
-        all_messages = list(existing_messages)
-        all_messages.append(HumanMessage(content=request.message))
-
-        # Configure for streaming agent (no checkpointing)
-        effective_session_id = request.session_id or thread_id
-        effective_user_id = request.user_id or "anonymous"
-
-        configurable = {
-            "thread_id": thread_id,
-            "session_id": effective_session_id,
-            "run_id": run_id,
-            "user_id": effective_user_id,
-            "langfuse_session_id": effective_session_id,
-            "langfuse_user_id": effective_user_id,
-            "langfuse_observation_id": thread_id,
-        }
-
-        config = RunnableConfig(
-            configurable=configurable,
-            run_id=run_id,
-            callbacks=[langfuse_handler],
-        )
-
-        return {
-            "input": {"messages": all_messages},
-            "config": config,
-        }
-
-    async def _save_final_conversation_state(
-        self, persistent_agent, config, all_messages: list, thread_id: str
-    ) -> None:
-        """Save the final conversation state once after streaming completes."""
-        try:
-            app_logger.info(
-                f"Saving {len(all_messages)} messages for thread {thread_id}"
-            )
-
-            # Log message types for debugging
-            message_types = [
-                getattr(msg, "type", type(msg).__name__) for msg in all_messages
-            ]
-            app_logger.info(f"Message types being saved: {message_types}")
-
-            # Update the persistent agent's state with all messages
-            await persistent_agent.aupdate_state(
-                config=config, values={"messages": all_messages}
-            )
-            app_logger.info(
-                f"Successfully saved conversation state for thread {thread_id}"
-            )
-
-        except Exception as e:
-            app_logger.error(f"Error saving final conversation state: {e}")
-            # Don't re-raise - streaming already completed successfully
 
     def _format_events(
         self,
@@ -483,24 +593,6 @@ class AgentManager:
 
             updates = updates or {}
             update_messages = updates.get("messages", [])
-
-            # Special cases for using langgraph-supervisor library (preserved)
-            if node == "supervisor":
-                ai_messages = [
-                    msg for msg in update_messages if isinstance(msg, AIMessage)
-                ]
-                if ai_messages:
-                    update_messages = [ai_messages[-1]]
-
-            if node in ("research_expert", "math_expert"):
-                # Convert sub-agent output to ToolMessage for UI display (preserved)
-                msg = ToolMessage(
-                    content=update_messages[0].content,
-                    name=node,
-                    tool_call_id="",
-                )
-                update_messages = [msg]
-
             new_messages.extend(update_messages)
 
         # Process messages and convert to simplified format

@@ -5,6 +5,7 @@ handling message streaming, token generation, and conversation management.
 """
 
 import json
+import time as _time
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -15,13 +16,16 @@ from template_agent.src.core.manager import AgentManager
 from template_agent.src.schema import StreamRequest
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
+from template_agent.utils.tracing import StreamTracer, langfuse_handler
 
 router = APIRouter()
 app_logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
 
 async def message_generator(
-    user_input: StreamRequest, agent_manager: AgentManager
+    user_input: StreamRequest,
+    agent_manager: AgentManager,
+    stream_tracer: StreamTracer | None = None,
 ) -> AsyncGenerator[str, None]:
     """Generate a stream of messages from the agent using the simplified format.
 
@@ -33,6 +37,7 @@ async def message_generator(
         user_input: The streaming input from the user containing the message
             and configuration.
         agent_manager: Pre-initialized AgentManager instance.
+        stream_tracer: Optional StreamTracer for Langfuse span tracking.
 
     Yields:
         JSON-formatted SSE messages as strings in the simplified event format.
@@ -43,12 +48,11 @@ async def message_generator(
         - Errors during streaming are sent as error events in the stream
         - Initialization errors are handled before streaming starts
     """
+    start_time = _time.monotonic()
     try:
         app_logger.info(f"Starting stream for message: {user_input.message[:100]}...")
 
-        # Stream events using the simplified AgentManager
         async for event in agent_manager.stream_response(user_input):
-            # Filter out duplicate human messages
             if (
                 event.get("type") == "message"
                 and event.get("content", {}).get("type") == "human"
@@ -56,11 +60,16 @@ async def message_generator(
             ):
                 continue
 
-            # Yield the simplified event format
+            if stream_tracer and event.get("type") == "message":
+                content = event.get("content", {}).get("content", "")
+                stream_tracer.track_message(str(content))
+
             yield f"{json.dumps(event, separators=(',', ':'))}\n\n"
 
     except Exception as e:
         app_logger.error(f"Error in message generator: {e}")
+        if stream_tracer:
+            stream_tracer.track_error(e)
         error_event = {
             "type": "error",
             "content": {
@@ -71,7 +80,11 @@ async def message_generator(
         }
         yield f"{json.dumps(error_event)}\n\n"
     finally:
-        # Send completion marker
+        duration_ms = (_time.monotonic() - start_time) * 1000
+        if stream_tracer:
+            stream_tracer.end_stream(duration_ms=duration_ms)
+        if langfuse_handler:
+            langfuse_handler.flush()
         yield "[DONE]\n\n"
 
 
@@ -139,13 +152,24 @@ async def stream(user_input: StreamRequest, request: Request) -> StreamingRespon
     Raises:
         HTTPException: If initialization fails (returns 500 status code).
     """
-    # Get token from request headers
     access_token = request.headers.get("X-Token")
     app_logger.info(f"Received token: {'Yes' if access_token else 'No'}")
 
-    # Initialize AgentManager BEFORE streaming to catch initialization errors
+    root_tracer = getattr(request.state, "root_tracer", None)
+    if root_tracer:
+        root_tracer.update(
+            user_id=user_input.user_id,
+            session_id=user_input.session_id,
+            metadata={"message_preview": user_input.message[:200]},
+        )
+
+    stream_tracer = StreamTracer(parent_tracer=root_tracer, name="stream_response")
+
     try:
-        agent_manager = AgentManager(redhat_sso_token=access_token)
+        agent_manager = AgentManager(
+            redhat_sso_token=access_token,
+            root_tracer=root_tracer,
+        )
     except Exception as e:
         app_logger.error(f"Failed to initialize AgentManager: {e}")
         raise HTTPException(
@@ -153,7 +177,7 @@ async def stream(user_input: StreamRequest, request: Request) -> StreamingRespon
         )
 
     return StreamingResponse(
-        message_generator(user_input, agent_manager),
+        message_generator(user_input, agent_manager, stream_tracer=stream_tracer),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

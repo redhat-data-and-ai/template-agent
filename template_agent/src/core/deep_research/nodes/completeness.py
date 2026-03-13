@@ -1,6 +1,5 @@
 """Completeness evaluator node: assess research coverage."""
 
-import re
 from typing import Any, Dict, List
 
 from template_agent.src.core.deep_research.events import (
@@ -60,28 +59,6 @@ def _get_findings_summary_and_count(
             if not f.get("error") and not f.get("access_denied")
         )
     return summary, count
-
-
-def _build_number_inventory_parts(check_findings: dict) -> list[str]:
-    """Build per-subquery number inventory (tool results only, no SQL)."""
-    parts = []
-    for subquery, finding in check_findings.items():
-        if finding.get("error") or finding.get("access_denied"):
-            continue
-        answer = finding.get("answer", "")
-        part = f"SUBQUERY: {subquery}\n"
-        numbers_in_answer = re.findall(r"\b(\d[\d,]*(?:\.\d+)?)\b", answer)
-        if numbers_in_answer:
-            part += f"Numbers in answer: {numbers_in_answer[:30]}\n"
-        tool_results = finding.get("tool_results", [])
-        for tr in tool_results[:3]:
-            if isinstance(tr, str):
-                nums = re.findall(r"\b(\d[\d,]*(?:\.\d+)?)\b", tr)
-                if nums:
-                    part += f"Tool result numbers: {nums[:20]}\n"
-        if len(part) > len(f"SUBQUERY: {subquery}\n"):
-            parts.append(part)
-    return parts
 
 
 def _get_completeness_threshold(state: DeepResearchState) -> float:
@@ -206,7 +183,9 @@ def _apply_quality_early_exit(
     return decision
 
 
-def _emit_contradiction_events(contradictions: list, events: list) -> None:
+def _emit_contradiction_events(
+    contradictions: list, events: list, ctx: ResearchContext
+) -> None:
     """Emit validation conflict events for each contradiction."""
     for contradiction in contradictions:
         desc = (
@@ -214,7 +193,7 @@ def _emit_contradiction_events(contradictions: list, events: list) -> None:
             if isinstance(contradiction, dict)
             else str(contradiction)
         )
-        events.append(emit_validation_conflict(desc, [], "low"))
+        ctx.emit_or_append(emit_validation_conflict(desc, [], "low"), events)
 
 
 def _build_validation_notes(numeric_issues: list, contradictions: list) -> str:
@@ -288,15 +267,9 @@ async def completeness_evaluator_node(
     findings_summary, successful_count = _get_findings_summary_and_count(
         findings_board, findings
     )
-    events.append(emit_validation_start(successful_count))
+    ctx.emit_or_append(emit_validation_start(successful_count), events)
 
     understanding = state.get("understanding", "")
-    check_findings = (
-        findings
-        if findings
-        else {sq: entry.get("finding") or {} for sq, entry in findings_board.items()}
-    )
-    _build_number_inventory_parts(check_findings)
 
     completeness_threshold = _get_completeness_threshold(state)
 
@@ -328,16 +301,17 @@ async def completeness_evaluator_node(
         coverage_pct, contradictions, successful_count, decision, emitter
     )
 
-    _emit_contradiction_events(contradictions, events)
+    _emit_contradiction_events(contradictions, events, ctx)
 
-    events.append(
+    ctx.emit_or_append(
         emit_completeness_assessment(
             coverage_pct=coverage_pct,
             gaps=gaps,
             conflicts=[str(c) for c in contradictions],
             decision=decision,
             threshold=int(completeness_threshold),
-        )
+        ),
+        events,
     )
 
     validation_notes = _build_validation_notes(numeric_issues, contradictions)
@@ -347,7 +321,9 @@ async def completeness_evaluator_node(
         else understanding
     )
 
-    events.append(emit_validation_complete(len(contradictions), len(numeric_issues)))
+    ctx.emit_or_append(
+        emit_validation_complete(len(contradictions), len(numeric_issues)), events
+    )
 
     if _should_route_to_supervisor(
         decision,

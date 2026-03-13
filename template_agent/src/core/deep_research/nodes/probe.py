@@ -42,9 +42,9 @@ async def probe_node(
 
     tool_names = ctx.get_tool_names()
     tool_inventory = ctx.format_tool_inventory()
-    events.append(emit_tool_discovery(len(ctx.tools), tool_names))
+    ctx.emit_or_append(emit_tool_discovery(len(ctx.tools), tool_names), events)
 
-    events.append(emit_probe_start())
+    ctx.emit_or_append(emit_probe_start(), events)
 
     probe_prompt = build_probe_prompt()
     probe_query = probe_prompt.format_messages(
@@ -76,7 +76,7 @@ async def probe_node(
         probe_result = f"Probe failed: {simplify_error_for_display(str(e))}"
         logger.warning("Tool discovery probe failed: %s", e)
 
-    events.append(emit_probe_complete(probe_result))
+    ctx.emit_or_append(emit_probe_complete(probe_result), events)
 
     return {
         "tool_inventory": tool_inventory,

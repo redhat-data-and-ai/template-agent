@@ -81,11 +81,9 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                     f"No checkpoints found for thread {thread_id} - this means no conversations have happened in this thread yet."
                 )
             else:
-                # DEBUG: Log structure of all checkpoints to understand how messages are stored
                 for i, checkpoint_tuple in enumerate(state_history):
-                    logger.info(f"=== CHECKPOINT {i} DEBUG ===")
-                    logger.info(
-                        f"Checkpoint keys: {list(checkpoint_tuple.checkpoint.keys()) if checkpoint_tuple.checkpoint else 'None'}"
+                    logger.debug(
+                        f"Checkpoint {i} keys: {list(checkpoint_tuple.checkpoint.keys()) if checkpoint_tuple.checkpoint else 'None'}"
                     )
 
                     if (
@@ -93,40 +91,26 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                         and "channel_values" in checkpoint_tuple.checkpoint
                     ):
                         channel_values = checkpoint_tuple.checkpoint["channel_values"]
-                        logger.info(
+                        logger.debug(
                             f"Channel values keys: {list(channel_values.keys())}"
                         )
 
                         if "messages" in channel_values:
                             messages = channel_values["messages"]
-                            logger.info(
+                            logger.debug(
                                 f"Messages count in checkpoint {i}: {len(messages)}"
                             )
-                            for j, msg in enumerate(messages):
-                                msg_type = (
-                                    getattr(msg, "type", "unknown")
-                                    if hasattr(msg, "type")
-                                    else type(msg).__name__
-                                )
-                                msg_content = (
-                                    getattr(msg, "content", str(msg)[:100])
-                                    if hasattr(msg, "content")
-                                    else str(msg)[:100]
-                                )
-                                logger.info(
-                                    f"  Message {j}: {msg_type} - {msg_content}"
-                                )
                         else:
-                            logger.info(
+                            logger.debug(
                                 f"No 'messages' key in channel_values for checkpoint {i}"
                             )
                     else:
-                        logger.info(f"No channel_values in checkpoint {i}")
+                        logger.debug(f"No channel_values in checkpoint {i}")
 
                 # Try the latest checkpoint first (our current approach)
                 latest_checkpoint = state_history[-1]
-                logger.info(
-                    f"=== PROCESSING LATEST CHECKPOINT (index {len(state_history) - 1}) ==="
+                logger.debug(
+                    f"Processing latest checkpoint (index {len(state_history) - 1})"
                 )
 
                 if (
@@ -136,16 +120,13 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                     channel_values = latest_checkpoint.checkpoint["channel_values"]
                     if "messages" in channel_values:
                         messages = channel_values["messages"]
-                        logger.info(
+                        logger.debug(
                             f"Found {len(messages)} messages in latest checkpoint"
                         )
                         for message in messages:
                             try:
                                 chat_message = langchain_to_chat_message(message)
                                 chat_messages.append(chat_message)
-                                logger.info(
-                                    f"Added message: {chat_message.type} - {chat_message.content[:50]}..."
-                                )
                             except Exception as e:
                                 logger.warning(
                                     f"Could not convert message to ChatMessage: {e}"
@@ -154,7 +135,7 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
 
                 # If latest checkpoint approach didn't work, try collecting from all checkpoints
                 if len(chat_messages) == 0:
-                    logger.info("=== FALLBACK: PROCESSING ALL CHECKPOINTS ===")
+                    logger.debug("Fallback: processing all checkpoints")
                     for i, checkpoint_tuple in enumerate(state_history):
                         if (
                             checkpoint_tuple.checkpoint
@@ -165,7 +146,7 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                             ]
                             if "messages" in channel_values:
                                 messages = channel_values["messages"]
-                                logger.info(
+                                logger.debug(
                                     f"Processing {len(messages)} messages from checkpoint {i}"
                                 )
                                 for message in messages:
@@ -224,49 +205,21 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
             latest_row = cur.fetchone()
 
             if latest_row:
-                logger.info(f"Found latest checkpoint for thread_id: {thread_id}")
+                logger.debug(f"Found latest checkpoint for thread_id: {thread_id}")
                 checkpoint_data, metadata = latest_row
 
-                # DEBUG: Log the structure of the latest checkpoint
-                logger.info("=== POSTGRESQL LATEST CHECKPOINT DEBUG ===")
-                logger.info(
-                    f"Checkpoint_data keys: {list(checkpoint_data.keys()) if checkpoint_data else 'None'}"
-                )
-                logger.info(
-                    f"Metadata keys: {list(metadata.keys()) if metadata else 'None'}"
-                )
-
-                # Try to get complete conversation from latest checkpoint
                 if checkpoint_data and "channel_values" in checkpoint_data:
                     channel_values = checkpoint_data["channel_values"]
-                    logger.info(f"Channel values keys: {list(channel_values.keys())}")
+                    logger.debug(f"Channel values keys: {list(channel_values.keys())}")
 
                     if "messages" in channel_values:
                         checkpoint_messages = channel_values["messages"]
-                        logger.info(
-                            f"Found {len(checkpoint_messages)} messages in latest checkpoint channel_values"
+                        logger.debug(
+                            f"Found {len(checkpoint_messages)} messages in latest checkpoint"
                         )
 
-                        # DEBUG: Log each message structure
-                        for i, msg in enumerate(checkpoint_messages):
-                            msg_type = (
-                                getattr(msg, "type", "unknown")
-                                if hasattr(msg, "type")
-                                else type(msg).__name__
-                            )
-                            msg_content = (
-                                getattr(msg, "content", str(msg)[:100])
-                                if hasattr(msg, "content")
-                                else str(msg)[:100]
-                            )
-                            logger.info(
-                                f"  PostgreSQL Message {i}: {msg_type} - {msg_content}"
-                            )
-
-                        # Extract metadata for tracking
                         run_id = metadata.get("run_id") if metadata else None
                         session_id = metadata.get("session_id") if metadata else None
-                        user_id = metadata.get("user_id") if metadata else None
 
                         # Convert LangChain messages directly (like in-memory version)
                         for message in checkpoint_messages:
@@ -289,19 +242,19 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                                 )
                                 continue
 
-                        logger.info(
+                        logger.debug(
                             f"Retrieved {len(chat_messages)} messages from latest checkpoint for thread_id: {thread_id}"
                         )
                         return ChatHistoryResponse(messages=chat_messages)
                     else:
-                        logger.info(
+                        logger.debug(
                             "No 'messages' key found in channel_values of latest checkpoint"
                         )
                 else:
-                    logger.info("No 'channel_values' found in latest checkpoint_data")
+                    logger.debug("No 'channel_values' found in latest checkpoint_data")
 
             # Fallback: If latest checkpoint doesn't have messages, process all checkpoints with writes
-            logger.info(
+            logger.debug(
                 "Latest checkpoint didn't contain messages, falling back to processing all checkpoints"
             )
             cur.execute(
@@ -310,7 +263,7 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
             )
             rows = cur.fetchall()
 
-            logger.info(f"Found {len(rows)} checkpoints for thread_id: {thread_id}")
+            logger.debug(f"Found {len(rows)} checkpoints for thread_id: {thread_id}")
 
             total_messages_found = 0
 
@@ -318,13 +271,11 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
             for row in rows:
                 checkpoint_data, metadata = row
 
-                # Extract run_id, thread_id, session_id from metadata for tracking
                 run_id = metadata.get("run_id") if metadata else None
                 session_id = metadata.get("session_id") if metadata else None
-                user_id = metadata.get("user_id") if metadata else None
 
-                logger.info(
-                    f"Processing checkpoint with run_id: {run_id}, session_id: {session_id}, user_id: {user_id}"
+                logger.debug(
+                    f"Processing checkpoint with run_id: {run_id}, session_id: {session_id}"
                 )
 
                 # Get messages from metadata.writes (original logic)
@@ -334,7 +285,7 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                 # Handle case where writes might be None
                 if writes is None:
                     writes = {}
-                    logger.info("Writes is None, using empty dict")
+                    logger.debug("Writes is None, using empty dict")
 
                 # Check for messages in different write locations
                 if "__start__" in writes and "messages" in writes["__start__"]:

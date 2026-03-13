@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +29,7 @@ from template_agent.src.routes.stream import router as stream_router
 from template_agent.src.routes.threads import router as threads_router
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
+from template_agent.utils.tracing import AgentTracer
 
 logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
@@ -91,6 +93,47 @@ class RequestLoggingMiddleware:
         await self.app(scope, receive, send_wrapper)
 
 
+_SKIP_TRACE_PATHS = frozenset({"/health", "/docs", "/openapi.json", "/redoc"})
+
+
+class RequestTracingMiddleware:
+    """Pure ASGI middleware that creates a Langfuse AgentTracer per request.
+
+    For non-health/docs paths, an ``AgentTracer`` is attached to
+    ``request.state.root_tracer`` so downstream handlers can record
+    spans and generations.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
+        path = request.url.path
+
+        if path in _SKIP_TRACE_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        trace_id = request.headers.get("X-Trace-ID") or str(uuid4())
+        root_tracer = AgentTracer(
+            name=f"{request.method} {path}",
+            trace_id=trace_id,
+            metadata={
+                "method": request.method,
+                "path": path,
+                "client_host": request.client.host if request.client else None,
+            },
+        )
+        request.state.root_tracer = root_tracer
+
+        await self.app(scope, receive, send)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Configure application lifespan.
@@ -128,6 +171,9 @@ app = FastAPI(lifespan=lifespan)
 
 # Register request logging middleware first to capture all requests
 app.add_middleware(RequestLoggingMiddleware)
+
+# Register tracing middleware to create per-request Langfuse traces
+app.add_middleware(RequestTracingMiddleware)
 
 # Configure CORS middleware for cross-origin requests
 app.add_middleware(
@@ -179,7 +225,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
 @app.exception_handler(AppException)
 async def app_exception_handler(request: Request, exc: AppException):
     """App exception handler for unhandled exceptions."""
-    logger.warn(
+    logger.warning(
         f"App exception occurred for request_method={request.method}, request_path={request.url.path}, error={exc}"
     )
     logger.debug(f"App exception occurred for request={request}, error={exc}")

@@ -1,14 +1,19 @@
-"""Token usage tracking and LLM invocation utilities.
+"""Token usage tracking, LLM invocation utilities, and Langfuse tracing.
 
-Provides thread-safe token tracking, cost estimation, and a convenience
-wrapper for invoking LLMs with automatic usage recording.
+Provides thread-safe token tracking, cost estimation, a convenience
+wrapper for invoking LLMs with automatic usage recording, and centralized
+Langfuse tracing infrastructure (client, AgentTracer, StreamTracer).
 """
 
 import asyncio
 import logging
+import time as _time
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Dict, Optional
+from uuid import uuid4
+
+from template_agent.src.settings import settings
 
 _MODEL_PRICING: Dict[str, Dict[str, float]] = {
     "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
@@ -21,6 +26,178 @@ DEFAULT_INPUT_COST_PER_MILLION = 1.25
 DEFAULT_OUTPUT_COST_PER_MILLION = 10.0
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Langfuse client & handler initialization (guarded by credentials check)
+# ---------------------------------------------------------------------------
+
+client = None
+langfuse_handler = None
+
+_has_credentials = bool(
+    settings.LANGFUSE_PUBLIC_KEY
+    and settings.LANGFUSE_SECRET_KEY
+    and settings.LANGFUSE_BASE_URL
+)
+
+if _has_credentials:
+    try:
+        from langfuse import Langfuse
+        from langfuse.callback import CallbackHandler
+
+        client = Langfuse(
+            public_key=settings.LANGFUSE_PUBLIC_KEY,
+            secret_key=settings.LANGFUSE_SECRET_KEY,
+            host=settings.LANGFUSE_BASE_URL,
+            environment=settings.LANGFUSE_TRACING_ENVIRONMENT,
+        )
+        langfuse_handler = CallbackHandler(
+            trace_name="template-agent",
+            environment=settings.LANGFUSE_TRACING_ENVIRONMENT,
+            public_key=settings.LANGFUSE_PUBLIC_KEY,
+            secret_key=settings.LANGFUSE_SECRET_KEY,
+            host=settings.LANGFUSE_BASE_URL,
+        )
+    except Exception as exc:
+        logger.warning("Failed to initialize Langfuse: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# AgentTracer -- wraps a Langfuse trace for per-request tracing
+# ---------------------------------------------------------------------------
+
+
+class AgentTracer:
+    """Per-request wrapper around a Langfuse trace.
+
+    Provides convenience helpers for creating child spans, generations,
+    events, and scores. All methods are safe to call even when Langfuse
+    is not configured -- they simply no-op.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        trace_id: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self._trace = None
+        if client is not None:
+            self._trace = client.trace(
+                id=trace_id or str(uuid4()),
+                name=name,
+                **kwargs,
+            )
+
+    def update(self, **kwargs: Any) -> None:
+        if self._trace:
+            self._trace.update(**kwargs)
+
+    def span(self, name: str, **kwargs: Any) -> Any:
+        if self._trace:
+            return self._trace.span(name=name, **kwargs)
+        return None
+
+    def event(self, name: str, **kwargs: Any) -> None:
+        if self._trace:
+            self._trace.event(name=name, **kwargs)
+
+    def generation(self, name: str, **kwargs: Any) -> Any:
+        if self._trace:
+            return self._trace.generation(name=name, **kwargs)
+        return None
+
+    def score(self, name: str, value: float, **kwargs: Any) -> None:
+        if self._trace:
+            self._trace.score(name=name, value=value, **kwargs)
+
+    @property
+    def trace_id(self) -> str | None:
+        return self._trace.id if self._trace else None
+
+
+# ---------------------------------------------------------------------------
+# StreamTracer -- child span that tracks a streaming response lifecycle
+# ---------------------------------------------------------------------------
+
+
+class StreamTracer:
+    """Tracks a streaming response as a child span under a parent tracer."""
+
+    def __init__(
+        self,
+        parent_tracer: AgentTracer | None = None,
+        name: str = "stream",
+    ) -> None:
+        self._span = None
+        self._parent = parent_tracer
+        self._message_count = 0
+        if parent_tracer:
+            self._span = parent_tracer.span(name=name)
+
+    def track_message(self, content: str, role: str = "assistant") -> None:
+        self._message_count += 1
+        if self._span and role == "assistant" and content:
+            self._span.event(name="stream_message", output=content)
+
+    def track_tokens(self, input_tokens: int = 0, output_tokens: int = 0) -> None:
+        if self._span:
+            self._span.update(
+                metadata={
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                }
+            )
+
+    def track_error(self, error: Exception) -> None:
+        if self._span:
+            self._span.update(level="ERROR", status_message=str(error))
+
+    def end_stream(self, duration_ms: float | None = None) -> None:
+        if self._span:
+            metadata: Dict[str, Any] = {"message_count": self._message_count}
+            if duration_ms is not None:
+                metadata["duration_ms"] = round(duration_ms, 2)
+            self._span.end(metadata=metadata)
+
+
+# ---------------------------------------------------------------------------
+# _record_langfuse_generation -- records a single LLM call as a generation
+# ---------------------------------------------------------------------------
+
+
+def _record_langfuse_generation(
+    root_tracer: Any,
+    response: Any,
+    phase: str,
+    model: Any,
+    start_time: float,
+) -> None:
+    """Record an LLM call as a Langfuse generation under *root_tracer*."""
+    if root_tracer is None:
+        return
+    try:
+        model_name = (
+            getattr(model, "model_name", None)
+            or getattr(model, "model", None)
+            or "unknown"
+        )
+        input_tokens, output_tokens = extract_usage_from_response(response)
+        duration_ms = (_time.time() - start_time) * 1000
+
+        gen = root_tracer.generation(
+            name=f"llm.{phase}",
+            model=str(model_name),
+            usage={"input": input_tokens, "output": output_tokens},
+            metadata={
+                "phase": phase,
+                "duration_ms": round(duration_ms, 2),
+            },
+        )
+        if gen is not None:
+            gen.end()
+    except Exception as exc:
+        logger.debug("Failed to record Langfuse generation: %s", exc)
 
 
 @dataclass
@@ -169,6 +346,29 @@ class TokenUsageTracker:
         except Exception as e:
             logger.warning("Failed to persist token usage: %s", e)
 
+    def flush_to_langfuse(self, root_tracer: Any) -> None:
+        """Update the root trace with token totals and per-phase cost scores."""
+        if root_tracer is None:
+            return
+        try:
+            total = self.get_total()
+            root_tracer.update(
+                metadata={
+                    "total_input_tokens": total.input_tokens,
+                    "total_output_tokens": total.output_tokens,
+                    "total_tokens": total.total_tokens,
+                    "llm_calls": total.llm_calls,
+                    "estimated_cost_usd": round(total.estimated_cost_usd, 6),
+                }
+            )
+            for phase_name, usage in self.get_per_phase().items():
+                root_tracer.score(
+                    name=f"cost.{phase_name}",
+                    value=round(usage.estimated_cost_usd, 6),
+                )
+        except Exception as e:
+            logger.warning("Failed to flush token usage to Langfuse: %s", e)
+
 
 def extract_usage_from_response(response: Any) -> tuple[int, int]:
     """Extract input and output token counts from an LLM response.
@@ -217,12 +417,14 @@ async def tracked_invoke(
     llm_semaphore: Optional[asyncio.Semaphore] = None,
     timeout: Optional[float] = None,
     callbacks: Optional[list] = None,
+    root_tracer: Any = None,
     **kwargs: Any,
 ) -> Any:
     """Invoke an LLM and track token usage.
 
     Convenience wrapper that calls the model and automatically records
-    token usage. Supports per-call timeouts and concurrency limiting.
+    token usage. Supports per-call timeouts, concurrency limiting, and
+    Langfuse generation recording via *root_tracer*.
 
     Args:
         model: The language model to invoke.
@@ -231,7 +433,8 @@ async def tracked_invoke(
         phase: The pipeline phase name for tracking.
         timeout_seconds: Per-call timeout in seconds.
         llm_semaphore: Optional semaphore to limit concurrent LLM calls.
-        callbacks: Optional list of LangChain callbacks (e.g. Langfuse handler).
+        callbacks: Optional list of LangChain callbacks.
+        root_tracer: Optional AgentTracer for Langfuse generation recording.
 
     Returns:
         The model response.
@@ -245,6 +448,8 @@ async def tracked_invoke(
 
     if not messages:
         raise ValueError(f"Cannot invoke LLM with empty messages in phase '{phase}'.")
+
+    start_time = _time.time()
 
     invoke_kwargs: Dict[str, Any] = {}
     if callbacks:
@@ -266,5 +471,7 @@ async def tracked_invoke(
         input_tokens, output_tokens = extract_usage_from_response(response)
         if input_tokens > 0 or output_tokens > 0:
             tracker.track(phase, input_tokens, output_tokens)
+
+    _record_langfuse_generation(root_tracer, response, phase, model, start_time)
 
     return response

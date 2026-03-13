@@ -14,6 +14,7 @@ import hashlib
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
+from template_agent.src.core.deep_research.utils import get_setting as _get_setting
 from template_agent.utils.pylogger import get_python_logger
 
 if TYPE_CHECKING:
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
 
 logger = get_python_logger()
 
-# Defaults when settings are not available
 _MAX_PLANS = 500
 _MAX_THREAD_OWNERS = 10_000
 
@@ -31,16 +31,6 @@ _PLAN_ENRICHMENT: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _PLAN_CONTEXT: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _THREAD_OWNERS: OrderedDict[str, str] = OrderedDict()
 _LOCKS: dict[int, asyncio.Lock] = {}
-
-
-def _get_setting(name: str, default: Any) -> Any:
-    """Get setting with fallback to default."""
-    try:
-        from template_agent.src.settings import settings
-
-        return getattr(settings, name, default)
-    except Exception:
-        return default
 
 
 def _get_lock() -> asyncio.Lock:

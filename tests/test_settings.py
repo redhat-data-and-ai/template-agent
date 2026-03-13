@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from template_agent.src.settings import Settings, validate_config
 from template_agent.src.core.exceptions.exceptions import AppException
+from template_agent.src.settings import Settings, validate_config
 
 
 class TestSettings:

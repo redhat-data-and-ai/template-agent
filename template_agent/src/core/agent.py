@@ -161,27 +161,23 @@ async def get_template_agent(
             )
 
     # Initialize the language model
-    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3)
+    model = ChatGoogleGenerativeAI(model=settings.DEFAULT_AGENT_MODEL, temperature=0.3)
 
     if not enable_checkpointing:
-        # Create agent without checkpointing for streaming-only operations
         logger.info(
             "Creating agent without checkpointing for streaming-only operations"
         )
-        agent_redhat = create_react_agent(
+        agent = create_react_agent(
             model=model,
             prompt=get_system_prompt(),
             tools=tools,
-            # No checkpointer or store - streaming only, no persistence
         )
         logger.info("Template agent initialized successfully without checkpointing")
-        yield agent_redhat
+        yield agent
     elif settings.USE_INMEMORY_SAVER:
-        # Use single global checkpoint for local development
         logger.info("Using single global checkpoint for local development")
-        # Use single checkpoint instance for both checkpointer and store
         checkpoint = get_global_checkpoint()
-        agent_redhat = create_react_agent(
+        agent = create_react_agent(
             model=model,
             prompt=get_system_prompt(),
             tools=tools,
@@ -191,19 +187,16 @@ async def get_template_agent(
         logger.info(
             "Template agent initialized successfully with single global checkpoint"
         )
-        yield agent_redhat
+        yield agent
     else:
-        # Use PostgreSQL storage for production
         logger.info("Using PostgreSQL checkpoint for production")
         async with AsyncPostgresSaver.from_conn_string(
             settings.database_uri
         ) as checkpoint:
-            # Setup database connection once
             if hasattr(checkpoint, "setup"):
                 await checkpoint.setup()
 
-            # Create the agent with single checkpoint instance for both checkpointer and store
-            agent_redhat = create_react_agent(
+            agent = create_react_agent(
                 model=model,
                 prompt=get_system_prompt(),
                 tools=tools,
@@ -214,4 +207,4 @@ async def get_template_agent(
             logger.info(
                 "Template agent initialized successfully with PostgreSQL checkpoint"
             )
-            yield agent_redhat
+            yield agent
