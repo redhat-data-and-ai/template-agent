@@ -121,6 +121,85 @@ class Settings(BaseSettings):
         },
     )
 
+    # Deep Research Configuration
+    DEEP_RESEARCH_ENABLED: bool = Field(
+        default=True,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_ENABLED",
+            "description": "Enable deep research pipeline",
+        },
+    )
+    DEEP_RESEARCH_DEFAULT_MODEL: str = Field(
+        default="gemini-2.5-flash",
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_DEFAULT_MODEL",
+            "description": "Default model for deep research LLM calls",
+        },
+    )
+    DEEP_RESEARCH_MAX_SUBQUERIES: int = Field(
+        default=10,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_MAX_SUBQUERIES",
+            "description": "Default maximum number of research subqueries",
+        },
+    )
+    DEEP_RESEARCH_MAX_TOOLS: int = Field(
+        default=50,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_MAX_TOOLS",
+            "description": "Maximum tools to include in prompts",
+        },
+    )
+    DEEP_RESEARCH_LLM_CALL_TIMEOUT_SECONDS: int = Field(
+        default=120,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_LLM_CALL_TIMEOUT_SECONDS",
+            "description": "Timeout for individual LLM calls in deep research",
+        },
+    )
+    DEEP_RESEARCH_REQUIRE_PLAN_APPROVAL: bool = Field(
+        default=True,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_REQUIRE_PLAN_APPROVAL",
+            "description": "Require user approval before executing research plan",
+        },
+    )
+    DEEP_RESEARCH_ENABLE_VISUALIZATION: bool = Field(
+        default=True,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_ENABLE_VISUALIZATION",
+            "description": "Enable visualization node in deep research pipeline",
+        },
+    )
+    DEEP_RESEARCH_MAX_SESSION_SECONDS: int = Field(
+        default=600,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_MAX_SESSION_SECONDS",
+            "description": "Maximum session duration for deep research",
+        },
+    )
+    DEEP_RESEARCH_LLM_CONCURRENCY: int = Field(
+        default=5,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_LLM_CONCURRENCY",
+            "description": "Maximum concurrent LLM calls in deep research",
+        },
+    )
+    LLM_INPUT_COST_PER_MILLION: float = Field(
+        default=1.25,
+        json_schema_extra={
+            "env": "LLM_INPUT_COST_PER_MILLION",
+            "description": "Cost per 1M input tokens in USD",
+        },
+    )
+    LLM_OUTPUT_COST_PER_MILLION: float = Field(
+        default=10.0,
+        json_schema_extra={
+            "env": "LLM_OUTPUT_COST_PER_MILLION",
+            "description": "Cost per 1M output tokens in USD",
+        },
+    )
+
     # Request Logging Configuration
     REQUEST_LOGGING_ENABLED: bool = Field(
         default=True,

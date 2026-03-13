@@ -45,7 +45,8 @@ class AgentManager:
 
     This class provides a simplified interface for agent interactions while
     preserving all enterprise features like authentication, tracing, and
-    error handling from the original implementation.
+    error handling from the original implementation. Supports both standard
+    agent mode and deep research mode.
     """
 
     def __init__(self, redhat_sso_token: str | None = None):
@@ -56,15 +57,176 @@ class AgentManager:
         """
         self.redhat_sso_token = redhat_sso_token
         self._agent: Pregel | None = None
-        self._current_tool_call_id: str | None = None  # Track current active tool call
+        self._current_tool_call_id: str | None = None
+
+    def _should_use_deep_research(self, request: StreamRequest) -> bool:
+        """Determine whether to route to deep research pipeline."""
+        if not settings.DEEP_RESEARCH_ENABLED:
+            return False
+        if getattr(request, "deep_research_enabled", False):
+            return True
+        if getattr(request, "deep_research_resume", False):
+            return True
+        return False
+
+    async def _stream_deep_research(
+        self, request: StreamRequest
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream deep research by reading _pending_events from graph updates."""
+        thread_id = request.thread_id or str(uuid4())
+        run_id = str(uuid4())
+        session_id = request.session_id or thread_id
+        effective_user_id = request.user_id or "anonymous"
+
+        if settings.USE_INMEMORY_SAVER:
+            register_thread(effective_user_id, thread_id)
+
+        try:
+            from template_agent.src.core.deep_research.streaming import (
+                create_initial_state,
+                get_deep_research_agent,
+            )
+            from template_agent.utils.tracing import TokenUsageTracker
+
+            model_name = (
+                getattr(request, "deep_research_model", None)
+                or settings.DEEP_RESEARCH_DEFAULT_MODEL
+            )
+            max_mode = getattr(request, "deep_research_max_mode", False)
+            max_subqueries = getattr(request, "deep_research_max_subqueries", None)
+            token_tracker = TokenUsageTracker(model_name=model_name or "")
+
+            require_approval = getattr(
+                request, "deep_research_require_plan_approval", False
+            )
+            plan_approved = not require_approval
+            user_plan = getattr(request, "deep_research_plan", None)
+
+            async with get_deep_research_agent(
+                model_name=model_name,
+                user_id=request.user_id,
+                max_subqueries_override=max_subqueries,
+                max_mode=max_mode,
+                token_tracker=token_tracker,
+                root_tracer=langfuse_handler,
+            ) as dr_agent:
+                graph = dr_agent.graph
+                ctx = dr_agent.ctx
+
+                cached_findings_text = ""
+                try:
+                    from template_agent.src.core.deep_research.nodes._cache import (
+                        format_cached_findings_for_prompt,
+                        load_findings_in_memory,
+                    )
+
+                    cached = load_findings_in_memory(thread_id)
+                    if cached:
+                        cached_findings_text = format_cached_findings_for_prompt(cached)
+                        app_logger.info(
+                            "Loaded %d cached findings for thread %s",
+                            len(cached),
+                            thread_id,
+                        )
+                except Exception as e:
+                    app_logger.warning("Failed to load cached findings: %s", e)
+
+                initial = await create_initial_state(
+                    query=request.message,
+                    thread_id=thread_id,
+                    plan_override=user_plan if isinstance(user_plan, list) else None,
+                    plan_approved=plan_approved,
+                    user_id=request.user_id,
+                    cached_findings_text=cached_findings_text,
+                )
+
+                langfuse_config = {
+                    "callbacks": [langfuse_handler],
+                    "run_id": run_id,
+                    "recursion_limit": 100,
+                    "configurable": {
+                        "thread_id": thread_id,
+                        "langfuse_session_id": session_id,
+                    },
+                }
+
+                async for stream_event in graph.astream(
+                    initial,
+                    stream_mode=["updates"],
+                    config=langfuse_config,
+                ):
+                    if not isinstance(stream_event, tuple):
+                        continue
+
+                    stream_mode_name, event = stream_event
+
+                    if stream_mode_name == "updates":
+                        for _node_name, updates in event.items():
+                            if not updates:
+                                continue
+
+                            pending = updates.get("_pending_events", [])
+                            for evt in pending:
+                                yield evt
+
+                            final_answer = updates.get("final_answer")
+                            if final_answer:
+                                yield {
+                                    "type": "message",
+                                    "content": {
+                                        "type": "ai",
+                                        "content": final_answer,
+                                        "run_id": run_id,
+                                        "thread_id": thread_id,
+                                        "session_id": session_id,
+                                    },
+                                }
+
+                if ctx.token_tracker:
+                    total = ctx.token_tracker.get_total()
+                    if total.llm_calls > 0:
+                        from template_agent.src.core.deep_research.events import (
+                            emit_token_usage_update,
+                        )
+
+                        yield emit_token_usage_update(
+                            input_tokens=total.input_tokens,
+                            output_tokens=total.output_tokens,
+                            total_tokens=total.total_tokens,
+                            llm_calls=total.llm_calls,
+                            estimated_cost_usd=total.estimated_cost_usd,
+                        )
+
+            app_logger.info(f"Deep research completed for thread {thread_id}")
+
+        except ImportError as e:
+            app_logger.error(f"Deep research module not available: {e}")
+            yield {
+                "type": "error",
+                "content": {
+                    "message": f"Deep research not available: {e}",
+                    "recoverable": False,
+                    "error_type": "import_error",
+                },
+            }
+        except Exception as e:
+            app_logger.error(f"Deep research error: {e}", exc_info=True)
+            yield {
+                "type": "error",
+                "content": {
+                    "message": "Deep research encountered an error",
+                    "recoverable": False,
+                    "error_type": "deep_research_error",
+                },
+            }
 
     async def stream_response(
         self, request: StreamRequest
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Stream agent response with simplified event structure.
 
-        This method provides streaming functionality while ensuring that conversation
-        state is saved only once at the end, not during intermediate streaming.
+        Routes to deep research pipeline when enabled, otherwise uses
+        standard agent mode.
 
         Args:
             request: The streaming request containing user input and configuration.
@@ -72,8 +234,12 @@ class AgentManager:
         Yields:
             Simplified event dictionaries with 'type' and 'content' fields.
         """
-        # Use persistent agent for both streaming and state persistence
-        # This ensures LangGraph handles state management automatically
+        if self._should_use_deep_research(request):
+            async for event in self._stream_deep_research(request):
+                yield event
+            return
+
+        # Standard agent mode
         async with get_template_agent(
             self.redhat_sso_token, enable_checkpointing=True
         ) as persistent_agent:

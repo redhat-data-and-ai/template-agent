@@ -43,12 +43,58 @@ class StreamRequest(UserInput):
     """User input model for streaming agent responses.
 
     Extends UserInput with streaming-specific configuration options
-    for real-time response generation.
+    for real-time response generation and optional deep research mode.
     """
 
     stream_tokens: bool = Field(
         description="Whether to stream LLM tokens to the client in real-time.",
         default=True,
+    )
+
+    # Deep Research Fields
+    deep_research_enabled: bool = Field(
+        description="Enable deep research mode for multi-step analysis.",
+        default=False,
+    )
+    deep_research_plan: list[str] | None = Field(
+        description="Pre-defined research plan (list of subqueries).",
+        default=None,
+    )
+    deep_research_plan_approved: bool | None = Field(
+        description="Whether the user has approved the research plan.",
+        default=None,
+    )
+    deep_research_require_plan_approval: bool = Field(
+        description="Whether to require user approval before executing the plan.",
+        default=True,
+    )
+    deep_research_resume: bool = Field(
+        description="Whether to resume a previously paused deep research session.",
+        default=False,
+    )
+    deep_research_model: str | None = Field(
+        description="Model to use for deep research (e.g., 'gemini-2.5-pro').",
+        default=None,
+    )
+    deep_research_max_mode: bool = Field(
+        description="Enable max mode for comprehensive research.",
+        default=False,
+    )
+    deep_research_max_subqueries: int | None = Field(
+        description="Override maximum number of research subqueries.",
+        default=None,
+    )
+    deep_research_max_supervisor_rounds: int | None = Field(
+        description="Override maximum supervisor rounds.",
+        default=None,
+    )
+    deep_research_max_review_iterations: int | None = Field(
+        description="Override maximum review iterations.",
+        default=None,
+    )
+    deep_research_pre_plan_elapsed_seconds: float | None = Field(
+        description="Pre-plan computation time (for fair timing after human wait).",
+        default=None,
     )
 
 
@@ -165,3 +211,19 @@ class ChatHistoryResponse(BaseModel):
     """
 
     messages: list[ChatMessage]
+
+
+class DeepResearchPlanRequest(BaseModel):
+    """Request model for saving/updating a deep research plan."""
+
+    thread_id: str = Field(description="Thread ID for the research session.")
+    plan: list[str] = Field(description="List of research subqueries.")
+    user_id: str | None = Field(default=None, description="User ID for ownership.")
+
+
+class DeepResearchPlanResponse(BaseModel):
+    """Response model for deep research plan operations."""
+
+    status: Literal["success"] = "success"
+    thread_id: str
+    plan_count: int

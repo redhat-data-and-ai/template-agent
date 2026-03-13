@@ -8,15 +8,19 @@ management for the template agent service.
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Callable
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from template_agent.src.core.agent import initialize_database
+from template_agent.src.core.deep_research.cancel import get_cancel_store
 from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+from template_agent.src.routes.deep_research_plan import (
+    router as deep_research_plan_router,
+)
 from template_agent.src.routes.feedback import router as feedback_router
 from template_agent.src.routes.health import router as health_router
 from template_agent.src.routes.history import router as history_router
@@ -28,18 +32,25 @@ from template_agent.utils.pylogger import get_python_logger
 logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware to log all incoming requests and outgoing responses."""
+class RequestLoggingMiddleware:
+    """Pure ASGI middleware for request/response logging.
 
-    async def dispatch(self, request: Request, call_next: Callable):
-        """Process and log incoming requests and outgoing responses."""
-        if not settings.REQUEST_LOGGING_ENABLED:
-            return await call_next(request)
+    Unlike BaseHTTPMiddleware, this does NOT buffer streaming response bodies,
+    allowing SSE and other streaming responses to flow through uninterrupted.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not settings.REQUEST_LOGGING_ENABLED:
+            await self.app(scope, receive, send)
+            return
 
         start_time = time.time()
+        request = Request(scope)
 
-        # Capture request details
-        request_data = {
+        request_data: dict[str, Any] = {
             "method": request.method,
             "path": request.url.path,
             "client_ip": request.client.host if request.client else None,
@@ -47,60 +58,37 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             if request.query_params
             else None,
         }
-
-        # Optionally log headers
         if settings.REQUEST_LOG_HEADERS:
             request_data["headers"] = dict(request.headers)
 
-        # Optionally log request body
-        if settings.REQUEST_LOG_BODY:
-            try:
-                body_bytes = await request.body()
-                body_size = len(body_bytes)
-
-                if body_size > 0:
-                    request_data["body_size"] = body_size
-                    if (
-                        settings.REQUEST_LOG_BODY_MAX_SIZE == 0
-                        or body_size <= settings.REQUEST_LOG_BODY_MAX_SIZE
-                    ):
-                        try:
-                            body_str = body_bytes.decode("utf-8")
-                            request_data["body"] = body_str
-                        except UnicodeDecodeError:
-                            request_data["body"] = "<binary data>"
-                    else:
-                        request_data["body"] = f"<truncated: {body_size} bytes>"
-
-                # Rebuild request with body
-                async def receive():
-                    return {"type": "http.request", "body": body_bytes}
-
-                request = Request(request.scope, receive)
-            except Exception as e:
-                logger.warning("Failed to read request body", error=str(e))
-
         logger.info("incoming_request", **request_data)
 
-        # Process request
-        response = await call_next(request)
+        response_status: int | None = None
 
-        # Capture response details
-        duration_ms = (time.time() - start_time) * 1000
-        response_data = {
-            "method": request.method,
-            "path": request.url.path,
-            "status_code": response.status_code,
-            "duration_ms": round(duration_ms, 2),
-        }
+        async def send_wrapper(message: Message) -> None:
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = message["status"]
+                duration_ms = (time.time() - start_time) * 1000
+                response_data: dict[str, Any] = {
+                    "method": request_data["method"],
+                    "path": request_data["path"],
+                    "status_code": response_status,
+                    "duration_ms": round(duration_ms, 2),
+                }
+                if settings.REQUEST_LOG_HEADERS:
+                    headers = dict(
+                        (
+                            k.decode() if isinstance(k, bytes) else k,
+                            v.decode() if isinstance(v, bytes) else v,
+                        )
+                        for k, v in message.get("headers", [])
+                    )
+                    response_data["headers"] = headers
+                logger.info("outgoing_response", **response_data)
+            await send(message)
 
-        # Optionally log response headers
-        if settings.REQUEST_LOG_HEADERS:
-            response_data["headers"] = dict(response.headers)
-
-        logger.info("outgoing_response", **response_data)
-
-        return response
+        await self.app(scope, receive, send_wrapper)
 
 
 @asynccontextmanager
@@ -159,6 +147,16 @@ app.include_router(stream_router)
 app.include_router(feedback_router)
 app.include_router(history_router)
 app.include_router(threads_router)
+app.include_router(deep_research_plan_router)
+
+
+@app.delete("/v1/cancel/{thread_id}")
+async def cancel_deep_research(thread_id: str):
+    """Cancel an in-progress deep research run."""
+    store = get_cancel_store()
+    await store.request_cancel(thread_id)
+    logger.info(f"Cancel requested for thread_id={thread_id}")
+    return {"status": "cancelled", "thread_id": thread_id}
 
 
 @app.exception_handler(Exception)

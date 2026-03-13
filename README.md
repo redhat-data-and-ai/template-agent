@@ -5,30 +5,32 @@
 [![Coverage](https://codecov.io/gh/redhat-data-and-ai/template-agent/branch/main/graph/badge.svg)](https://codecov.io/gh/redhat-data-and-ai/template-mcp-server)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-A production-ready template for building AI agents with streaming capabilities, conversation management, and enterprise-grade features.
+A production-ready template for building AI agents with streaming capabilities, conversation management, and enterprise-grade features. Includes a generic **Deep Research** pipeline for multi-phase, multi-agent research with parallel workers, triage-based follow-up optimization, and Langfuse tracing.
 
-## 🌟 Features
+## Features
 
 - **Simplified Streaming API**: Clean, consistent event format for easy client integration
 - **Real-time Streaming**: Server-Sent Events (SSE) with token and message streaming
-- **Multiple Client Examples**: TypeScript, Python async, and Streamlit demo applications
+- **Deep Research Mode**: Multi-phase research pipeline with planning, parallel worker execution, multi-persona review, and synthesis -- toggle on/off per request
+- **Follow-up Optimization**: Triage node detects when cached findings can answer a follow-up query, skipping full research via a fast context-answer path
+- **Multiple Client Examples**: Python async and Streamlit demo applications with deep research support
 - **Conversation Management**: Multi-turn conversations with thread persistence
-- **Enterprise Integration**: Langfuse tracing, PostgreSQL checkpointing, SSO support
+- **Enterprise Integration**: Langfuse tracing (graph-level and worker-level), PostgreSQL checkpointing, SSO support
 - **Modular Architecture**: AgentManager abstraction with clean separation of concerns
-- **Production Ready**: Health checks, error handling, and comprehensive logging
-- **Google AI Integration**: Built-in support for Google Generative AI models
+- **Production Ready**: Health checks, error handling, cancellation support, and comprehensive logging
+- **Google AI Integration**: Built-in support for Google Generative AI models (Gemini 2.5 Flash / Pro)
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 graph TB
-    subgraph "Client"
+    subgraph clients [Clients]
         UI[Web UI]
         API[API Client]
     end
 
-    subgraph "Template Agent"
-        subgraph "API Layer"
+    subgraph agent [Template Agent]
+        subgraph apiLayer [API Layer]
             Health[Health Check]
             Stream[Stream Chat]
             History[Chat History]
@@ -36,50 +38,72 @@ graph TB
             Feedback[Feedback]
         end
 
-        subgraph "Core Layer"
+        subgraph coreLayer [Core Layer]
             Agent[Agent Engine]
+            Manager[AgentManager]
             Utils[Message Utils]
             Prompt[Prompt Management]
         end
 
-        subgraph "Data Layer"
+        subgraph deepResearch [Deep Research Pipeline]
+            Router[Router]
+            Complexity[Assess Complexity]
+            Triage[Triage]
+            ContextAnswer[Context Answer]
+            Probe[Probe]
+            Plan[Plan]
+            Supervisor[Supervisor]
+            Completeness[Completeness]
+            Synthesize[Synthesize]
+            Visualize[Visualize]
+            Review[Review]
+            Complete[Complete]
+        end
+
+        subgraph dataLayer [Data Layer]
             DB[(PostgreSQL)]
             Langfuse[Langfuse]
         end
-
-        subgraph "External Services"
-            Google[Google AI]
-            SSO[SSO Auth]
-        end
     end
 
-    UI --> Health
+    subgraph external [External Services]
+        Google[Google AI]
+        MCP[MCP Server]
+        SSO[SSO Auth]
+    end
+
     UI --> Stream
-    UI --> History
-    UI --> Threads
-    UI --> Feedback
-
-    API --> Health
+    UI --> Health
     API --> Stream
-    API --> History
-    API --> Threads
-    API --> Feedback
+    API --> Health
 
-    Stream --> Agent
-    Agent --> Utils
-    Agent --> Prompt
+    Stream --> Manager
+    Manager --> Agent
+    Manager --> Router
+
+    Router --> Complexity
+    Complexity --> Triage
+    Triage -->|context_sufficient| ContextAnswer
+    Triage -->|full_research| Probe
+    ContextAnswer --> Review
+    Probe --> Plan
+    Plan --> Supervisor
+    Supervisor --> Completeness
+    Completeness --> Synthesize
+    Synthesize --> Visualize
+    Visualize --> Review
+    Review --> Complete
+
+    Supervisor --> MCP
+    Agent --> MCP
     Agent --> Google
-
-    History --> DB
-    Threads --> DB
-    Agent --> DB
+    Supervisor --> Google
     Agent --> Langfuse
-    Feedback --> Langfuse
+    Manager --> Langfuse
+    Agent --> DB
 ```
 
-## 📡 Simplified Streaming API
-
-The Template Agent now features a simplified streaming API that makes client integration easier while preserving all enterprise features:
+## Streaming API
 
 ### Single Streaming Endpoint
 
@@ -89,7 +113,7 @@ Content-Type: application/json
 Accept: text/event-stream
 ```
 
-### Request Format
+### Standard Request
 
 ```json
 {
@@ -101,13 +125,38 @@ Accept: text/event-stream
 }
 ```
 
-### Response Format
+### Deep Research Request
 
 ```json
-{"type": "message", "content": {"type": "ai", "content": "", "tool_calls": [...]}}
+{
+  "message": "Tell me about Red Hat",
+  "thread_id": "thread-123",
+  "session_id": "session-123",
+  "user_id": "user-456",
+  "deep_research_enabled": true,
+  "deep_research_require_plan_approval": false,
+  "deep_research_model": "gemini-2.5-flash",
+  "deep_research_max_subqueries": 10,
+  "deep_research_max_mode": false
+}
+```
+
+### Response Events
+
+**Standard mode:**
+```
 {"type": "token", "content": "Hello"}
 {"type": "token", "content": " world"}
 {"type": "message", "content": {"type": "ai", "content": "Hello world"}}
+[DONE]
+```
+
+**Deep research mode:**
+```
+{"type": "deep_research_status", "content": {"stage": "started", "event_type": "started", "display_text": "Starting deep research analysis...", "ui_visible": true, "details": {}}}
+{"type": "deep_research_status", "content": {"stage": "agent_conversation", "event_type": "subquery_complete", "display_text": "Worker 1/7: ...", "ui_visible": true, "details": {...}}}
+{"type": "deep_research_status", "content": {"stage": "completed", "event_type": "final_answer", "display_text": "Answer: ...", "ui_visible": true, "details": {"final_answer": "..."}}}
+{"type": "message", "content": {"type": "ai", "content": "# Research Report\n..."}}
 [DONE]
 ```
 
@@ -115,18 +164,19 @@ Accept: text/event-stream
 
 Ready-to-use client examples are available in the [`examples/`](./examples/) directory:
 
-- **[Streamlit Demo App](./examples/streamlit_app.py)** - Interactive chat application
-- **[Python Async Client](./examples/client_python.py)** - Server-to-server integration
+- **[Streamlit Demo App](./examples/streamlit_app.py)** - Interactive chat with deep research support
+- **[Python Async Client](./examples/client_python.py)** - Server-to-server integration with deep research
 
 See the [examples README](./examples/README.md) for detailed usage instructions.
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
 - Python 3.12+
-- PostgreSQL database
 - Google AI API credentials
+- Template MCP Server running (for tool access)
+- PostgreSQL database (optional -- in-memory mode available)
 - Langfuse account (optional)
 
 ### Installation
@@ -141,7 +191,6 @@ See the [examples README](./examples/README.md) for detailed usage instructions.
    ```bash
    uv venv
    source .venv/bin/activate
-
    ```
 
 3. **Install dependencies**
@@ -157,29 +206,27 @@ See the [examples README](./examples/README.md) for detailed usage instructions.
 
 5. **Run template-mcp-server** following https://github.com/redhat-data-and-ai/template-mcp-server
 
-
 6. **Run the application**
    ```bash
    uv run python -m template_agent.src.main
    ```
 
-
-## 📚 API Reference
+## API Reference
 
 ### Endpoints
 
 | Endpoint                  | Method | Description |
 |---------------------------|--------|-------------|
 | `/health`                 | GET | Health check |
-| `/v1/stream`              | POST | Stream chat responses |
+| `/v1/stream`              | POST | Stream chat responses (standard and deep research) |
 | `/v1/history/{thread_id}` | GET | Get conversation history |
 | `/v1/threads/{user_id}`   | GET | List user threads |
 | `/v1/feedback`            | POST | Record feedback |
 
-### Streaming Chat
+### Standard Chat
 
 ```bash
-curl -X POST "http://localhost:8081/v1/stream" \
+curl -X POST "http://localhost:5002/v1/stream" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "Hello, how can you help me?",
@@ -189,57 +236,115 @@ curl -X POST "http://localhost:8081/v1/stream" \
   }'
 ```
 
+### Deep Research Chat
+
+```bash
+curl -X POST "http://localhost:5002/v1/stream" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Tell me about Red Hat",
+    "thread_id": "thread_123",
+    "user_id": "user_456",
+    "deep_research_enabled": true,
+    "deep_research_require_plan_approval": false
+  }'
+```
+
 ### Health Check
 
 ```bash
-curl "http://localhost:8081/health"
+curl "http://localhost:5002/health"
 # Response: {"status": "healthy", "service": "Template Agent"}
 ```
 
-## ⚙️ Configuration
+## Deep Research Pipeline
+
+The deep research mode executes a multi-phase LangGraph pipeline:
+
+| Phase | Node | Description |
+|-------|------|-------------|
+| Routing | `router` | Validates the query and determines if deep research is needed |
+| Complexity | `assess_complexity` | Classifies query complexity (simple/moderate/complex) and sets iteration bounds |
+| Triage | `triage` | For follow-up queries: checks if cached findings can answer without new research |
+| Context Answer | `context_answer` | Fast-path synthesis from cached findings (skips probe/plan/supervisor) |
+| Probing | `probe` | Discovers available MCP tools and tests their capabilities |
+| Planning | `plan` | Generates a research plan with subqueries based on tool capabilities |
+| Research | `supervisor` | Orchestrates parallel workers via `asyncio.Semaphore` / `create_task` |
+| Completeness | `completeness` | Evaluates research coverage and decides if more rounds are needed |
+| Synthesis | `synthesize` | Aggregates findings into a structured report |
+| Visualization | `visualize` | Generates charts/tables (optional) |
+| Review | `review` | Multi-persona quality review (Factual Skeptic, User Advocate, Numerical Auditor, etc.) |
+| Completion | `complete` | Saves findings to cache, emits final answer |
+
+### Key Features
+
+- **Parallel workers**: Subqueries execute concurrently with configurable concurrency limits
+- **Follow-up optimization**: Triage detects when prior findings answer a follow-up, routing to a fast context-answer path
+- **In-memory findings cache**: Findings persist across requests on the same thread within the process lifetime
+- **Langfuse tracing**: Graph-level, worker-level, and node-level LLM call tracing
+- **Cancellation support**: Active research sessions can be cancelled mid-flight
+- **Token tracking**: Per-phase token usage and cost estimation
+
+## Configuration
 
 ### Environment Variables
 
-#### Required
-- `AGENT_HOST`: Server host (default: 0.0.0.0)
-- `AGENT_PORT`: Server port (default: 5002)
-- `PYTHON_LOG_LEVEL`: Logging level (default: INFO)
+#### Server
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_HOST` | `0.0.0.0` | Server bind address |
+| `AGENT_PORT` | `5002` | Server port |
+| `PYTHON_LOG_LEVEL` | `INFO` | Logging level |
+| `USE_INMEMORY_SAVER` | `false` | Use in-memory checkpointer (no PostgreSQL needed) |
 
 #### Database
-- `POSTGRES_USER`: Database username (default: pgvector)
-- `POSTGRES_PASSWORD`: Database password (default: pgvector)
-- `POSTGRES_DB`: Database name (default: pgvector)
-- `POSTGRES_HOST`: Database host (default: pgvector)
-- `POSTGRES_PORT`: Database port (default: 5432)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_USER` | `pgvector` | Database username |
+| `POSTGRES_PASSWORD` | `pgvector` | Database password |
+| `POSTGRES_DB` | `pgvector` | Database name |
+| `POSTGRES_HOST` | `pgvector` | Database host |
+| `POSTGRES_PORT` | `5432` | Database port |
 
-#### Optional
-- `LANGFUSE_PUBLIC_KEY`: Langfuse public key for tracing
-- `LANGFUSE_SECRET_KEY`: Langfuse secret key for tracing
-- `LANGFUSE_BASE_URL`: Langfuse host URL (e.g., https://cloud.langfuse.com)
-- `LANGFUSE_TRACING_ENVIRONMENT`: Langfuse environment (default: development)
-- `GOOGLE_SERVICE_ACCOUNT_FILE`: Google credentials
-- `AGENT_SSL_KEYFILE`: SSL private key path
-- `AGENT_SSL_CERTFILE`: SSL certificate path
+#### MCP Server
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_SERVER_NAME` | `template-mcp-server` | MCP server identifier |
+| `MCP_SERVER_URL` | `http://localhost:5001/mcp/` | MCP server endpoint |
+| `MCP_TRANSPORT_PROTOCOL` | `streamable_http` | Transport protocol |
+| `MCP_CONNECTION_TIMEOUT` | `30` | Connection timeout in seconds |
+| `MCP_SSL_VERIFY` | `false` | Enable SSL verification for MCP |
 
-### Configuration Example
+#### Deep Research
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEEP_RESEARCH_ENABLED` | `true` | Enable deep research pipeline |
+| `DEEP_RESEARCH_DEFAULT_MODEL` | `gemini-2.5-flash` | Default model for deep research LLM calls |
+| `DEEP_RESEARCH_MAX_SUBQUERIES` | `10` | Maximum number of research subqueries |
+| `DEEP_RESEARCH_MAX_TOOLS` | `50` | Maximum tools to include in prompts |
+| `DEEP_RESEARCH_LLM_CALL_TIMEOUT_SECONDS` | `120` | Timeout for individual LLM calls |
+| `DEEP_RESEARCH_REQUIRE_PLAN_APPROVAL` | `true` | Require user approval before executing plan |
+| `DEEP_RESEARCH_ENABLE_VISUALIZATION` | `true` | Enable visualization node |
+| `DEEP_RESEARCH_MAX_SESSION_SECONDS` | `600` | Maximum session duration (10 min) |
+| `DEEP_RESEARCH_LLM_CONCURRENCY` | `5` | Maximum concurrent LLM calls |
+| `LLM_INPUT_COST_PER_MILLION` | `1.25` | Cost per 1M input tokens (USD) |
+| `LLM_OUTPUT_COST_PER_MILLION` | `10.0` | Cost per 1M output tokens (USD) |
 
-```bash
-# .env file
-AGENT_HOST=0.0.0.0
-AGENT_PORT=5002
-PYTHON_LOG_LEVEL=INFO
+#### Langfuse (optional)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LANGFUSE_PUBLIC_KEY` | - | Langfuse public key |
+| `LANGFUSE_SECRET_KEY` | - | Langfuse secret key |
+| `LANGFUSE_BASE_URL` | - | Langfuse host URL |
+| `LANGFUSE_TRACING_ENVIRONMENT` | `development` | Langfuse environment |
 
-POSTGRES_USER=myuser
-POSTGRES_PASSWORD=mypassword
-POSTGRES_DB=template_agent
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
+#### Google AI
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GOOGLE_SERVICE_ACCOUNT_FILE` | - | Path to service account JSON |
+| `GOOGLE_APPLICATION_CREDENTIALS_CONTENT` | - | Inline service account JSON |
 
-LANGFUSE_TRACING_ENVIRONMENT=production
-GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/credentials.json
-```
-
-## 🧪 Testing
+## Testing
 
 ### Run Tests
 
@@ -254,22 +359,11 @@ pytest --cov=template_agent.src --cov-report=html
 pytest tests/test_prompt.py -v
 ```
 
-### Test Coverage
-
-Current test coverage includes:
-- ✅ Core utilities (prompt, agent_utils)
-- ✅ Data models (schema)
-- ✅ Configuration (settings)
-- ✅ API endpoints (health, feedback)
-- 🔄 Complex routes (history, stream, threads)
-- 🔄 Application setup (api, main, agent)
-
-## 🚀 Deployment
+## Deployment
 
 ### Podman Compose
 
 ```bash
-# Start with Docker Compose
 podman-compose up -d --build
 ```
 
@@ -281,30 +375,64 @@ podman-compose up -d --build
 - **Scaling**: Configure horizontal pod autoscaling
 - **Security**: Implement proper authentication
 
-## 🔧 Development
+## Development
 
 ### Project Structure
 
 ```
 template-agent/
 ├── template_agent/
-│   └── src/
-│       ├── core/           # Core agent functionality
-│       │   ├── agent.py    # Agent initialization
-│       │   ├── agent_utils.py  # Message utilities
-│       │   └── prompt.py   # Prompt management
-│       ├── routes/         # API endpoints
-│       │   ├── health.py   # Health checks
-│       │   ├── stream.py   # Streaming chat
-│       │   ├── history.py  # Chat history
-│       │   ├── threads.py  # Thread management
-│       │   └── feedback.py # Feedback recording
-│       ├── api.py          # FastAPI application
-│       ├── main.py         # Application entry point
-│       ├── schema.py       # Data models
-│       └── settings.py     # Configuration
-├── tests/                  # Test suite
-└── README.md              # This file
+│   ├── src/
+│   │   ├── core/
+│   │   │   ├── agent.py            # Agent initialization
+│   │   │   ├── agent_utils.py      # Message utilities
+│   │   │   ├── manager.py          # AgentManager (routes standard / deep research)
+│   │   │   ├── prompt.py           # Prompt management
+│   │   │   └── deep_research/      # Deep research pipeline
+│   │   │       ├── streaming.py    # Graph builder & streaming orchestration
+│   │   │       ├── agents.py       # ResearchContext factory & worker execution
+│   │   │       ├── state.py        # State schema, ResearchContext dataclass
+│   │   │       ├── events.py       # SSE event emitters
+│   │   │       ├── prompts.py      # LLM prompt templates
+│   │   │       ├── mode_config.py  # Model/mode configuration
+│   │   │       ├── sentinel.py     # Loop circuit breaker
+│   │   │       ├── cancel.py       # Cancellation store
+│   │   │       ├── context_manager.py  # Hierarchical context window
+│   │   │       ├── plan_store.py   # Plan persistence
+│   │   │       ├── findings_store.py   # Cross-chat findings
+│   │   │       ├── token_tracker.py    # Token usage re-export
+│   │   │       ├── utils.py        # Shared utilities
+│   │   │       └── nodes/          # Pipeline nodes
+│   │   │           ├── probe.py
+│   │   │           ├── triage.py
+│   │   │           ├── complexity.py
+│   │   │           ├── context_answer.py
+│   │   │           ├── plan.py
+│   │   │           ├── supervisor.py
+│   │   │           ├── completeness.py
+│   │   │           ├── synthesize.py
+│   │   │           ├── visualize.py
+│   │   │           ├── review.py
+│   │   │           └── complete.py
+│   │   ├── routes/
+│   │   │   ├── health.py
+│   │   │   ├── stream.py
+│   │   │   ├── history.py
+│   │   │   ├── threads.py
+│   │   │   └── feedback.py
+│   │   ├── api.py
+│   │   ├── main.py
+│   │   ├── schema.py
+│   │   └── settings.py
+│   └── utils/
+│       ├── tracing.py              # Token tracking & tracked_invoke
+│       └── pylogger.py             # Structured logging
+├── examples/
+│   ├── client_python.py
+│   ├── streamlit_app.py
+│   └── README.md
+├── tests/
+└── README.md
 ```
 
 ### Code Quality
@@ -323,60 +451,14 @@ ruff format .
 pre-commit run --all-files
 ```
 
-### Adding New Features
+## Related Projects
 
-1. **Create feature branch**
-   ```bash
-   git checkout -b feature/new-feature
-   ```
-
-2. **Implement changes**
-   - Follow Google docstring format
-   - Add type hints
-   - Write tests for new functionality
-
-3. **Run quality checks**
-   ```bash
-   pre-commit run --all-files
-   pytest
-   ```
-
-4. **Submit pull request**
-   - Include tests
-   - Update documentation
-   - Follow commit message conventions
-
-### Development Setup
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
-
-### Code Standards
-
-- **Python**: Follow PEP 8 and use type hints
-- **Documentation**: Use Google docstring format
-- **Tests**: Maintain >80% code coverage
-- **Commits**: Use conventional commit messages
-
-This template includes `.cursor/rules.md` - a comprehensive development guide specifically designed to help AI coding assistants understand and work effectively with this MCP server template.
-
-### What's Included
-
-## 🆘 Support
-
-- **Issues**: [GitHub Issues](https://github.com/redhat-data-and-ai/template-agent/issues)
-
-## 🔗 Related Projects
-
-- [LangChain](https://github.com/langchain-ai/langchain) - LLM application framework
+- [Template MCP Server](https://github.com/redhat-data-and-ai/template-mcp-server) - MCP tools server
+- [Template UI](https://github.com/redhat-data-and-ai/template-ui) - React frontend
 - [LangGraph](https://github.com/langchain-ai/langgraph) - Stateful LLM applications
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern web framework
 - [Langfuse](https://langfuse.com/) - LLM observability platform
 
 ---
 
-**Built with ❤️ by the Red Hat Data & AI team**
+**Built with care by the Red Hat Data & AI team**
