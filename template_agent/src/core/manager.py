@@ -40,6 +40,15 @@ from template_agent.utils.tracing import langfuse_handler
 app_logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
 
+def _content_to_str(content: str | list[Any] | None) -> str:
+    """Convert LLM response content to string (handles multi-modal list format)."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    return convert_message_content_to_string(content)
+
+
 class AgentManager:
     """Manager class for handling agent operations and streaming responses.
 
@@ -99,11 +108,24 @@ class AgentManager:
             "Respond with EXACTLY one of:\n"
             "- answer_directly\n"
             "- needs_research\n\n"
-            "Choose 'answer_directly' when the existing findings and conversation "
-            "history contain enough information to give a complete, accurate answer.\n"
-            "Choose 'needs_research' when the question asks about something not "
-            "covered by the findings, requires up-to-date data, or needs deeper "
-            "investigation.\n\n"
+            "## Decision Rules (follow strictly)\n\n"
+            "DEFAULT to 'answer_directly'. Only choose 'needs_research' when the "
+            "question asks about a topic, entity, or time period that is COMPLETELY "
+            "ABSENT from the findings below.\n\n"
+            "Choose 'answer_directly' when:\n"
+            "- The question asks about facts, dates, people, or details that "
+            "appear anywhere in the findings (even if not the exact phrasing).\n"
+            "- The question can be answered by combining or filtering information "
+            "already present in the findings (e.g., 'who was X at time Y').\n"
+            "- The question rephrases, narrows, or drills into a topic already "
+            "covered by the findings.\n"
+            "- The question asks for a comparison, summary, or opinion that can "
+            "be derived from existing findings.\n\n"
+            "Choose 'needs_research' ONLY when:\n"
+            "- The question asks about a completely new topic not mentioned at "
+            "all in the findings.\n"
+            "- The question explicitly requests fresh, real-time, or breaking-news "
+            "data that the findings could not contain.\n\n"
             "## Previous Research Findings\n"
             f"{findings_text}\n\n"
             "## Conversation History\n"
@@ -117,7 +139,7 @@ class AgentManager:
             response = await llm.ainvoke(
                 [SystemMessage(content=system_prompt), _HM(content=query)]
             )
-            decision = (response.content or "").strip().lower()
+            decision = _content_to_str(response.content).strip().lower()
             if decision not in ("answer_directly", "needs_research"):
                 app_logger.warning(
                     "Follow-up classifier returned unexpected value '%s', defaulting to needs_research",
@@ -174,7 +196,7 @@ class AgentManager:
             async for chunk in llm.astream(
                 [SystemMessage(content=system_prompt), _HM(content=request.message)]
             ):
-                token_text = chunk.content or ""
+                token_text = _content_to_str(chunk.content)
                 if token_text:
                     collected_answer += token_text
                     yield {
@@ -252,23 +274,41 @@ class AgentManager:
 
                 cached_findings_text = ""
                 cached_triage_text = ""
+                cached_raw: dict = {}
                 try:
                     from template_agent.src.core.deep_research.nodes._cache import (
                         format_cached_findings_for_prompt,
                         load_findings_in_memory,
                     )
 
-                    cached = load_findings_in_memory(thread_id)
-                    if cached:
-                        cached_findings_text = format_cached_findings_for_prompt(cached)
-                        cached_triage_text = format_cached_findings_for_triage(cached)
+                    cached_raw = load_findings_in_memory(thread_id)
+                    if cached_raw:
+                        cached_findings_text = format_cached_findings_for_prompt(
+                            cached_raw
+                        )
                         app_logger.info(
                             "Loaded %d cached findings for thread %s",
-                            len(cached),
+                            len(cached_raw),
                             thread_id,
                         )
                 except Exception as e:
                     app_logger.warning("Failed to load cached findings: %s", e)
+
+                if cached_raw and not is_resume:
+                    from template_agent.src.core.deep_research.streaming import (
+                        select_relevant_findings,
+                    )
+
+                    cached_triage_text = await select_relevant_findings(
+                        ctx.base_model,
+                        request.message,
+                        cached_raw,
+                        max_chars=30000,
+                    )
+                    if not cached_triage_text:
+                        cached_triage_text = format_cached_findings_for_triage(
+                            cached_raw
+                        )
 
                 if cached_triage_text and not is_resume:
                     conversation_history = load_conversation_history(thread_id)

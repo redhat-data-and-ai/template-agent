@@ -4,7 +4,8 @@ Minimal implementations for the template agent. Replace with full implementation
 from the dataverse agent for production use.
 """
 
-from typing import Any, Dict
+import hashlib
+from typing import Any, Dict, cast
 
 from template_agent.src.core.deep_research.nodes._cache import (
     format_cached_findings_for_triage,
@@ -13,14 +14,53 @@ from template_agent.src.core.deep_research.nodes._cache import (
     save_cached_findings,
     save_conversation_turn,
 )
+from template_agent.src.core.deep_research.nodes.complete import (
+    complete_node,
+)
+from template_agent.src.core.deep_research.nodes.completeness import (
+    completeness_evaluator_node,
+)
+from template_agent.src.core.deep_research.nodes.complexity import (
+    assess_complexity_node,
+)
+from template_agent.src.core.deep_research.nodes.context_answer import (
+    context_answer_node,
+)
+from template_agent.src.core.deep_research.nodes.plan import plan_node
+from template_agent.src.core.deep_research.nodes.probe import probe_node
+from template_agent.src.core.deep_research.nodes.review import (
+    review_node,
+)
+from template_agent.src.core.deep_research.nodes.supervisor import (
+    research_supervisor_node,
+)
+from template_agent.src.core.deep_research.nodes.synthesize import (
+    synthesize_node,
+)
+from template_agent.src.core.deep_research.nodes.triage import triage_node
+from template_agent.src.core.deep_research.nodes.visualize import (
+    visualize_node,
+)
 from template_agent.src.core.deep_research.state import Finding
+
+# ---------------------------------------------------------------------------
+# Phase constants
+# ---------------------------------------------------------------------------
+
+PHASE_TRIAGE = "triage"
+PHASE_PROBE = "probe"
+PHASE_PLAN = "plan"
+PHASE_SUPERVISOR = "supervisor"
+PHASE_COMPLETENESS = "completeness"
+PHASE_SYNTHESIZE = "synthesize"
+PHASE_COMPLETE = "complete"
 
 # ---------------------------------------------------------------------------
 # Cache utilities (used by streaming.py)
 # ---------------------------------------------------------------------------
 
 
-def findings_from_board(board: dict) -> dict:
+def findings_from_board(board: Any) -> dict:
     """Derive a legacy-shaped findings dict from the findings_board."""
     if not isinstance(board, dict):
         return {}
@@ -88,8 +128,6 @@ async def load_cached_findings(
 
 def _hash_subquery(subquery: str) -> str:
     """Simple hash for subquery key."""
-    import hashlib
-
     return hashlib.sha256((subquery or "").lower().strip().encode()).hexdigest()[:16]
 
 
@@ -105,59 +143,23 @@ async def _aput_checkpoint(
         if hasattr(checkpointer, "aput"):
             await checkpointer.aput(config, checkpoint, metadata)
         elif hasattr(checkpointer, "aput_tuple"):
-            from langgraph.checkpoint.base import CheckpointTuple
+            from langgraph.checkpoint.base import (
+                Checkpoint,
+                CheckpointMetadata,
+                CheckpointTuple,
+            )
 
             await checkpointer.aput_tuple(
                 CheckpointTuple(
                     config=config,
-                    checkpoint=checkpoint,
-                    metadata=metadata,
+                    checkpoint=cast(Checkpoint, checkpoint),
+                    metadata=cast(CheckpointMetadata, metadata),
                     parent_config=None,
                 )
             )
     except Exception:
         pass
 
-
-# ---------------------------------------------------------------------------
-# Node implementations (plan, probe, triage, complexity, context_answer)
-# ---------------------------------------------------------------------------
-
-PHASE_TRIAGE = "triage"
-PHASE_PROBE = "probe"
-PHASE_PLAN = "plan"
-PHASE_SUPERVISOR = "supervisor"
-PHASE_COMPLETENESS = "completeness"
-PHASE_SYNTHESIZE = "synthesize"
-PHASE_COMPLETE = "complete"
-
-from template_agent.src.core.deep_research.nodes.complete import (
-    complete_node,
-)
-from template_agent.src.core.deep_research.nodes.completeness import (
-    completeness_evaluator_node,
-)
-from template_agent.src.core.deep_research.nodes.complexity import (
-    assess_complexity_node,
-)
-from template_agent.src.core.deep_research.nodes.context_answer import (
-    context_answer_node,
-)
-from template_agent.src.core.deep_research.nodes.plan import plan_node
-from template_agent.src.core.deep_research.nodes.probe import probe_node
-from template_agent.src.core.deep_research.nodes.review import (
-    review_node,
-)
-from template_agent.src.core.deep_research.nodes.supervisor import (
-    research_supervisor_node,
-)
-from template_agent.src.core.deep_research.nodes.synthesize import (
-    synthesize_node,
-)
-from template_agent.src.core.deep_research.nodes.triage import triage_node
-from template_agent.src.core.deep_research.nodes.visualize import (
-    visualize_node,
-)
 
 __all__ = [
     "findings_from_board",

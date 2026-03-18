@@ -1305,7 +1305,7 @@ def build_worker_mode_instruction(mode_config: object | None) -> str:
     """
     if not mode_config or not getattr(mode_config, "worker_instruction", None):
         return ""
-    return f"\n\n## ANALYSIS DEPTH GUIDANCE\n{mode_config.worker_instruction}"
+    return f"\n\n## ANALYSIS DEPTH GUIDANCE\n{getattr(mode_config, 'worker_instruction', '')}"
 
 
 def build_worker_execution_instruction() -> str:

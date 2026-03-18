@@ -81,6 +81,7 @@ class AgentTracer:
         trace_id: str | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initialize the tracer with a name and optional trace ID."""
         self._trace = None
         if client is not None:
             self._trace = client.trace(
@@ -90,29 +91,35 @@ class AgentTracer:
             )
 
     def update(self, **kwargs: Any) -> None:
+        """Update the trace with additional metadata or attributes."""
         if self._trace:
             self._trace.update(**kwargs)
 
     def span(self, name: str, **kwargs: Any) -> Any:
+        """Create a child span under this trace."""
         if self._trace:
             return self._trace.span(name=name, **kwargs)
         return None
 
     def event(self, name: str, **kwargs: Any) -> None:
+        """Record an event on the trace."""
         if self._trace:
             self._trace.event(name=name, **kwargs)
 
     def generation(self, name: str, **kwargs: Any) -> Any:
+        """Create a generation span for LLM calls."""
         if self._trace:
             return self._trace.generation(name=name, **kwargs)
         return None
 
     def score(self, name: str, value: float, **kwargs: Any) -> None:
+        """Record a score on the trace."""
         if self._trace:
             self._trace.score(name=name, value=value, **kwargs)
 
     @property
     def trace_id(self) -> str | None:
+        """Return the Langfuse trace ID, or None if not configured."""
         return self._trace.id if self._trace else None
 
 
@@ -129,6 +136,7 @@ class StreamTracer:
         parent_tracer: AgentTracer | None = None,
         name: str = "stream",
     ) -> None:
+        """Initialize the stream tracer with an optional parent tracer."""
         self._span = None
         self._parent = parent_tracer
         self._message_count = 0
@@ -136,11 +144,13 @@ class StreamTracer:
             self._span = parent_tracer.span(name=name)
 
     def track_message(self, content: str, role: str = "assistant") -> None:
+        """Record a streamed message event on the span."""
         self._message_count += 1
         if self._span and role == "assistant" and content:
             self._span.event(name="stream_message", output=content)
 
     def track_tokens(self, input_tokens: int = 0, output_tokens: int = 0) -> None:
+        """Update the span with input and output token counts."""
         if self._span:
             self._span.update(
                 metadata={
@@ -150,10 +160,12 @@ class StreamTracer:
             )
 
     def track_error(self, error: Exception) -> None:
+        """Record an error on the span."""
         if self._span:
             self._span.update(level="ERROR", status_message=str(error))
 
     def end_stream(self, duration_ms: float | None = None) -> None:
+        """End the stream span with message count and optional duration."""
         if self._span:
             metadata: Dict[str, Any] = {"message_count": self._message_count}
             if duration_ms is not None:

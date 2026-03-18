@@ -5,7 +5,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -13,6 +13,11 @@ from template_agent.src.core.deep_research.agents import (
     execute_with_research_agent,
 )
 from template_agent.src.core.deep_research.cancel import get_cancel_store
+from template_agent.src.core.deep_research.constants import (
+    DEEP_RESEARCH_COMPLETENESS_THRESHOLD,
+    DEEP_RESEARCH_MAX_SUPERVISOR_ROUNDS,
+    DEEP_RESEARCH_MAX_TOTAL_SUBQUERIES,
+)
 from template_agent.src.core.deep_research.events import (
     emit_agent_decision,
     emit_agent_thinking,
@@ -84,10 +89,7 @@ from ._helpers import (
 DEEP_RESEARCH_SUBQUERY_TIMEOUT_SECONDS = 180
 DEEP_RESEARCH_SUBAGENT_MAX_RETRIES = 2
 DEEP_RESEARCH_SUBAGENT_QUALITY_THRESHOLD = 0.6
-DEEP_RESEARCH_MAX_SUPERVISOR_ROUNDS = 3
-DEEP_RESEARCH_MAX_TOTAL_SUBQUERIES = 20
 DEEP_RESEARCH_MAX_CONCURRENT_WORKERS = 4
-DEEP_RESEARCH_COMPLETENESS_THRESHOLD = 70
 ENABLE_HIERARCHICAL_CONTEXT = False
 
 logger = get_python_logger()
@@ -848,9 +850,13 @@ def _extract_answers_for_conflict_detection(
             answer = finding.get("answer", "")
             if answer and not finding.get("error"):
                 answers[sq] = answer
-                quality_scores[sq] = entry.get(
-                    "data_quality_score", entry.get("quality_score", 0.5)
+                raw_score: Any = (
+                    entry.get("data_quality_score") or entry.get("quality_score") or 0.5
                 )
+                try:
+                    quality_scores[sq] = float(raw_score)
+                except (TypeError, ValueError):
+                    quality_scores[sq] = 0.5
     return answers, quality_scores
 
 
@@ -867,7 +873,10 @@ def _apply_conflict_metadata(
                 sq = finding_keys[idx - 1]
                 if sq in findings_board:
                     entry = findings_board[sq]
-                    tags = list(entry.get("tags") or [])
+                    raw_tags = entry.get("tags") or []
+                    tags: List[str] = (
+                        list(raw_tags) if isinstance(raw_tags, list) else []
+                    )
                     if "has_conflict" not in tags:
                         tags.append("has_conflict")
                         findings_board[sq] = FindingEntry(**{**entry, "tags": tags})
@@ -1583,26 +1592,8 @@ def _supervisor_check_cancellation(
     """Return (state_updates, events) if thread cancelled, else None."""
     if not inp.thread_id:
         return None
+    # Cancellation is checked asynchronously in research_supervisor_node
     return None
-    inp.ctx.emit_or_append(emit_cancelled(inp.thread_id), inp.events)
-    base = SupervisorStateBase(
-        execution_start_update=inp.execution_start_update,
-        findings_board=inp.findings_board,
-        agent_messages=inp.agent_messages,
-        supervisor_rounds=inp.supervisor_rounds,
-        completed=inp.completed,
-        round_num=inp.round_num,
-        transitions=inp.transitions,
-        immediate_context=inp.immediate_context,
-        finding_cards=inp.finding_cards,
-        research_memory=inp.research_memory,
-    )
-    return _build_supervisor_state(
-        base,
-        current_phase=PHASE_COMPLETE,
-        total_subqueries_executed=inp.total_sq_executed,
-        findings_count_history=inp.findings_count_history,
-    ), inp.events
 
 
 async def research_supervisor_node(
@@ -1628,11 +1619,11 @@ async def research_supervisor_node(
     round_num = state.get("current_round", 0) + 1
     max_rounds = state.get("max_rounds", DEEP_RESEARCH_MAX_SUPERVISOR_ROUNDS)
     findings_board: Dict[str, FindingEntry] = dict(state.get("findings_board", {}))
-    agent_messages: List[AgentMessage] = list(state.get("agent_messages", []))
+    agent_messages = cast(List[AgentMessage], list(state.get("agent_messages", [])))
     supervisor_rounds: List[SupervisorRound] = list(state.get("supervisor_rounds", []))
-    immediate_context = state.get("immediate_context")
-    finding_cards: list = list(state.get("finding_cards", []))
-    research_memory = state.get("research_memory")
+    immediate_context: Optional[ImmediateContext] = state.get("immediate_context")
+    finding_cards: list = list(state.get("finding_cards") or [])
+    research_memory: Optional[ResearchMemory] = state.get("research_memory")
     subqueries = state.get("subqueries", [])
     enriched_subqueries = state.get("enriched_subqueries", [])
     thread_id = state.get("thread_id")

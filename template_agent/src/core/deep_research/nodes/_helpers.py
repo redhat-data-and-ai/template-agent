@@ -531,7 +531,8 @@ def _get_data_quality_score(
     """Get data quality score from findings_board or finding."""
     if findings_board and subquery in findings_board:
         entry = findings_board[subquery]
-        return entry.get("data_quality_score", entry.get("quality_score", 0.5))
+        val = entry.get("data_quality_score") or entry.get("quality_score") or 0.5
+        return float(val)
     if finding.get("data_quality_score") is not None:
         return float(finding.get("data_quality_score") or 0.5)
     return 0.5

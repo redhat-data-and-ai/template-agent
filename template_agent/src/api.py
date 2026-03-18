@@ -42,9 +42,11 @@ class RequestLoggingMiddleware:
     """
 
     def __init__(self, app: ASGIApp) -> None:
+        """Initialize the middleware with the next ASGI app in the stack."""
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Process the request and log incoming/outgoing details when enabled."""
         if scope["type"] != "http" or not settings.REQUEST_LOGGING_ENABLED:
             await self.app(scope, receive, send)
             return
@@ -105,9 +107,11 @@ class RequestTracingMiddleware:
     """
 
     def __init__(self, app: ASGIApp) -> None:
+        """Initialize the middleware with the next ASGI app in the stack."""
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Create an AgentTracer per request and attach it to request.state.root_tracer."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -194,6 +198,49 @@ app.include_router(feedback_router)
 app.include_router(history_router)
 app.include_router(threads_router)
 app.include_router(deep_research_plan_router)
+
+
+@app.get("/.well-known/deep-research")
+async def deep_research_capabilities():
+    """Advertise this backend's adapter contract for auto-discovery by any compatible UI."""
+    return {
+        "name": "template-agent",
+        "features": {
+            "planApproval": True,
+            "steering": False,
+            "modelSelection": False,
+        },
+        "endpoints": {
+            "start": {
+                "path": "/v1/stream",
+                "method": "POST",
+                "bodyMapping": {
+                    "message": "{{message}}",
+                    "thread_id": "{{threadId}}",
+                    "session_id": "{{sessionId}}",
+                    "user_id": "{{userId}}",
+                    "stream_tokens": True,
+                    "deep_research_enabled": True,
+                },
+            },
+            "cancel": {"path": "/v1/cancel/{{threadId}}", "method": "DELETE"},
+            "planApproval": {
+                "path": "/v1/stream",
+                "method": "POST",
+                "bodyMapping": {
+                    "message": "{{message}}",
+                    "thread_id": "{{threadId}}",
+                    "session_id": "{{sessionId}}",
+                    "user_id": "{{userId}}",
+                    "stream_tokens": True,
+                    "deep_research_enabled": True,
+                    "deep_research_plan": "{{plan}}",
+                    "deep_research_plan_approved": True,
+                },
+            },
+        },
+        "stream": {"mode": "direct", "chunkFormat": "passthrough"},
+    }
 
 
 @app.delete("/v1/cancel/{thread_id}")

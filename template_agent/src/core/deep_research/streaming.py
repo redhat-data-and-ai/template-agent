@@ -21,6 +21,10 @@ from langchain_core.runnables import RunnableConfig
 
 from template_agent.src.core.deep_research.agents import get_research_context
 from template_agent.src.core.deep_research.cancel import get_cancel_store
+from template_agent.src.core.deep_research.constants import (
+    DEEP_RESEARCH_MAX_SUPERVISOR_ROUNDS,
+    DEEP_RESEARCH_MAX_TOTAL_SUBQUERIES,
+)
 from template_agent.src.core.deep_research.events import (
     DeepResearchEventType,
     emit_context_loaded,
@@ -82,10 +86,8 @@ logger = get_python_logger()
 DEEP_RESEARCH_MAX_SELECTED_FINDINGS = 10
 DEEP_RESEARCH_FINDING_SELECTION_THRESHOLD = 8
 DEEP_RESEARCH_GRAPH_RECURSION_LIMIT = 100
-DEEP_RESEARCH_MAX_SUPERVISOR_ROUNDS = 3
 DEEP_RESEARCH_MAX_ITERATIONS = 3
 DEEP_RESEARCH_MAX_SUBQUERIES = 10
-DEEP_RESEARCH_MAX_TOTAL_SUBQUERIES = 20
 DEEP_RESEARCH_MAX_NODE_TRANSITIONS = 50
 DEEP_RESEARCH_MAX_SESSION_SECONDS: float = float(
     app_settings.DEEP_RESEARCH_MAX_SESSION_SECONDS
@@ -846,6 +848,7 @@ class DeepResearchAgent:
     """Agent that orchestrates hierarchical deep research with streaming."""
 
     def __init__(self, ctx: ResearchContext, checkpointer: Any = None):
+        """Initialize the agent with research context and optional checkpointer."""
         self.ctx = ctx
         self.checkpointer = checkpointer
         self.graph = build_research_graph(ctx, checkpointer=checkpointer)

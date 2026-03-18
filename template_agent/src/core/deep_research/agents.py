@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.prebuilt import create_react_agent
@@ -173,15 +174,15 @@ async def execute_with_research_agent(
 
     from template_agent.utils.tracing import langfuse_handler
 
-    config: dict[str, Any] = {}
+    config: RunnableConfig | None = None
     if langfuse_handler is not None:
-        config["callbacks"] = [langfuse_handler]
+        config = RunnableConfig(callbacks=[langfuse_handler])
 
     for attempt in range(max_retries + 1):
         try:
             worker = create_react_agent(model=ctx.base_model, tools=ctx.tools)
             result = await asyncio.wait_for(
-                worker.ainvoke(input_payload, config=config if config else None),
+                worker.ainvoke(input_payload, config=config),
                 timeout=timeout,
             )
             if isinstance(result, dict):

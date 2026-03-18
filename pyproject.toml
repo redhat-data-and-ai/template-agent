@@ -210,6 +210,14 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 
+[[tool.mypy.overrides]]
+module = "template_agent.src.core.deep_research.context_manager"
+warn_unreachable = false
+
+[[tool.mypy.overrides]]
+module = "template_agent.src.core.deep_research.nodes.synthesize"
+warn_unreachable = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

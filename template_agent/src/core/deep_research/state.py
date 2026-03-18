@@ -90,7 +90,7 @@ class Finding(TypedDict, total=False):
     cached: bool
     execution_time_ms: float | None
     plausibility_concern: bool
-    plausibility_warnings: list[str]
+    plausibility_warnings: list[dict[str, Any]]
     data_quality_alert: bool
     low_quality_drop: bool
     data_quality_score: float | None
@@ -123,6 +123,14 @@ class FindingEntry(TypedDict, total=False):
     finding: Finding
     review: ReviewResult | None
     index: int
+    deposited_by: str
+    round_number: int
+    quality_score: float
+    confidence: str
+    related_subqueries: list[str]
+    tags: list[str]
+    data_quality_score: float
+    exclude_from_synthesis: bool
 
 
 class SupervisorRound(TypedDict, total=False):
@@ -130,7 +138,7 @@ class SupervisorRound(TypedDict, total=False):
 
     round_number: int
     delegated_subqueries: list[str]
-    findings_received: int
+    findings_received: list[str]
     gaps_identified: list[str]
     follow_ups_spawned: list[str]
     coverage_assessment: str
@@ -220,6 +228,9 @@ class DeepResearchState(DeepResearchStateRequired, total=False):
     findings: dict[str, Any]
     findings_board: dict[str, Any]
     agent_messages: list[dict[str, Any]]
+    finding_cards: list[FindingCard]
+    immediate_context: ImmediateContext | None
+    research_memory: ResearchMemory | None
     supervisor_rounds: list[SupervisorRound]
     current_round: int
     max_rounds: int

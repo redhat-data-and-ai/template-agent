@@ -202,8 +202,10 @@ def _filter_search_results(
 def cross_chat_to_finding_dict(
     cross_chat_results: list[dict[str, Any]],
 ) -> dict[str, Finding]:
-    """Convert cross-chat store results into the Finding dict format
-    expected by the triage pipeline (keyed by subquery hash)."""
+    """Convert cross-chat store results into the Finding dict format.
+
+    Expected by the triage pipeline (keyed by subquery hash).
+    """
     findings: dict[str, Finding] = {}
     for item in cross_chat_results:
         subquery = item.get("subquery", "")

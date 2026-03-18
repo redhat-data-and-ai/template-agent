@@ -745,7 +745,7 @@ class HierarchicalContextManager:
                 try:
                     highlights_text = json.dumps(data_highlights, default=str)
                     entry.append(f"Data: {highlights_text}")
-                except Exception:
+                except (TypeError, ValueError):
                     pass
 
             parts.append("\n".join(entry))
@@ -829,7 +829,7 @@ def _get_tiktoken_encoding():
         enc = tiktoken.get_encoding("cl100k_base")
         _get_tiktoken_encoding._cached = enc
         return enc
-    except Exception:
+    except (ImportError, OSError):
         _get_tiktoken_encoding._cached = None
         return None
 

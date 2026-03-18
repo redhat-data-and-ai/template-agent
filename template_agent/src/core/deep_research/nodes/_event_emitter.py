@@ -34,6 +34,7 @@ class NodeEventEmitter:
     __slots__ = ("_ctx", "_events")
 
     def __init__(self, ctx: ResearchContext, events: list[dict[str, Any]]) -> None:
+        """Store context and events list for emitting events."""
         self._ctx = ctx
         self._events = events
 

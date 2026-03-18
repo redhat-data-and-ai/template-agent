@@ -1,7 +1,7 @@
 """Utility functions for deep research pipeline."""
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from template_agent.src.core.deep_research.prompts import (
     INPUT_CLASSIFICATION_PROMPT,
@@ -59,12 +59,16 @@ async def aput_checkpoint(
 ) -> None:
     """Persist checkpoint with metadata."""
     try:
-        from langgraph.checkpoint.base import CheckpointTuple
+        from langgraph.checkpoint.base import (
+            Checkpoint,
+            CheckpointMetadata,
+            CheckpointTuple,
+        )
 
         new_tuple = CheckpointTuple(
             config=config,
-            checkpoint=checkpoint,
-            metadata=metadata,
+            checkpoint=cast(Checkpoint, checkpoint),
+            metadata=cast(CheckpointMetadata, metadata),
             parent_config=None,
         )
         if hasattr(checkpointer, "aput_tuple"):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from template_agent.src.core.deep_research.context_manager import (
     create_context_manager,
@@ -53,14 +53,18 @@ async def _process_finding_hierarchical(
     if not _get_setting("ENABLE_HIERARCHICAL_CONTEXT", False):
         return None, [], None
 
-    immediate_context = state.get("immediate_context") or {
-        "recent_findings": [],
-        "recent_subqueries": [],
-        "window_size": _get_setting("CONTEXT_WINDOW_SIZE", 8),
-        "slide_step": _get_setting("CONTEXT_SLIDE_STEP", 4),
-    }
-    finding_cards = list(state.get("finding_cards", []))
-    research_memory = state.get("research_memory")
+    immediate_context = cast(
+        "ImmediateContext",
+        state.get("immediate_context")
+        or {
+            "recent_findings": [],
+            "recent_subqueries": [],
+            "window_size": _get_setting("CONTEXT_WINDOW_SIZE", 8),
+            "slide_step": _get_setting("CONTEXT_SLIDE_STEP", 4),
+        },
+    )
+    finding_cards = list(cast(list["FindingCard"], state.get("finding_cards", [])))
+    research_memory = cast("ResearchMemory | None", state.get("research_memory"))
 
     try:
         mgr = create_context_manager(ctx)
@@ -95,9 +99,11 @@ def _emit_context_usage(
     try:
         board = state.get("findings_board", {})
         findings = findings_from_board(board) if board else state.get("findings", {})
-        immediate_context = state.get("immediate_context")
-        finding_cards = state.get("finding_cards", [])
-        research_memory = state.get("research_memory")
+        immediate_context = cast(
+            "ImmediateContext | None", state.get("immediate_context")
+        )
+        finding_cards = cast(list["FindingCard"], state.get("finding_cards", []))
+        research_memory = cast("ResearchMemory | None", state.get("research_memory"))
 
         current_tokens = estimate_state_tokens(
             findings,
@@ -156,9 +162,9 @@ def _format_hierarchical_context_for_synthesis(
     try:
         mgr = create_context_manager(ctx)
         return mgr.format_for_synthesis(
-            immediate_context,
-            state.get("finding_cards", []),
-            state.get("research_memory"),
+            cast("ImmediateContext", immediate_context),
+            cast(list["FindingCard"], state.get("finding_cards", [])),
+            cast("ResearchMemory | None", state.get("research_memory")),
             state.get("query", ""),
         )
     except Exception as e:

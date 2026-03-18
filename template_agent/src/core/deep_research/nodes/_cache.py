@@ -2,7 +2,7 @@
 
 import hashlib
 import re
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 from template_agent.src.core.deep_research.state import Finding
 from template_agent.src.core.utils import truncate_text
@@ -20,7 +20,7 @@ def _get_logger():
             from template_agent.utils.pylogger import get_python_logger
 
             logger = get_python_logger()
-        except Exception:
+        except (ImportError, AttributeError):
             import logging
 
             logger = logging.getLogger(__name__)
@@ -135,13 +135,17 @@ async def save_cached_findings(
             if hasattr(checkpointer, "aput"):
                 await checkpointer.aput(config, result.checkpoint, metadata)
             elif hasattr(checkpointer, "aput_tuple"):
-                from langgraph.checkpoint.base import CheckpointTuple
+                from langgraph.checkpoint.base import (
+                    Checkpoint,
+                    CheckpointMetadata,
+                    CheckpointTuple,
+                )
 
                 await checkpointer.aput_tuple(
                     CheckpointTuple(
                         config=config,
-                        checkpoint=result.checkpoint,
-                        metadata=metadata,
+                        checkpoint=cast(Checkpoint, result.checkpoint),
+                        metadata=cast(CheckpointMetadata, metadata),
                         parent_config=None,
                     )
                 )
@@ -151,7 +155,7 @@ async def save_cached_findings(
 
 def format_cached_findings_for_prompt(
     findings: Dict[str, Finding],
-    max_chars: int = 3000,
+    max_chars: int = 8000,
 ) -> str:
     """Format cached findings as context for the planning prompt."""
     if not findings:
@@ -163,7 +167,7 @@ def format_cached_findings_for_prompt(
         answer = finding.get("answer", "")
         if not subquery:
             continue
-        answer_preview = truncate_text(answer, 300)
+        answer_preview = truncate_text(answer, 600)
         entry = f"- Q: {subquery}\n  A: {answer_preview}"
         if total_chars + len(entry) > max_chars:
             break
@@ -246,7 +250,7 @@ def format_conversation_for_prompt(
 
 def format_cached_findings_for_triage(
     findings: Dict[str, Finding],
-    max_chars: int = 8000,
+    max_chars: int = 30000,
 ) -> str:
     """Format cached findings with full answers for follow-up routing.
 

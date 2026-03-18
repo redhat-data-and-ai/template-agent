@@ -3,7 +3,7 @@
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 from template_agent.src.core.deep_research.events import (
     emit_agent_decision,
@@ -61,9 +61,14 @@ def _select_reviewers(mode_config: Any | None, time_pressure: bool) -> list:
     )
     min_count = getattr(mode_config, "min_reviewer_count", 2)
     target = min_count if time_pressure else default_count
+
+    def _weight(p: dict[str, Any]) -> float:
+        w = p.get("weight", 1.0)
+        return float(w) if isinstance(w, (int, float)) else 1.0
+
     sorted_personas = sorted(
         REVIEWER_PERSONAS,
-        key=lambda p: float(p.get("weight", 1.0)),
+        key=_weight,
         reverse=True,
     )
     return sorted_personas[: min(target, len(REVIEWER_PERSONAS))]
@@ -409,31 +414,40 @@ async def review_node(
         "persona": "aggregate",
     }
 
-    agent_messages = list(state.get("agent_messages", []))
+    agent_messages: list[dict[str, Any]] = list(state.get("agent_messages", []))
     ts = datetime.now(timezone.utc).isoformat()
     if overall_action == RESEARCH_MORE:
         agent_messages.append(
-            AgentMessage(
-                from_agent="reviewer:aggregate",
-                to_agent="supervisor",
-                message_type="feedback",
-                content="More research needed",
-                metadata={
-                    "follow_up_subqueries": follow_ups[:3],
-                    "avg_score": avg_score,
-                },
-                timestamp=ts,
+            cast(
+                Dict[str, Any],
+                AgentMessage(
+                    from_agent="reviewer:aggregate",
+                    to_agent="supervisor",
+                    message_type="feedback",
+                    content="More research needed",
+                    metadata={
+                        "follow_up_subqueries": follow_ups[:3],
+                        "avg_score": avg_score,
+                    },
+                    timestamp=ts,
+                ),
             )
         )
     elif overall_action == REVISE:
         agent_messages.append(
-            AgentMessage(
-                from_agent="reviewer:aggregate",
-                to_agent="synthesizer",
-                message_type="feedback",
-                content="Revision needed",
-                metadata={"gate_violations": gate_violations, "avg_score": avg_score},
-                timestamp=ts,
+            cast(
+                Dict[str, Any],
+                AgentMessage(
+                    from_agent="reviewer:aggregate",
+                    to_agent="synthesizer",
+                    message_type="feedback",
+                    content="Revision needed",
+                    metadata={
+                        "gate_violations": gate_violations,
+                        "avg_score": avg_score,
+                    },
+                    timestamp=ts,
+                ),
             )
         )
 

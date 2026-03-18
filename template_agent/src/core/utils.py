@@ -131,7 +131,7 @@ def simplify_error_for_display(error: str) -> str:
     return _simplify_error_default(error)
 
 
-def is_model_config_error(e: Exception) -> bool:
+def is_model_config_error(e: BaseException) -> bool:
     """Check if an exception indicates a non-retryable model configuration error."""
     error_str = str(e).lower()
     return (

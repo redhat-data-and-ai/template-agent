@@ -2,6 +2,10 @@
 
 from typing import Any, Dict, List
 
+from template_agent.src.core.deep_research.constants import (
+    DEEP_RESEARCH_COMPLETENESS_THRESHOLD,
+    DEEP_RESEARCH_MAX_SUPERVISOR_ROUNDS,
+)
 from template_agent.src.core.deep_research.events import (
     emit_completeness_assessment,
     emit_diminishing_returns,
@@ -30,9 +34,6 @@ from ._helpers import (
     _summarize_findings_board,
     findings_from_board,
 )
-
-DEEP_RESEARCH_COMPLETENESS_THRESHOLD = 70
-DEEP_RESEARCH_MAX_SUPERVISOR_ROUNDS = 3
 
 logger = get_python_logger()
 

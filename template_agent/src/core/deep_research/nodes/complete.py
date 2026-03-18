@@ -1,5 +1,7 @@
 """Complete node: finalize research output."""
 
+from typing import Any
+
 from template_agent.src.core.deep_research.events import (
     emit_completed,
     emit_final_answer,
@@ -31,7 +33,7 @@ async def complete_node(
     Saves findings to cache, emits final answer and completion events.
     No dataverse-specific persistence.
     """
-    events = []
+    events: list[dict[str, Any]] = []
     final_answer = state.get("draft_answer") or state.get("final_answer") or ""
     final_answer = strip_annotation_tags(final_answer)
     final_answer = sanitize_markdown_tables(final_answer)

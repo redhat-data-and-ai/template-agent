@@ -19,7 +19,7 @@ async def save_plan(request: DeepResearchPlanRequest) -> DeepResearchPlanRespons
     try:
         from template_agent.src.core.deep_research.plan_store import set_plan
 
-        set_plan(request.thread_id, request.plan)
+        await set_plan(request.thread_id, request.plan)
 
         logger.info(
             "deep_research_plan_saved",
@@ -44,7 +44,7 @@ async def get_plan(thread_id: str) -> dict:
             get_plan as get_plan_fn,
         )
 
-        plan = get_plan_fn(thread_id)
+        plan = await get_plan_fn(thread_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="No plan found for thread")
 
@@ -62,7 +62,7 @@ async def delete_plan(thread_id: str) -> dict:
     try:
         from template_agent.src.core.deep_research.plan_store import clear_plan
 
-        clear_plan(thread_id)
+        await clear_plan(thread_id)
         return {"status": "success", "thread_id": thread_id}
     except Exception as e:
         logger.error(f"Failed to delete deep research plan: {e}")

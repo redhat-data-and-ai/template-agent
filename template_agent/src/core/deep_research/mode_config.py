@@ -62,10 +62,12 @@ class ResearchModeConfig:
 
     @property
     def max_output_tokens(self) -> int:
+        """Return the synthesis max output tokens limit."""
         return self.synthesis_max_output_tokens
 
     @property
     def session_timeout_seconds(self) -> int:
+        """Return the session timeout floor in seconds."""
         return self.session_timeout_floor
 
 
