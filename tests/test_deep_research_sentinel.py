@@ -14,12 +14,15 @@ from template_agent.src.core.deep_research.sentinel import (
     check_loop_sentinel,
     trim_follow_ups,
 )
+from template_agent.src.core.deep_research.state import DeepResearchState
 
 
-def _make_state(**kwargs: object) -> dict:
+def _make_state(**kwargs: object) -> DeepResearchState:
     """Build a minimal DeepResearchState-like dict for tests."""
-    defaults = {
+    defaults: dict[str, object] = {
+        "query": "test query",
         "thread_id": "test-thread",
+        "current_phase": "planning",
         "findings_board": {},
         "findings": {},
         "execution_start_time": time.time(),
@@ -31,7 +34,7 @@ def _make_state(**kwargs: object) -> dict:
         "findings_count_history": [],
     }
     defaults.update(kwargs)
-    return defaults
+    return defaults  # type: ignore[return-value]
 
 
 class TestCheckCancellation:

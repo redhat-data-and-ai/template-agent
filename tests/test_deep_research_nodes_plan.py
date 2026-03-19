@@ -54,11 +54,11 @@ def _make_llm_responses_success():
     ]
 
 
-def _mock_tracked_invoke_success(*args, **kwargs):
+def _mock_tracked_invoke_success(*args: object, **kwargs: object) -> MagicMock:
     """Side-effect for tracked_invoke returning success responses in order."""
     responses = _make_llm_responses_success()
-    call_count = _mock_tracked_invoke_success._count
-    _mock_tracked_invoke_success._count += 1
+    call_count: int = getattr(_mock_tracked_invoke_success, "_count", 0)
+    setattr(_mock_tracked_invoke_success, "_count", call_count + 1)
     if call_count < len(responses):
         content = responses[call_count]
     else:
@@ -68,7 +68,7 @@ def _mock_tracked_invoke_success(*args, **kwargs):
     return msg
 
 
-_mock_tracked_invoke_success._count = 0
+setattr(_mock_tracked_invoke_success, "_count", 0)
 
 
 class TestPlanNodeSuccess:

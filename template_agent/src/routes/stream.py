@@ -4,6 +4,8 @@ This module provides streaming endpoints for real-time agent interactions,
 handling message streaming, token generation, and conversation management.
 """
 
+import asyncio
+import hashlib
 import json
 import time as _time
 from collections.abc import AsyncGenerator
@@ -20,6 +22,18 @@ from template_agent.utils.tracing import StreamTracer, langfuse_handler
 
 router = APIRouter()
 app_logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
+
+_MAX_CONCURRENT_DEEP_RESEARCH_PER_USER = 2
+_user_semaphores: dict[str, asyncio.Semaphore] = {}
+
+
+def _get_user_semaphore(user_id: str) -> asyncio.Semaphore:
+    """Return a per-user semaphore, creating one on first access."""
+    if user_id not in _user_semaphores:
+        _user_semaphores[user_id] = asyncio.Semaphore(
+            _MAX_CONCURRENT_DEEP_RESEARCH_PER_USER
+        )
+    return _user_semaphores[user_id]
 
 
 async def message_generator(
@@ -50,7 +64,10 @@ async def message_generator(
     """
     start_time = _time.monotonic()
     try:
-        app_logger.info(f"Starting stream for message: {user_input.message[:100]}...")
+        msg_hash = hashlib.sha256(user_input.message.encode()).hexdigest()[:12]
+        app_logger.info(
+            f"Starting stream for message hash={msg_hash}, length={len(user_input.message)}"
+        )
 
         async for event in agent_manager.stream_response(user_input):
             if (
@@ -155,12 +172,21 @@ async def stream(user_input: StreamRequest, request: Request) -> StreamingRespon
     access_token = request.headers.get("X-Token")
     app_logger.info(f"Received token: {'Yes' if access_token else 'No'}")
 
+    if user_input.deep_research_enabled and user_input.user_id:
+        sem = _get_user_semaphore(user_input.user_id)
+        if sem.locked():
+            raise HTTPException(
+                status_code=429,
+                detail="Too many concurrent deep research requests. Please wait for an existing request to finish.",
+            )
+        await sem.acquire()
+
     root_tracer = getattr(request.state, "root_tracer", None)
     if root_tracer:
         root_tracer.update(
             user_id=user_input.user_id,
             session_id=user_input.session_id,
-            metadata={"message_preview": user_input.message[:200]},
+            metadata={"message_length": len(user_input.message)},
         )
 
     stream_tracer = StreamTracer(parent_tracer=root_tracer, name="stream_response")
@@ -172,12 +198,22 @@ async def stream(user_input: StreamRequest, request: Request) -> StreamingRespon
         )
     except Exception as e:
         app_logger.error(f"Failed to initialize AgentManager: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to initialize agent: {str(e)}"
-        )
+        if user_input.deep_research_enabled and user_input.user_id:
+            _get_user_semaphore(user_input.user_id).release()
+        raise HTTPException(status_code=500, detail="Failed to initialize agent")
+
+    async def _guarded_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for chunk in message_generator(
+                user_input, agent_manager, stream_tracer=stream_tracer
+            ):
+                yield chunk
+        finally:
+            if user_input.deep_research_enabled and user_input.user_id:
+                _get_user_semaphore(user_input.user_id).release()
 
     return StreamingResponse(
-        message_generator(user_input, agent_manager, stream_tracer=stream_tracer),
+        _guarded_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

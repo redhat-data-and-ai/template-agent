@@ -81,16 +81,22 @@ class StreamRequest(UserInput):
         default=False,
     )
     deep_research_max_subqueries: int | None = Field(
-        description="Override maximum number of research subqueries.",
+        description="Override maximum number of research subqueries (1-30).",
         default=None,
+        ge=1,
+        le=30,
     )
     deep_research_max_supervisor_rounds: int | None = Field(
-        description="Override maximum supervisor rounds.",
+        description="Override maximum supervisor rounds (1-10).",
         default=None,
+        ge=1,
+        le=10,
     )
     deep_research_max_review_iterations: int | None = Field(
-        description="Override maximum review iterations.",
+        description="Override maximum review iterations (0-5).",
         default=None,
+        ge=0,
+        le=5,
     )
     deep_research_pre_plan_elapsed_seconds: float | None = Field(
         description="Pre-plan computation time (for fair timing after human wait).",

@@ -27,11 +27,13 @@ def _make_ctx(**overrides):
     return ctx
 
 
-def _make_finding(subquery: str = "q1", answer: str = "a1", **overrides) -> Finding:
+def _make_finding(
+    subquery: str = "q1", answer: str = "a1", **overrides: object
+) -> Finding:
     """Create a minimal Finding for testing."""
-    f: Finding = {"subquery": subquery, "answer": answer}
-    f.update(overrides)
-    return f
+    base: dict[str, object] = {"subquery": subquery, "answer": answer}
+    base.update(overrides)
+    return base  # type: ignore[return-value]
 
 
 def _make_immediate_context(
@@ -50,19 +52,15 @@ def _make_immediate_context(
 
 
 def _make_finding_card(
-    subquery: str = "c1", summary: str = "s1", **overrides
+    subquery: str = "c1", answer: str = "a1", **overrides: object
 ) -> FindingCard:
     """Create a minimal FindingCard for testing."""
-    from datetime import datetime, timezone
-
-    card: FindingCard = {
+    base: dict[str, object] = {
         "subquery": subquery,
-        "summary": summary,
-        "key_facts": [],
-        "compressed_at": datetime.now(timezone.utc).isoformat(),
+        "answer": answer,
     }
-    card.update(overrides)
-    return card
+    base.update(overrides)
+    return base  # type: ignore[return-value]
 
 
 class TestHierarchicalContextManagerInit:

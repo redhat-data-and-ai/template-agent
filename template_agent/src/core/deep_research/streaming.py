@@ -609,7 +609,14 @@ async def _relay_events_to_output(
     output_queue: asyncio.Queue,
 ) -> None:
     while True:
-        item = await event_queue.get()
+        try:
+            item = await asyncio.wait_for(
+                event_queue.get(),
+                timeout=app_settings.DEEP_RESEARCH_MAX_SESSION_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Event relay timed out waiting for next item")
+            break
         if item.get("_sentinel"):
             break
         await output_queue.put(item)
@@ -958,7 +965,11 @@ class DeepResearchAgent:
         max_dedup_size: int,
     ) -> AsyncGenerator[dict[str, Any]]:
         current_state = state_ref["current"]
+        deadline = time.monotonic() + app_settings.DEEP_RESEARCH_MAX_SESSION_SECONDS
         while True:
+            if time.monotonic() > deadline:
+                logger.warning("Consume loop exceeded max session time, breaking")
+                break
             item, should_heartbeat = await _run_graph_get_next_item(
                 output_queue, heartbeat_interval
             )

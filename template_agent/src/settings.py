@@ -192,6 +192,27 @@ class Settings(BaseSettings):
             "description": "Maximum concurrent LLM calls in deep research",
         },
     )
+    DEEP_RESEARCH_MAX_SUPERVISOR_ROUNDS: int = Field(
+        default=3,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_MAX_SUPERVISOR_ROUNDS",
+            "description": "Maximum number of supervisor rounds per deep research session",
+        },
+    )
+    DEEP_RESEARCH_MAX_TOTAL_SUBQUERIES: int = Field(
+        default=20,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_MAX_TOTAL_SUBQUERIES",
+            "description": "Maximum total subqueries allowed in a deep research session",
+        },
+    )
+    DEEP_RESEARCH_COMPLETENESS_THRESHOLD: int = Field(
+        default=70,
+        json_schema_extra={
+            "env": "DEEP_RESEARCH_COMPLETENESS_THRESHOLD",
+            "description": "Completeness threshold percentage for deep research (0-100)",
+        },
+    )
     LLM_INPUT_COST_PER_MILLION: float = Field(
         default=1.25,
         json_schema_extra={

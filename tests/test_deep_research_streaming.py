@@ -61,6 +61,17 @@ from template_agent.src.core.deep_research.streaming import (
 )
 
 
+def _make_state(**overrides: object) -> DeepResearchState:
+    """Build a DeepResearchState with required keys populated for testing."""
+    base: dict[str, object] = {
+        "query": "test query",
+        "thread_id": "test-thread",
+        "current_phase": "planning",
+    }
+    base.update(overrides)
+    return base  # type: ignore[return-value]
+
+
 class TestCreateInitialState:
     """Test create_initial_state function."""
 
@@ -141,120 +152,120 @@ class TestRoutingFunctions:
 
     def test_after_triage_context_sufficient_routes_to_context_answer(self):
         """Triage decision context_sufficient routes to context_answer."""
-        state: DeepResearchState = {"triage_decision": "context_sufficient"}
+        state = _make_state(triage_decision="context_sufficient")
         assert _after_triage(state) == "context_answer"
 
     def test_after_triage_partial_research_routes_to_plan(self):
         """Triage decision partial_research routes to plan."""
-        state: DeepResearchState = {"triage_decision": "partial_research"}
+        state = _make_state(triage_decision="partial_research")
         assert _after_triage(state) == "plan"
 
     def test_after_triage_full_research_default_routes_to_probe(self):
         """Triage decision full_research or default routes to probe."""
-        state: DeepResearchState = {"triage_decision": "full_research"}
+        state = _make_state(triage_decision="full_research")
         assert _after_triage(state) == "probe"
-        assert _after_triage({}) == "probe"
+        assert _after_triage(_make_state()) == "probe"
 
     def test_after_router_complete_routes_to_complete(self):
         """Phase complete routes to complete node."""
-        state: DeepResearchState = {"current_phase": PHASE_COMPLETE}
+        state = _make_state(current_phase=PHASE_COMPLETE)
         assert _after_router(state) == "complete"
 
     def test_after_router_supervisor_routes_to_supervisor(self):
         """Phase supervisor routes to supervisor node."""
-        state: DeepResearchState = {"current_phase": PHASE_SUPERVISOR}
+        state = _make_state(current_phase=PHASE_SUPERVISOR)
         assert _after_router(state) == "supervisor"
 
     def test_after_router_default_routes_to_assess_complexity(self):
         """Default phase routes to assess_complexity."""
-        state: DeepResearchState = {"current_phase": PHASE_PROBE}
+        state = _make_state(current_phase=PHASE_PROBE)
         assert _after_router(state) == "assess_complexity"
 
     def test_after_assess_complexity_with_cached_findings_routes_to_triage(self):
         """Cached findings text routes to triage."""
-        state: DeepResearchState = {"cached_findings_text": "cached..."}
+        state = _make_state(cached_findings_text="cached...")
         assert _after_assess_complexity(state) == "triage"
 
     def test_after_assess_complexity_supervisor_routes_to_supervisor(self):
         """Phase supervisor routes to supervisor."""
-        state: DeepResearchState = {"current_phase": PHASE_SUPERVISOR}
+        state = _make_state(current_phase=PHASE_SUPERVISOR)
         assert _after_assess_complexity(state) == "supervisor"
 
     def test_after_assess_complexity_default_routes_to_probe(self):
         """Default routes to probe."""
-        state: DeepResearchState = {}
+        state = _make_state()
         assert _after_assess_complexity(state) == "probe"
 
     def test_after_plan_approved_routes_to_supervisor(self):
         """Plan approved routes to supervisor."""
-        state: DeepResearchState = {"plan_approved": True}
+        state = _make_state(plan_approved=True)
         assert _after_plan(state) == "supervisor"
 
     def test_after_plan_not_approved_routes_to_await_approval(self):
         """Plan not approved routes to await_approval."""
-        state: DeepResearchState = {"plan_approved": False}
+        state = _make_state(plan_approved=False)
         assert _after_plan(state) == "await_approval"
 
     def test_after_await_approval_approved_routes_to_supervisor(self):
         """Await approval with plan_approved routes to supervisor."""
-        state: DeepResearchState = {"plan_approved": True}
+        state = _make_state(plan_approved=True)
         assert _after_await_approval(state) == "supervisor"
 
     def test_after_await_approval_not_approved_routes_to_plan_rejected(self):
         """Await approval without plan_approved routes to plan_rejected."""
-        state: DeepResearchState = {"plan_approved": False}
+        state = _make_state(plan_approved=False)
         assert _after_await_approval(state) == "plan_rejected"
 
     def test_after_supervisor_phase_supervisor_loops(self):
         """Supervisor phase loops back to supervisor."""
-        state: DeepResearchState = {"current_phase": PHASE_SUPERVISOR}
+        state = _make_state(current_phase=PHASE_SUPERVISOR)
         assert _after_supervisor(state) == "supervisor"
 
     def test_after_supervisor_default_routes_to_completeness(self):
         """Default routes to completeness."""
-        state: DeepResearchState = {"current_phase": PHASE_COMPLETENESS}
+        state = _make_state(current_phase=PHASE_COMPLETENESS)
         assert _after_supervisor(state) == "completeness"
 
     def test_after_completeness_phase_supervisor_loops(self):
         """Completeness with supervisor phase loops."""
-        state: DeepResearchState = {"current_phase": PHASE_SUPERVISOR}
+        state = _make_state(current_phase=PHASE_SUPERVISOR)
         assert _after_completeness(state) == "supervisor"
 
     def test_after_completeness_default_routes_to_synthesize(self):
         """Default routes to synthesize."""
-        state: DeepResearchState = {"current_phase": PHASE_SYNTHESIZE}
+        state = _make_state(current_phase=PHASE_SYNTHESIZE)
         assert _after_completeness(state) == "synthesize"
 
     def test_after_review_route_no_review_returns_complete(self):
         """No current_review returns complete."""
-        state: DeepResearchState = {"current_review": None}
+        state = _make_state(current_review=None)
         assert _after_review_route(state) == "complete"
 
     def test_after_review_route_research_more_returns_supervisor(self):
         """Action research_more returns supervisor."""
-        state: DeepResearchState = {
-            "current_review": {"action": "research_more"},
-            "iteration": 1,
-            "max_iterations": 3,
-        }
+        state = _make_state(
+            current_review={"action": "research_more"},
+            iteration=1,
+            max_iterations=3,
+        )
         assert _after_review_route(state) == "supervisor"
 
     def test_after_review_route_revise_returns_synthesize(self):
         """Action revise returns synthesize."""
-        state: DeepResearchState = {
-            "current_review": {"action": "revise"},
-            "iteration": 1,
-            "max_iterations": 3,
-        }
+        state = _make_state(
+            current_review={"action": "revise"},
+            iteration=1,
+            max_iterations=3,
+        )
         assert _after_review_route(state) == "synthesize"
 
     def test_after_review_route_max_iterations_reached_returns_complete(self):
         """Max iterations reached returns complete."""
-        state: DeepResearchState = {
-            "current_review": {"action": "research_more"},
-            "iteration": 3,
-            "max_iterations": 3,
-        }
+        state = _make_state(
+            current_review={"action": "research_more"},
+            iteration=3,
+            max_iterations=3,
+        )
         assert _after_review_route(state) == "complete"
 
 

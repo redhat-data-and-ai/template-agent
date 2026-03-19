@@ -5,6 +5,12 @@ source of truth.  A local in-memory LRU cache provides fast reads within the
 same pod.  All writes go to the store *first*; the local cache is updated
 only after persistence succeeds.  This guarantees multi-pod consistency:
 any pod can resume a plan that was created on a different pod.
+
+# TODO: The module-level OrderedDict caches (_PLAN_STORE, _PLAN_METADATA,
+# _PLAN_ENRICHMENT, _PLAN_CONTEXT, _THREAD_OWNERS) are local to each pod.
+# In a horizontally-scaled deployment the LangGraph store (Postgres) is the
+# authoritative source.  If you observe stale reads across pods, consider
+# adding a TTL to the local cache or switching to Redis as a shared L1 cache.
 """
 
 from __future__ import annotations

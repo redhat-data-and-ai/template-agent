@@ -5,6 +5,7 @@ handles streaming responses, and manages the conversion between LangGraph events
 and simplified streaming.
 """
 
+import asyncio
 import inspect
 from collections.abc import AsyncGenerator
 from typing import Any, Dict
@@ -136,8 +137,9 @@ class AgentManager:
         llm = ChatGoogleGenerativeAI(model=classifier_model, temperature=0.0)
 
         try:
-            response = await llm.ainvoke(
-                [SystemMessage(content=system_prompt), _HM(content=query)]
+            response = await asyncio.wait_for(
+                llm.ainvoke([SystemMessage(content=system_prompt), _HM(content=query)]),
+                timeout=settings.DEEP_RESEARCH_LLM_CALL_TIMEOUT_SECONDS,
             )
             decision = _content_to_str(response.content).strip().lower()
             if decision not in ("answer_directly", "needs_research"):

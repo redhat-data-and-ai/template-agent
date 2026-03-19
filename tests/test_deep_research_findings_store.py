@@ -20,8 +20,8 @@ from template_agent.src.core.deep_research.state import Finding
 
 def _make_finding(subquery: str, answer: str, **kwargs: object) -> Finding:
     """Build a minimal Finding for tests."""
-    f: Finding = {"subquery": subquery, "answer": answer, **kwargs}
-    return f
+    base: dict[str, object] = {"subquery": subquery, "answer": answer, **kwargs}
+    return base  # type: ignore[return-value]
 
 
 class TestHashSubquery:

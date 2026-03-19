@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -19,6 +19,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from template_agent.src.core.agent import initialize_database
 from template_agent.src.core.deep_research.cancel import get_cancel_store
 from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+from template_agent.src.core.storage import (
+    initialize_shared_store,
+    shutdown_shared_store,
+)
 from template_agent.src.routes.deep_research_plan import (
     router as deep_research_plan_router,
 )
@@ -165,9 +169,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.critical(f"Failed to initialize database on startup: {e}")
         raise
 
+    # Wire the shared BaseStore into the CancelStore so cancellation
+    # flags survive pod restarts and are visible across pods.
+    shared_store = await initialize_shared_store()
+    if shared_store is not None:
+        get_cancel_store().configure_backing_store(shared_store)
+
     logger.info("Agent server ready - MCP connection will be established per-request")
     yield
+
     logger.info("Agent server shutting down")
+    await shutdown_shared_store()
 
 
 # Create FastAPI application with lifespan management
@@ -244,8 +256,21 @@ async def deep_research_capabilities():
 
 
 @app.delete("/v1/cancel/{thread_id}")
-async def cancel_deep_research(thread_id: str):
-    """Cancel an in-progress deep research run."""
+async def cancel_deep_research(thread_id: str, user_id: str | None = None):
+    """Cancel an in-progress deep research run.
+
+    Requires user_id to verify ownership of the thread.
+    """
+    from template_agent.src.core.deep_research.plan_store import get_thread_owner
+
+    if not user_id:
+        raise HTTPException(status_code=403, detail="user_id is required")
+    owner = await get_thread_owner(thread_id)
+    if owner is not None and owner != user_id:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to cancel this thread"
+        )
+
     store = get_cancel_store()
     await store.request_cancel(thread_id)
     logger.info(f"Cancel requested for thread_id={thread_id}")

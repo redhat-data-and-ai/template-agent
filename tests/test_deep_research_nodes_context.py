@@ -20,11 +20,13 @@ def _make_ctx(**overrides) -> ResearchContext:
     return ctx
 
 
-def _make_finding(subquery: str = "q1", answer: str = "a1", **overrides) -> Finding:
+def _make_finding(
+    subquery: str = "q1", answer: str = "a1", **overrides: object
+) -> Finding:
     """Create a minimal Finding for testing."""
-    f: Finding = {"subquery": subquery, "answer": answer}
-    f.update(overrides)
-    return f
+    base: dict[str, object] = {"subquery": subquery, "answer": answer}
+    base.update(overrides)
+    return base  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +462,7 @@ class TestFormatHierarchicalContextForSynthesis:
             "thread_id": "t",
             "current_phase": "synthesis",
             "immediate_context": immediate,
-            "finding_cards": [{"subquery": "q1", "summary": "s1"}],
+            "finding_cards": [{"subquery": "q1", "answer": "s1"}],
             "research_memory": {"key_insights": ["i1"]},
         }
         ctx = _make_ctx()
@@ -483,7 +485,7 @@ class TestFormatHierarchicalContextForSynthesis:
         assert result == expected
         mock_mgr.format_for_synthesis.assert_called_once_with(
             immediate,
-            [{"subquery": "q1", "summary": "s1"}],
+            [{"subquery": "q1", "answer": "s1"}],
             {"key_insights": ["i1"]},
             "What is X?",
         )

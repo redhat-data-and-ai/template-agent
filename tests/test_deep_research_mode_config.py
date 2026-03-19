@@ -60,7 +60,7 @@ class TestQualityGate:
             methodology_required=False,
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
-            gate.coverage_min = 0.6
+            gate.coverage_min = 0.6  # type: ignore[misc]
 
 
 class TestResearchModeConfig:
@@ -122,7 +122,7 @@ class TestModelSpec:
         """ModelSpec is immutable."""
         spec = ModelSpec(context_window=200_000, max_output_tokens=64_000)
         with pytest.raises(dataclasses.FrozenInstanceError):
-            spec.context_window = 300_000
+            spec.context_window = 300_000  # type: ignore[misc]
 
 
 class TestResolveModelSpec:

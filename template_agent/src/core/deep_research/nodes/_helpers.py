@@ -175,7 +175,8 @@ async def check_node_cancelled(
         store = get_cancel_store()
         if not await store.is_cancelled(thread_id):
             return None
-    except Exception:
+    except Exception as exc:
+        logger.warning("check_node_cancelled failed for thread %s: %s", thread_id, exc)
         return None
 
     from template_agent.src.core.deep_research.state import PHASE_COMPLETE
