@@ -1,0 +1,21 @@
+<div style="max-width:600px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;color:#333;">
+  <!-- Header (always) -->
+  <div style="background-color:#CC0000;color:white;padding:20px;text-align:center;">
+    <h1 style="margin:0;font-size:22px;">Red Hat Fitness Report</h1>
+  </div>
+
+  <div style="padding:20px;">
+    <!-- Metric highlight box (if BMI provided) -->
+    <div style="background-color:#f5f5f5;padding:12px;border-radius:6px;margin-bottom:16px;">
+      <strong>BMI:</strong> {{BMI_VALUE}} ({{BMI_CATEGORY}})
+    </div>
+
+    <!-- Dynamic sections go here -->
+    {{DYNAMIC_SECTIONS}}
+  </div>
+
+  <!-- Disclaimer (always) -->
+  <div style="padding:12px 20px;font-size:12px;color:#999;text-align:center;">
+    This is not medical advice. Consult a healthcare professional.
+  </div>
+</div>

@@ -1,0 +1,37 @@
+{
+  "skill_name": "client-intake",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Hi! I'm 175 cm tall and weigh 70 kg. Can you analyze my BMI?",
+      "expected_output": "Greeting with Red Hat branding, delegation to analyst, and relay of BMI results.",
+      "files": [],
+      "assertions": [
+        "Response includes BMI value and category (from analyst)",
+        "Response includes health tips (from analyst)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I'm 5 feet 10 inches tall and weigh 165 pounds. What's my BMI?",
+      "expected_output": "Imperial units converted to metric, delegation to analyst, BMI results returned.",
+      "files": [],
+      "assertions": [
+        "Response includes BMI value (approximately 23.7 for 5'10\" and 165 lbs)",
+        "Response includes BMI category (should be Normal)",
+        "Response includes health tips appropriate for the BMI category"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Height: 6ft, Weight: 180lbs, and please email the report to john@example.com",
+      "expected_output": "Units converted, BMI analysis delegated to analyst, email sent via publisher.",
+      "files": [],
+      "assertions": [
+        "Response includes BMI analysis results",
+        "Response confirms email was sent or mentions publisher action",
+        "Email address john@example.com is referenced in the response"
+      ]
+    }
+  ]
+}

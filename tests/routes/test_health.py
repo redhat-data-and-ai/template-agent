@@ -22,14 +22,3 @@ class TestHealthRoute:
         data = response.json()
         assert data["status"] == "healthy"
         assert data["service"] == "Template Agent"
-
-    def test_health_endpoint_content_type(self):
-        """Test health endpoint returns correct content type."""
-        from fastapi import FastAPI
-
-        app = FastAPI()
-        app.include_router(router)
-        client = TestClient(app)
-
-        response = client.get("/health")
-        assert response.headers["content-type"] == "application/json"

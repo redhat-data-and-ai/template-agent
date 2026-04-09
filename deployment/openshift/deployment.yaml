@@ -22,14 +22,14 @@ spec:
           image: template-agent:latest
           imagePullPolicy: Always
           ports:
-            - containerPort: 8081
+            - containerPort: 5002
               name: http
               protocol: TCP
           env:
             - name: AGENT_HOST
               value: "0.0.0.0"
             - name: AGENT_PORT
-              value: "8081"
+              value: "5002"
             - name: PYTHON_LOG_LEVEL
               valueFrom:
                 configMapKeyRef:
@@ -123,7 +123,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8081
+              port: 5002
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
@@ -131,7 +131,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 8081
+              port: 5002
             initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3

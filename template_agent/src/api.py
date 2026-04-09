@@ -15,8 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from template_agent.src.core.agent import initialize_database
+from template_agent.src.core.backend import initialize_backend
 from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+from template_agent.src.core.storage import initialize_database
 from template_agent.src.routes.feedback import router as feedback_router
 from template_agent.src.routes.health import router as health_router
 from template_agent.src.routes.history import router as history_router
@@ -78,9 +79,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
                 request = Request(request.scope, receive)
             except Exception as e:
-                logger.warning("Failed to read request body", error=str(e))
+                logger.warning(f"Failed to read request body: {e}")
 
-        logger.info("incoming_request", **request_data)
+        logger.info(f"incoming_request {request_data}")
 
         # Process request
         response = await call_next(request)
@@ -98,7 +99,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if settings.REQUEST_LOG_HEADERS:
             response_data["headers"] = dict(response.headers)
 
-        logger.info("outgoing_response", **response_data)
+        logger.info(f"outgoing_response {response_data}")
 
         return response
 
@@ -128,6 +129,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await initialize_database()
     except Exception as e:
         logger.critical(f"Failed to initialize database on startup: {e}")
+        raise
+
+    # Pre-initialize the shell backend (venv + deps) so the first request is fast
+    try:
+        initialize_backend()
+    except Exception as e:
+        logger.critical(f"Failed to initialize backend on startup: {e}")
         raise
 
     logger.info("Agent server ready - MCP connection will be established per-request")

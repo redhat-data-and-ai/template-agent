@@ -56,8 +56,9 @@ async def message_generator(
             ):
                 continue
 
-            # Yield the simplified event format
-            yield f"{json.dumps(event, separators=(',', ':'))}\n\n"
+            payload = json.dumps(event, separators=(",", ":"))
+            app_logger.info(f"SSE -> {payload}")
+            yield f"{payload}\n\n"
 
     except Exception as e:
         app_logger.error(f"Error in message generator: {e}")

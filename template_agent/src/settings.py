@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Server Configuration
     AGENT_HOST: str = Field(default="0.0.0.0", json_schema_extra={"env": "AGENT_HOST"})
-    AGENT_PORT: int = Field(default=8081, json_schema_extra={"env": "AGENT_PORT"})
+    AGENT_PORT: int = Field(default=5002, json_schema_extra={"env": "AGENT_PORT"})
     AGENT_SSL_KEYFILE: Optional[str] = Field(
         default=None, json_schema_extra={"env": "AGENT_SSL_KEYFILE"}
     )

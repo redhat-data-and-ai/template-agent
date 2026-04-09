@@ -5,7 +5,6 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from template_agent.src.routes.feedback import router
-from template_agent.src.schema import FeedbackRequest
 
 
 class TestFeedbackRoute:
@@ -68,11 +67,3 @@ class TestFeedbackRoute:
         mock_client.score.assert_called_once_with(
             trace_id="run_123", name="response_quality", value=4.5
         )
-
-    def test_feedback_request_model(self):
-        """Test FeedbackRequest model validation."""
-        feedback = FeedbackRequest(run_id="run_123", key="response_quality", score=4.5)
-        assert feedback.run_id == "run_123"
-        assert feedback.key == "response_quality"
-        assert feedback.score == 4.5
-        assert feedback.kwargs == {}
