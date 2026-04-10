@@ -86,6 +86,7 @@ class AgentManager:
                 # Use propagate_attributes to set user_id, session_id, and tags for the trace
                 # This is the SDK v4 way to set trace attributes
                 with propagate_attributes(
+                    trace_name="template-agent",
                     user_id=effective_user_id,
                     session_id=effective_session_id,
                     tags=["template-agent", "chat"],
@@ -95,8 +96,9 @@ class AgentManager:
                         as_type="span",
                         name="chat-response",
                         trace_context=trace_context,
+                        input=request.message,
                         metadata={"thread_id": request.thread_id},
-                    ):
+                    ) as observation:
                         # Reset tracking for this stream
                         self._current_tool_call_id = None
                         self._seen_message_ids = set()
@@ -110,6 +112,9 @@ class AgentManager:
                         app_logger.info(
                             f"AgentManager streaming response for run_id: {run_id}, thread_id: {thread_id}, trace_id: {trace_id}"
                         )
+
+                        # Track final agent response for trace output
+                        final_response = ""
 
                         # Use persistent agent for streaming - LangGraph will handle state automatically
                         async for stream_event in persistent_agent.astream(
@@ -136,7 +141,24 @@ class AgentManager:
 
                             for formatted_event in formatted_events:
                                 if formatted_event:
+                                    # Capture final AI message content for trace output
+                                    if (
+                                        formatted_event.get("type") == "message"
+                                        and formatted_event.get("content", {}).get(
+                                            "type"
+                                        )
+                                        == "ai"
+                                    ):
+                                        content = formatted_event["content"].get(
+                                            "content", ""
+                                        )
+                                        if isinstance(content, str):
+                                            final_response = content
                                     yield formatted_event
+
+                        # Set trace output before context exits
+                        if final_response:
+                            observation.update(output=final_response)
 
                         # No manual state saving needed - LangGraph handles this automatically
                         app_logger.info(
@@ -179,14 +201,11 @@ class AgentManager:
         if settings.USE_INMEMORY_SAVER:
             register_thread(effective_user_id, thread_id)
 
-        ai_call_id = f"ai_call_{str(run_id)}"
-
         configurable = {
             "thread_id": thread_id,
             "session_id": effective_session_id,
             "run_id": str(run_id),
             "user_id": effective_user_id,
-            "ai_call_id": ai_call_id,
         }
 
         # Create Langfuse handler - it will automatically use run_id as trace_id
@@ -574,8 +593,6 @@ class AgentManager:
             content["thread_id"] = thread_id
         if session_id:
             content["session_id"] = session_id
-        if chat_message.ai_call_id:
-            content["ai_call_id"] = chat_message.ai_call_id
         if chat_message.response_metadata:
             content["response_metadata"] = chat_message.response_metadata
         if chat_message.custom_data:

@@ -108,7 +108,6 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
                     ai_message.response_metadata.update(
                         message.additional_kwargs["response_metadata"]
                     )
-                ai_message.ai_call_id = message.additional_kwargs.get("ai_call_id")
             return ai_message
 
         case ToolMessage():

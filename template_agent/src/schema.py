@@ -108,11 +108,6 @@ class ChatMessage(BaseModel):
         default=None,
         examples=["847c6285-8fc9-4560-a83f-4e6285809254"],
     )
-    ai_call_id: str | None = Field(
-        description="Unique identifier for the AI call that generated this message.",
-        default=None,
-        examples=["ai_call_847c6285-8fc9-4560-a83f-4e6285809254"],
-    )
     response_metadata: dict[str, Any] = Field(
         description="Additional metadata for the response, such as headers, logprobs, or token counts.",
         default={},
