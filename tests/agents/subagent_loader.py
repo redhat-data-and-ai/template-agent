@@ -69,10 +69,8 @@ def load_subagents(
             if skill_paths:
                 subagent["skills"] = skill_paths
 
-        # Add model if specified
-        model_name = config.get("model")
-        if model_name:
-            subagent["model"] = model_name
+        # Don't set model for tests - subagents will inherit from parent agent
+        # In production, agent.py creates proper ChatGoogleGenerativeAI instances
 
         subagents.append(subagent)
 
