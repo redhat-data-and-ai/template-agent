@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 from langgraph.pregel import Pregel
 from langgraph.types import Command, Interrupt, Overwrite
@@ -66,52 +67,78 @@ class AgentManager:
         # Use persistent agent for both streaming and state persistence
         # This ensures LangGraph handles state management automatically
         async with get_template_agent(self.redhat_sso_token) as persistent_agent:
+            # Get Langfuse client for trace context manager
+            langfuse = Langfuse()
+
+            # Create trace ID for this conversation turn (hex format for Langfuse)
+            trace_id = uuid4().hex
+            effective_session_id = (
+                request.session_id or request.thread_id or str(uuid4())
+            )
+            effective_user_id = request.user_id or "anonymous"
+
             try:
-                # Reset tracking for this stream
-                self._current_tool_call_id = None
-                self._seen_message_ids = set()
-
-                # Prepare input for the persistent agent
-                # (also pre-populates _seen_message_ids from existing checkpoint)
-                kwargs, run_id, thread_id = await self._handle_input(
-                    request, persistent_agent
-                )
-
-                app_logger.info(
-                    f"AgentManager streaming response for run_id: {run_id}, thread_id: {thread_id}"
-                )
-
-                # Use persistent agent for streaming - LangGraph will handle state automatically
-                async for stream_event in persistent_agent.astream(
-                    **kwargs, stream_mode=["updates", "messages", "custom"]
+                # Wrap entire agent invocation in Langfuse trace context
+                # This ensures ALL nested operations (tools, subagents) are properly nested
+                # Uses start_as_current_observation for proper OTel context propagation
+                # See: https://github.com/langfuse/langfuse/issues/10721
+                trace_context = {
+                    "trace_id": trace_id,
+                    "session_id": effective_session_id,
+                    "user_id": effective_user_id,
+                    "tags": ["template-agent", "chat"],
+                }
+                with langfuse.start_as_current_observation(
+                    as_type="span",
+                    name="chat-response",
+                    trace_context=trace_context,
+                    metadata={"thread_id": request.thread_id},
                 ):
-                    if not isinstance(stream_event, tuple):
-                        continue
+                    # Reset tracking for this stream
+                    self._current_tool_call_id = None
+                    self._seen_message_ids = set()
 
-                    stream_mode, event = stream_event
-
-                    # Update tool call tracking based on stream events
-                    self._update_tool_call_tracking(stream_mode, event)
-
-                    # Convert LangGraph events to simplified format
-                    effective_session_id = request.session_id or thread_id
-                    formatted_events = self._format_events(
-                        stream_mode,
-                        event,
-                        request.stream_tokens,
-                        run_id,
-                        thread_id,
-                        effective_session_id,
+                    # Prepare input for the persistent agent
+                    # (also pre-populates _seen_message_ids from existing checkpoint)
+                    kwargs, run_id, thread_id = await self._handle_input(
+                        request, persistent_agent
                     )
 
-                    for formatted_event in formatted_events:
-                        if formatted_event:
-                            yield formatted_event
+                    app_logger.info(
+                        f"AgentManager streaming response for run_id: {run_id}, thread_id: {thread_id}, trace_id: {trace_id}"
+                    )
 
-                # No manual state saving needed - LangGraph handles this automatically
-                app_logger.info(
-                    f"Conversation completed and auto-saved for thread {thread_id}"
-                )
+                    # Use persistent agent for streaming - LangGraph will handle state automatically
+                    async for stream_event in persistent_agent.astream(
+                        **kwargs, stream_mode=["updates", "messages", "custom"]
+                    ):
+                        if not isinstance(stream_event, tuple):
+                            continue
+
+                        stream_mode, event = stream_event
+
+                        # Update tool call tracking based on stream events
+                        self._update_tool_call_tracking(stream_mode, event)
+
+                        # Convert LangGraph events to simplified format
+                        effective_session_id = request.session_id or thread_id
+                        formatted_events = self._format_events(
+                            stream_mode,
+                            event,
+                            request.stream_tokens,
+                            run_id,
+                            thread_id,
+                            effective_session_id,
+                        )
+
+                        for formatted_event in formatted_events:
+                            if formatted_event:
+                                yield formatted_event
+
+                    # No manual state saving needed - LangGraph handles this automatically
+                    app_logger.info(
+                        f"Conversation completed and auto-saved for thread {thread_id}"
+                    )
 
             except Exception as e:
                 app_logger.error(
@@ -149,8 +176,7 @@ class AgentManager:
         if settings.USE_INMEMORY_SAVER:
             register_thread(effective_user_id, thread_id)
 
-        # Generate AI call ID
-        ai_call_id = f"ai_call_{str(uuid4())}"
+        ai_call_id = f"ai_call_{str(run_id)}"
 
         configurable = {
             "thread_id": thread_id,
@@ -160,19 +186,22 @@ class AgentManager:
             "ai_call_id": ai_call_id,
         }
 
+        # Create Langfuse handler - it will automatically use run_id as trace_id
+        # This ensures all operations (agent + tools + subagents) are grouped under one trace
+        # See: https://langfuse.com/docs/integrations/langchain/tracing
         langfuse_handler = CallbackHandler()
 
         # Set trace-level metadata for Langfuse observability
-        # See: https://langfuse.com/docs/integrations/langchain
+        # The CallbackHandler automatically uses run_id as trace_id
         config = RunnableConfig(
             configurable=configurable,
             run_id=run_id,
             callbacks=[langfuse_handler],
             run_name="chat-response",  # Descriptive trace name for filtering
             metadata={
-                "langfuse_user_id": effective_user_id,
-                "langfuse_session_id": effective_session_id,
-                "langfuse_tags": ["template-agent", "chat"],
+                "ls_user_id": effective_user_id,  # Langfuse metadata keys
+                "ls_session_id": effective_session_id,
+                "ls_tags": ["template-agent", "chat"],
             },
         )
 
@@ -239,6 +268,7 @@ class AgentManager:
             "user_id": effective_user_id,
         }
 
+        # Create Langfuse handler - it will automatically use run_id as trace_id
         langfuse_handler = CallbackHandler()
 
         # Set trace-level metadata for Langfuse observability
@@ -248,9 +278,9 @@ class AgentManager:
             callbacks=[langfuse_handler],
             run_name="chat-response",
             metadata={
-                "langfuse_user_id": effective_user_id,
-                "langfuse_session_id": effective_session_id,
-                "langfuse_tags": ["template-agent", "chat"],
+                "ls_user_id": effective_user_id,
+                "ls_session_id": effective_session_id,
+                "ls_tags": ["template-agent", "chat"],
             },
         )
 
