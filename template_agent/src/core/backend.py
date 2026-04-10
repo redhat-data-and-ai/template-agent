@@ -26,11 +26,18 @@ _PASSTHROUGH_VARS = ("HOME", "USER", "LANG", "LC_ALL", "TZ", "TERM")
 
 
 def _base_python() -> str:
-    """Resolve the base (non-venv) Python so the agent venv is independent."""
+    """Resolve the base (non-venv) Python so the agent venv is independent.
+
+    Prefers the versioned binary (e.g. python3.12) to avoid picking up the
+    UBI9 system python3 → 3.9 symlink when the app runs inside a 3.12 venv.
+    """
     if sys.prefix != sys.base_prefix:
-        candidate = Path(sys.base_prefix) / "bin" / "python3"
-        if candidate.exists():
-            return str(candidate)
+        v = sys.version_info
+        base_bin = Path(sys.base_prefix) / "bin"
+        for name in (f"python{v.major}.{v.minor}", "python3"):
+            candidate = base_bin / name
+            if candidate.exists():
+                return str(candidate)
     return sys.executable
 
 
@@ -40,14 +47,17 @@ def _ensure_venv(root_dir: Path, pyproject: Path) -> Path:
     The venv directory is keyed by a hash of *root_dir* **and** the contents of
     *pyproject* so a changed ``pyproject.toml`` triggers a reinstall.
 
-    Uses ~/.cache/template-agent/venvs/ to avoid security risks with world-readable
-    /tmp directories on shared hosts.
+    Uses /app/.cache/template-agent/venvs/ (or ~/.cache/ outside containers) to
+    avoid security risks with world-readable /tmp directories on shared hosts.
     """
     project_hash = hashlib.sha256(str(root_dir.resolve()).encode()).hexdigest()[:12]
     toml_hash = hashlib.sha256(pyproject.read_bytes()).hexdigest()[:8]
 
-    # Use user cache directory instead of /tmp for security on shared hosts
-    cache_dir = Path.home() / ".cache" / "template-agent" / "venvs"
+    # Prefer /app/.cache inside containers (always writable); fall back to
+    # the user home cache dir for local / non-container runs.
+    app_cache = Path("/app/.cache")
+    base_cache = app_cache if app_cache.parent.is_dir() else Path.home() / ".cache"
+    cache_dir = base_cache / "template-agent" / "venvs"
     cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)  # User-only permissions
 
     venv_dir = cache_dir / f"agent-venv-{project_hash}"

@@ -16,7 +16,8 @@ COPY pyproject.toml /app/pyproject.toml
 RUN pip install --no-cache-dir uv && \
     cd /app && \
     uv venv /app/.venv && \
-    uv pip install --python /app/.venv/bin/python -r pyproject.toml
+    uv pip install --python /app/.venv/bin/python -r pyproject.toml && \
+    mkdir -p /app/.cache && chown -R default:root /app/.cache
 USER default
 
 # --------------------------------------------------------------------------------------------------
