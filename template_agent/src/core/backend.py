@@ -13,7 +13,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 from deepagents.backends import LocalShellBackend
@@ -36,14 +35,22 @@ def _base_python() -> str:
 
 
 def _ensure_venv(root_dir: Path, pyproject: Path) -> Path:
-    """Create an isolated venv under ``$TMPDIR`` and install from *pyproject*.
+    """Create an isolated venv in user cache directory and install from *pyproject*.
 
     The venv directory is keyed by a hash of *root_dir* **and** the contents of
     *pyproject* so a changed ``pyproject.toml`` triggers a reinstall.
+
+    Uses ~/.cache/template-agent/venvs/ to avoid security risks with world-readable
+    /tmp directories on shared hosts.
     """
     project_hash = hashlib.sha256(str(root_dir.resolve()).encode()).hexdigest()[:12]
     toml_hash = hashlib.sha256(pyproject.read_bytes()).hexdigest()[:8]
-    venv_dir = Path(tempfile.gettempdir()) / f"agent-venv-{project_hash}"
+
+    # Use user cache directory instead of /tmp for security on shared hosts
+    cache_dir = Path.home() / ".cache" / "template-agent" / "venvs"
+    cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)  # User-only permissions
+
+    venv_dir = cache_dir / f"agent-venv-{project_hash}"
     stamp = venv_dir / ".toml_hash"
 
     needs_install = False
