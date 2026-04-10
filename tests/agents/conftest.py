@@ -86,7 +86,10 @@ def tracer():
 
 @pytest.fixture
 def langfuse_client():
-    """Langfuse client (optional, requires env vars)."""
+    """Langfuse client (optional, requires env vars).
+
+    Ensures traces are flushed before test teardown.
+    """
     if all(
         [
             os.getenv("LANGFUSE_PUBLIC_KEY"),
@@ -94,8 +97,12 @@ def langfuse_client():
             os.getenv("LANGFUSE_BASE_URL"),
         ]
     ):
-        return Langfuse()
-    return None
+        client = Langfuse()
+        yield client
+        # Flush pending traces before test cleanup
+        client.flush()
+    else:
+        yield None
 
 
 @pytest.fixture

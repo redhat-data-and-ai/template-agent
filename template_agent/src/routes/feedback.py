@@ -11,9 +11,24 @@ from template_agent.src.schema import FeedbackRequest, FeedbackResponse
 
 router = APIRouter()
 
-# Initialize Langfuse client for feedback tracking
-# Environment is read from LANGFUSE_ENVIRONMENT env var
-client = Langfuse()
+# Lazy initialization to ensure env vars are loaded first
+_langfuse_client = None
+
+
+def get_langfuse_client() -> Langfuse:
+    """Get or create the Langfuse client singleton.
+
+    Lazy initialization ensures environment variables are loaded before
+    the client is created, avoiding initialization issues if this module
+    is imported before env vars are set.
+
+    Returns:
+        Langfuse client instance.
+    """
+    global _langfuse_client
+    if _langfuse_client is None:
+        _langfuse_client = Langfuse()
+    return _langfuse_client
 
 
 @router.post("/v1/feedback")
@@ -46,6 +61,7 @@ async def feedback(feedback: FeedbackRequest) -> FeedbackResponse:
     kwargs = feedback.kwargs or {}
 
     # Langfuse uses different parameter names than our schema
+    client = get_langfuse_client()
     client.score(
         trace_id=feedback.run_id,  # Assuming run_id maps to trace_id
         name=feedback.key,  # 'key' becomes 'name' in Langfuse
