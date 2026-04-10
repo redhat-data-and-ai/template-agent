@@ -7,6 +7,8 @@ runtime values like the current date.
 from datetime import datetime
 from pathlib import Path
 
+from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+
 _CONFIG_DIR = Path(__file__).parent.parent.parent / "agent_config"
 
 
@@ -27,7 +29,24 @@ def get_system_prompt() -> str:
 
     Returns:
         The fully rendered system prompt string.
+
+    Raises:
+        AppException: If system-prompt.md is missing or unreadable.
     """
     template_path = _CONFIG_DIR / "system-prompt.md"
-    template = template_path.read_text()
+
+    try:
+        template = template_path.read_text()
+    except FileNotFoundError:
+        raise AppException(
+            f"System prompt file not found at {template_path}. "
+            f"Please ensure agent_config/system-prompt.md exists in the project.",
+            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+        )
+    except Exception as e:
+        raise AppException(
+            f"Failed to read system prompt from {template_path}: {e}",
+            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+        )
+
     return template.replace("{{current_date}}", get_current_date())
