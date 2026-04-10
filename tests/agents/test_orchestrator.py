@@ -54,11 +54,11 @@ def build_context(skill_name: str, eval_id: int, eval_case: dict) -> dict:
     }
 
 
-async def run_agent_async(agent, prompt: str, tracer) -> str:
+async def run_agent_async(agent, prompt: str, eval_id: int, tracer) -> str:
     """Run agent asynchronously."""
     tracer.start()
 
-    config = {"configurable": {"thread_id": f"orchestrator-test"}}
+    config = {"configurable": {"thread_id": f"orchestrator-test-{eval_id}"}}
 
     try:
         result = await agent.ainvoke(
@@ -76,7 +76,7 @@ async def run_agent_async(agent, prompt: str, tracer) -> str:
         raise
 
 
-def run_agent_sync(agent, prompt: str, tracer) -> str:
+def run_agent_sync(agent, prompt: str, eval_id: int, tracer) -> str:
     """Synchronous wrapper for async agent execution."""
     try:
         loop = asyncio.get_event_loop()
@@ -86,7 +86,7 @@ def run_agent_sync(agent, prompt: str, tracer) -> str:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-    return loop.run_until_complete(run_agent_async(agent, prompt, tracer))
+    return loop.run_until_complete(run_agent_async(agent, prompt, eval_id, tracer))
 
 
 # ============================================================================
@@ -153,7 +153,7 @@ def test_orchestrator_evaluation(
 
     # Run agent
     prompt = eval_case["prompt"]
-    output = run_agent_sync(agent, prompt, tracer)
+    output = run_agent_sync(agent, prompt, eval_id, tracer)
 
     # Save output
     save_output(output_dir, output)
