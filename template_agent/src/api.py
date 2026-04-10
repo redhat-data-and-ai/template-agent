@@ -79,9 +79,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
                 request = Request(request.scope, receive)
             except Exception as e:
-                logger.warning(f"Failed to read request body: {e}")
+                logger.warning("failed_to_read_request_body", error=str(e))
 
-        logger.info(f"incoming_request {request_data}")
+        logger.info("incoming_request", **request_data)
 
         # Process request
         response = await call_next(request)
@@ -99,7 +99,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if settings.REQUEST_LOG_HEADERS:
             response_data["headers"] = dict(response.headers)
 
-        logger.info(f"outgoing_response {response_data}")
+        logger.info("outgoing_response", **response_data)
 
         return response
 
@@ -122,25 +122,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Raises:
         AppException: If database initialization fails on startup.
     """
-    logger.info("Agent server starting up")
+    logger.info("agent_server_starting")
 
     # Initialize database schema on startup
     try:
         await initialize_database()
     except Exception as e:
-        logger.critical(f"Failed to initialize database on startup: {e}")
+        logger.critical("database_initialization_failed", error=str(e))
         raise
 
     # Pre-initialize the shell backend (venv + deps) so the first request is fast
     try:
         initialize_backend()
     except Exception as e:
-        logger.critical(f"Failed to initialize backend on startup: {e}")
+        logger.critical("backend_initialization_failed", error=str(e))
         raise
 
-    logger.info("Agent server ready - MCP connection will be established per-request")
+    logger.info("agent_server_ready")
     yield
-    logger.info("Agent server shutting down")
+    logger.info("agent_server_shutting_down")
 
 
 # Create FastAPI application with lifespan management
@@ -173,9 +173,11 @@ app.include_router(threads_router)
 async def generic_exception_handler(request: Request, exc: Exception):
     """Generic exception handler for unhandled exceptions."""
     logger.exception(
-        f"Unhandled exception occurred for request_method={request.method}, request_path={request.url.path}, error={exc}"
+        "unhandled_exception",
+        request_method=request.method,
+        request_path=request.url.path,
+        error=str(exc),
     )
-    logger.debug(f"Unhandled exception occurred for request={request}, error={exc}")
     return JSONResponse(
         status_code=AppExceptionCode.INTERNAL_SERVER_ERROR.response_code,
         content={
@@ -189,10 +191,13 @@ async def generic_exception_handler(request: Request, exc: Exception):
 @app.exception_handler(AppException)
 async def app_exception_handler(request: Request, exc: AppException):
     """App exception handler for unhandled exceptions."""
-    logger.warn(
-        f"App exception occurred for request_method={request.method}, request_path={request.url.path}, error={exc}"
+    logger.warning(
+        "app_exception",
+        request_method=request.method,
+        request_path=request.url.path,
+        error=str(exc),
+        error_code=exc.error_code,
     )
-    logger.debug(f"App exception occurred for request={request}, error={exc}")
     return JSONResponse(
         status_code=exc.response_code,
         content={
