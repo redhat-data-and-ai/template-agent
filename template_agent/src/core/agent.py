@@ -5,6 +5,7 @@ including initialization, configuration, and agent creation with MCP tools,
 skills, subagents, and memory.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -83,8 +84,6 @@ async def get_template_agent(sso_token: str | None = None):
     logger.info(f"SSO authentication: {'Yes' if sso_token else 'No'}")
 
     try:
-        import asyncio
-
         # Add timeout wrapper for MCP connection
         async def connect_with_timeout():
             server_config: dict = {
