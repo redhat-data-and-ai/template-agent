@@ -63,6 +63,17 @@ def _ensure_venv(root_dir: Path, pyproject: Path) -> Path:
         logger.info(f"Agent venv up-to-date ({venv_dir})")
         return venv_dir
 
+    # If pyproject.toml changed, clear the venv to remove stale dependencies
+    if stamp.exists() and stamp.read_text() != toml_hash:
+        base = _base_python()
+        logger.info(f"pyproject.toml changed — clearing venv at {venv_dir}")
+        subprocess.run(
+            [base, "-m", "venv", "--clear", str(venv_dir)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     pkg_dir = venv_dir / "_pkg"
     pkg_dir.mkdir(exist_ok=True)
     shutil.copy2(pyproject, pkg_dir / "pyproject.toml")
