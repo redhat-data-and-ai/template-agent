@@ -57,7 +57,7 @@ async def message_generator(
                 continue
 
             payload = json.dumps(event, separators=(",", ":"))
-            app_logger.info(f"SSE -> {payload}")
+            app_logger.info(payload)
             yield f"{payload}\n\n"
 
     except Exception as e:
