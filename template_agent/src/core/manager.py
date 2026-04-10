@@ -176,6 +176,10 @@ class AgentManager:
         existing_messages = state.values.get("messages", [])
         for msg in existing_messages:
             msg_id = getattr(msg, "id", None)
+            # For ToolMessages without .id, use tool_call_id as stable identifier
+            if msg_id is None and isinstance(msg, ToolMessage):
+                msg_id = f"tool_{msg.tool_call_id}"
+
             if msg_id:
                 self._seen_message_ids.add(msg_id)
 
@@ -324,16 +328,29 @@ class AgentManager:
                 # Overwrite contains the FULL message history; only keep unseen messages
                 unseen = []
                 for msg in update_messages:
-                    msg_id = getattr(msg, "id", None) or id(msg)
-                    if msg_id not in self._seen_message_ids:
+                    msg_id = getattr(msg, "id", None)
+                    # For ToolMessages without .id, use tool_call_id as stable identifier
+                    if msg_id is None and isinstance(msg, ToolMessage):
+                        msg_id = f"tool_{msg.tool_call_id}"
+
+                    if msg_id is None:
+                        # Messages without any stable ID can't be reliably deduplicated
+                        # across checkpoint restores - always include to avoid data loss
+                        unseen.append(msg)
+                    elif msg_id not in self._seen_message_ids:
                         unseen.append(msg)
                         self._seen_message_ids.add(msg_id)
                 update_messages = unseen
             else:
                 # Regular update — track IDs so Overwrite can skip them later
                 for msg in update_messages:
-                    msg_id = getattr(msg, "id", None) or id(msg)
-                    self._seen_message_ids.add(msg_id)
+                    msg_id = getattr(msg, "id", None)
+                    # For ToolMessages without .id, use tool_call_id as stable identifier
+                    if msg_id is None and isinstance(msg, ToolMessage):
+                        msg_id = f"tool_{msg.tool_call_id}"
+
+                    if msg_id is not None:
+                        self._seen_message_ids.add(msg_id)
 
             # Special cases for using langgraph-supervisor library (preserved)
             if node == "supervisor":
