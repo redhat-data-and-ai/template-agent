@@ -12,6 +12,7 @@ from typing import Callable
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from langfuse import Langfuse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
@@ -141,6 +142,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("agent_server_ready")
     yield
     logger.info("agent_server_shutting_down")
+
+    # Flush pending Langfuse traces on shutdown
+    # See: https://langfuse.com/docs/integrations/langchain
+    try:
+        langfuse_client = Langfuse()
+        langfuse_client.shutdown()
+        logger.info("langfuse_traces_flushed")
+    except Exception as e:
+        logger.warning("langfuse_shutdown_failed", error=str(e))
 
 
 # Create FastAPI application with lifespan management

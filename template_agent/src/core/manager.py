@@ -162,10 +162,18 @@ class AgentManager:
 
         langfuse_handler = CallbackHandler()
 
+        # Set trace-level metadata for Langfuse observability
+        # See: https://langfuse.com/docs/integrations/langchain
         config = RunnableConfig(
             configurable=configurable,
             run_id=run_id,
             callbacks=[langfuse_handler],
+            run_name="chat-response",  # Descriptive trace name for filtering
+            metadata={
+                "langfuse_user_id": effective_user_id,
+                "langfuse_session_id": effective_session_id,
+                "langfuse_tags": ["template-agent", "chat"],
+            },
         )
 
         # Check for interrupts that need to be resumed (preserved from original)
@@ -233,10 +241,17 @@ class AgentManager:
 
         langfuse_handler = CallbackHandler()
 
+        # Set trace-level metadata for Langfuse observability
         config = RunnableConfig(
             configurable=configurable,
             run_id=run_id,
             callbacks=[langfuse_handler],
+            run_name="chat-response",
+            metadata={
+                "langfuse_user_id": effective_user_id,
+                "langfuse_session_id": effective_session_id,
+                "langfuse_tags": ["template-agent", "chat"],
+            },
         )
 
         return {
