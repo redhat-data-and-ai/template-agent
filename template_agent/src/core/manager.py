@@ -509,6 +509,9 @@ class AgentManager:
 
         # Add optional fields only if present
         if chat_message.tool_calls:
+            # Rewrite SubAgentMiddleware's generic "task" tool name to the actual
+            # subagent name (from subagent_type arg) so the UI can display which
+            # subagent is being invoked rather than the generic "task" wrapper
             content["tool_calls"] = [
                 {**tc, "name": tc["args"]["subagent_type"]}
                 if tc.get("name") == "task" and "subagent_type" in tc.get("args", {})
