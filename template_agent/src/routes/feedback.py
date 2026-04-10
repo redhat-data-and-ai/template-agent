@@ -8,12 +8,12 @@ from fastapi import APIRouter
 from langfuse import Langfuse
 
 from template_agent.src.schema import FeedbackRequest, FeedbackResponse
-from template_agent.src.settings import settings
 
 router = APIRouter()
 
 # Initialize Langfuse client for feedback tracking
-client = Langfuse(environment=settings.LANGFUSE_TRACING_ENVIRONMENT)
+# Environment is read from LANGFUSE_ENVIRONMENT env var
+client = Langfuse()
 
 
 @router.post("/v1/feedback")

@@ -40,11 +40,11 @@ spec:
                 configMapKeyRef:
                   name: template-agent-config
                   key: USE_INMEMORY_SAVER
-            - name: LANGFUSE_TRACING_ENVIRONMENT
+            - name: LANGFUSE_ENVIRONMENT
               valueFrom:
                 configMapKeyRef:
                   name: template-agent-config
-                  key: LANGFUSE_TRACING_ENVIRONMENT
+                  key: LANGFUSE_ENVIRONMENT
             - name: MCP_SERVER_NAME
               valueFrom:
                 configMapKeyRef:

@@ -86,8 +86,8 @@ class Settings(BaseSettings):
     LANGFUSE_BASE_URL: Optional[str] = Field(
         default=None, json_schema_extra={"env": "LANGFUSE_BASE_URL"}
     )
-    LANGFUSE_TRACING_ENVIRONMENT: str = Field(
-        default="development", json_schema_extra={"env": "LANGFUSE_TRACING_ENVIRONMENT"}
+    LANGFUSE_ENVIRONMENT: str = Field(
+        default="development", json_schema_extra={"env": "LANGFUSE_ENVIRONMENT"}
     )
 
     # Google Application Credentials

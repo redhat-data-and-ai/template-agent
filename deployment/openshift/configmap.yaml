@@ -8,7 +8,7 @@ metadata:
 data:
   PYTHON_LOG_LEVEL: "INFO"
   USE_INMEMORY_SAVER: "false"
-  LANGFUSE_TRACING_ENVIRONMENT: "production"
+  LANGFUSE_ENVIRONMENT: "production"
   MCP_SERVER_NAME: "template-mcp-server"
   MCP_SERVER_URL: "https://template-mcp-server.ns.svc:8443/mcp/"
   MCP_TRANSPORT_PROTOCOL: "streamable_http"
