@@ -151,7 +151,8 @@ def create_orchestrator_agent(model):
     from subagent_loader import load_subagents
 
     # Load analyst and publisher subagents
-    subagents = load_subagents(AGENTS_DIR, SKILLS_DIR)
+    # Pass model as default for subagents that don't specify their own
+    subagents = load_subagents(AGENTS_DIR, SKILLS_DIR, default_model=model)
 
     # Main agent uses client-intake skill
     main_skill_path = SKILLS_DIR / "client-intake"
