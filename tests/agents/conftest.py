@@ -97,6 +97,7 @@ def langfuse_client():
             os.getenv("LANGFUSE_BASE_URL"),
         ]
     ):
+        # Environment is auto-read from LANGFUSE_TRACING_ENVIRONMENT env var
         client = Langfuse()
         yield client
         # Flush pending traces before test cleanup

@@ -145,6 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Flush pending Langfuse traces on shutdown
     # See: https://langfuse.com/docs/integrations/langchain
+    # Environment is auto-read from LANGFUSE_TRACING_ENVIRONMENT env var
     try:
         langfuse_client = Langfuse()
         langfuse_client.shutdown()

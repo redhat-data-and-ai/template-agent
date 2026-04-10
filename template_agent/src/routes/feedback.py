@@ -27,6 +27,7 @@ def get_langfuse_client() -> Langfuse:
     """
     global _langfuse_client
     if _langfuse_client is None:
+        # Environment is auto-read from LANGFUSE_TRACING_ENVIRONMENT env var
         _langfuse_client = Langfuse()
     return _langfuse_client
 

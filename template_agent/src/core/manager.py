@@ -68,6 +68,7 @@ class AgentManager:
         # This ensures LangGraph handles state management automatically
         async with get_template_agent(self.redhat_sso_token) as persistent_agent:
             # Get Langfuse client for trace context manager
+            # Environment is auto-read from LANGFUSE_TRACING_ENVIRONMENT env var
             langfuse = Langfuse()
 
             # Create trace ID for this conversation turn (hex format for Langfuse)
