@@ -195,10 +195,10 @@ async def get_template_agent(sso_token: str | None = None):
 
             # Add model if specified
             model_name = config.get("model")
-            model = None
+            subagent_model = None
             if model_name:
                 logger.info(f"Subagent '{name}' using model: {model_name}")
-                model = ChatGoogleGenerativeAI(
+                subagent_model = ChatGoogleGenerativeAI(
                     model=model_name,
                     temperature=0,
                     credentials=credentials,
@@ -208,7 +208,7 @@ async def get_template_agent(sso_token: str | None = None):
 
             sa: SubAgent = SubAgent(
                 name=name,
-                model=model,
+                model=subagent_model,
                 description=config.get("description", ""),
                 system_prompt=config.get("body", ""),
             )
