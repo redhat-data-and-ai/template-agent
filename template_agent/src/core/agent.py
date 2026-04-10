@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 from deepagents import SubAgent, create_deep_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -86,8 +87,6 @@ async def get_template_agent(sso_token: str | None = None):
 
         # Add timeout wrapper for MCP connection
         async def connect_with_timeout():
-            import httpx
-
             server_config: dict = {
                 "url": settings.MCP_SERVER_URL,
                 "transport": settings.MCP_TRANSPORT_PROTOCOL,
@@ -162,11 +161,18 @@ async def get_template_agent(sso_token: str | None = None):
     credentials, project = google.auth.default(
         scopes=["https://www.googleapis.com/auth/cloud-platform"]
     )
+    # Disable HTTP keepalive to prevent stale TLS connections after tool-call
+    # pauses.  Long-lived pooled connections to Vertex/Gemini can trigger
+    # ssl.SSLError("passed invalid argument") when reused; fresh connections
+    # on every request eliminate the issue.
+    _no_keepalive = httpx.Limits(max_keepalive_connections=0)
+
     model = ChatGoogleGenerativeAI(
         model="gemini-3.1-pro-preview",
         temperature=0,
         credentials=credentials,
         project=project,
+        client_args={"limits": _no_keepalive},
     )
 
     # Load subagent definitions from agents/ directory (markdown + frontmatter)
@@ -197,6 +203,7 @@ async def get_template_agent(sso_token: str | None = None):
                     temperature=0,
                     credentials=credentials,
                     project=project,
+                    client_args={"limits": _no_keepalive},
                 )
 
             sa: SubAgent = SubAgent(

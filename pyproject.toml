@@ -11,7 +11,7 @@ version = "0.1.0"
 description = "A template for Model Context Protocol (MCP) server development"
 readme = "README.md"
 keywords = ["mcp", "template", "server"]
-requires-python = "==3.12.2"
+requires-python = ">=3.12.2,<3.13"
 dependencies = [
     "deepagents==0.4.12",
     "fastapi==0.135.2",

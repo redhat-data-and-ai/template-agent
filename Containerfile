@@ -12,10 +12,11 @@ WORKDIR /app
 
 USER root
 COPY pyproject.toml /app/pyproject.toml
-RUN pip install uv
-RUN uv venv
-RUN source /app/.venv/bin/activate
-RUN uv pip install -r pyproject.toml
+# Install deps into /app/.venv explicitly (each RUN is a new shell; "source activate" does not persist).
+RUN pip install --no-cache-dir uv && \
+    cd /app && \
+    uv venv /app/.venv && \
+    uv pip install --python /app/.venv/bin/python -r pyproject.toml
 USER default
 
 # --------------------------------------------------------------------------------------------------
