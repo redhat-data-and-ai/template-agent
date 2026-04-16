@@ -12,7 +12,6 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler
 from langgraph.pregel import Pregel
 from langgraph.types import Command, Interrupt, Overwrite
@@ -67,104 +66,52 @@ class AgentManager:
         # Use persistent agent for both streaming and state persistence
         # This ensures LangGraph handles state management automatically
         async with get_template_agent(self.redhat_sso_token) as persistent_agent:
-            # Get Langfuse client for trace context manager
-            # Environment is auto-read from LANGFUSE_TRACING_ENVIRONMENT env var
-            langfuse = Langfuse()
-
-            # Create trace ID for this conversation turn (hex format for Langfuse)
-            trace_id = uuid4().hex
-            effective_session_id = (
-                request.session_id or request.thread_id or str(uuid4())
-            )
-            effective_user_id = request.user_id or "anonymous"
-
             try:
-                # Wrap entire agent invocation in Langfuse trace context
-                # This ensures ALL nested operations (tools, subagents) are properly nested
-                # Uses start_as_current_observation for proper OTel context propagation
-                # See: https://github.com/langfuse/langfuse/issues/10721
+                # Reset tracking for this stream
+                self._current_tool_call_id = None
+                self._seen_message_ids = set()
 
-                # Use propagate_attributes to set user_id, session_id, and tags for the trace
-                # This is the SDK v4 way to set trace attributes
-                with propagate_attributes(
-                    trace_name="template-agent",
-                    user_id=effective_user_id,
-                    session_id=effective_session_id,
-                    tags=["template-agent", "chat"],
+                # Prepare input for the persistent agent
+                # (also pre-populates _seen_message_ids from existing checkpoint)
+                kwargs, run_id, thread_id = await self._handle_input(
+                    request, persistent_agent
+                )
+
+                app_logger.info(
+                    f"AgentManager streaming response for run_id: {run_id}, thread_id: {thread_id}"
+                )
+
+                # Use persistent agent for streaming - LangGraph will handle state automatically
+                async for stream_event in persistent_agent.astream(
+                    **kwargs, stream_mode=["updates", "messages", "custom"]
                 ):
-                    trace_context = {"trace_id": trace_id}
-                    with langfuse.start_as_current_observation(
-                        as_type="span",
-                        name="chat-response",
-                        trace_context=trace_context,
-                        input=request.message,
-                        metadata={"thread_id": request.thread_id},
-                    ) as observation:
-                        # Reset tracking for this stream
-                        self._current_tool_call_id = None
-                        self._seen_message_ids = set()
+                    if not isinstance(stream_event, tuple):
+                        continue
 
-                        # Prepare input for the persistent agent
-                        # (also pre-populates _seen_message_ids from existing checkpoint)
-                        kwargs, run_id, thread_id = await self._handle_input(
-                            request, persistent_agent
-                        )
+                    stream_mode, event = stream_event
 
-                        app_logger.info(
-                            f"AgentManager streaming response for run_id: {run_id}, thread_id: {thread_id}, trace_id: {trace_id}"
-                        )
+                    # Update tool call tracking based on stream events
+                    self._update_tool_call_tracking(stream_mode, event)
 
-                        # Track final agent response for trace output
-                        final_response = ""
+                    # Convert LangGraph events to simplified format
+                    effective_session_id = request.session_id or thread_id
+                    formatted_events = self._format_events(
+                        stream_mode,
+                        event,
+                        request.stream_tokens,
+                        run_id,
+                        thread_id,
+                        effective_session_id,
+                    )
 
-                        # Use persistent agent for streaming - LangGraph will handle state automatically
-                        async for stream_event in persistent_agent.astream(
-                            **kwargs, stream_mode=["updates", "messages", "custom"]
-                        ):
-                            if not isinstance(stream_event, tuple):
-                                continue
+                    for formatted_event in formatted_events:
+                        if formatted_event:
+                            yield formatted_event
 
-                            stream_mode, event = stream_event
-
-                            # Update tool call tracking based on stream events
-                            self._update_tool_call_tracking(stream_mode, event)
-
-                            # Convert LangGraph events to simplified format
-                            effective_session_id = request.session_id or thread_id
-                            formatted_events = self._format_events(
-                                stream_mode,
-                                event,
-                                request.stream_tokens,
-                                run_id,
-                                thread_id,
-                                effective_session_id,
-                            )
-
-                            for formatted_event in formatted_events:
-                                if formatted_event:
-                                    # Capture final AI message content for trace output
-                                    if (
-                                        formatted_event.get("type") == "message"
-                                        and formatted_event.get("content", {}).get(
-                                            "type"
-                                        )
-                                        == "ai"
-                                    ):
-                                        content = formatted_event["content"].get(
-                                            "content", ""
-                                        )
-                                        if isinstance(content, str):
-                                            final_response = content
-                                    yield formatted_event
-
-                        # Set trace output before context exits
-                        if final_response:
-                            observation.update(output=final_response)
-
-                        # No manual state saving needed - LangGraph handles this automatically
-                        app_logger.info(
-                            f"Conversation completed and auto-saved for thread {thread_id}"
-                        )
+                # No manual state saving needed - LangGraph handles this automatically
+                app_logger.info(
+                    f"Conversation completed and auto-saved for thread {thread_id}"
+                )
 
             except Exception as e:
                 app_logger.error(
@@ -202,28 +149,19 @@ class AgentManager:
         if settings.USE_INMEMORY_SAVER:
             register_thread(effective_user_id, thread_id)
 
-        configurable = {
-            "thread_id": thread_id,
-            "session_id": effective_session_id,
-            "run_id": str(run_id),
-            "user_id": effective_user_id,
-        }
-
-        # Create Langfuse handler - it will automatically use run_id as trace_id
-        # This ensures all operations (agent + tools + subagents) are grouped under one trace
-        # See: https://langfuse.com/docs/integrations/langchain/tracing
+        # Create Langfuse handler for tracing
         langfuse_handler = CallbackHandler()
 
         config = RunnableConfig(
-            configurable=configurable,
-            run_id=run_id,
-            callbacks=[langfuse_handler],
-            run_name="chat-response",
-            metadata={
-                "user_id": effective_user_id,
-                "session_id": effective_session_id,
+            configurable={
                 "thread_id": thread_id,
+                "session_id": effective_session_id,
+                "run_id": str(run_id),
+                "user_id": effective_user_id,
             },
+            run_id=run_id,
+            run_name="template-agent",
+            callbacks=[langfuse_handler],
         )
 
         # Check for interrupts that need to be resumed (preserved from original)
@@ -263,73 +201,6 @@ class AgentManager:
             f"AgentManager configured with run_id: {run_id}, thread_id: {thread_id}, session_id: {effective_session_id}"
         )
         return kwargs, str(run_id), thread_id
-
-    async def _prepare_streaming_input_with_history(
-        self, request: StreamRequest, existing_state, run_id: str, thread_id: str
-    ) -> Dict[str, Any]:
-        """Prepare streaming input with conversation history for non-checkpointing agent."""
-        from langchain_core.messages import HumanMessage
-        from langchain_core.runnables import RunnableConfig
-
-        # Get existing messages from state
-        existing_messages = existing_state.values.get("messages", [])
-
-        # Create new message list with history + current user message
-        all_messages = list(existing_messages)
-        all_messages.append(HumanMessage(content=request.message))
-
-        # Configure for streaming agent (no checkpointing)
-        effective_session_id = request.session_id or thread_id
-        effective_user_id = request.user_id or "anonymous"
-
-        configurable = {
-            "thread_id": thread_id,
-            "session_id": effective_session_id,
-            "run_id": run_id,
-            "user_id": effective_user_id,
-        }
-
-        # Create Langfuse handler - it will automatically use run_id as trace_id
-        langfuse_handler = CallbackHandler()
-
-        config = RunnableConfig(
-            configurable=configurable,
-            run_id=run_id,
-            callbacks=[langfuse_handler],
-            run_name="chat-response",
-        )
-
-        return {
-            "input": {"messages": all_messages},
-            "config": config,
-        }
-
-    async def _save_final_conversation_state(
-        self, persistent_agent, config, all_messages: list, thread_id: str
-    ) -> None:
-        """Save the final conversation state once after streaming completes."""
-        try:
-            app_logger.info(
-                f"Saving {len(all_messages)} messages for thread {thread_id}"
-            )
-
-            # Log message types for debugging
-            message_types = [
-                getattr(msg, "type", type(msg).__name__) for msg in all_messages
-            ]
-            app_logger.info(f"Message types being saved: {message_types}")
-
-            # Update the persistent agent's state with all messages
-            await persistent_agent.aupdate_state(
-                config=config, values={"messages": all_messages}
-            )
-            app_logger.info(
-                f"Successfully saved conversation state for thread {thread_id}"
-            )
-
-        except Exception as e:
-            app_logger.error(f"Error saving final conversation state: {e}")
-            # Don't re-raise - streaming already completed successfully
 
     def _format_events(
         self,
