@@ -4,7 +4,7 @@ description: >
   Publishes fitness reports to users via email. Formats reports into
   Gmail-compatible HTML and sends them. Use after all upstream work is
   complete and the user requests an emailed report. Do NOT use for analysis.
-model: gemini-3.1-pro-preview
+model: gemini-2.5-flash
 tools:
   - send_email
 skills:

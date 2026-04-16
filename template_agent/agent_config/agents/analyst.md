@@ -4,7 +4,7 @@ description: >
   Calculates BMI, classifies the result, and fetches category-specific
   health tips for Red Hat employees. Use when the user provides height
   and weight for BMI analysis.
-model: gemini-3.1-pro-preview
+model: gemini-2.5-pro
 tools:
   - calculate_bmi
   - search_web
