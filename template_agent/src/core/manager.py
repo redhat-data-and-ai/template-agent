@@ -149,15 +149,15 @@ class AgentManager:
         if settings.USE_INMEMORY_SAVER:
             register_thread(effective_user_id, thread_id)
 
-        # Create Langfuse handler for tracing
+        # Create Langfuse handler for tracing with user and session context
         langfuse_handler = CallbackHandler()
 
         config = RunnableConfig(
             configurable={
                 "thread_id": thread_id,
-                "session_id": effective_session_id,
+                "langfuse_session_id": effective_session_id,
                 "run_id": str(run_id),
-                "user_id": effective_user_id,
+                "langfuse_user_id": effective_user_id,
             },
             run_id=run_id,
             run_name="template-agent",

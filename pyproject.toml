@@ -22,7 +22,7 @@ dependencies = [
     "python-multipart==0.0.22",
     "langchain-google-genai==4.2.1",
     "langchain-mcp-adapters==0.2.2",
-    "langfuse==3.11.1",
+    "langfuse==3.14.5",
     "langgraph-checkpoint-postgres==3.0.5",
     "psycopg[binary,pool]==3.3.3",
     "psycopg2-binary==2.9.11",
