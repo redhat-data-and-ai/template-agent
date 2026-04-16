@@ -219,6 +219,11 @@ class AgentManager:
             run_id=run_id,
             callbacks=[langfuse_handler],
             run_name="chat-response",
+            metadata={
+                "user_id": effective_user_id,
+                "session_id": effective_session_id,
+                "thread_id": thread_id,
+            },
         )
 
         # Check for interrupts that need to be resumed (preserved from original)
