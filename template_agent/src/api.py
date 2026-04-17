@@ -17,7 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from template_agent.src.core.backend import initialize_backend
-from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+from template_agent.src.core.exceptions import AppException, ErrorCodes
 from template_agent.src.core.storage import initialize_database
 from template_agent.src.routes.feedback import router as feedback_router
 from template_agent.src.routes.health import router as health_router
@@ -190,11 +190,11 @@ async def generic_exception_handler(request: Request, exc: Exception):
         error=str(exc),
     )
     return JSONResponse(
-        status_code=AppExceptionCode.INTERNAL_SERVER_ERROR.response_code,
+        status_code=ErrorCodes.INTERNAL_SERVER_ERROR.status,
         content={
             "detail_message": str(exc),
-            "message": AppExceptionCode.INTERNAL_SERVER_ERROR.message,
-            "error_code": AppExceptionCode.INTERNAL_SERVER_ERROR.error_code,
+            "message": ErrorCodes.INTERNAL_SERVER_ERROR.message,
+            "error_code": ErrorCodes.INTERNAL_SERVER_ERROR.code,
         },
     )
 
@@ -207,13 +207,13 @@ async def app_exception_handler(request: Request, exc: AppException):
         request_method=request.method,
         request_path=request.url.path,
         error=str(exc),
-        error_code=exc.error_code,
+        error_code=exc.code,
     )
     return JSONResponse(
-        status_code=exc.response_code,
+        status_code=exc.status,
         content={
-            "detail_message": exc.detail_message,
+            "detail_message": exc.detail,
             "message": exc.message,
-            "error_code": exc.error_code,
+            "error_code": exc.code,
         },
     )

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from template_agent.src.core.exceptions.exceptions import AppException
+from template_agent.src.core.exceptions import AppException
 from template_agent.src.core.mcp import (
     _build_server_config,
     _handle_no_tools,
@@ -102,7 +102,7 @@ class TestHandleNoTools:
             mock_settings.USE_INMEMORY_SAVER = False
             with pytest.raises(AppException) as exc_info:
                 _handle_no_tools()
-            assert exc_info.value.error_code == "E_007"
+            assert exc_info.value.code == "E_007"
 
 
 class TestLoadServerConfigs:
@@ -349,7 +349,7 @@ class TestGetMCPTools:
             mock_settings.MCP_CONNECTION_TIMEOUT = 30
             with pytest.raises(AppException) as exc_info:
                 await get_mcp_tools()
-            assert exc_info.value.error_code == "E_007"
+            assert exc_info.value.code == "E_007"
 
     @pytest.mark.asyncio
     async def test_no_enabled_servers_dev_mode(self, tmp_path):

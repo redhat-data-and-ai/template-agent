@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+from template_agent.src.core.exceptions import AppException, ErrorCodes
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
 
@@ -52,21 +52,21 @@ def _load_from_json() -> dict[str, dict]:
     except json.JSONDecodeError as exc:
         raise AppException(
             f"Invalid JSON in {_CONFIG_PATH}: {exc}",
-            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+            ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         ) from exc
 
     all_servers = data.get("mcpServers") or {}
     if not isinstance(all_servers, dict):
         raise AppException(
             "mcpServers must be a JSON object",
-            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+            ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         )
 
     for name, entry in all_servers.items():
         if "url" not in entry:
             raise AppException(
                 f"MCP server '{name}' missing required field 'url'",
-                AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
             )
 
     logger.info(
@@ -229,5 +229,5 @@ def _handle_no_tools() -> list:
 
     raise AppException(
         "No MCP tools available — all servers failed or none are enabled",
-        AppExceptionCode.PRODUCTION_MCP_CONNECTION_ERROR,
+        ErrorCodes.PRODUCTION_MCP_CONNECTION_ERROR,
     )

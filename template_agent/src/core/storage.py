@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.memory import InMemoryStore
 
-from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+from template_agent.src.core.exceptions import AppException, ErrorCodes
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
 
@@ -120,7 +120,7 @@ async def initialize_database() -> None:
         logger.error(f"Failed to initialize database schema: {e}", exc_info=True)
         raise AppException(
             f"Database initialization failed: {str(e)}",
-            AppExceptionCode.CONFIGURATION_INITIALIZATION_ERROR,
+            ErrorCodes.CONFIGURATION_INITIALIZATION_ERROR,
         )
 
 

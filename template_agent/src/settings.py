@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
-from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+from template_agent.src.core.exceptions import AppException, ErrorCodes
 from template_agent.utils.pylogger import get_python_logger
 
 # Initialize logger
@@ -185,7 +185,7 @@ def validate_config(settings: Settings) -> None:
         )
         raise AppException(
             f"AGENT_PORT must be between 1024 and 65535, got {settings.AGENT_PORT}",
-            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+            ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         )
 
     # Validate log level
@@ -196,7 +196,7 @@ def validate_config(settings: Settings) -> None:
         )
         raise AppException(
             f"PYTHON_LOG_LEVEL must be one of {valid_log_levels}, got {settings.PYTHON_LOG_LEVEL}",
-            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+            ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         )
 
 
