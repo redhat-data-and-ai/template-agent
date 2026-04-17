@@ -1,8 +1,8 @@
 # Template Agent
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12,3.13-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://github.com/redhat-data-and-ai/template-agent/actions/workflows/test.yml/badge.svg)](https://github.com/redhat-data-and-ai/template-mcp-server/actions/workflows/ci.yml)
-[![Coverage](https://codecov.io/gh/redhat-data-and-ai/template-agent/branch/main/graph/badge.svg)](https://codecov.io/gh/redhat-data-and-ai/template-mcp-server)
+[![Tests](https://github.com/redhat-data-and-ai/template-agent/actions/workflows/test.yml/badge.svg)](https://github.com/redhat-data-and-ai/template-agent/actions/workflows/test.yml)
+[![Coverage](https://codecov.io/gh/redhat-data-and-ai/template-agent/branch/main/graph/badge.svg)](https://codecov.io/gh/redhat-data-and-ai/template-agent)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 A production-ready template for building AI agents with streaming capabilities, conversation management, and enterprise-grade features.
@@ -155,7 +155,7 @@ See the [examples README](./examples/README.md) for detailed usage instructions.
    # Edit .env with your configuration
    ```
 
-5. **Run template-mcp-server** following https://github.com/redhat-data-and-ai/template-mcp-server
+5. **Configure MCP servers** in `template_agent/agent_config/mcp_servers.json` — enable the servers you need and set their URLs. See [template-mcp-server](https://github.com/redhat-data-and-ai/template-mcp-server) for a compatible local MCP server.
 
 
 6. **Run the application**

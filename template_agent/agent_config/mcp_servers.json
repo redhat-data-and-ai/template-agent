@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "template-mcp-server": {
+      "enabled": false,
+      "url": "http://localhost:5001/mcp/",
+      "transport": "streamable_http",
+      "ssl_verify": false,
+      "description": "Local template MCP server"
+    },
+    "remote-mcp-server": {
+      "enabled": false,
+      "url": "https://mcp.example.com/mcp/",
+      "transport": "streamable_http",
+      "ssl_verify": true,
+      "description": "Remote MCP server (replace URL with your deployment)"
+    }
+  }
+}

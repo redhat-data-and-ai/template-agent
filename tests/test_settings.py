@@ -82,5 +82,5 @@ class TestValidateConfig:
         assert "PYTHON_LOG_LEVEL must be one of" in exc_info.value.detail_message
         assert exc_info.value.error_code == "E_009"
 
-    # Note: MCP_PORT and MCP_TRANSPORT_PROTOCOL were removed from settings
-    # so these tests are no longer applicable
+    # MCP servers are now configured via agent_config/mcp_servers.json
+    # (see settings.mcp_servers property)

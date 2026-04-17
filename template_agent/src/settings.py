@@ -5,7 +5,9 @@ BaseSettings for environment variable loading, validation, and default
 value handling for the template agent service.
 """
 
-from typing import Optional
+import json
+from pathlib import Path
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -96,29 +98,21 @@ class Settings(BaseSettings):
         json_schema_extra={"env": "GOOGLE_APPLICATION_CREDENTIALS_CONTENT"},
     )
 
-    # MCP Server Configuration
-    MCP_SERVER_NAME: str = Field(
-        default="template-mcp-server",
-        json_schema_extra={"env": "MCP_SERVER_NAME"},
-    )
-    MCP_SERVER_URL: str = Field(
-        default="http://localhost:5001/mcp/",
-        json_schema_extra={"env": "MCP_SERVER_URL"},
-    )
-    MCP_TRANSPORT_PROTOCOL: str = Field(
-        default="streamable_http",
-        json_schema_extra={"env": "MCP_TRANSPORT_PROTOCOL"},
+    # MCP Server Configuration (JSON-based — define N servers in one file)
+    MCP_SERVERS_CONFIG: str = Field(
+        default="",
+        json_schema_extra={
+            "env": "MCP_SERVERS_CONFIG",
+            "description": (
+                "Path to an mcp_servers.json file that declares all MCP "
+                "servers.  Falls back to agent_config/mcp_servers.json "
+                "when empty."
+            ),
+        },
     )
     MCP_CONNECTION_TIMEOUT: int = Field(
         default=30,
         json_schema_extra={"env": "MCP_CONNECTION_TIMEOUT"},
-    )
-    MCP_SSL_VERIFY: bool = Field(
-        default=False,
-        json_schema_extra={
-            "env": "MCP_SSL_VERIFY",
-            "description": "Enable SSL certificate verification for MCP connections",
-        },
     )
 
     # Request Logging Configuration
@@ -152,6 +146,50 @@ class Settings(BaseSettings):
     )
 
     @property
+    def mcp_servers(self) -> dict[str, dict[str, Any]]:
+        """Load MCP server definitions from the JSON config file.
+
+        Reads ``mcp_servers.json`` (path overridable via
+        ``MCP_SERVERS_CONFIG`` env var) and returns only the entries
+        where ``enabled`` is ``true``.
+
+        Returns:
+            A dict mapping server names to their config dicts.
+        """
+        config_path = (
+            Path(self.MCP_SERVERS_CONFIG) if self.MCP_SERVERS_CONFIG else None
+        )
+
+        if not config_path or not config_path.is_file():
+            config_path = (
+                Path(__file__).parent.parent / "agent_config" / "mcp_servers.json"
+            )
+
+        if not config_path.is_file():
+            logger.warning(f"MCP servers config not found at {config_path}")
+            return {}
+
+        try:
+            data = json.loads(config_path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.error(f"Failed to parse MCP config {config_path}: {exc}")
+            return {}
+
+        all_servers: dict[str, Any] = data.get("mcpServers", {})
+
+        enabled = {
+            name: cfg
+            for name, cfg in all_servers.items()
+            if cfg.get("enabled", True)
+        }
+
+        logger.info(
+            f"MCP config loaded: {len(enabled)}/{len(all_servers)} servers "
+            f"enabled from {config_path}"
+        )
+        return enabled
+
+    @property
     def database_uri(self) -> str:
         """Generate database URI from individual components.
 
@@ -170,7 +208,7 @@ def validate_config(settings: Settings) -> None:
 
     Performs comprehensive validation to ensure required settings are
     present and values are within acceptable ranges. This function
-    validates port ranges, log levels, and transport protocols.
+    validates port ranges and log levels.
 
     Args:
         settings: Settings instance to validate.

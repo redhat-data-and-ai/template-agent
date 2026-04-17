@@ -45,21 +45,11 @@ spec:
                 configMapKeyRef:
                   name: template-agent-config
                   key: LANGFUSE_TRACING_ENVIRONMENT
-            - name: MCP_SERVER_NAME
+            - name: MCP_CONNECTION_TIMEOUT
               valueFrom:
                 configMapKeyRef:
                   name: template-agent-config
-                  key: MCP_SERVER_NAME
-            - name: MCP_SERVER_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: template-agent-config
-                  key: MCP_SERVER_URL
-            - name: MCP_TRANSPORT_PROTOCOL
-              valueFrom:
-                configMapKeyRef:
-                  name: template-agent-config
-                  key: MCP_TRANSPORT_PROTOCOL
+                  key: MCP_CONNECTION_TIMEOUT
             - name: POSTGRES_HOST
               valueFrom:
                 secretKeyRef:
