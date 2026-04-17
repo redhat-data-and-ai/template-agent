@@ -5,14 +5,14 @@ from typing import Any
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langgraph.types import Overwrite
 
-from template_agent.src.core.agent_utils import (
+from template_agent.src.core.messages import (
     convert_message_content_to_string,
     langchain_to_chat_message,
-    remove_tool_calls,
 )
 from template_agent.src.core.streaming.context import StreamContext
 from template_agent.src.core.streaming.converter import (
     convert_message_to_api_format,
+    remove_tool_calls,
     should_skip_message,
 )
 from template_agent.src.core.streaming.deduplicator import MessageDeduplicator

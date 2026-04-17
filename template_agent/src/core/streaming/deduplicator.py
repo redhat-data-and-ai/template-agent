@@ -12,9 +12,9 @@ def extract_message_id(msg) -> str | None:
     Returns:
         A stable ID string, or None if no stable ID exists.
     """
-    msg_id = getattr(msg, "id", None)
+    msg_id = msg.id
     if msg_id is None and isinstance(msg, ToolMessage):
-        # ToolMessages may lack .id; use tool_call_id as fallback
+        # ToolMessages may not have .id set; use tool_call_id as fallback
         msg_id = f"tool_{msg.tool_call_id}"
     return msg_id
 

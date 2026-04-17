@@ -13,6 +13,9 @@ logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 def extract_tool_call_id(msg: AIMessageChunk) -> str | None:
     """Extract tool call ID from an AIMessageChunk.
 
+    Modern LangChain automatically populates tool_calls from tool_call_chunks
+    during streaming, so we only need to check tool_calls.
+
     Args:
         msg: The message chunk to extract from.
 
@@ -20,17 +23,10 @@ def extract_tool_call_id(msg: AIMessageChunk) -> str | None:
         The tool call ID if available, None otherwise.
     """
     try:
-        if hasattr(msg, "tool_calls") and msg.tool_calls:
+        if msg.tool_calls:
             return msg.tool_calls[0].get("id")
-
-        if hasattr(msg, "tool_call_chunks") and msg.tool_call_chunks:
-            return msg.tool_call_chunks[0].get("id")
-
-        if hasattr(msg, "tool_call_id") and msg.tool_call_id:
-            return msg.tool_call_id
-
         return None
-    except (AttributeError, IndexError, KeyError) as e:
+    except (IndexError, KeyError) as e:
         logger.debug(f"Could not extract tool call ID: {e}")
         return None
 
@@ -73,21 +69,29 @@ class ToolCallTracker:
 
     def _update_from_updates(self, event: dict) -> None:
         """Update from an 'updates' mode event."""
+        from langchain_core.messages import ToolMessage
+
         for _node, updates in event.items():
             if not updates or "messages" not in updates:
                 continue
             for message in updates["messages"]:
-                if hasattr(message, "tool_calls") and message.tool_calls:
-                    self._current_tool_call_id = message.tool_calls[0].get("id")
-                    return
-                elif hasattr(message, "tool_call_id") and message.tool_call_id:
+                # ToolMessage responding to a tool call
+                if isinstance(message, ToolMessage):
                     self._current_tool_call_id = message.tool_call_id
+                    return
+                # AIMessage with tool calls
+                elif message.tool_calls:
+                    self._current_tool_call_id = message.tool_calls[0].get("id")
                     return
 
     def _update_from_message_stream(self, event: tuple) -> None:
         """Update from a 'messages' mode event."""
+        from langchain_core.messages import ToolMessage
+
         msg, _metadata = event
-        if hasattr(msg, "tool_calls") and msg.tool_calls:
-            self._current_tool_call_id = msg.tool_calls[0].get("id")
-        elif hasattr(msg, "tool_call_id") and msg.tool_call_id:
+        # ToolMessage responding to a tool call
+        if isinstance(msg, ToolMessage):
             self._current_tool_call_id = msg.tool_call_id
+        # AIMessage with tool calls
+        elif msg.tool_calls:
+            self._current_tool_call_id = msg.tool_calls[0].get("id")

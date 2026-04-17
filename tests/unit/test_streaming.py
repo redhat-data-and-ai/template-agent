@@ -8,6 +8,7 @@ from template_agent.src.core.streaming import (
     MessageDeduplicator,
     StreamContext,
     ToolCallTracker,
+    remove_tool_calls,
 )
 from template_agent.src.core.streaming.converter import (
     convert_message_to_api_format,
@@ -241,7 +242,6 @@ class TestConverter:
                 self.tool_call_id = None
                 self.run_id = "test_run_1"
                 self.response_metadata = {"model": "test-model"}
-                self.custom_data = None
 
         chat_msg = MockChatMessage()
         result = convert_message_to_api_format(chat_msg, stream_context)
@@ -271,7 +271,6 @@ class TestConverter:
                 self.tool_call_id = None
                 self.run_id = "test_run_1"
                 self.response_metadata = {}
-                self.custom_data = None
 
         chat_msg = MockChatMessage()
         result = convert_message_to_api_format(chat_msg, stream_context)
@@ -279,6 +278,50 @@ class TestConverter:
         # Should rewrite "task" to actual subagent name
         assert result["tool_calls"][0]["name"] == "research_agent"
         assert result["tool_calls"][0]["args"]["subagent_type"] == "research_agent"
+
+    def test_remove_tool_calls_string_content(self):
+        """Test that remove_tool_calls returns string content unchanged."""
+        content = "Hello, how can I help?"
+        result = remove_tool_calls(content)
+
+        assert result == "Hello, how can I help?"
+        assert isinstance(result, str)
+
+    def test_remove_tool_calls_filters_tool_use(self):
+        """Test that remove_tool_calls filters out tool_use items from list content."""
+        content = [
+            {"type": "text", "text": "Let me search for that"},
+            {"type": "tool_use", "name": "search", "id": "tc_1"},
+            {"type": "text", "text": "..."},
+        ]
+        result = remove_tool_calls(content)
+
+        assert len(result) == 2
+        assert result[0]["type"] == "text"
+        assert result[0]["text"] == "Let me search for that"
+        assert result[1]["type"] == "text"
+        assert result[1]["text"] == "..."
+
+    def test_remove_tool_calls_preserves_string_items(self):
+        """Test that remove_tool_calls preserves string items in list content."""
+        content = [
+            "Plain string",
+            {"type": "text", "text": "Dict content"},
+            {"type": "tool_use", "name": "search", "id": "tc_1"},
+        ]
+        result = remove_tool_calls(content)
+
+        assert len(result) == 2
+        assert result[0] == "Plain string"
+        assert result[1]["type"] == "text"
+
+    def test_remove_tool_calls_empty_list(self):
+        """Test that remove_tool_calls handles empty list."""
+        content = []
+        result = remove_tool_calls(content)
+
+        assert result == []
+        assert isinstance(result, list)
 
 
 class TestTokenEventHandler:

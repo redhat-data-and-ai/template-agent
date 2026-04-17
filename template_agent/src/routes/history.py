@@ -10,7 +10,7 @@ import psycopg2
 from fastapi import APIRouter, HTTPException, Query
 from langchain_core.runnables import RunnableConfig
 
-from template_agent.src.core.agent_utils import langchain_to_chat_message
+from template_agent.src.core.messages import langchain_to_chat_message
 from template_agent.src.core.storage import get_shared_checkpointer
 from template_agent.src.schema import ChatHistoryResponse, ChatMessage, ToolCall
 from template_agent.src.settings import settings

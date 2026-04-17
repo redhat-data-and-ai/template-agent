@@ -1,7 +1,8 @@
-"""Utility functions for handling agent messages and conversions.
+"""Message conversion utilities for the template agent.
 
-This module provides utility functions for converting between different message
-formats, handling message content, and managing tool calls in the template agent.
+This module provides utilities for converting between different message formats,
+handling message content, and managing conversions between LangChain and internal
+ChatMessage formats.
 """
 
 from typing import Any, Dict, List, Union
@@ -12,7 +13,6 @@ from langchain_core.messages import (
     HumanMessage,
     ToolMessage,
 )
-from langchain_core.messages import ChatMessage as LangchainChatMessage
 
 from template_agent.src.schema import ChatMessage, ToolCall
 
@@ -77,19 +77,14 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
                 type="ai",
                 content=convert_message_content_to_string(message.content),
             )
-            # Handle tool calls from both direct attribute and additional_kwargs
-            tool_calls = message.tool_calls or []
-            if message.additional_kwargs and "tool_calls" in message.additional_kwargs:
-                tool_calls.extend(message.additional_kwargs["tool_calls"])
 
-            if tool_calls:
-                # Ensure tool calls have the correct structure
+            # Handle tool calls from modern LangChain messages
+            if message.tool_calls:
                 formatted_tool_calls = []
-                for tool_call in tool_calls:
+                for tool_call in message.tool_calls:
                     if isinstance(tool_call, dict):
                         # Ensure required fields are present and properly typed
                         if "name" in tool_call and "args" in tool_call:
-                            # Create a proper ToolCall object
                             formatted_call: ToolCall = {
                                 "name": str(tool_call["name"]),
                                 "args": dict(tool_call["args"]),
@@ -101,13 +96,10 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
                             formatted_tool_calls.append(formatted_call)
                 ai_message.tool_calls = formatted_tool_calls
 
+            # Copy response metadata
             if message.response_metadata:
                 ai_message.response_metadata = message.response_metadata
-            if message.additional_kwargs:
-                if "response_metadata" in message.additional_kwargs:
-                    ai_message.response_metadata.update(
-                        message.additional_kwargs["response_metadata"]
-                    )
+
             return ai_message
 
         case ToolMessage():
@@ -118,43 +110,5 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
             )
             return tool_message
 
-        case LangchainChatMessage():
-            if message.role == "custom":
-                custom_message = ChatMessage(
-                    type="custom",
-                    content="",
-                    custom_data=message.content[0],
-                )
-                return custom_message
-            else:
-                raise ValueError(f"Unsupported chat message role: {message.role}")
-
         case _:
             raise ValueError(f"Unsupported message type: {message.__class__.__name__}")
-
-
-def remove_tool_calls(
-    content: Union[str, List[Union[str, Dict[str, Any]]]],
-) -> Union[str, List[Union[str, Dict[str, Any]]]]:
-    """Remove tool calls from message content.
-
-    This function filters out tool call content from message content, particularly
-    useful for handling streaming responses from models that include tool calls
-    in their content stream.
-
-    Args:
-        content: The content to process. Can be a string or a list containing
-            strings and dictionaries with content information.
-
-    Returns:
-        The content with tool calls removed. Returns the same type as input.
-    """
-    if isinstance(content, str):
-        return content
-
-    # Currently only Anthropic models stream tool calls, using content item type tool_use
-    return [
-        content_item
-        for content_item in content
-        if isinstance(content_item, str) or content_item["type"] != "tool_use"
-    ]
