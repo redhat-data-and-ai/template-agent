@@ -1,102 +1,72 @@
 """Google credentials management utilities.
 
-This module provides functions for initializing Google Generative AI with various
-credential formats including base64-encoded, file paths, and direct JSON content.
+This module provides functions for initializing Google Generative AI with
+service account credentials from environment variables.
 """
 
-import base64
-import os
-import tempfile
+import json
+
+from google.auth.credentials import Credentials
+from google.oauth2 import service_account
 
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
 
-logger = get_python_logger()
+logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
+
+# Google Cloud authentication scope for Vertex AI
+GOOGLE_AUTH_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+
+# Cache for credentials to avoid repeated credential fetches
+_credentials_cache: tuple[Credentials, str] | None = None
 
 
-def initialize_google_genai():
-    """Initialize Google Generative AI with service account credentials."""
-    credentials_file = None
+def get_service_account_credentials() -> tuple[Credentials, str]:
+    """Get Google Cloud credentials from service account JSON.
+
+    Reads service account JSON from GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+    environment variable and creates credentials. Uses caching to avoid
+    repeated credential fetches.
+
+    Returns:
+        Tuple of (credentials, project_id)
+
+    Raises:
+        RuntimeError: If credentials cannot be loaded or project ID is missing
+    """
+    global _credentials_cache
+
+    if _credentials_cache is not None:
+        return _credentials_cache
 
     if not settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT:
-        logger.warning("No Google service account credentials configured")
-        return
+        raise RuntimeError("No Google service account credentials configured")
 
-    # Check if credentials are provided as base64-encoded environment variable
-    if settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT.startswith("ewog"):
-        # Validate that it's valid JSON
-        import json
-
-        try:
-            # Decode base64 credentials
-            credentials_json = base64.b64decode(
-                settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT
-            ).decode("utf-8")
-
-            json.loads(credentials_json)  # This will raise an exception if invalid JSON
-
-            # Create temporary file with credentials
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False
-            ) as temp_file:
-                temp_file.write(credentials_json)
-                credentials_file = temp_file.name
-
-            logger.info(
-                "Initialized Google Generative AI with base64-encoded service account credentials"
-            )
-
-        except (base64.binascii.Error, UnicodeDecodeError) as e:
-            logger.error(f"Failed to decode base64 credentials: {e}")
-            return
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in base64 credentials: {e}")
-            return
-        except Exception as e:
-            logger.error(f"Unexpected error processing base64 credentials: {e}")
-            return
-
-    # Check if credentials are provided as file path
-    elif os.path.exists(settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT):
-        credentials_file = settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT
-        logger.info(
-            f"Initialized Google Generative AI with service account file: {settings.GOOGLE_SERVICE_ACCOUNT_FILE}"
+    try:
+        service_account_info = json.loads(
+            settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT
         )
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in credentials: {e}")
+        raise RuntimeError(f"Invalid JSON in credentials: {e}") from e
 
-    # Check if credentials are provided as direct JSON content
-    elif settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT.strip().startswith("{"):
-        # Validate that it's valid JSON
-        import json
+    project = service_account_info.get("project_id")
+    if not project:
+        raise RuntimeError("Service account JSON does not contain 'project_id' field")
 
-        try:
-            credentials_json = settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT.strip()
-            json.loads(credentials_json)  # This will raise an exception if invalid JSON
+    credentials = service_account.Credentials.from_service_account_info(
+        service_account_info, scopes=GOOGLE_AUTH_SCOPES
+    )
 
-            # Create temporary file with credentials
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False
-            ) as temp_file:
-                temp_file.write(credentials_json)
-                credentials_file = temp_file.name
+    logger.info(f"Loaded Google credentials for project: {project}")
+    _credentials_cache = (credentials, project)
+    return _credentials_cache
 
-            logger.info(
-                "Initialized Google Generative AI with direct JSON service account credentials"
-            )
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in direct credentials: {e}")
-            return
-        except Exception as e:
-            logger.error(f"Unexpected error processing direct JSON credentials: {e}")
-            return
+def clear_credentials_cache() -> None:
+    """Clear the cached Google Cloud credentials.
 
-    else:
-        logger.warning(
-            f"Google service account credentials not found or invalid format: {settings.GOOGLE_SERVICE_ACCOUNT_FILE[:50]}..."
-        )
-        return
-
-    # Set environment variable for langchain-google-genai to use
-    if credentials_file:
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_file
-        logger.debug(f"Set GOOGLE_APPLICATION_CREDENTIALS to: {credentials_file}")
+    Useful for testing or when credentials need to be refreshed.
+    """
+    global _credentials_cache
+    _credentials_cache = None
