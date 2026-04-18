@@ -14,7 +14,6 @@ from langfuse.langchain import CallbackHandler
 from langgraph.types import Command
 
 from template_agent.src.core.agent import get_template_agent
-from template_agent.src.core.storage import register_thread
 from template_agent.src.core.streaming import (
     MessageDeduplicator,
     StreamContext,
@@ -140,18 +139,16 @@ class AgentManager:
         effective_session_id = request.session_id or thread_id
         effective_user_id = request.user_id or "anonymous"
 
-        # Register thread for in-memory storage
-        if settings.USE_INMEMORY_SAVER:
-            register_thread(effective_user_id, thread_id)
-
         # Configure Langfuse tracing
         langfuse_handler = CallbackHandler()
         config = RunnableConfig(
             configurable={
                 "thread_id": thread_id,
-                "langfuse_session_id": effective_session_id,
+                "user_id": effective_user_id,  # For checkpoint queries
+                "session_id": effective_session_id,  # For checkpoint queries
+                "langfuse_user_id": effective_user_id,  # For Langfuse integration
+                "langfuse_session_id": effective_session_id,  # For Langfuse integration
                 "run_id": str(run_id),
-                "langfuse_user_id": effective_user_id,
             },
             run_id=run_id,
             run_name="template-agent",

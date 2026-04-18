@@ -110,40 +110,27 @@ async def _connect_single_server(name: str, config: dict, timeout: int) -> list:
     return []
 
 
-def _handle_no_mcp_tools(reason: str) -> list:
-    """Handle the case when no MCP tools are available.
-
-    Returns empty list in dev mode, raises exception in production.
-    """
-    if settings.USE_INMEMORY_SAVER:
-        logger.warning(reason)
-        return []
-    raise AppException(
-        "No MCP tools configured",
-        ErrorCodes.PRODUCTION_MCP_CONNECTION_ERROR,
-    )
-
-
 async def get_mcp_tools(sso_token: str | None = None) -> list:
     """Connect to MCP server(s) and retrieve available tools.
 
     Loads server definitions from ``agent_config/mcp.json``, connects to
     each enabled server in parallel, and returns a deduplicated flat list.
 
+    Connection failures are logged but do not raise exceptions, ensuring
+    the application continues with an empty tool list.
+
     Args:
         sso_token: Optional SSO token for authentication.
 
     Returns:
-        List of available MCP tools.
-
-    Raises:
-        AppException: If connection fails in production mode.
+        List of available MCP tools (empty list if all connections fail).
     """
     servers = _load_server_configs()
     enabled = {k: v for k, v in servers.items() if v.get("enabled", False)}
 
     if not enabled:
-        return _handle_no_mcp_tools("No MCP servers enabled")
+        logger.warning("No MCP servers enabled")
+        return []
 
     logger.info(f"Connecting to {len(enabled)} MCP server(s): {', '.join(enabled)}")
 
@@ -170,7 +157,8 @@ async def get_mcp_tools(sso_token: str | None = None) -> list:
                 logger.warning(f"Duplicate tool '{tool.name}' skipped")
 
     if not tools:
-        return _handle_no_mcp_tools("All MCP servers failed to load tools")
+        logger.warning("All MCP servers failed to load tools")
+        return []
 
     logger.info(f"Loaded {len(tools)} MCP tool(s): {', '.join(seen)}")
     return tools

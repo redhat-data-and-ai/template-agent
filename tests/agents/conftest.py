@@ -8,17 +8,15 @@ from typing import Any, Dict, Optional
 
 import google.auth
 import pytest
-from deepagents import SubAgent, create_deep_agent
+from deepagents import create_deep_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langfuse import Langfuse
 from langgraph.checkpoint.memory import MemorySaver
-
-from template_agent.src.core.backend import get_backend
-from template_agent.utils.google_creds import initialize_google_genai
-
 from llm_judge import LLMJudge
 from mock_tools import MOCK_TOOLS
 
+from template_agent.src.core.backend import get_backend
+from template_agent.utils.google_creds import initialize_google_genai
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 AGENT_CONFIG_DIR = PROJECT_ROOT / "template_agent" / "agent_config"

@@ -9,13 +9,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from deepagents import create_deep_agent
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from template_agent.src.core.backend import get_backend
+from template_agent.src.core.checkpointer import get_checkpointer
 from template_agent.src.core.llm import create_model
 from template_agent.src.core.mcp import get_mcp_tools
 from template_agent.src.core.prompt import get_system_prompt
-from template_agent.src.core.storage import get_global_checkpoint, get_global_store
 from template_agent.src.core.subagents import load_subagents
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
@@ -58,7 +57,7 @@ async def get_template_agent(sso_token: str | None = None):
     main_skills_path = [str(main_skills_dir)] if main_skills_dir.exists() else []
 
     # Load and configure subagents
-    subagents_config = load_subagents(
+    subagents = load_subagents(
         agents_dir=agents_dir,
         tools=tools,
         skills_base=skills_base,
@@ -75,44 +74,16 @@ async def get_template_agent(sso_token: str | None = None):
 
     backend = get_backend()
 
-    # Resolve checkpointer and store
-    checkpointer = None
-    store = None
-    pg_ctx = None
-
-    if settings.USE_INMEMORY_SAVER:
-        checkpointer = get_global_checkpoint()
-        store = get_global_store()
-        logger.info(
-            f"Using in-memory checkpoint={type(checkpointer).__name__} "
-            f"store={type(store).__name__}"
-        )
-    else:
-        logger.info("Using PostgreSQL checkpoint")
-        pg_ctx = AsyncPostgresSaver.from_conn_string(settings.database_uri)
-        checkpointer = await pg_ctx.__aenter__()
-        logger.info(f"PostgreSQL checkpointer ready: {type(checkpointer).__name__}")
-        if hasattr(checkpointer, "setup"):
-            await checkpointer.setup()
-
-    logger.info(
-        f"Creating deep agent with checkpointer={type(checkpointer).__name__ if checkpointer else None} "
-        f"store={type(store).__name__ if store else None}"
-    )
-
-    try:
+    async with get_checkpointer() as checkpointer:
         agent = create_deep_agent(
             model=model,
             system_prompt=system_prompt,
             skills=main_skills_path,
             tools=[],
-            subagents=subagents_config,
+            subagents=subagents,
             backend=backend,
             checkpointer=checkpointer,
-            store=store,
+            store=None,  # TODO: Add store support
         )
         logger.info("Deep agent initialized successfully")
         yield agent
-    finally:
-        if pg_ctx is not None:
-            await pg_ctx.__aexit__(None, None, None)

@@ -52,9 +52,6 @@ class Settings(BaseSettings):
     PYTHON_LOG_LEVEL: str = Field(
         default="INFO", json_schema_extra={"env": "PYTHON_LOG_LEVEL"}
     )
-    USE_INMEMORY_SAVER: bool = Field(
-        default=False, json_schema_extra={"env": "USE_INMEMORY_SAVER"}
-    )
 
     # Database Configuration
     POSTGRES_USER: str = Field(

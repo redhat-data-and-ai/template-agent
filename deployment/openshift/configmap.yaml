@@ -7,5 +7,4 @@ metadata:
     component: agent
 data:
   PYTHON_LOG_LEVEL: "INFO"
-  USE_INMEMORY_SAVER: "false"
   LANGFUSE_TRACING_ENVIRONMENT: "production"

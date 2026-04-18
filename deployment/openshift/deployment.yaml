@@ -35,11 +35,6 @@ spec:
                 configMapKeyRef:
                   name: template-agent-config
                   key: PYTHON_LOG_LEVEL
-            - name: USE_INMEMORY_SAVER
-              valueFrom:
-                configMapKeyRef:
-                  name: template-agent-config
-                  key: USE_INMEMORY_SAVER
             - name: LANGFUSE_TRACING_ENVIRONMENT
               valueFrom:
                 configMapKeyRef:

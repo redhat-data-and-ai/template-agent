@@ -5,14 +5,12 @@ import json
 from pathlib import Path
 
 import pytest
-
 from conftest import (
     create_publisher_agent,
     extract_output,
     extract_tokens,
     load_skill_evals,
 )
-
 
 # ============================================================================
 # Helpers

@@ -6,7 +6,6 @@ import google.auth
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langfuse import Langfuse
 
-
 # Model configuration
 MODEL_NAME = "gemini-3.1-pro-preview"
 MODEL_TEMPERATURE = 0

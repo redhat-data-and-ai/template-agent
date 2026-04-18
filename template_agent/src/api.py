@@ -17,8 +17,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from template_agent.src.core.backend import initialize_backend
+from template_agent.src.core.checkpointer import initialize_checkpointer
 from template_agent.src.core.exceptions import AppException, ErrorCodes
-from template_agent.src.core.storage import initialize_database
 from template_agent.src.routes.feedback import router as feedback_router
 from template_agent.src.routes.health import router as health_router
 from template_agent.src.routes.history import router as history_router
@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Configure application lifespan.
 
     This context manager handles the application startup and shutdown
-    lifecycle. Database schema is initialized on startup, while agent
+    lifecycle. Checkpointer schema is initialized on startup, while agent
     initialization is deferred to per-request handling to allow for
     authenticated MCP connections.
 
@@ -121,15 +121,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         None: The lifespan context for the application.
 
     Raises:
-        AppException: If database initialization fails on startup.
+        AppException: If checkpointer initialization fails on startup.
     """
     logger.info("agent_server_starting")
 
-    # Initialize database schema on startup
+    # Initialize checkpointer schema on startup
     try:
-        await initialize_database()
+        await initialize_checkpointer()
     except Exception as e:
-        logger.critical("database_initialization_failed", error=str(e))
+        logger.critical("checkpointer_initialization_failed", error=str(e))
         raise
 
     # Pre-initialize the shell backend (venv + deps) so the first request is fast

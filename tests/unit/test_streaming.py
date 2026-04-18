@@ -160,6 +160,7 @@ class TestToolCallTracker:
     def test_extract_tool_call_id(self):
         """Test extracting tool call ID directly from message."""
         from langchain_core.messages import AIMessageChunk
+
         from template_agent.src.core.streaming.tracker import extract_tool_call_id
 
         msg = AIMessageChunk(

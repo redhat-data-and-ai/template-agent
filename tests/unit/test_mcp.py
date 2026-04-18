@@ -1,7 +1,6 @@
 """Unit tests for MCP client utilities."""
 
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -242,8 +241,8 @@ class TestGetMCPTools:
         assert tools[0] is tool_a
 
     @pytest.mark.asyncio
-    async def test_errors_in_development_mode(self, tmp_path):
-        """Test errors return empty list in development mode."""
+    async def test_connection_errors_return_empty_list(self, tmp_path):
+        """Test connection errors return empty list gracefully."""
         config_file = tmp_path / "mcp.json"
         config_file.write_text(
             json.dumps(
@@ -268,58 +267,18 @@ class TestGetMCPTools:
 
         with (
             patch("template_agent.src.core.mcp._CONFIG_PATH", config_file),
-            patch("template_agent.src.core.mcp.settings") as mock_settings,
             patch(
                 "template_agent.src.core.mcp.MultiServerMCPClient",
                 return_value=mock_client,
             ),
         ):
-            mock_settings.USE_INMEMORY_SAVER = True
             tools = await get_mcp_tools()
 
         assert tools == []
 
     @pytest.mark.asyncio
-    async def test_errors_in_production_mode(self, tmp_path):
-        """Test errors raise AppException in production mode."""
-        config_file = tmp_path / "mcp.json"
-        config_file.write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "prod_server": {
-                            "url": "http://api.example.com/mcp/",
-                            "enabled": True,
-                            "auth": False,
-                            "ssl_verify": True,
-                            "timeout": 1,
-                        }
-                    }
-                }
-            )
-        )
-
-        mock_client = MagicMock()
-        mock_client.get_tools = AsyncMock(
-            side_effect=ConnectionError("Connection refused")
-        )
-
-        with (
-            patch("template_agent.src.core.mcp._CONFIG_PATH", config_file),
-            patch("template_agent.src.core.mcp.settings") as mock_settings,
-            patch(
-                "template_agent.src.core.mcp.MultiServerMCPClient",
-                return_value=mock_client,
-            ),
-        ):
-            mock_settings.USE_INMEMORY_SAVER = False
-            with pytest.raises(AppException) as exc_info:
-                await get_mcp_tools()
-            assert exc_info.value.code == "E_007"
-
-    @pytest.mark.asyncio
-    async def test_no_enabled_servers_dev_mode(self, tmp_path):
-        """Test that no enabled servers returns empty list in dev mode."""
+    async def test_no_enabled_servers(self, tmp_path):
+        """Test that no enabled servers returns empty list."""
         config_file = tmp_path / "mcp.json"
         config_file.write_text(
             json.dumps(
@@ -334,11 +293,7 @@ class TestGetMCPTools:
             )
         )
 
-        with (
-            patch("template_agent.src.core.mcp._CONFIG_PATH", config_file),
-            patch("template_agent.src.core.mcp.settings") as mock_settings,
-        ):
-            mock_settings.USE_INMEMORY_SAVER = True
+        with patch("template_agent.src.core.mcp._CONFIG_PATH", config_file):
             tools = await get_mcp_tools()
 
         assert tools == []

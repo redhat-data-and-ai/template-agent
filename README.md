@@ -27,8 +27,8 @@ The [template-mcp-server](https://github.com/redhat-data-and-ai/template-mcp-ser
 |---|---|---|
 | `/health` | GET | Health check |
 | `/v1/stream` | POST | Stream chat (SSE) |
-| `/v1/history/{thread_id}` | GET | Conversation history |
-| `/v1/threads/{user_id}` | GET | List user threads |
+| `/v1/users/{user_id}/history/{thread_id}` | GET | Conversation history |
+| `/v1/users/{user_id}/threads` | GET | List user threads |
 | `/v1/feedback` | POST | Record feedback |
 
 ```bash
@@ -70,8 +70,8 @@ template_agent/
 │   │   └── backend.py        # Shell backend (isolated venv)
 │   ├── routes/
 │   │   ├── stream.py         # POST /v1/stream
-│   │   ├── history.py        # GET  /v1/history
-│   │   ├── threads.py        # GET  /v1/threads
+│   │   ├── history.py        # GET  /v1/users/{user_id}/history/{thread_id}
+│   │   ├── threads.py        # GET  /v1/users/{user_id}/threads
 │   │   ├── health.py         # GET  /health
 │   │   └── feedback.py       # POST /v1/feedback
 │   ├── api.py                # FastAPI app + lifespan
