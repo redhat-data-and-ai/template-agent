@@ -132,26 +132,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.critical("checkpointer_initialization_failed", error=str(e))
         raise
 
-    # Pre-initialize the shell backend (venv + deps) so the first request is fast
+    # Initialize the shell backend (venv + deps) so the first request is fast
     try:
         initialize_backend()
     except Exception as e:
         logger.critical("backend_initialization_failed", error=str(e))
         raise
 
+    # Initialize Langfuse client on startup
+    try:
+        app.state.langfuse_client = Langfuse(
+            public_key=settings.LANGFUSE_PUBLIC_KEY,
+            secret_key=settings.LANGFUSE_SECRET_KEY,
+            base_url=settings.LANGFUSE_BASE_URL,
+        )
+        logger.info("langfuse_client_initialized")
+    except Exception as e:
+        logger.warning(f"langfuse_initialization_failed: {e}")
+        app.state.langfuse_client = None
+
     logger.info("agent_server_ready")
     yield
     logger.info("agent_server_shutting_down")
 
     # Flush pending Langfuse traces on shutdown
-    # See: https://langfuse.com/docs/integrations/langchain
-    # Environment is auto-read from LANGFUSE_TRACING_ENVIRONMENT env var
-    try:
-        langfuse_client = Langfuse()
-        langfuse_client.shutdown()
-        logger.info("langfuse_traces_flushed")
-    except Exception as e:
-        logger.warning("langfuse_shutdown_failed", error=str(e))
+    if app.state.langfuse_client:
+        try:
+            app.state.langfuse_client.shutdown()
+            logger.info("langfuse_traces_flushed")
+        except Exception as e:
+            logger.warning(f"langfuse_shutdown_failed: {e}")
 
 
 # Create FastAPI application with lifespan management

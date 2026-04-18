@@ -59,3 +59,18 @@ class TestAgentManager:
         # Check that TokenEventHandler has the manager's tracker
         token_handler = agent_manager.handlers["messages"]
         assert token_handler.tracker is agent_manager.tracker
+
+    def test_manager_with_langfuse_client(self):
+        """Test manager initialization with Langfuse client."""
+        from unittest.mock import MagicMock
+
+        mock_client = MagicMock()
+        manager = AgentManager(langfuse_client=mock_client)
+
+        assert manager.langfuse_client is mock_client
+
+    def test_manager_without_langfuse_client(self):
+        """Test manager initialization without Langfuse client."""
+        manager = AgentManager()
+
+        assert manager.langfuse_client is None

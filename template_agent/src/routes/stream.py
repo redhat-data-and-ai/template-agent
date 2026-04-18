@@ -6,9 +6,8 @@ handling message streaming, token generation, and conversation management.
 
 import json
 from collections.abc import AsyncGenerator
-from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from template_agent.src.core.manager import AgentManager
@@ -76,29 +75,7 @@ async def message_generator(
         yield "[DONE]\n\n"
 
 
-def _sse_response_example() -> dict[int | str, Any]:
-    """Generate example response for SSE endpoint documentation.
-
-    Returns:
-        A dictionary containing the example SSE response format for
-        the simplified streaming API.
-    """
-    return {
-        status.HTTP_200_OK: {
-            "description": "Server Sent Event Response - Simplified Format",
-            "content": {
-                "text/event-stream": {
-                    "example": '{"type": "message", "content": {"type": "ai", "content": "", "tool_calls": [{"name": "multiply", "args": {"a": 3, "b": 2}, "id": "call_123"}], "run_id": "12345", "thread_id": "thread-123", "session_id": "session-456"}}\n\n{"type": "message", "content": {"type": "tool", "content": "6", "tool_call_id": "call_123", "run_id": "12345", "thread_id": "thread-123", "session_id": "session-456"}}\n\n{"type": "token", "content": "The"}\n\n{"type": "token", "content": " answer"}\n\n{"type": "token", "content": " is"}\n\n{"type": "token", "content": " 6"}\n\n{"type": "message", "content": {"type": "ai", "content": "The answer is 6", "run_id": "12345", "thread_id": "thread-123", "session_id": "session-456"}}\n\n[DONE]\n\n',
-                    "schema": {"type": "string"},
-                }
-            },
-        }
-    }
-
-
-@router.post(
-    "/v1/stream", response_class=StreamingResponse, responses=_sse_response_example()
-)
+@router.post("/v1/stream")
 async def stream(user_input: StreamRequest, request: Request) -> StreamingResponse:
     """Stream AI agent responses in real-time using simplified event format.
 
@@ -146,7 +123,10 @@ async def stream(user_input: StreamRequest, request: Request) -> StreamingRespon
 
     # Initialize AgentManager BEFORE streaming to catch initialization errors
     try:
-        agent_manager = AgentManager(redhat_sso_token=access_token)
+        agent_manager = AgentManager(
+            redhat_sso_token=access_token,
+            langfuse_client=request.app.state.langfuse_client,
+        )
     except Exception as e:
         app_logger.error(f"Failed to initialize AgentManager: {e}")
         raise HTTPException(

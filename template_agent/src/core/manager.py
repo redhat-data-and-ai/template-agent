@@ -5,11 +5,12 @@ handles streaming responses, and coordinates the streaming pipeline components.
 """
 
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 from langgraph.types import Command
 
@@ -38,13 +39,19 @@ class AgentManager:
     - Authentication and tracing
     """
 
-    def __init__(self, redhat_sso_token: str | None = None):
+    def __init__(
+        self,
+        redhat_sso_token: str | None = None,
+        langfuse_client: Optional[Langfuse] = None,
+    ):
         """Initialize the AgentManager.
 
         Args:
             redhat_sso_token: Optional SSO token for MCP authentication.
+            langfuse_client: Optional Langfuse client for tracing (from app.state).
         """
         self.redhat_sso_token = redhat_sso_token
+        self.langfuse_client = langfuse_client
 
         # Initialize streaming components
         self.deduplicator = MessageDeduplicator()
@@ -140,7 +147,15 @@ class AgentManager:
         effective_user_id = request.user_id or "anonymous"
 
         # Configure Langfuse tracing
-        langfuse_handler = CallbackHandler()
+        # Note: CallbackHandler must be created per request (tracks trace-specific state)
+        # We inject the shared Langfuse client to avoid creating a new one each time
+        callbacks = []
+        if self.langfuse_client:
+            langfuse_handler = CallbackHandler()
+            # Inject the shared client instead of letting it create a new one
+            langfuse_handler.client = self.langfuse_client
+            callbacks.append(langfuse_handler)
+
         config = RunnableConfig(
             configurable={
                 "thread_id": thread_id,
@@ -152,7 +167,7 @@ class AgentManager:
             },
             run_id=run_id,
             run_name="template-agent",
-            callbacks=[langfuse_handler],
+            callbacks=callbacks,
         )
 
         # Get current state and pre-populate seen messages
