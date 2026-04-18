@@ -1,12 +1,8 @@
 """MCP client initialization and connection utilities.
 
-This module handles connecting to one or more MCP servers defined in
-``agent_config/mcp.json`` and retrieving their tools, with
-parallel connections, per-server auth/SSL/timeout, fault isolation,
-and tool-name deduplication.
-
-If the JSON config file is absent the module falls back to the single-
-server settings exposed via environment variables (backward compatible).
+This module handles connecting to MCP servers defined in
+``agent_config/mcp.json`` and retrieving their tools with
+parallel connections and fault isolation.
 """
 
 import asyncio
@@ -26,13 +22,9 @@ _CONFIG_PATH = (
     Path(__file__).resolve().parent.parent.parent / "agent_config" / "mcp.json"
 )
 
-# ---------------------------------------------------------------------------
-# Config loading
-# ---------------------------------------------------------------------------
-
 
 def _load_server_configs() -> dict[str, dict]:
-    """Load MCP server definitions from JSON or fall back to env vars.
+    """Load MCP server definitions from JSON config file.
 
     Returns:
         ``{server_name: {url, transport, enabled, auth, ssl_verify, timeout}}``
@@ -40,13 +32,10 @@ def _load_server_configs() -> dict[str, dict]:
     Raises:
         AppException: On JSON parse errors or missing required fields.
     """
-    if _CONFIG_PATH.is_file():
-        return _load_from_json()
-    return _fallback_from_settings()
+    if not _CONFIG_PATH.is_file():
+        logger.warning(f"No MCP config file found at {_CONFIG_PATH}")
+        return {}
 
-
-def _load_from_json() -> dict[str, dict]:
-    """Parse and validate ``mcp.json``."""
     try:
         data = json.loads(_CONFIG_PATH.read_bytes())
     except json.JSONDecodeError as exc:
@@ -55,120 +44,91 @@ def _load_from_json() -> dict[str, dict]:
             ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         ) from exc
 
-    all_servers = data.get("mcpServers") or {}
-    if not isinstance(all_servers, dict):
+    servers = data.get("mcpServers") or {}
+    if not isinstance(servers, dict):
         raise AppException(
             "mcpServers must be a JSON object",
             ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         )
 
-    for name, entry in all_servers.items():
+    for name, entry in servers.items():
         if "url" not in entry:
             raise AppException(
                 f"MCP server '{name}' missing required field 'url'",
                 ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
             )
 
-    logger.info(
-        f"Loaded {len(all_servers)} MCP server definition(s) from {_CONFIG_PATH.name}"
-    )
-    return all_servers
-
-
-def _fallback_from_settings() -> dict[str, dict]:
-    """Build a single-server config dict from Settings env vars."""
-    logger.info("No mcp.json found; falling back to env-var config")
-    return {
-        settings.MCP_SERVER_NAME: {
-            "url": settings.MCP_SERVER_URL,
-            "transport": settings.MCP_TRANSPORT_PROTOCOL,
-            "enabled": True,
-            "auth": True,
-            "ssl_verify": settings.MCP_SSL_VERIFY,
-            "timeout": settings.MCP_CONNECTION_TIMEOUT,
-        }
-    }
-
-
-# ---------------------------------------------------------------------------
-# Per-server config builder
-# ---------------------------------------------------------------------------
+    logger.info(f"Loaded {len(servers)} MCP server(s) from {_CONFIG_PATH.name}")
+    return servers
 
 
 def _build_server_config(entry: dict, sso_token: str | None) -> dict:
-    """Translate a JSON entry into a ``MultiServerMCPClient``-compatible dict.
+    """Build MultiServerMCPClient config from server definition.
 
     Args:
-        entry: Single server definition from the config.
+        entry: Server definition with url, auth, ssl_verify, transport.
         sso_token: Optional bearer token for authentication.
 
     Returns:
-        Config dict ready for ``MultiServerMCPClient``.
+        Config dict for MultiServerMCPClient.
     """
-    wants_auth = entry.get("auth", True)
-    headers: dict[str, str] = {}
-    if wants_auth and sso_token:
-        headers["Authorization"] = f"Bearer {sso_token}"
+    headers = (
+        {"Authorization": f"Bearer {sso_token}"}
+        if entry.get("auth", True) and sso_token
+        else {}
+    )
 
-    config: dict = {
+    config = {
         "url": entry["url"],
         "transport": entry.get("transport", "streamable_http"),
         "headers": headers,
     }
 
     if not entry.get("ssl_verify", True):
-        config["httpx_client_factory"] = (
-            lambda **kwargs: httpx.AsyncClient(verify=False, **kwargs)  # nosec B501 # NOSONAR
-        )
+        config["httpx_client_factory"] = lambda **kw: httpx.AsyncClient(
+            verify=False, **kw
+        )  # nosec B501
 
     return config
 
 
-# ---------------------------------------------------------------------------
-# Single-server connection (fault-isolated)
-# ---------------------------------------------------------------------------
-
-
-async def _connect_single_server(
-    name: str,
-    config: dict,
-    timeout: int,
-) -> list:
+async def _connect_single_server(name: str, config: dict, timeout: int) -> list:
     """Connect to one MCP server and return its tools.
 
-    On any failure the error is logged and an empty list is returned so
-    that other servers are not affected.
+    Failures are logged and return empty list for fault isolation.
     """
     try:
-        client = MultiServerMCPClient({name: config})
         async with asyncio.timeout(timeout):
+            client = MultiServerMCPClient({name: config})
             tools = await client.get_tools()
         logger.info(f"[{name}] loaded {len(tools)} tool(s)")
         return tools
     except TimeoutError:
-        logger.error(
-            f"[{name}] timeout after {timeout}s connecting to {config.get('url')}"
-        )
-        return []
+        logger.error(f"[{name}] timeout after {timeout}s ({config.get('url')})")
     except Exception:
-        logger.error(
-            f"[{name}] failed to connect to {config.get('url')}",
-            exc_info=True,
-        )
+        logger.error(f"[{name}] connection failed ({config.get('url')})", exc_info=True)
+    return []
+
+
+def _handle_no_mcp_tools(reason: str) -> list:
+    """Handle the case when no MCP tools are available.
+
+    Returns empty list in dev mode, raises exception in production.
+    """
+    if settings.USE_INMEMORY_SAVER:
+        logger.warning(reason)
         return []
-
-
-# ---------------------------------------------------------------------------
-# Public API (signature unchanged for backward compatibility)
-# ---------------------------------------------------------------------------
+    raise AppException(
+        "No MCP tools configured",
+        ErrorCodes.PRODUCTION_MCP_CONNECTION_ERROR,
+    )
 
 
 async def get_mcp_tools(sso_token: str | None = None) -> list:
     """Connect to MCP server(s) and retrieve available tools.
 
-    Loads server definitions from ``agent_config/mcp.json`` (or
-    falls back to env-var settings), connects to each enabled server in
-    parallel, and returns a deduplicated flat list of tools.
+    Loads server definitions from ``agent_config/mcp.json``, connects to
+    each enabled server in parallel, and returns a deduplicated flat list.
 
     Args:
         sso_token: Optional SSO token for authentication.
@@ -179,55 +139,38 @@ async def get_mcp_tools(sso_token: str | None = None) -> list:
     Raises:
         AppException: If connection fails in production mode.
     """
-    server_defs = _load_server_configs()
-
-    enabled = {
-        name: entry
-        for name, entry in server_defs.items()
-        if entry.get("enabled", False)
-    }
+    servers = _load_server_configs()
+    enabled = {k: v for k, v in servers.items() if v.get("enabled", False)}
 
     if not enabled:
-        logger.warning("No MCP servers are enabled in configuration")
-        return _handle_no_tools()
+        return _handle_no_mcp_tools("No MCP servers enabled")
 
-    logger.info(f"Connecting to {len(enabled)} MCP server(s): {list(enabled.keys())}")
+    logger.info(f"Connecting to {len(enabled)} MCP server(s): {', '.join(enabled)}")
 
-    tasks = [
-        _connect_single_server(
-            name=name,
-            config=_build_server_config(entry, sso_token),
-            timeout=entry.get("timeout", settings.MCP_CONNECTION_TIMEOUT),
-        )
-        for name, entry in enabled.items()
-    ]
+    results = await asyncio.gather(
+        *[
+            _connect_single_server(
+                name=name,
+                config=_build_server_config(entry, sso_token),
+                timeout=entry.get("timeout", 30),
+            )
+            for name, entry in enabled.items()
+        ]
+    )
 
-    results = await asyncio.gather(*tasks)
-
-    all_tools: list = []
-    seen_names: set[str] = set()
+    # Deduplicate tools by name (first occurrence wins)
+    seen = set()
+    tools = []
     for tool_list in results:
         for tool in tool_list:
-            if tool.name in seen_names:
+            if tool.name not in seen:
+                seen.add(tool.name)
+                tools.append(tool)
+            else:
                 logger.warning(f"Duplicate tool '{tool.name}' skipped")
-                continue
-            seen_names.add(tool.name)
-            all_tools.append(tool)
 
-    if not all_tools:
-        return _handle_no_tools()
+    if not tools:
+        return _handle_no_mcp_tools("All MCP servers failed to load tools")
 
-    logger.info(f"Total MCP tools loaded: {len(all_tools)} ({', '.join(seen_names)})")
-    return all_tools
-
-
-def _handle_no_tools() -> list:
-    """Apply the dev/prod error policy when no tools were retrieved."""
-    if settings.USE_INMEMORY_SAVER:
-        logger.warning("Running in local development mode without MCP tools")
-        return []
-
-    raise AppException(
-        "No MCP tools available — all servers failed or none are enabled",
-        ErrorCodes.PRODUCTION_MCP_CONNECTION_ERROR,
-    )
+    logger.info(f"Loaded {len(tools)} MCP tool(s): {', '.join(seen)}")
+    return tools

@@ -96,31 +96,6 @@ class Settings(BaseSettings):
         json_schema_extra={"env": "GOOGLE_APPLICATION_CREDENTIALS_CONTENT"},
     )
 
-    # MCP Server Configuration
-    MCP_SERVER_NAME: str = Field(
-        default="template-mcp-server",
-        json_schema_extra={"env": "MCP_SERVER_NAME"},
-    )
-    MCP_SERVER_URL: str = Field(
-        default="http://localhost:5001/mcp/",
-        json_schema_extra={"env": "MCP_SERVER_URL"},
-    )
-    MCP_TRANSPORT_PROTOCOL: str = Field(
-        default="streamable_http",
-        json_schema_extra={"env": "MCP_TRANSPORT_PROTOCOL"},
-    )
-    MCP_CONNECTION_TIMEOUT: int = Field(
-        default=30,
-        json_schema_extra={"env": "MCP_CONNECTION_TIMEOUT"},
-    )
-    MCP_SSL_VERIFY: bool = Field(
-        default=False,
-        json_schema_extra={
-            "env": "MCP_SSL_VERIFY",
-            "description": "Enable SSL certificate verification for MCP connections",
-        },
-    )
-
     # Request Logging Configuration
     REQUEST_LOGGING_ENABLED: bool = Field(
         default=True,

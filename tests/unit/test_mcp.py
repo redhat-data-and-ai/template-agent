@@ -9,7 +9,6 @@ import pytest
 from template_agent.src.core.exceptions import AppException
 from template_agent.src.core.mcp import (
     _build_server_config,
-    _handle_no_tools,
     _load_server_configs,
     get_mcp_tools,
 )
@@ -86,46 +85,15 @@ class TestBuildServerConfig:
         assert "httpx_client_factory" not in config
 
 
-class TestHandleNoTools:
-    """Tests for _handle_no_tools function."""
-
-    def test_returns_empty_in_dev_mode(self):
-        """Test dev mode returns empty list."""
-        with patch("template_agent.src.core.mcp.settings") as mock_settings:
-            mock_settings.USE_INMEMORY_SAVER = True
-            result = _handle_no_tools()
-            assert result == []
-
-    def test_raises_in_prod_mode(self):
-        """Test prod mode raises AppException."""
-        with patch("template_agent.src.core.mcp.settings") as mock_settings:
-            mock_settings.USE_INMEMORY_SAVER = False
-            with pytest.raises(AppException) as exc_info:
-                _handle_no_tools()
-            assert exc_info.value.code == "E_007"
-
-
 class TestLoadServerConfigs:
     """Tests for _load_server_configs function."""
 
-    def test_fallback_to_env_vars(self, tmp_path):
-        """Test fallback when JSON file does not exist."""
+    def test_returns_empty_when_no_file(self, tmp_path):
+        """Test returns empty dict when JSON file does not exist."""
         fake_path = tmp_path / "nonexistent.json"
-        with (
-            patch("template_agent.src.core.mcp._CONFIG_PATH", fake_path),
-            patch("template_agent.src.core.mcp.settings") as mock_settings,
-        ):
-            mock_settings.MCP_SERVER_NAME = "env-server"
-            mock_settings.MCP_SERVER_URL = "http://localhost:5001/mcp/"
-            mock_settings.MCP_TRANSPORT_PROTOCOL = "streamable_http"
-            mock_settings.MCP_SSL_VERIFY = False
-            mock_settings.MCP_CONNECTION_TIMEOUT = 30
-
+        with patch("template_agent.src.core.mcp._CONFIG_PATH", fake_path):
             configs = _load_server_configs()
-
-        assert "env-server" in configs
-        assert configs["env-server"]["url"] == "http://localhost:5001/mcp/"
-        assert configs["env-server"]["enabled"] is True
+        assert configs == {}
 
     def test_loads_from_json(self, tmp_path):
         """Test loading from a valid JSON config file."""
@@ -307,7 +275,6 @@ class TestGetMCPTools:
             ),
         ):
             mock_settings.USE_INMEMORY_SAVER = True
-            mock_settings.MCP_CONNECTION_TIMEOUT = 30
             tools = await get_mcp_tools()
 
         assert tools == []
@@ -346,7 +313,6 @@ class TestGetMCPTools:
             ),
         ):
             mock_settings.USE_INMEMORY_SAVER = False
-            mock_settings.MCP_CONNECTION_TIMEOUT = 30
             with pytest.raises(AppException) as exc_info:
                 await get_mcp_tools()
             assert exc_info.value.code == "E_007"
@@ -376,33 +342,3 @@ class TestGetMCPTools:
             tools = await get_mcp_tools()
 
         assert tools == []
-
-    @pytest.mark.asyncio
-    async def test_env_var_fallback(self):
-        """Test fallback to env-var config when JSON is absent."""
-        mock_tool = MagicMock()
-        mock_tool.name = "fallback_tool"
-
-        mock_client = MagicMock()
-        mock_client.get_tools = AsyncMock(return_value=[mock_tool])
-
-        fake_path = Path("/nonexistent/mcp.json")
-
-        with (
-            patch("template_agent.src.core.mcp._CONFIG_PATH", fake_path),
-            patch("template_agent.src.core.mcp.settings") as mock_settings,
-            patch(
-                "template_agent.src.core.mcp.MultiServerMCPClient",
-                return_value=mock_client,
-            ),
-        ):
-            mock_settings.MCP_SERVER_NAME = "env-server"
-            mock_settings.MCP_SERVER_URL = "http://localhost:5001/mcp/"
-            mock_settings.MCP_TRANSPORT_PROTOCOL = "streamable_http"
-            mock_settings.MCP_SSL_VERIFY = True
-            mock_settings.MCP_CONNECTION_TIMEOUT = 30
-
-            tools = await get_mcp_tools()
-
-        assert len(tools) == 1
-        assert tools[0].name == "fallback_tool"
