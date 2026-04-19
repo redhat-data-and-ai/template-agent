@@ -31,14 +31,12 @@ def convert_message_to_api_format(chat_message, ctx: StreamContext) -> dict[str,
         ]
     if chat_message.tool_call_id:
         content["tool_call_id"] = chat_message.tool_call_id
-    if chat_message.run_id:
-        content["run_id"] = chat_message.run_id
-    if chat_message.trace_id:
-        content["trace_id"] = chat_message.trace_id
     if chat_message.response_metadata:
         content["response_metadata"] = chat_message.response_metadata
 
-    # Add context metadata (always present)
+    # Add context metadata (always present, authoritative for the stream)
+    content["run_id"] = ctx.run_id
+    content["trace_id"] = ctx.trace_id
     content["thread_id"] = ctx.thread_id
     content["session_id"] = ctx.session_id
     content["user_id"] = ctx.user_id

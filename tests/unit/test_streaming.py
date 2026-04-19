@@ -242,8 +242,6 @@ class TestConverter:
                 self.content = "Hello, how can I help?"
                 self.tool_calls = None
                 self.tool_call_id = None
-                self.run_id = "test_run_1"
-                self.trace_id = "test_trace_1"
                 self.response_metadata = {"model": "test-model"}
 
         chat_msg = MockChatMessage()
@@ -251,6 +249,7 @@ class TestConverter:
 
         assert result["type"] == "ai"
         assert result["content"] == "Hello, how can I help?"
+        # run_id and trace_id come from stream context (authoritative)
         assert result["run_id"] == "test_run_1"
         assert result["trace_id"] == "test_trace_1"
         assert result["thread_id"] == "test_thread_1"
@@ -258,8 +257,8 @@ class TestConverter:
         assert result["user_id"] == "test_user"
         assert result["response_metadata"] == {"model": "test-model"}
 
-    def test_convert_includes_trace_id(self, stream_context):
-        """Test that trace_id is included in API format conversion."""
+    def test_convert_includes_trace_id_from_context(self, stream_context):
+        """Test that trace_id and run_id come from stream context (authoritative)."""
 
         class MockChatMessage:
             def __init__(self):
@@ -267,17 +266,14 @@ class TestConverter:
                 self.content = "Test"
                 self.tool_calls = None
                 self.tool_call_id = None
-                self.run_id = "run123"
-                self.trace_id = "trace456"
                 self.response_metadata = {}
 
         chat_msg = MockChatMessage()
         result = convert_message_to_api_format(chat_msg, stream_context)
 
-        # Verify trace_id is included
-        assert result["trace_id"] == "trace456"
-        assert result["run_id"] == "run123"
-        # Context metadata also included
+        # Verify all context metadata is included (authoritative for the stream)
+        assert result["run_id"] == stream_context.run_id
+        assert result["trace_id"] == stream_context.trace_id
         assert result["thread_id"] == stream_context.thread_id
         assert result["session_id"] == stream_context.session_id
         assert result["user_id"] == stream_context.user_id
