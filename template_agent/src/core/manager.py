@@ -137,37 +137,52 @@ class AgentManager:
         Returns:
             Tuple of (config dict for astream, StreamContext).
         """
-        run_id = uuid4()
-        thread_id = request.thread_id or str(uuid4())
+        run_id = uuid4().hex
+        trace_id = uuid4().hex
 
-        if not request.thread_id:
-            logger.info(f"Auto-generated thread_id: {thread_id}")
-
-        effective_session_id = request.session_id or thread_id
+        # Handle optional parameters with defaults
+        effective_thread_id = request.thread_id or uuid4().hex
+        effective_session_id = request.session_id or uuid4().hex
         effective_user_id = request.user_id or "anonymous"
 
-        # Configure Langfuse tracing
+        # Log when auto-generating values
+        if not request.thread_id:
+            logger.info(f"Auto-generated thread_id: {effective_thread_id}")
+        if not request.session_id:
+            logger.info(f"Auto-generated session_id: {effective_session_id}")
+        if not request.user_id:
+            logger.info("No user_id provided, using 'anonymous'")
+
+        # Configure callbacks
+        callbacks = []
+
+        # Langfuse tracing (optional)
         # Note: CallbackHandler must be created per request (tracks trace-specific state)
         # We inject the shared Langfuse client to avoid creating a new one each time
-        callbacks = []
         if self.langfuse_client:
-            langfuse_handler = CallbackHandler()
+            langfuse_handler = CallbackHandler(trace_context={"trace_id": trace_id})
             # Inject the shared client instead of letting it create a new one
             langfuse_handler.client = self.langfuse_client
             callbacks.append(langfuse_handler)
 
         config = RunnableConfig(
             configurable={
-                "thread_id": thread_id,
+                "thread_id": effective_thread_id,
                 "user_id": effective_user_id,  # For checkpoint queries
                 "session_id": effective_session_id,  # For checkpoint queries
                 "langfuse_user_id": effective_user_id,  # For Langfuse integration
                 "langfuse_session_id": effective_session_id,  # For Langfuse integration
-                "run_id": str(run_id),
+                "run_id": run_id,
+                "trace_id": trace_id,
             },
             run_id=run_id,
             run_name="template-agent",
             callbacks=callbacks,
+            metadata={
+                "run_id": run_id,
+                "trace_id": trace_id,
+                "session_id": effective_session_id,
+            },
         )
 
         # Get current state and pre-populate seen messages
@@ -188,13 +203,14 @@ class AgentManager:
             user_input = {"messages": [HumanMessage(content=request.message)]}
 
         logger.info(
-            f"Configured run_id={run_id}, thread_id={thread_id}, session_id={effective_session_id}"
+            f"Configured run_id={run_id}, thread_id={effective_thread_id}, session_id={effective_session_id}"
         )
 
         # Create stream context
         ctx = StreamContext(
-            run_id=str(run_id),
-            thread_id=thread_id,
+            run_id=run_id,
+            trace_id=trace_id,
+            thread_id=effective_thread_id,
             session_id=effective_session_id,
             user_id=effective_user_id,
             stream_tokens=request.stream_tokens,

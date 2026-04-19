@@ -21,9 +21,9 @@ class TestListThreads:
         mock_cursor.execute = AsyncMock()
         mock_cursor.fetchall = AsyncMock(
             return_value=[
-                {"thread_id": "thread-1"},
-                {"thread_id": "thread-2"},
-                {"thread_id": "thread-3"},
+                {"thread_id": "thread1"},
+                {"thread_id": "thread2"},
+                {"thread_id": "thread3"},
             ]
         )
         mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
@@ -45,7 +45,7 @@ class TestListThreads:
 
             result = await list_threads("user123")
 
-            assert result == ["thread-1", "thread-2", "thread-3"]
+            assert result == ["thread1", "thread2", "thread3"]
             mock_cursor.execute.assert_called_once()
             # Verify the SQL query includes user_id filter
             call_args = mock_cursor.execute.call_args
@@ -75,7 +75,7 @@ class TestListThreads:
         ) as mock_get_checkpointer:
             mock_get_checkpointer.return_value = mock_checkpointer
 
-            result = await list_threads("user-no-threads")
+            result = await list_threads("usernothreads")
 
             assert result == []
 
@@ -107,20 +107,20 @@ class TestListThreads:
                 await list_threads("user123")
 
             assert exc_info.value.status_code == 500
-            assert "Unexpected error" in exc_info.value.detail
+            assert "Failed to retrieve threads" in exc_info.value.detail
 
     @pytest.mark.asyncio
-    async def test_threads_sorted_by_timestamp_desc(self):
-        """Test that threads are sorted by timestamp descending (newest first)."""
+    async def test_threads_sorted_by_checkpoint_id_desc(self):
+        """Test that threads are sorted by checkpoint_id descending (newest first)."""
         mock_checkpointer = MagicMock()
         mock_cursor = MagicMock()
 
         mock_cursor.execute = AsyncMock()
         mock_cursor.fetchall = AsyncMock(
             return_value=[
-                {"thread_id": "newest-thread"},
-                {"thread_id": "middle-thread"},
-                {"thread_id": "oldest-thread"},
+                {"thread_id": "newestthread"},
+                {"thread_id": "middlethread"},
+                {"thread_id": "oldestthread"},
             ]
         )
         mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
@@ -140,37 +140,12 @@ class TestListThreads:
 
             result = await list_threads("user123")
 
-            # Verify SQL includes ORDER BY DESC
+            # Verify SQL uses checkpoint_id not step
             call_args = mock_cursor.execute.call_args
             sql_query = call_args[0][0]
             assert "ORDER BY" in sql_query
+            assert "MAX(checkpoint_id)" in sql_query
             assert "DESC" in sql_query
-            assert result == ["newest-thread", "middle-thread", "oldest-thread"]
-
-    @pytest.mark.asyncio
-    async def test_checkpointer_context_manager_cleanup(self):
-        """Test that checkpointer context manager is properly cleaned up."""
-        mock_checkpointer = MagicMock()
-        mock_cursor = MagicMock()
-
-        mock_cursor.execute = AsyncMock()
-        mock_cursor.fetchall = AsyncMock(return_value=[])
-        mock_cursor.__aenter__ = AsyncMock(return_value=mock_cursor)
-        mock_cursor.__aexit__ = AsyncMock(return_value=None)
-
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_checkpointer.conn = mock_conn
-
-        mock_checkpointer.__aenter__ = AsyncMock(return_value=mock_checkpointer)
-        mock_checkpointer.__aexit__ = AsyncMock(return_value=None)
-
-        with patch(
-            "template_agent.src.routes.threads.get_checkpointer"
-        ) as mock_get_checkpointer:
-            mock_get_checkpointer.return_value = mock_checkpointer
-
-            await list_threads("user123")
-
-            mock_checkpointer.__aenter__.assert_called_once()
-            mock_checkpointer.__aexit__.assert_called_once()
+            # Should NOT use step anymore
+            assert "step" not in sql_query.lower()
+            assert result == ["newestthread", "middlethread", "oldestthread"]

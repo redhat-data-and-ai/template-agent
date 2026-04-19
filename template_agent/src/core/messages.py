@@ -52,7 +52,8 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
 
     This function converts LangChain message objects to the internal ChatMessage
     format used by the template agent. It handles different message types and
-    preserves relevant metadata.
+    preserves relevant metadata including run_id, trace_id, and session_id from
+    message metadata.
 
     Args:
         message: The LangChain message to convert. Must be one of the supported
@@ -64,11 +65,20 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
     Raises:
         ValueError: If the message type is not supported or has an invalid role.
     """
+    # Extract common metadata fields from message.metadata
+    metadata = getattr(message, "metadata", None) or {}
+    run_id = metadata.get("run_id")
+    trace_id = metadata.get("trace_id")
+    session_id = metadata.get("session_id")
+
     match message:
         case HumanMessage():
             human_message = ChatMessage(
                 type="human",
                 content=convert_message_content_to_string(message.content),
+                run_id=run_id,
+                trace_id=trace_id,
+                session_id=session_id,
             )
             return human_message
 
@@ -76,6 +86,9 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
             ai_message = ChatMessage(
                 type="ai",
                 content=convert_message_content_to_string(message.content),
+                run_id=run_id,
+                trace_id=trace_id,
+                session_id=session_id,
             )
 
             # Handle tool calls from modern LangChain messages
@@ -107,6 +120,9 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
                 type="tool",
                 content=convert_message_content_to_string(message.content),
                 tool_call_id=message.tool_call_id,
+                run_id=run_id,
+                trace_id=trace_id,
+                session_id=session_id,
             )
             return tool_message
 

@@ -41,15 +41,9 @@ async def feedback(
     allowing credentials to be stored and managed in the service rather than
     requiring client-side credential management.
 
-    The function maps the feedback request parameters to Langfuse's expected
-    format:
-    - run_id -> trace_id
-    - key -> name
-    - score -> value
-
     Args:
-        feedback_request: The feedback request containing run_id, key, score, and
-            optional kwargs for additional metadata.
+        feedback_request: The feedback request containing trace_id, name, value,
+            and optional kwargs for additional metadata.
         client: Langfuse client instance injected by FastAPI.
 
     Returns:
@@ -68,20 +62,19 @@ async def feedback(
         )
 
     logger.info(
-        f"Recording feedback: run_id={feedback_request.run_id}, "
-        f"key={feedback_request.key}, score={feedback_request.score}"
+        f"Recording feedback: trace_id={feedback_request.trace_id}, "
+        f"name={feedback_request.name}, value={feedback_request.value}"
     )
 
     kwargs = feedback_request.kwargs or {}
 
     try:
         # Run blocking I/O operations in thread pool to avoid blocking event loop
-        # Langfuse uses different parameter names than our schema
         await to_thread(
             client.create_score,
-            trace_id=feedback_request.run_id,  # Assuming run_id maps to trace_id
-            name=feedback_request.key,  # 'key' becomes 'name' in Langfuse
-            value=feedback_request.score,  # 'score' becomes 'value' in Langfuse
+            trace_id=feedback_request.trace_id,
+            name=feedback_request.name,
+            value=feedback_request.value,
             **kwargs,
         )
 
@@ -89,13 +82,13 @@ async def feedback(
         await to_thread(client.flush)
 
         logger.info(
-            f"Successfully recorded feedback for run_id={feedback_request.run_id}"
+            f"Successfully recorded feedback for trace_id={feedback_request.trace_id}"
         )
         return FeedbackResponse()
 
     except Exception as e:
         logger.error(
-            f"Failed to submit feedback for run_id={feedback_request.run_id}: {e}",
+            f"Failed to submit feedback for trace_id={feedback_request.trace_id}: {e}",
             exc_info=True,
         )
         raise HTTPException(

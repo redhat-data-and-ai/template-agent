@@ -25,6 +25,7 @@ def stream_context():
     """Fixture providing a standard StreamContext for tests."""
     return StreamContext(
         run_id="test_run_1",
+        trace_id="test_trace_1",
         thread_id="test_thread_1",
         session_id="test_session_1",
         user_id="test_user",
@@ -242,6 +243,7 @@ class TestConverter:
                 self.tool_calls = None
                 self.tool_call_id = None
                 self.run_id = "test_run_1"
+                self.trace_id = "test_trace_1"
                 self.response_metadata = {"model": "test-model"}
 
         chat_msg = MockChatMessage()
@@ -250,10 +252,35 @@ class TestConverter:
         assert result["type"] == "ai"
         assert result["content"] == "Hello, how can I help?"
         assert result["run_id"] == "test_run_1"
+        assert result["trace_id"] == "test_trace_1"
         assert result["thread_id"] == "test_thread_1"
         assert result["session_id"] == "test_session_1"
         assert result["user_id"] == "test_user"
         assert result["response_metadata"] == {"model": "test-model"}
+
+    def test_convert_includes_trace_id(self, stream_context):
+        """Test that trace_id is included in API format conversion."""
+
+        class MockChatMessage:
+            def __init__(self):
+                self.type = "ai"
+                self.content = "Test"
+                self.tool_calls = None
+                self.tool_call_id = None
+                self.run_id = "run123"
+                self.trace_id = "trace456"
+                self.response_metadata = {}
+
+        chat_msg = MockChatMessage()
+        result = convert_message_to_api_format(chat_msg, stream_context)
+
+        # Verify trace_id is included
+        assert result["trace_id"] == "trace456"
+        assert result["run_id"] == "run123"
+        # Context metadata also included
+        assert result["thread_id"] == stream_context.thread_id
+        assert result["session_id"] == stream_context.session_id
+        assert result["user_id"] == stream_context.user_id
 
     def test_convert_with_tool_calls(self, stream_context):
         """Test conversion with tool calls, including subagent name rewriting."""
@@ -271,6 +298,7 @@ class TestConverter:
                 ]
                 self.tool_call_id = None
                 self.run_id = "test_run_1"
+                self.trace_id = "test_trace_1"
                 self.response_metadata = {}
 
         chat_msg = MockChatMessage()
@@ -352,6 +380,7 @@ class TestTokenEventHandler:
         # Create context with stream_tokens=False
         no_stream_ctx = StreamContext(
             run_id="r1",
+            trace_id="tr1",
             thread_id="t1",
             session_id="s1",
             user_id="u1",

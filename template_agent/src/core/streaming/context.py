@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class StreamContext:
     """Context object for streaming metadata.
 
-    Carries run, thread, session, and user identifiers plus configuration
+    Carries run, trace, thread, session, and user identifiers plus configuration
     through the event processing pipeline.
 
     All fields are required to ensure complete context is available
@@ -15,6 +15,7 @@ class StreamContext:
     """
 
     run_id: str
+    trace_id: str
     thread_id: str
     session_id: str
     user_id: str

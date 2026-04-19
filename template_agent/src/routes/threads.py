@@ -35,27 +35,31 @@ async def list_threads(user_id: str) -> List[str]:
     try:
         async with get_checkpointer() as checkpointer:
             async with checkpointer.conn.cursor() as cur:
+                # Note: For optimal performance, consider creating a GIN index:
+                # CREATE INDEX idx_checkpoints_user_id ON checkpoints USING GIN ((metadata->>'user_id'));
                 await cur.execute(
                     """
                     SELECT thread_id
                     FROM checkpoints
                     WHERE metadata->>'user_id' = %s
                     GROUP BY thread_id
-                    ORDER BY MIN((checkpoint->>'ts')::timestamp) DESC
+                    ORDER BY MAX(checkpoint_id) DESC
                     """,
                     (user_id,),
                 )
                 rows = await cur.fetchall()
-                thread_ids = [row["thread_id"] for row in rows]
 
-                logger.info(
-                    f"Retrieved {len(thread_ids)} thread(s) for user_id={user_id}"
-                )
+                if not rows:
+                    logger.info(f"No threads found for user {user_id}")
+                    return []
+
+                thread_ids = [row["thread_id"] for row in rows]
+                logger.info(f"Retrieved {len(thread_ids)} threads for user {user_id}")
                 return thread_ids
 
     except Exception as e:
         logger.error(
-            f"Database error while fetching threads for user {user_id}: {e}",
+            f"Error fetching threads for user {user_id}: {e}",
             exc_info=True,
         )
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve threads")
