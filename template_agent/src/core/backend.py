@@ -17,12 +17,19 @@ from pathlib import Path
 
 from deepagents.backends import LocalShellBackend
 
+from template_agent.src.core.agent_config import agent_config
+from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
 
-logger = get_python_logger()
+logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
-SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
+_SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
 _PASSTHROUGH_VARS = ("HOME", "USER", "LANG", "LC_ALL", "TZ", "TERM")
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+_backend: LocalShellBackend | None = None
 
 
 def _base_python() -> str:
@@ -113,16 +120,10 @@ def _build_env(venv_dir: Path, extra: dict[str, str] | None = None) -> dict[str,
     """Minimal env: allowlisted host vars + venv activation + optional overrides."""
     env = {k: os.environ[k] for k in _PASSTHROUGH_VARS if k in os.environ}
     env["VIRTUAL_ENV"] = str(venv_dir)
-    env["PATH"] = f"{venv_dir}/bin:{SYSTEM_PATH}"
+    env["PATH"] = f"{venv_dir}/bin:{_SYSTEM_PATH}"
     if extra:
         env.update(extra)
     return env
-
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "agent_config"
-
-_backend: LocalShellBackend | None = None
 
 
 def create_backend(
@@ -170,13 +171,13 @@ def get_backend(
 
     Subsequent calls return the same instance regardless of arguments.
     When *root_dir* or *pyproject* are ``None`` the module-level defaults
-    (``_REPO_ROOT`` / ``_CONFIG_DIR``) are used.
+    (``_REPO_ROOT`` / ``agent_config.get_pyproject_path()``) are used.
     """
     global _backend  # noqa: PLW0603
     if _backend is None:
         _backend = create_backend(
             root_dir or _REPO_ROOT,
-            pyproject or (_CONFIG_DIR / "pyproject.toml"),
+            pyproject or agent_config.get_pyproject_path(),
             timeout=timeout,
             max_output_bytes=max_output_bytes,
             extra_env=extra_env,

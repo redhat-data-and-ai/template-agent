@@ -20,7 +20,7 @@ from template_agent.utils.google_creds import initialize_google_genai
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 AGENT_CONFIG_DIR = PROJECT_ROOT / "template_agent" / "agent_config"
-AGENTS_DIR = AGENT_CONFIG_DIR / "agents"
+AGENTS_DIR = AGENT_CONFIG_DIR / "subagents"
 SKILLS_DIR = AGENT_CONFIG_DIR / "skills"
 
 MODEL_NAME = "gemini-3.1-pro-preview"

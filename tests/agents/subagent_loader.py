@@ -6,25 +6,11 @@ from typing import Any, Dict, List, Optional
 
 import google.auth
 import httpx
-import yaml
 from deepagents import SubAgent
 from langchain_google_genai import ChatGoogleGenerativeAI
 from mock_tools import MOCK_TOOLS
 
-
-def parse_agent_frontmatter(path: Path) -> Dict[str, Any]:
-    """Parse markdown file with YAML frontmatter."""
-    content = path.read_text()
-    if not content.startswith("---"):
-        return {"body": content.strip()}
-
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return {"body": content.strip()}
-
-    frontmatter = yaml.safe_load(parts[1]) or {}
-    frontmatter["body"] = parts[2].strip()
-    return frontmatter
+from template_agent.src.core.frontmatter import parse_agent_frontmatter
 
 
 def load_subagents(

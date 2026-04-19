@@ -6,22 +6,19 @@ skills, subagents, and memory.
 """
 
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from deepagents import create_deep_agent
 
+from template_agent.src.core.agent_config import agent_config
 from template_agent.src.core.backend import get_backend
 from template_agent.src.core.checkpointer import get_checkpointer
 from template_agent.src.core.llm import create_model
 from template_agent.src.core.mcp import get_mcp_tools
-from template_agent.src.core.prompt import get_system_prompt
 from template_agent.src.core.subagents import load_subagents
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
-
-CONFIG_DIR = Path(__file__).parent.parent.parent / "agent_config"
 
 
 @asynccontextmanager
@@ -42,48 +39,45 @@ async def get_template_agent(sso_token: str | None = None):
     Raises:
         Exception: If there are issues with database connections or agent setup.
     """
-    # Initialize MCP client and get tools
-    tools = await get_mcp_tools(sso_token=sso_token)
+    # Get pre-loaded orchestrator configuration
+    orchestrator_cfg = agent_config.get_orchestrator_config()
 
-    # Initialize the language model (credentials handled in llm.py)
-    model = create_model(model_name="gemini-3.1-pro-preview")
+    # Extract configuration from frontmatter
+    agent_name = orchestrator_cfg.get("name", "orchestrator")
+    model_name = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
+    system_prompt = orchestrator_cfg.get("body", "")
+    skill_names = orchestrator_cfg.get("skills", [])
 
-    # Load subagent definitions from agents/ directory (markdown + frontmatter)
-    agents_dir = CONFIG_DIR / "agents"
-    skills_base = CONFIG_DIR / "skills"
-
-    # Main agent skills — flat directory under skills/
-    main_skills_dir = skills_base / "client-intake"
-    main_skills_path = [str(main_skills_dir)] if main_skills_dir.exists() else []
-
-    # Load and configure subagents
-    subagents = load_subagents(
-        agents_dir=agents_dir,
-        tools=tools,
-        skills_base=skills_base,
+    logger.info(
+        f"Initializing orchestrator agent '{agent_name}' with model: {model_name}"
     )
 
-    # Load system prompt (identity + routing + behavior from system-prompt.md)
-    system_prompt = get_system_prompt()
-    logger.info("Loaded system prompt from agent_config/system-prompt.md")
+    # Initialize the language model
+    model = create_model(model_name=model_name)
 
-    if main_skills_path:
-        logger.info(f"Main agent skills: {main_skills_dir}")
-    else:
-        logger.warning(f"Main agent skills directory not found: {main_skills_dir}")
+    # Initialize MCP client and get tools
+    mcp_tools = await get_mcp_tools(sso_token=sso_token)
 
+    # Resolve skills from pre-scanned index
+    skill_paths = agent_config.resolve_skills(skill_names, agent_name=agent_name)
+
+    # Build subagents from pre-loaded configs
+    subagents = load_subagents(tools=mcp_tools)
+
+    # Load and configure backend
     backend = get_backend()
 
     async with get_checkpointer() as checkpointer:
         agent = create_deep_agent(
+            name=agent_name,
             model=model,
             system_prompt=system_prompt,
-            skills=main_skills_path,
-            tools=[],
+            skills=skill_paths,
+            tools=[],  # Orchestrator doesn't use tools directly, delegates to subagents
             subagents=subagents,
             backend=backend,
             checkpointer=checkpointer,
             store=None,  # TODO: Add store support
         )
-        logger.info("Deep agent initialized successfully")
+        logger.info(f"Orchestrator agent '{agent_name}' initialized successfully")
         yield agent

@@ -6,60 +6,24 @@ parallel connections and fault isolation.
 """
 
 import asyncio
-import json
-from pathlib import Path
 
 import httpx
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-from template_agent.src.core.exceptions import AppException, ErrorCodes
+from template_agent.src.core.agent_config import agent_config
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
-_CONFIG_PATH = (
-    Path(__file__).resolve().parent.parent.parent / "agent_config" / "mcp.json"
-)
 
-
-def _load_server_configs() -> dict[str, dict]:
-    """Load MCP server definitions from JSON config file.
+def _get_server_configs() -> dict[str, dict]:
+    """Get pre-loaded MCP server configurations.
 
     Returns:
         ``{server_name: {url, transport, enabled, auth, ssl_verify, timeout}}``
-
-    Raises:
-        AppException: On JSON parse errors or missing required fields.
     """
-    if not _CONFIG_PATH.is_file():
-        logger.warning(f"No MCP config file found at {_CONFIG_PATH}")
-        return {}
-
-    try:
-        data = json.loads(_CONFIG_PATH.read_bytes())
-    except json.JSONDecodeError as exc:
-        raise AppException(
-            f"Invalid JSON in {_CONFIG_PATH}: {exc}",
-            ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
-        ) from exc
-
-    servers = data.get("mcpServers") or {}
-    if not isinstance(servers, dict):
-        raise AppException(
-            "mcpServers must be a JSON object",
-            ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
-        )
-
-    for name, entry in servers.items():
-        if "url" not in entry:
-            raise AppException(
-                f"MCP server '{name}' missing required field 'url'",
-                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
-            )
-
-    logger.info(f"Loaded {len(servers)} MCP server(s) from {_CONFIG_PATH.name}")
-    return servers
+    return agent_config.get_mcp_servers()
 
 
 def _build_server_config(entry: dict, sso_token: str | None) -> dict:
@@ -125,7 +89,7 @@ async def get_mcp_tools(sso_token: str | None = None) -> list:
     Returns:
         List of available MCP tools (empty list if all connections fail).
     """
-    servers = _load_server_configs()
+    servers = _get_server_configs()
     enabled = {k: v for k, v in servers.items() if v.get("enabled", False)}
 
     if not enabled:

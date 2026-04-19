@@ -79,8 +79,9 @@ template_agent/
 │   ├── schema.py             # Pydantic models
 │   └── settings.py           # Env config
 ├── agent_config/
-│   ├── system-prompt.md      # Orchestrator prompt
-│   ├── agents/               # Subagent definitions (YAML + MD)
+│   ├── orchestrator/         # Main agent configuration
+│   │   └── main.md           # Orchestrator prompt (YAML + MD)
+│   ├── subagents/            # Subagent definitions (YAML + MD)
 │   └── skills/               # Skill documents per agent
 └── tests/
     ├── agents/               # Agent-level tests (LLM-as-judge)

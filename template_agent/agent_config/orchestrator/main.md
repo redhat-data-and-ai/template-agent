@@ -4,6 +4,10 @@ description: >
   Main coordinator for Red Hat fitness assistant. Handles client intake,
   routes to analyst and publisher subagents, manages TODO lists and
   delegates health metric analysis.
+model: gemini-3.1-pro-preview
+tools: []
+skills:
+  - client-intake
 ---
 
 # Red Hat Fitness Assistant

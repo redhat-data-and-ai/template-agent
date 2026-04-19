@@ -1,15 +1,14 @@
 """Subagent initialization and configuration module.
 
-This module handles loading and configuring subagents from markdown files
-with YAML frontmatter, including tool and skill resolution.
+This module handles building subagents from pre-loaded configurations
+with tool and skill resolution.
 """
 
-from pathlib import Path
 from typing import Any
 
-import yaml
 from deepagents import SubAgent
 
+from template_agent.src.core.agent_config import agent_config
 from template_agent.src.core.llm import create_model
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
@@ -17,144 +16,70 @@ from template_agent.utils.pylogger import get_python_logger
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
 
-def _resolve_tools(
-    agent_name: str,
-    tool_names: list[str],
-    tool_by_name: dict[str, Any],
-) -> list[Any]:
-    """Resolve tool names to actual tool objects.
-
-    Args:
-        agent_name: Name of the agent (for logging)
-        tool_names: List of tool names from frontmatter
-        tool_by_name: Dictionary mapping tool names to tool objects
-
-    Returns:
-        List of resolved tool objects
-    """
-    resolved = [tool_by_name[n] for n in tool_names if n in tool_by_name]
-    missing = [n for n in tool_names if n not in tool_by_name]
-
-    if missing:
-        logger.warning(f"Subagent '{agent_name}' references unknown tools: {missing}")
-
-    return resolved
-
-
-def _resolve_skills(
-    agent_name: str,
-    skill_names: list[str],
-    skills_base: Path,
-) -> list[str]:
-    """Resolve skill names to skill directory paths.
-
-    Args:
-        agent_name: Name of the agent (for logging)
-        skill_names: List of skill names from frontmatter
-        skills_base: Base directory containing skills
-
-    Returns:
-        List of skill directory paths as strings
-    """
-    skill_paths: list[str] = []
-
-    for skill_name in skill_names:
-        skill_dir = skills_base / skill_name
-        if skill_dir.exists():
-            skill_paths.append(str(skill_dir))
-            logger.info(f"Subagent '{agent_name}' skill loaded: {skill_dir}")
-        else:
-            logger.warning(f"Subagent '{agent_name}' skill not found: {skill_dir}")
-
-    return skill_paths
-
-
-def parse_agent_frontmatter(path: Path) -> dict[str, Any]:
-    r"""Parse a markdown agent file with YAML frontmatter.
-
-    Expects the format: ``--- \\n <yaml> \\n --- \\n <markdown body>``.
-    The markdown body is returned under the ``"body"`` key as the
-    subagent's system prompt.
-
-    Args:
-        path: Path to the ``.md`` agent definition file.
-
-    Returns:
-        A dict of frontmatter fields plus ``body`` (the markdown body).
-    """
-    content = path.read_text()
-    if not content.startswith("---"):
-        return {"body": content.strip()}
-
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return {"body": content.strip()}
-
-    frontmatter: dict[str, Any] = yaml.safe_load(parts[1]) or {}
-    frontmatter["body"] = parts[2].strip()
-    return frontmatter
-
-
 def load_subagents(
-    agents_dir: Path,
     tools: list,
-    skills_base: Path,
 ) -> list[SubAgent] | None:
-    """Load and configure subagents from markdown files.
+    """Build subagents from pre-loaded configurations.
 
     Args:
-        agents_dir: Directory containing agent definition files (*.md)
         tools: List of available MCP tools
-        skills_base: Base directory for skills
 
     Returns:
-        List of configured SubAgent instances, or None if agents_dir doesn't exist
+        List of configured SubAgent instances, or None if no subagents configured
     """
-    if not agents_dir.is_dir():
-        logger.warning(f"Agents directory not found at {agents_dir}")
+    all_subagent_configs = agent_config.get_all_subagent_configs()
+
+    if not all_subagent_configs:
+        logger.warning("No subagent configurations found")
         return None
 
-    logger.info(f"Loading subagents from {agents_dir}")
+    logger.info(f"Building {len(all_subagent_configs)} subagent(s)")
 
-    # Create tool lookup map
-    tool_by_name = {t.name: t for t in tools}
+    subagents_list: list[SubAgent] = []
 
-    subagents_config: list[SubAgent] = []
-
-    for agent_file in sorted(agents_dir.glob("*.md")):
-        config = parse_agent_frontmatter(agent_file)
-        name = config.get("name", agent_file.stem)
-
+    for name, agent_cfg in all_subagent_configs.items():
         # Model is required for subagents
-        model_name = config.get("model")
+        model_name = agent_cfg.get("model")
         if not model_name:
             raise ValueError(
-                f"Subagent '{name}' in {agent_file} is missing required 'model' field in frontmatter"
+                f"Subagent '{name}' is missing required 'model' field in frontmatter"
             )
 
         logger.info(f"Subagent '{name}' using model: {model_name}")
 
-        # Build SubAgent with all required fields
-        sa: SubAgent = SubAgent(
-            name=name,
-            model=create_model(model_name=model_name),
-            description=config.get("description", ""),
-            system_prompt=config.get("body", ""),
+        # Resolve all components before building subagent
+        tool_names = agent_cfg.get("tools", [])
+        resolved_tools = (
+            agent_config.resolve_tools(tool_names, tools, agent_name=name)
+            if tool_names
+            else []
         )
 
-        # Resolve tool names to loaded MCP tools
-        tool_names = config.get("tools", [])
-        if tool_names:
-            sa["tools"] = _resolve_tools(name, tool_names, tool_by_name)
+        skill_names = agent_cfg.get("skills", [])
+        resolved_skills = (
+            agent_config.resolve_skills(skill_names, agent_name=name)
+            if skill_names
+            else []
+        )
 
-        # Resolve skill names to paths under skills/
-        skill_names = config.get("skills", [])
-        if skill_names:
-            skill_paths = _resolve_skills(name, skill_names, skills_base)
-            if skill_paths:
-                sa["skills"] = skill_paths
+        # Build subagent params dict
+        subagent_params: dict[str, Any] = {
+            "name": name,
+            "model": create_model(model_name=model_name),
+            "description": agent_cfg.get("description", ""),
+            "system_prompt": agent_cfg.get("body", ""),
+        }
 
-        subagents_config.append(sa)
+        # Add optional parameters only if they have values
+        if resolved_tools:
+            subagent_params["tools"] = resolved_tools
+        if resolved_skills:
+            subagent_params["skills"] = resolved_skills
 
-    logger.info(f"Loaded {len(subagents_config)} subagents")
-    return subagents_config
+        # Build SubAgent with all parameters at once
+        sa = SubAgent(**subagent_params)
+
+        subagents_list.append(sa)
+
+    logger.info(f"Built {len(subagents_list)} subagent(s) successfully")
+    return subagents_list

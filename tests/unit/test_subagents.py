@@ -4,12 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from template_agent.src.core.subagents import (
-    _resolve_skills,
-    _resolve_tools,
-    load_subagents,
-    parse_agent_frontmatter,
-)
+from template_agent.src.core import agent_config
+from template_agent.src.core.frontmatter import parse_agent_frontmatter
+from template_agent.src.core.subagents import load_subagents
 
 
 class TestParseAgentFrontmatter:
