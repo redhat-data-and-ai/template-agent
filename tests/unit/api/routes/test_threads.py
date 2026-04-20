@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from template_agent.src.routes.threads import list_threads
+from template_agent.src.api.routes.memory.threads import list_threads
 
 
 class TestListThreads:
@@ -39,7 +39,7 @@ class TestListThreads:
         mock_checkpointer.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.threads.get_checkpointer"
+            "template_agent.src.api.routes.memory.threads.get_checkpointer"
         ) as mock_get_checkpointer:
             mock_get_checkpointer.return_value = mock_checkpointer
 
@@ -71,7 +71,7 @@ class TestListThreads:
         mock_checkpointer.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.threads.get_checkpointer"
+            "template_agent.src.api.routes.memory.threads.get_checkpointer"
         ) as mock_get_checkpointer:
             mock_get_checkpointer.return_value = mock_checkpointer
 
@@ -99,7 +99,7 @@ class TestListThreads:
         mock_checkpointer.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.threads.get_checkpointer"
+            "template_agent.src.api.routes.memory.threads.get_checkpointer"
         ) as mock_get_checkpointer:
             mock_get_checkpointer.return_value = mock_checkpointer
 
@@ -134,7 +134,7 @@ class TestListThreads:
         mock_checkpointer.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.threads.get_checkpointer"
+            "template_agent.src.api.routes.memory.threads.get_checkpointer"
         ) as mock_get_checkpointer:
             mock_get_checkpointer.return_value = mock_checkpointer
 
