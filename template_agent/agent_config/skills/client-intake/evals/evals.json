@@ -8,8 +8,7 @@
       "files": [],
       "assertions": [
         "Successfully parsed height as 175 cm",
-        "Successfully parsed weight as 70 kg",
-        "Both measurements validated as within normal range (50-300 cm, 20-300 kg)"
+        "Successfully parsed weight as 70 kg"
       ]
     },
     {

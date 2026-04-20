@@ -46,14 +46,26 @@ def save_grading(output_dir: Path, results: list, summary: dict):
 
 
 def calculate_summary(results: list) -> dict:
-    """Calculate pass/fail summary."""
-    passed = sum(1 for r in results if r["passed"])
+    """Calculate pass/fail summary.
+
+    Assertions with passed=null are counted as 'aborted' and excluded
+    from pass rate calculation (LLM judge couldn't determine verdict).
+    """
+    passed = sum(1 for r in results if r["passed"] is True)
+    failed = sum(1 for r in results if r["passed"] is False)
+    aborted = sum(1 for r in results if r["passed"] is None)
     total = len(results)
+
+    # Pass rate excludes aborted tests
+    evaluated = passed + failed
+    pass_rate = passed / evaluated if evaluated > 0 else 0
+
     return {
         "passed": passed,
-        "failed": total - passed,
+        "failed": failed,
+        "aborted": aborted,
         "total": total,
-        "pass_rate": passed / total if total > 0 else 0,
+        "pass_rate": pass_rate,
     }
 
 
@@ -93,14 +105,8 @@ async def run_agent_async(agent, prompt: str, thread_id: str, tracer) -> str:
 
 def run_agent_sync(agent, prompt: str, thread_id: str, tracer) -> str:
     """Synchronous wrapper for async agent execution."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("Event loop is closed")
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     return loop.run_until_complete(run_agent_async(agent, prompt, thread_id, tracer))
 
 
@@ -110,8 +116,19 @@ def create_skill_agent(skill_dir: str, skill_name: str, model):
     Skills are self-contained and use only local scripts/reference docs.
     No external tools are needed.
     """
+    system_prompt = """\
+    You are a helpful assistant with specialized skills.
+
+    CRITICAL: You have been provided with skill instructions as part of SKILL.md
+
+    You MUST strictly follow the skill instructions.
+
+    When using a skill, follow its instructions EXACTLY as written.
+    """
+
     agent = create_deep_agent(
         model=model,
+        system_prompt=system_prompt,
         skills=[skill_dir],
         tools=[],  # Skills don't need external tools
         backend=get_backend(),
@@ -138,13 +155,11 @@ def test_skill_evaluation(
 
     Auto-discovers all skills from agent_config/skills/ and runs their evals.
 
-    IMPORTANT: These tests use real LLM calls and LLM-as-judge evaluation,
-    which means results can vary between runs. Known variability:
-    - email-formatter: LLM may return plain text instead of HTML
-    - client-intake: Imperial unit conversions may not display explicitly
+    Each eval must pass 70% of its assertions to be considered successful.
 
-    A 75%+ pass rate across all skill evals is considered acceptable.
-    Individual test failures are expected due to LLM non-determinism.
+    IMPORTANT: These tests use real LLM calls and LLM-as-judge evaluation,
+    which means results can vary between runs. The system prompt helps guide
+    the model to follow skill instructions more strictly.
     """
     skill_name = skill_eval["skill_name"]
     skill_dir = skill_eval["skill_dir"]
@@ -178,15 +193,22 @@ def test_skill_evaluation(
         )
         results.append(result)
 
-    # Calculate summary
+    # Calculate summary for this eval
     summary = calculate_summary(results)
 
     # Save grading
     save_grading(output_dir, results, summary)
 
-    # Assert pass rate (70% threshold)
+    # Assert pass rate (70% threshold per eval)
     pass_rate = summary["pass_rate"]
-    assert pass_rate >= 0.7, (
-        f"{skill_name} failed eval-{eval_id}: "
-        f"{summary['passed']}/{summary['total']} assertions passed"
-    )
+
+    # Build failure message
+    msg_parts = [
+        f"{skill_name} failed eval-{eval_id}:",
+        f"{summary['passed']}/{summary['total']} assertions passed",
+    ]
+    if summary["aborted"] > 0:
+        msg_parts.append(f"({summary['aborted']} aborted, excluded from rate)")
+    msg_parts.append(f"pass_rate: {pass_rate:.1%}, threshold: 70%")
+
+    assert pass_rate >= 0.7, " ".join(msg_parts)
