@@ -4,17 +4,17 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Overwrite
 
-from template_agent.src.core.streaming import (
+from template_agent.src.streaming import (
     MessageDeduplicator,
     StreamContext,
     ToolCallTracker,
     remove_tool_calls,
 )
-from template_agent.src.core.streaming.converter import (
+from template_agent.src.streaming.converter import (
     convert_message_to_api_format,
     should_skip_message,
 )
-from template_agent.src.core.streaming.handlers import (
+from template_agent.src.streaming.handlers import (
     TokenEventHandler,
     UpdateEventHandler,
 )
@@ -162,7 +162,7 @@ class TestToolCallTracker:
         """Test extracting tool call ID directly from message."""
         from langchain_core.messages import AIMessageChunk
 
-        from template_agent.src.core.streaming.tracker import extract_tool_call_id
+        from template_agent.src.streaming.tracker import extract_tool_call_id
 
         msg = AIMessageChunk(
             content="",
