@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from template_agent.src.core.checkpointer import (
+from template_agent.src.exceptions import AppException
+from template_agent.src.infrastructure.checkpointer import (
     get_checkpointer,
     initialize_checkpointer,
 )
-from template_agent.src.core.exceptions import AppException
 
 
 class TestInitializeCheckpointer:
@@ -23,7 +23,7 @@ class TestInitializeCheckpointer:
         mock_checkpointer.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.core.checkpointer.AsyncPostgresSaver.from_conn_string"
+            "template_agent.src.infrastructure.checkpointer.AsyncPostgresSaver.from_conn_string"
         ) as mock_from_conn:
             mock_from_conn.return_value = mock_checkpointer
 
@@ -41,7 +41,7 @@ class TestInitializeCheckpointer:
         mock_checkpointer.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.core.checkpointer.AsyncPostgresSaver.from_conn_string"
+            "template_agent.src.infrastructure.checkpointer.AsyncPostgresSaver.from_conn_string"
         ) as mock_from_conn:
             mock_from_conn.return_value = mock_checkpointer
 
@@ -55,7 +55,7 @@ class TestInitializeCheckpointer:
     async def test_connection_failure_raises_app_exception(self):
         """Test that connection failures raise AppException."""
         with patch(
-            "template_agent.src.core.checkpointer.AsyncPostgresSaver.from_conn_string"
+            "template_agent.src.infrastructure.checkpointer.AsyncPostgresSaver.from_conn_string"
         ) as mock_from_conn:
             mock_from_conn.side_effect = Exception("Connection refused")
 
@@ -76,7 +76,7 @@ class TestGetCheckpointer:
         mock_checkpointer.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.core.checkpointer.AsyncPostgresSaver.from_conn_string"
+            "template_agent.src.infrastructure.checkpointer.AsyncPostgresSaver.from_conn_string"
         ) as mock_from_conn:
             mock_from_conn.return_value = mock_checkpointer
 
@@ -94,9 +94,11 @@ class TestGetCheckpointer:
 
         with (
             patch(
-                "template_agent.src.core.checkpointer.AsyncPostgresSaver.from_conn_string"
+                "template_agent.src.infrastructure.checkpointer.AsyncPostgresSaver.from_conn_string"
             ) as mock_from_conn,
-            patch("template_agent.src.core.checkpointer.settings") as mock_settings,
+            patch(
+                "template_agent.src.infrastructure.checkpointer.settings"
+            ) as mock_settings,
         ):
             mock_settings.database_uri = "postgresql://test:test@localhost/testdb"
             mock_from_conn.return_value = mock_checkpointer
@@ -116,7 +118,7 @@ class TestGetCheckpointer:
         mock_checkpointer.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.core.checkpointer.AsyncPostgresSaver.from_conn_string"
+            "template_agent.src.infrastructure.checkpointer.AsyncPostgresSaver.from_conn_string"
         ) as mock_from_conn:
             mock_from_conn.return_value = mock_checkpointer
 
@@ -130,7 +132,7 @@ class TestGetCheckpointer:
     async def test_connection_error_propagates(self):
         """Test that connection errors propagate properly."""
         with patch(
-            "template_agent.src.core.checkpointer.AsyncPostgresSaver.from_conn_string"
+            "template_agent.src.infrastructure.checkpointer.AsyncPostgresSaver.from_conn_string"
         ) as mock_from_conn:
             mock_from_conn.side_effect = Exception("Connection failed")
 
@@ -152,7 +154,7 @@ class TestGetCheckpointer:
         mock_checkpointer2.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.core.checkpointer.AsyncPostgresSaver.from_conn_string"
+            "template_agent.src.infrastructure.checkpointer.AsyncPostgresSaver.from_conn_string"
         ) as mock_from_conn:
             mock_from_conn.side_effect = [mock_checkpointer1, mock_checkpointer2]
 
