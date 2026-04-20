@@ -8,7 +8,7 @@ from langfuse import Langfuse
 from template_agent.utils.google_creds import get_service_account_credentials
 
 # Model configuration
-MODEL_NAME = "gemini-2.5-pro-preview"
+MODEL_NAME = "gemini-3.1-pro-preview"
 MODEL_TEMPERATURE = 0
 OUTPUT_TRUNCATE_LENGTH = 500
 
