@@ -11,10 +11,9 @@ from typing import NoReturn
 import uvicorn
 
 from template_agent.src.api import app
-from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+from template_agent.src.exceptions import AppException, ErrorCodes
 from template_agent.src.settings import settings
 from template_agent.src.settings import validate_config as validate_config_func
-from template_agent.utils.google_creds import initialize_google_genai
 from template_agent.utils.pylogger import get_python_logger, get_uvicorn_log_config
 
 # Initialize logger
@@ -36,12 +35,6 @@ def validate_and_initialize_config() -> None:
     try:
         # Use the validate_config function from settings.py
         validate_config_func(settings)
-        if settings.use_openai_compatible_llm:
-            logger.info(
-                "Skipping Google GenAI credential init (OPENAI_COMPAT_BASE_URL is set)"
-            )
-        else:
-            initialize_google_genai()
 
         logger.info("Configuration validation and initialization passed")
 
@@ -49,13 +42,13 @@ def validate_and_initialize_config() -> None:
         # Handle case where config object is not properly initialized
         raise AppException(
             "Failed to properly initialize configurations",
-            AppExceptionCode.CONFIGURATION_INITIALIZATION_ERROR,
+            ErrorCodes.CONFIGURATION_INITIALIZATION_ERROR,
         )
     except Exception:
         # Re-raise as ValueError for consistent error handling
         raise AppException(
             "Configuration validation failed",
-            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+            ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         )
 
 

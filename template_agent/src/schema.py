@@ -94,24 +94,24 @@ class ChatMessage(BaseModel):
         examples=["call_Jja7J89XsjrOLA5r!MEOW!SL"],
     )
     run_id: str | None = Field(
-        description="Run ID associated with this message for tracking.",
+        description="Run ID associated with this message for tracking (hex format).",
         default=None,
-        examples=["847c6285-8fc9-4560-a83f-4e6285809254"],
+        examples=["847c62858fc94560a83f4e6285809254"],
+    )
+    trace_id: str | None = Field(
+        description="Trace ID associated with this message for tracing (hex format).",
+        default=None,
+        examples=["847c62858fc94560a83f4e6285809254"],
     )
     thread_id: str | None = Field(
-        description="Thread ID associated with this message for conversation tracking.",
+        description="Thread ID associated with this message for conversation tracking (hex format).",
         default=None,
-        examples=["847c6285-8fc9-4560-a83f-4e6285809254"],
+        examples=["847c62858fc94560a83f4e6285809254"],
     )
     session_id: str | None = Field(
-        description="Session ID associated with this message for session tracking.",
+        description="Session ID associated with this message for session tracking (hex format).",
         default=None,
-        examples=["847c6285-8fc9-4560-a83f-4e6285809254"],
-    )
-    ai_call_id: str | None = Field(
-        description="Unique identifier for the AI call that generated this message.",
-        default=None,
-        examples=["ai_call_847c6285-8fc9-4560-a83f-4e6285809254"],
+        examples=["847c62858fc94560a83f4e6285809254"],
     )
     response_metadata: dict[str, Any] = Field(
         description="Additional metadata for the response, such as headers, logprobs, or token counts.",
@@ -130,17 +130,17 @@ class FeedbackRequest(BaseModel):
     LangFuse for analytics and monitoring purposes.
     """
 
-    run_id: str = Field(
-        description="Run ID to record feedback for.",
-        examples=["847c6285-8fc9-4560-a83f-4e6285809254"],
+    trace_id: str = Field(
+        description="Trace ID to record feedback for (hex format, no hyphens).",
+        examples=["847c62858fc94560a83f4e6285809254"],
     )
-    key: str = Field(
-        description="Feedback key identifier.",
-        examples=["human-feedback-stars"],
+    name: str = Field(
+        description="Score name/identifier.",
+        examples=["user-rating", "thumbs-up"],
     )
-    score: float = Field(
-        description="Feedback score value.",
-        examples=[0.8],
+    value: float = Field(
+        description="Score value.",
+        examples=[0.8, 1.0],
     )
     kwargs: dict[str, Any] = Field(
         description="Additional feedback parameters passed to LangFuse.",
