@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from template_agent.src.routes.history import (
+from template_agent.src.api.routes.memory.history import (
     convert_with_metadata,
     history,
     is_subagent_checkpoint,
@@ -74,7 +74,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
@@ -114,7 +114,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
@@ -138,7 +138,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
@@ -170,7 +170,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
@@ -207,7 +207,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
@@ -243,7 +243,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
@@ -314,7 +314,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
@@ -359,7 +359,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
@@ -443,7 +443,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
@@ -471,7 +471,7 @@ class TestHistory:
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "template_agent.src.routes.history.get_template_agent"
+            "template_agent.src.api.routes.memory.history.get_template_agent"
         ) as mock_get_agent:
             mock_get_agent.return_value = mock_agent
 
