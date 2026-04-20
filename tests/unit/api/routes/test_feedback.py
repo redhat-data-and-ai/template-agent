@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
-from template_agent.src.routes.feedback import feedback
+from template_agent.src.api.routes.agent.feedback import feedback
 from template_agent.src.schema import FeedbackRequest, FeedbackResponse
 
 
@@ -79,7 +79,7 @@ class TestFeedback:
     @pytest.mark.asyncio
     async def test_get_langfuse_client_dependency(self):
         """Test that get_langfuse_client extracts client from app state."""
-        from template_agent.src.routes.feedback import get_langfuse_client
+        from template_agent.src.api.routes.agent.feedback import get_langfuse_client
 
         mock_request = MagicMock()
         mock_client = MagicMock()
