@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from template_agent.src.core.llm import CLAUDE_MODELS, GEMINI_MODELS, create_model
+from template_agent.src.agent.llm import CLAUDE_MODELS, GEMINI_MODELS, create_model
 
 
 class TestCreateModel:
@@ -15,12 +15,12 @@ class TestCreateModel:
         mock_creds = MagicMock()
 
         with patch(
-            "template_agent.src.core.llm.get_service_account_credentials"
+            "template_agent.src.agent.llm.get_service_account_credentials"
         ) as mock_get_creds:
             mock_get_creds.return_value = (mock_creds, "test-project")
 
             with patch(
-                "template_agent.src.core.llm.ChatGoogleGenerativeAI"
+                "template_agent.src.agent.llm.ChatGoogleGenerativeAI"
             ) as mock_chat:
                 create_model("gemini-2.5-pro", temperature=0.5)
                 mock_chat.assert_called_once_with(
@@ -36,11 +36,11 @@ class TestCreateModel:
         mock_creds = MagicMock()
 
         with patch(
-            "template_agent.src.core.llm.get_service_account_credentials"
+            "template_agent.src.agent.llm.get_service_account_credentials"
         ) as mock_get_creds:
             mock_get_creds.return_value = (mock_creds, "test-project")
 
-            with patch("template_agent.src.core.llm.ChatAnthropicVertex") as mock_chat:
+            with patch("template_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat:
                 create_model("claude-sonnet-4", temperature=0.7)
                 mock_chat.assert_called_once_with(
                     model="claude-sonnet-4",
@@ -64,7 +64,7 @@ class TestCreateModel:
         mock_creds = MagicMock()
 
         with patch(
-            "template_agent.src.core.llm.get_service_account_credentials"
+            "template_agent.src.agent.llm.get_service_account_credentials"
         ) as mock_get_creds:
             mock_get_creds.return_value = (mock_creds, "test-project")
 
@@ -80,12 +80,12 @@ class TestCreateModel:
         mock_creds = MagicMock()
 
         with patch(
-            "template_agent.src.core.llm.get_service_account_credentials"
+            "template_agent.src.agent.llm.get_service_account_credentials"
         ) as mock_get_creds:
             mock_get_creds.return_value = (mock_creds, "test-project")
 
             with patch(
-                "template_agent.src.core.llm.ChatGoogleGenerativeAI",
+                "template_agent.src.agent.llm.ChatGoogleGenerativeAI",
                 side_effect=RuntimeError("API error"),
             ):
                 with pytest.raises(RuntimeError, match="API error"):
@@ -96,14 +96,14 @@ class TestCreateModel:
         mock_creds = MagicMock()
 
         with patch(
-            "template_agent.src.core.llm.get_service_account_credentials"
+            "template_agent.src.agent.llm.get_service_account_credentials"
         ) as mock_get_creds:
             mock_get_creds.return_value = (mock_creds, "test-project")
 
-            with patch("template_agent.src.core.llm.ChatGoogleGenerativeAI"):
+            with patch("template_agent.src.agent.llm.ChatGoogleGenerativeAI"):
                 for model_name in GEMINI_MODELS:
                     create_model(model_name)
 
-            with patch("template_agent.src.core.llm.ChatAnthropicVertex"):
+            with patch("template_agent.src.agent.llm.ChatAnthropicVertex"):
                 for model_name in CLAUDE_MODELS:
                     create_model(model_name)
