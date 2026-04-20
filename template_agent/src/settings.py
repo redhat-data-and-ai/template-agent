@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
-from template_agent.src.core.exceptions import AppException, ErrorCodes
+from template_agent.src.exceptions import AppException, ErrorCodes
 from template_agent.utils.pylogger import get_python_logger
 
 # Initialize logger
