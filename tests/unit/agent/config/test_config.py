@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from template_agent.src.core.agent_config import AgentConfig
+from template_agent.src.agent.config import AgentConfig
 
 
 class TestAgentConfigSkillResolution:
