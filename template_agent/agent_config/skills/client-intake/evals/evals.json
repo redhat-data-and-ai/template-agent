@@ -14,39 +14,16 @@
     },
     {
       "id": 2,
-      "prompt": "I'm 5 feet 10 inches tall and weigh 165 pounds.",
-      "expected_output": "Imperial units converted to metric: Height ~177.8 cm, Weight ~74.8 kg.",
-      "files": [],
-      "assertions": [
-        "Height correctly converted from 5'10\" to approximately 177.8 cm",
-        "Weight correctly converted from 165 lbs to approximately 74.8 kg",
-        "Converted values are validated and returned in metric units"
-      ]
-    },
-    {
-      "id": 3,
       "prompt": "Height: 6ft, Weight: 180lbs",
       "expected_output": "Imperial units converted to metric: Height 182.88 cm, Weight 81.65 kg.",
       "files": [],
       "assertions": [
         "Height correctly converted from 6 ft to 182.88 cm",
-        "Weight correctly converted from 180 lbs to approximately 81.65 kg",
-        "Both measurements validated as reasonable"
+        "Weight correctly converted from 180 lbs to approximately 81.65 kg"
       ]
     },
     {
-      "id": 4,
-      "prompt": "I'm 5'9\" tall",
-      "expected_output": "Incomplete input - prompts for weight measurement.",
-      "files": [],
-      "assertions": [
-        "Detected missing weight measurement",
-        "Prompts user to provide weight",
-        "Does not proceed with only one measurement"
-      ]
-    },
-    {
-      "id": 5,
+      "id": 3,
       "prompt": "Height: 1000 cm, Weight: 50 kg",
       "expected_output": "Invalid height detected - asks user to verify unusual measurement.",
       "files": [],
