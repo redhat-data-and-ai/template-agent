@@ -3,34 +3,57 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Hi! I'm 175 cm tall and weigh 70 kg. Can you analyze my BMI?",
-      "expected_output": "Greeting with Red Hat branding, delegation to analyst, and relay of BMI results.",
+      "prompt": "I'm 175 cm tall and weigh 70 kg.",
+      "expected_output": "Parsed and validated metric measurements: Height 175 cm, Weight 70 kg.",
       "files": [],
       "assertions": [
-        "Response includes BMI value and category (from analyst)",
-        "Response includes health tips (from analyst)"
+        "Successfully parsed height as 175 cm",
+        "Successfully parsed weight as 70 kg",
+        "Both measurements validated as within normal range (50-300 cm, 20-300 kg)"
       ]
     },
     {
       "id": 2,
-      "prompt": "I'm 5 feet 10 inches tall and weigh 165 pounds. What's my BMI?",
-      "expected_output": "Imperial units converted to metric, delegation to analyst, BMI results returned.",
+      "prompt": "I'm 5 feet 10 inches tall and weigh 165 pounds.",
+      "expected_output": "Imperial units converted to metric: Height ~177.8 cm, Weight ~74.8 kg.",
       "files": [],
       "assertions": [
-        "Response includes BMI value (approximately 23.7 for 5'10\" and 165 lbs)",
-        "Response includes BMI category (should be Normal)",
-        "Response includes health tips appropriate for the BMI category"
+        "Height correctly converted from 5'10\" to approximately 177.8 cm",
+        "Weight correctly converted from 165 lbs to approximately 74.8 kg",
+        "Converted values are validated and returned in metric units"
       ]
     },
     {
       "id": 3,
-      "prompt": "Height: 6ft, Weight: 180lbs, and please email the report to john@example.com",
-      "expected_output": "Units converted, BMI analysis delegated to analyst, email sent via publisher.",
+      "prompt": "Height: 6ft, Weight: 180lbs",
+      "expected_output": "Imperial units converted to metric: Height 182.88 cm, Weight 81.65 kg.",
       "files": [],
       "assertions": [
-        "Response includes BMI analysis results",
-        "Response confirms email was sent or mentions publisher action",
-        "Email address john@example.com is referenced in the response"
+        "Height correctly converted from 6 ft to 182.88 cm",
+        "Weight correctly converted from 180 lbs to approximately 81.65 kg",
+        "Both measurements validated as reasonable"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "I'm 5'9\" tall",
+      "expected_output": "Incomplete input - prompts for weight measurement.",
+      "files": [],
+      "assertions": [
+        "Detected missing weight measurement",
+        "Prompts user to provide weight",
+        "Does not proceed with only one measurement"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Height: 1000 cm, Weight: 50 kg",
+      "expected_output": "Invalid height detected - asks user to verify unusual measurement.",
+      "files": [],
+      "assertions": [
+        "Flags height of 1000 cm as out of normal range",
+        "Asks user to confirm or re-enter measurement",
+        "Weight of 50 kg accepted as valid"
       ]
     }
   ]

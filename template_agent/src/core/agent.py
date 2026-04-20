@@ -46,7 +46,8 @@ async def get_template_agent(sso_token: str | None = None):
     agent_name = orchestrator_cfg.get("name", "orchestrator")
     model_name = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
     system_prompt = orchestrator_cfg.get("body", "")
-    skill_names = orchestrator_cfg.get("skills", [])
+    skill_paths = orchestrator_cfg.get("skill_paths", [])
+    tool_names = orchestrator_cfg.get("tools", [])
 
     logger.info(
         f"Initializing orchestrator agent '{agent_name}' with model: {model_name}"
@@ -58,8 +59,8 @@ async def get_template_agent(sso_token: str | None = None):
     # Initialize MCP client and get tools
     mcp_tools = await get_mcp_tools(sso_token=sso_token)
 
-    # Resolve skills from pre-scanned index
-    skill_paths = agent_config.resolve_skills(skill_names, agent_name=agent_name)
+    # Resolve tools from tool names in frontmatter
+    tools = agent_config.resolve_tools(tool_names, mcp_tools, agent_name=agent_name)
 
     # Build subagents from pre-loaded configs
     subagents = load_subagents(tools=mcp_tools)
@@ -73,7 +74,7 @@ async def get_template_agent(sso_token: str | None = None):
             model=model,
             system_prompt=system_prompt,
             skills=skill_paths,
-            tools=[],  # Orchestrator doesn't use tools directly, delegates to subagents
+            tools=tools,
             subagents=subagents,
             backend=backend,
             checkpointer=checkpointer,

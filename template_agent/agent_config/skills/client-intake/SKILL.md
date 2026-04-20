@@ -1,59 +1,82 @@
 ---
 name: client-intake
 description: >
-  Guides gathering health metrics from new or returning clients and
-  coordinates subagent handoffs. Use when a client interacts with the
-  fitness assistant to provide height, weight, or request BMI analysis.
+  Utility skill for gathering and normalizing health metrics (height, weight).
+  Handles input parsing, validation, and unit conversion from imperial to metric.
+  Use when you need to collect or convert user measurements.
 ---
 
 # Client Intake
 
-**YOU ARE A COORDINATOR ONLY. YOU MUST NOT ANALYZE DATA OR COMPUTE BMI.**
+**Purpose:** Parse user input and convert health measurements to standardized metric units.
 
 ## When to Use
 
-Gathering health metrics (height, weight) and coordinating routing to subagents.
-For the primary agent only — not for use by subagents.
+- Gathering height and weight from user input
+- Converting imperial units (ft, in, lbs) to metric (cm, kg)
+- Validating measurement inputs
+- Standardizing measurements before analysis
 
 ## Resources
 
-- **Coordination Flow:** `references/coordination_flow.md`
-- **Unit Conversion:** `references/unit_conversion_formulas.md` or `scripts/convert_units.py`
-- **Edge Cases:** `references/edge_cases.md`
+- **Input Gathering Guidelines:** `references/input_gathering.md`
+- **Unit Conversion Formulas:** `references/unit_conversion_formulas.md`
+- **Conversion Script:** `scripts/convert_units.py`
+- **Edge Cases & Validation:** `references/edge_cases.md`
 
-## Core Flow (FOLLOW EXACTLY)
+## Core Workflow
 
-1. **Greet:** Start with "Welcome! I'm your Red Hat fitness assistant."
-2. **Gather:** Collect height + weight (both required)
-3. **Convert:** If imperial units → metric (see references/unit_conversion_formulas.md)
-4. **DELEGATE TO ANALYST:** You MUST use the analyst subagent for BMI analysis
-   - Do NOT calculate BMI yourself
-   - Do NOT provide health tips yourself
-   - Pass height (cm) and weight (kg) to analyst
-5. **Relay:** After analyst responds, relay their results to user
-6. **Email (optional):** If user requests email → route to publisher
+1. **Parse Input:** Extract height and weight from user message
+   - Height may be in: cm, ft+in, or inches
+   - Weight may be in: kg or lbs
 
-## CRITICAL - YOU MUST DELEGATE
+2. **Validate:** Ensure both measurements are present and reasonable
+   - Height: 50-272 cm (or equivalent)
+   - Weight: 20-300 kg (or equivalent)
 
-**YOU ARE FORBIDDEN FROM:**
-- Calculating BMI values
-- Determining BMI categories (Underweight/Normal/Overweight/Obese)
-- Providing health tips or recommendations
-- Formatting email reports
+3. **Convert to Metric:** If measurements are in imperial units, convert to metric
+   - See `references/unit_conversion_formulas.md` for exact formulas
+   - Or use `scripts/convert_units.py` for programmatic conversion
 
-**YOU MUST ALWAYS:**
-- Delegate BMI analysis to the **analyst** subagent
-- Wait for analyst's response before relaying to user
-- Convert units BEFORE delegating (analyst expects cm and kg only)
-- Use `python3` for conversions (not `python`)
+4. **Return Standardized Values:** Always return height in cm and weight in kg
 
-**Example delegation:**
-When user asks for BMI analysis, immediately delegate to analyst with the metrics.
-Do not say "I'll calculate..." — you cannot calculate. Only coordinate.
+## Unit Conversion
+
+**Use the conversion script, never hardcode conversions:**
+
+```bash
+# Convert height (5 feet 10 inches to cm):
+python3 scripts/convert_units.py feet_inches 5 10
+
+# Convert weight (180 pounds to kg):
+python3 scripts/convert_units.py pounds 180
+
+# Other supported conversions:
+python3 scripts/convert_units.py feet 6        # feet to cm
+python3 scripts/convert_units.py inches 70     # inches to cm
+```
+
+## Input Validation
+
+**Required fields:**
+- Height (must be positive, within 50-272 cm range)
+- Weight (must be positive, within 20-300 kg range)
+
+**Edge cases to handle:**
+- Mixed units (e.g., "5 feet 10 inches and 80 kg")
+- Implicit units (e.g., "5'10" assumes imperial)
+- Missing measurements (prompt user for both)
+- Out-of-range values (ask user to verify)
+
+## Output Format
+
+Always return measurements in this format:
+- **Height:** `<value>` cm
+- **Weight:** `<value>` kg
 
 ## Gotchas
 
-- **Never calculate BMI yourself** — you don't have the calculate_bmi tool, only analyst does
-- **Always convert before delegating** — analyst expects metric units (cm, kg) only
 - **Use `python3` not `python`** — python command is not available on all systems
-- **Don't assume email is wanted** — only route to publisher if user explicitly requests it
+- **Always convert before returning** — downstream processes expect metric units (cm, kg) only
+- **Don't assume units** — if ambiguous, ask user to clarify (e.g., "Is that 180 lbs or kg?")
+- **Validate ranges** — catch unrealistic measurements early (e.g., 1000 cm height)

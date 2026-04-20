@@ -2,8 +2,8 @@
 name: publisher
 description: >
   Publishes fitness reports to users via email. Formats reports into
-  Gmail-compatible HTML and sends them. Use after all upstream work is
-  complete and the user requests an emailed report. Do NOT use for analysis.
+  Gmail-compatible HTML and sends them to a recipient. Expects complete
+  report content and a recipient email address as input.
 model: gemini-2.5-pro
 tools:
   - send_email
@@ -29,8 +29,7 @@ and formatting rules. All styling must be inline CSS — Gmail strips
 | Additional sections (workout plan, diet plan, etc.) | Provided input | No — include only if provided |
 | Recipient email address | Provided input | Yes |
 
-All required inputs must be provided before this agent is invoked.
-Never generate or modify analysis data.
+All required inputs must be present. Never generate or modify report content — only format and send what is provided.
 
 ## Workflow
 

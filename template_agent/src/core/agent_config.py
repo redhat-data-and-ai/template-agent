@@ -75,10 +75,11 @@ class AgentConfig:
             return
 
         logger.info("Loading agent configurations...")
+        # Scan skills first, as orchestrator and subagents need them for resolution
+        self._available_skills: dict[str, Path] = self._scan_available_skills()
         self._orchestrator: dict[str, Any] = self._load_orchestrator()
         self._subagents: dict[str, dict[str, Any]] = self._load_all_subagents()
         self._mcp_servers: dict[str, Any] = self._load_mcp_servers()
-        self._available_skills: dict[str, Path] = self._scan_available_skills()
 
         self._configs_loaded = True
         logger.info(
@@ -116,7 +117,7 @@ class AgentConfig:
         """Load orchestrator configuration at initialization.
 
         Returns:
-            Orchestrator config dict with injected runtime values.
+            Orchestrator config dict with injected runtime values and resolved skill paths.
 
         Raises:
             AppException: If orchestrator/main.md is missing or invalid.
@@ -126,6 +127,14 @@ class AgentConfig:
             config = AgentConfig._parse_frontmatter(orchestrator_path)
             if "body" in config:
                 config["body"] = AgentConfig._inject_runtime_values(config["body"])
+
+            # Resolve skill names to paths eagerly
+            skill_names = config.get("skills", [])
+            if skill_names:
+                config["skill_paths"] = self._resolve_skill_paths(
+                    skill_names, agent_name=config.get("name", "orchestrator")
+                )
+
             return config
         except FileNotFoundError:
             raise AppException(
@@ -142,7 +151,7 @@ class AgentConfig:
         """Load all subagent configurations at initialization.
 
         Returns:
-            Dict mapping subagent name to config dict.
+            Dict mapping subagent name to config dict with resolved skill paths.
         """
         subagents_dir = self._base_dir / "subagents"
         if not subagents_dir.is_dir():
@@ -157,6 +166,14 @@ class AgentConfig:
                     config["body"] = AgentConfig._inject_runtime_values(config["body"])
 
                 name = config.get("name", agent_file.stem)
+
+                # Resolve skill names to paths eagerly
+                skill_names = config.get("skills", [])
+                if skill_names:
+                    config["skill_paths"] = self._resolve_skill_paths(
+                        skill_names, agent_name=name
+                    )
+
                 subagents[name] = config
                 logger.info(f"Loaded subagent config: {name}")
             except Exception as e:
@@ -249,7 +266,7 @@ class AgentConfig:
         self._ensure_loaded()
         return self._subagents
 
-    def resolve_skills(
+    def _resolve_skill_paths(
         self,
         skill_names: list[str],
         agent_name: str = "agent",
@@ -263,7 +280,6 @@ class AgentConfig:
         Returns:
             List of skill directory paths as strings.
         """
-        self._ensure_loaded()
         skill_paths: list[str] = []
         missing: list[str] = []
 

@@ -47,7 +47,7 @@ def load_subagents(
 
         logger.info(f"Subagent '{name}' using model: {model_name}")
 
-        # Resolve all components before building subagent
+        # Resolve tools and get pre-resolved skill paths
         tool_names = agent_cfg.get("tools", [])
         resolved_tools = (
             agent_config.resolve_tools(tool_names, tools, agent_name=name)
@@ -55,12 +55,8 @@ def load_subagents(
             else []
         )
 
-        skill_names = agent_cfg.get("skills", [])
-        resolved_skills = (
-            agent_config.resolve_skills(skill_names, agent_name=name)
-            if skill_names
-            else []
-        )
+        # Skills are already resolved during config loading
+        skill_paths = agent_cfg.get("skill_paths", [])
 
         # Build subagent params dict
         subagent_params: dict[str, Any] = {
@@ -73,8 +69,8 @@ def load_subagents(
         # Add optional parameters only if they have values
         if resolved_tools:
             subagent_params["tools"] = resolved_tools
-        if resolved_skills:
-            subagent_params["skills"] = resolved_skills
+        if skill_paths:
+            subagent_params["skills"] = skill_paths
 
         # Build SubAgent with all parameters at once
         sa = SubAgent(**subagent_params)
