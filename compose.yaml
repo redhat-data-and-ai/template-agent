@@ -6,8 +6,6 @@ services:
       POSTGRES_DB: pgvector
       POSTGRES_USER: pgvector
       POSTGRES_PASSWORD: pgvector
-    ports:
-      - "5432:5432"
     volumes:
       - pgvector_data:/var/lib/postgresql/data
     restart: always
@@ -26,11 +24,11 @@ services:
       dockerfile: Containerfile
     container_name: template-agent
     ports:
-      - "8081:8081"
+      - "5002:5002"
     env_file:
       - .env
     environment:
-      - AGENT_PORT=8081
+      - AGENT_PORT=5002
       - POSTGRES_HOST=pgvector
       - POSTGRES_PORT=5432
       - POSTGRES_DB=pgvector
@@ -41,7 +39,7 @@ services:
         condition: service_healthy
     restart: always
     healthcheck:
-      test: [ "CMD", "curl", "-f", "-k", "http://0.0.0.0:8081/health"]
+      test: [ "CMD", "curl", "-f", "-k", "http://0.0.0.0:5002/health"]
       interval: 5s
       timeout: 5s
       retries: 5

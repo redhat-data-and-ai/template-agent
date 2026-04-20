@@ -1,0 +1,49 @@
+{
+  "skill_name": "bmi-report",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "My BMI is 22.5 and I'm in the Normal category. Can you give me a fitness report?",
+      "expected_output": "A well-structured BMI report with the value, category, health tips specific to Normal BMI, and disclaimer.",
+      "files": [],
+      "assertions": [
+        "Report includes BMI value 22.5",
+        "Report states the category as Normal",
+        "Report includes at least 3 category-specific health tips for Normal BMI",
+        "Report includes the disclaimer: 'This is not medical advice. Consult a healthcare professional.'",
+        "Tone is friendly, encouraging, and non-judgmental",
+        "No use of negative words like 'bad' or 'failing'"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I calculated my BMI as 17.8, which is Underweight. What should I do?",
+      "expected_output": "A BMI report with underweight-specific health tips focused on healthy weight gain, with proper tone and disclaimer.",
+      "files": [],
+      "assertions": [
+        "Report includes BMI value 17.8",
+        "Report correctly identifies category as Underweight",
+        "Health tips focus on healthy weight gain (nutrient-dense foods, frequent meals)",
+        "Health tips do NOT include weight loss advice",
+        "Report includes the mandatory disclaimer",
+        "Tone is encouraging and non-judgmental",
+        "Tips are actionable and specific (not generic wellness advice)"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "BMI of 28.3, Overweight range. Need a report.",
+      "expected_output": "Overweight-category report with sustainable weight loss tips and appropriate tone.",
+      "files": [],
+      "assertions": [
+        "Report includes BMI value 28.3",
+        "Report identifies category as Overweight",
+        "Health tips focus on gradual, sustainable weight loss",
+        "Tips mention safe weight loss rate (0.5-1 kg/week)",
+        "Report includes disclaimer",
+        "No extreme diet recommendations or quick fixes",
+        "Tone remains positive and supportive"
+      ]
+    }
+  ]
+}

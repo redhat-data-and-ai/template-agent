@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
-from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
+from template_agent.src.exceptions import AppException, ErrorCodes
 from template_agent.utils.pylogger import get_python_logger
 
 # Initialize logger
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Server Configuration
     AGENT_HOST: str = Field(default="0.0.0.0", json_schema_extra={"env": "AGENT_HOST"})
-    AGENT_PORT: int = Field(default=8081, json_schema_extra={"env": "AGENT_PORT"})
+    AGENT_PORT: int = Field(default=5002, json_schema_extra={"env": "AGENT_PORT"})
     AGENT_SSL_KEYFILE: Optional[str] = Field(
         default=None, json_schema_extra={"env": "AGENT_SSL_KEYFILE"}
     )
@@ -51,9 +51,6 @@ class Settings(BaseSettings):
     )
     PYTHON_LOG_LEVEL: str = Field(
         default="INFO", json_schema_extra={"env": "PYTHON_LOG_LEVEL"}
-    )
-    USE_INMEMORY_SAVER: bool = Field(
-        default=False, json_schema_extra={"env": "USE_INMEMORY_SAVER"}
     )
 
     # Database Configuration
@@ -94,31 +91,6 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS_CONTENT: Optional[str] = Field(
         default=None,
         json_schema_extra={"env": "GOOGLE_APPLICATION_CREDENTIALS_CONTENT"},
-    )
-
-    # MCP Server Configuration
-    MCP_SERVER_NAME: str = Field(
-        default="template-mcp-server",
-        json_schema_extra={"env": "MCP_SERVER_NAME"},
-    )
-    MCP_SERVER_URL: str = Field(
-        default="http://localhost:5001/mcp/",
-        json_schema_extra={"env": "MCP_SERVER_URL"},
-    )
-    MCP_TRANSPORT_PROTOCOL: str = Field(
-        default="streamable_http",
-        json_schema_extra={"env": "MCP_TRANSPORT_PROTOCOL"},
-    )
-    MCP_CONNECTION_TIMEOUT: int = Field(
-        default=30,
-        json_schema_extra={"env": "MCP_CONNECTION_TIMEOUT"},
-    )
-    MCP_SSL_VERIFY: bool = Field(
-        default=False,
-        json_schema_extra={
-            "env": "MCP_SSL_VERIFY",
-            "description": "Enable SSL certificate verification for MCP connections",
-        },
     )
 
     # Request Logging Configuration
@@ -185,7 +157,7 @@ def validate_config(settings: Settings) -> None:
         )
         raise AppException(
             f"AGENT_PORT must be between 1024 and 65535, got {settings.AGENT_PORT}",
-            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+            ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         )
 
     # Validate log level
@@ -196,7 +168,7 @@ def validate_config(settings: Settings) -> None:
         )
         raise AppException(
             f"PYTHON_LOG_LEVEL must be one of {valid_log_levels}, got {settings.PYTHON_LOG_LEVEL}",
-            AppExceptionCode.CONFIGURATION_VALIDATION_ERROR,
+            ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         )
 
 

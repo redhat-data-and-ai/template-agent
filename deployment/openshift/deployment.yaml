@@ -22,44 +22,24 @@ spec:
           image: template-agent:latest
           imagePullPolicy: Always
           ports:
-            - containerPort: 8081
+            - containerPort: 5002
               name: http
               protocol: TCP
           env:
             - name: AGENT_HOST
               value: "0.0.0.0"
             - name: AGENT_PORT
-              value: "8081"
+              value: "5002"
             - name: PYTHON_LOG_LEVEL
               valueFrom:
                 configMapKeyRef:
                   name: template-agent-config
                   key: PYTHON_LOG_LEVEL
-            - name: USE_INMEMORY_SAVER
-              valueFrom:
-                configMapKeyRef:
-                  name: template-agent-config
-                  key: USE_INMEMORY_SAVER
             - name: LANGFUSE_TRACING_ENVIRONMENT
               valueFrom:
                 configMapKeyRef:
                   name: template-agent-config
                   key: LANGFUSE_TRACING_ENVIRONMENT
-            - name: MCP_SERVER_NAME
-              valueFrom:
-                configMapKeyRef:
-                  name: template-agent-config
-                  key: MCP_SERVER_NAME
-            - name: MCP_SERVER_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: template-agent-config
-                  key: MCP_SERVER_URL
-            - name: MCP_TRANSPORT_PROTOCOL
-              valueFrom:
-                configMapKeyRef:
-                  name: template-agent-config
-                  key: MCP_TRANSPORT_PROTOCOL
             - name: POSTGRES_HOST
               valueFrom:
                 secretKeyRef:
@@ -123,7 +103,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8081
+              port: 5002
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
@@ -131,7 +111,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 8081
+              port: 5002
             initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3

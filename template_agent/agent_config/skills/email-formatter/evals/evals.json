@@ -1,0 +1,43 @@
+{
+  "skill_name": "email-formatter",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Format this BMI report for email:\nBMI: 22.5 (Normal)\nYour BMI is in the healthy range.\n\nHealth Tips:\n- Continue balanced nutrition\n- Maintain regular exercise\n- Stay hydrated",
+      "expected_output": "HTML email with BMI result, health tips, and disclaimer.",
+      "files": [],
+      "assertions": [
+        "Output contains HTML tags (not plain text or markdown)",
+        "BMI value 22.5 is present in the output",
+        "BMI category Normal is present in the output",
+        "Health tips are included in the output",
+        "Disclaimer about medical advice is included"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Create email body for:\nBMI: 17.8 (Underweight)\n\nTips:\n- Eat nutrient-dense foods\n- Increase meal frequency\n- Add healthy fats",
+      "expected_output": "HTML email with BMI result and health tips.",
+      "files": [],
+      "assertions": [
+        "Output contains HTML tags",
+        "BMI value 17.8 is present",
+        "Category Underweight is present",
+        "All three health tips are included",
+        "Disclaimer is included"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Format for email - just the BMI: 28.3 (Overweight). No tips available this time.",
+      "expected_output": "HTML email with BMI only, no health tips section.",
+      "files": [],
+      "assertions": [
+        "Output contains HTML tags",
+        "BMI value 28.3 is present",
+        "Category Overweight is present",
+        "Disclaimer is included"
+      ]
+    }
+  ]
+}

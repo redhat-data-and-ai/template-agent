@@ -1,0 +1,30 @@
+BMI REPORT TEMPLATE
+===================
+
+1. BMI RESULT
+-------------
+Your BMI is {{BMI_VALUE}} ({{CATEGORY}}).
+
+{{ONE_LINE_INTERPRETATION}}
+
+
+2. HEALTH TIPS
+--------------
+Based on your BMI category, here are some actionable tips:
+
+{{CATEGORY_SPECIFIC_TIPS}}
+
+
+3. DISCLAIMER
+-------------
+This is not medical advice. Consult a healthcare professional.
+
+
+---
+TONE GUIDELINES
+---
+- Friendly and encouraging
+- Non-judgmental
+- Never use words like "bad" or "failing" about someone's BMI
+- Focus on actionable steps, not criticism
+- Acknowledge that BMI is one metric among many

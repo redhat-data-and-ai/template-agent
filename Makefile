@@ -56,10 +56,10 @@ test:
 local:
 	@echo "Setting up local environment..."
 	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
-	@echo "Starting MCP server locally on port 5002..."
+	@echo "Starting agent locally on port 5002..."
 	@echo "Health check available at: http://localhost:5002/health"
 	@echo "Press Ctrl+C to stop the server"
-	@. .venv/bin/activate && USE_INMEMORY_SAVER=true python -m template_agent.src.main
+	@. .venv/bin/activate && python -m template_agent.src.main
 
 container:
 	export PODMAN_COMPOSE_SILENT=true
