@@ -88,9 +88,13 @@ def workspace_dir():
     return workspace
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def model():
-    """Create Gemini model with credentials."""
+    """Create Gemini model with credentials.
+
+    Function-scoped to ensure each test gets a fresh model instance
+    bound to the correct event loop.
+    """
     from template_agent.utils.google_creds import get_service_account_credentials
 
     # Check if credentials are available
