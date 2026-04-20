@@ -3,7 +3,7 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from template_agent.src.core.messages import (
+from template_agent.src.adapters.langchain import (
     convert_message_content_to_string,
     langchain_to_chat_message,
 )
