@@ -137,6 +137,14 @@ def test_skill_evaluation(
     """Test skill with eval case using LLM judge.
 
     Auto-discovers all skills from agent_config/skills/ and runs their evals.
+
+    IMPORTANT: These tests use real LLM calls and LLM-as-judge evaluation,
+    which means results can vary between runs. Known variability:
+    - email-formatter: LLM may return plain text instead of HTML
+    - client-intake: Imperial unit conversions may not display explicitly
+
+    A 75%+ pass rate across all skill evals is considered acceptable.
+    Individual test failures are expected due to LLM non-determinism.
     """
     skill_name = skill_eval["skill_name"]
     skill_dir = skill_eval["skill_dir"]
