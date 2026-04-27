@@ -127,7 +127,7 @@ def build_agent_card(cfg: Settings) -> AgentCard:
         version=cfg.A2A_AGENT_VERSION,
         default_input_modes=["text"],
         default_output_modes=["text"],
-        capabilities=AgentCapabilities(streaming=False, push_notifications=False),
+        capabilities=AgentCapabilities(streaming=True, push_notifications=False),
         skills=all_skills,
         security_schemes=security_schemes,
         security_requirements=security_requirements,

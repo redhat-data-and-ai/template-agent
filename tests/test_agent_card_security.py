@@ -42,7 +42,7 @@ class TestAgentCardSecurity:
     def test_capabilities_declared(self):
         card = build_agent_card(_settings())
         assert card.capabilities is not None
-        assert card.capabilities.streaming is False
+        assert card.capabilities.streaming is True
         assert card.capabilities.push_notifications is False
 
     def test_provider_info(self):
