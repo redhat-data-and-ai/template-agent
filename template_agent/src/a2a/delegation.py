@@ -20,7 +20,9 @@ class DelegateInput(BaseModel):
     """Input schema for the delegation tool."""
 
     agent_id: str = Field(description="ID of the downstream agent to delegate to")
-    message: str = Field(description="The query or instruction to send to the downstream agent")
+    message: str = Field(
+        description="The query or instruction to send to the downstream agent"
+    )
 
 
 async def delegate_to_a2a_agent(

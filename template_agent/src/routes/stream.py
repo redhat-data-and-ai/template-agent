@@ -12,7 +12,10 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from template_agent.src.core.manager import AgentManager
-from template_agent.src.request_auth import MISSING_AUTH_DETAIL, access_token_from_request
+from template_agent.src.request_auth import (
+    MISSING_AUTH_DETAIL,
+    access_token_from_request,
+)
 from template_agent.src.schema import StreamRequest
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger

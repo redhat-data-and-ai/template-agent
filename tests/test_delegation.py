@@ -91,10 +91,11 @@ class TestDelegateToA2AAgent:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("template_agent.src.a2a.delegation.httpx.AsyncClient", return_value=mock_client):
-            result = await delegate_to_a2a_agent(
-                "echo", "hello", access_token="tok123"
-            )
+        with patch(
+            "template_agent.src.a2a.delegation.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await delegate_to_a2a_agent("echo", "hello", access_token="tok123")
         assert "echoed: hello" in result
 
     async def test_downstream_failure(self, populated_registry):
@@ -106,7 +107,10 @@ class TestDelegateToA2AAgent:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("template_agent.src.a2a.delegation.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "template_agent.src.a2a.delegation.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
             result = await delegate_to_a2a_agent("echo", "hello")
         assert "failed" in result.lower()
 
@@ -118,7 +122,10 @@ class TestDelegateToA2AAgent:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("template_agent.src.a2a.delegation.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "template_agent.src.a2a.delegation.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
             result = await delegate_to_a2a_agent("echo", "hello")
         assert "HTTP 500" in result
 
@@ -139,7 +146,10 @@ class TestDelegateToA2AAgent:
         )
         token = a2a_request_ctx.set(ctx)
         try:
-            with patch("template_agent.src.a2a.delegation.httpx.AsyncClient", return_value=mock_client):
+            with patch(
+                "template_agent.src.a2a.delegation.httpx.AsyncClient",
+                return_value=mock_client,
+            ):
                 await delegate_to_a2a_agent("echo", "hello")
         finally:
             a2a_request_ctx.reset(token)

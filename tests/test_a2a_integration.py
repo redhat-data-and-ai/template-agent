@@ -97,9 +97,7 @@ class TestUpstreamInbound:
     def test_upstream_message_returns_200(self):
         """A valid message/send request gets a successful JSON-RPC response."""
         client = self._build_app_and_client()
-        with patch(
-            "template_agent.src.core.a2a_executor.AgentManager"
-        ) as MockManager:
+        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
             instance = MockManager.return_value
             instance.stream_response = _mock_stream_response("test reply")
             resp = client.post(
@@ -127,9 +125,7 @@ class TestUpstreamInbound:
     def test_upstream_token_reaches_executor(self):
         """Bearer token from upstream is extracted by middleware and passed to AgentManager."""
         client = self._build_app_and_client()
-        with patch(
-            "template_agent.src.core.a2a_executor.AgentManager"
-        ) as MockManager:
+        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
             instance = MockManager.return_value
             instance.stream_response = _mock_stream_response()
             client.post(
@@ -148,9 +144,7 @@ class TestUpstreamInbound:
 
         client = self._build_app_and_client()
 
-        with patch(
-            "template_agent.src.core.a2a_executor.AgentManager"
-        ) as MockManager:
+        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
             instance = MockManager.return_value
             instance.stream_response = _mock_stream_response()
 
@@ -186,9 +180,7 @@ class TestUpstreamInbound:
         captured_ctx = {}
         client = self._build_app_and_client()
 
-        with patch(
-            "template_agent.src.core.a2a_executor.AgentManager"
-        ) as MockManager:
+        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
             instance = MockManager.return_value
             instance.stream_response = _mock_stream_response()
 
@@ -225,9 +217,7 @@ class TestUpstreamInbound:
     def test_upstream_prompt_reaches_executor(self):
         """The user's text from the A2A message reaches the AgentManager stream."""
         client = self._build_app_and_client()
-        with patch(
-            "template_agent.src.core.a2a_executor.AgentManager"
-        ) as MockManager:
+        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
             instance = MockManager.return_value
 
             captured_requests = []
@@ -310,8 +300,7 @@ class TestDownstreamDelegation:
                                 {
                                     "kind": "text",
                                     "text": (
-                                        f"Echo: '{user_text}'\n"
-                                        f"Headers:\n{headers_echo}"
+                                        f"Echo: '{user_text}'\nHeaders:\n{headers_echo}"
                                     ),
                                 }
                             ]
@@ -451,7 +440,9 @@ class TestDownstreamDelegation:
 
         from template_agent.src.core.a2a_executor import TemplateAgentA2AExecutor
 
-        with patch.object(TemplateAgentA2AExecutor, "execute", _executor_that_delegates):
+        with patch.object(
+            TemplateAgentA2AExecutor, "execute", _executor_that_delegates
+        ):
             resp = client.post(
                 "/",
                 json=_jsonrpc_request("hello from upstream"),
@@ -502,9 +493,7 @@ class TestA2AStreaming:
         pushes incremental events internally.
         """
         client = self._build_client()
-        with patch(
-            "template_agent.src.core.a2a_executor.AgentManager"
-        ) as MockManager:
+        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
             instance = MockManager.return_value
             instance.stream_response = _mock_streaming_response(
                 tokens=["The ", "answer ", "is ", "42"],
@@ -546,9 +535,7 @@ class TestA2AStreaming:
         mock_context.context_id = "ctx-1"
         mock_context.metadata = {}
 
-        with patch(
-            "template_agent.src.core.a2a_executor.AgentManager"
-        ) as MockManager:
+        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
             instance = MockManager.return_value
             instance.stream_response = _mock_streaming_response(
                 tokens=["Hello", " world"],
@@ -574,9 +561,7 @@ class TestA2AStreaming:
             e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent)
         ]
         completed = [
-            e
-            for e in status_events
-            if e.status.state == TaskState.TASK_STATE_COMPLETED
+            e for e in status_events if e.status.state == TaskState.TASK_STATE_COMPLETED
         ]
         assert len(completed) == 1
 
@@ -608,9 +593,7 @@ class TestA2AStreaming:
         mock_context.context_id = "ctx-err"
         mock_context.metadata = {}
 
-        with patch(
-            "template_agent.src.core.a2a_executor.AgentManager"
-        ) as MockManager:
+        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
             instance = MockManager.return_value
             instance.stream_response = _error_stream
             await executor.execute(mock_context, SpyEventQueue())
@@ -619,9 +602,7 @@ class TestA2AStreaming:
             e for e in enqueued_events if isinstance(e, TaskStatusUpdateEvent)
         ]
         failed = [
-            e
-            for e in status_events
-            if e.status.state == TaskState.TASK_STATE_FAILED
+            e for e in status_events if e.status.state == TaskState.TASK_STATE_FAILED
         ]
         assert len(failed) == 1
         assert "something went wrong" in failed[0].status.message.parts[0].text

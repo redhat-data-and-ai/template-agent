@@ -89,17 +89,25 @@ def _validate_jwt(token: str, cfg: "Settings") -> bool:
     return True
 
 
-_V1_METHODS = frozenset({
-    "SendMessage", "SendStreamingMessage", "GetTask", "CancelTask",
-    "ListTasks", "SubscribeToTask", "CreateTaskPushNotificationConfig",
-    "GetTaskPushNotificationConfig", "ListTaskPushNotificationConfigs",
-    "DeleteTaskPushNotificationConfig", "GetExtendedAgentCard",
-})
+_V1_METHODS = frozenset(
+    {
+        "SendMessage",
+        "SendStreamingMessage",
+        "GetTask",
+        "CancelTask",
+        "ListTasks",
+        "SubscribeToTask",
+        "CreateTaskPushNotificationConfig",
+        "GetTaskPushNotificationConfig",
+        "ListTaskPushNotificationConfigs",
+        "DeleteTaskPushNotificationConfig",
+        "GetExtendedAgentCard",
+    }
+)
 
 
 class A2AVersionDefaultMiddleware(BaseHTTPMiddleware):
-    """Inject ``A2A-Version: 1.0`` when the header is absent and the
-    JSON-RPC method is a v1.0 method name.
+    """Inject ``A2A-Version: 1.0`` when the header is absent for v1.0 methods.
 
     Clients like the A2A TCK send v1.0 method names (``SendMessage``) but
     omit the ``A2A-Version`` header. The SDK defaults missing headers to
@@ -109,10 +117,12 @@ class A2AVersionDefaultMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        """Check POST requests and inject the A2A-Version header when needed."""
         if request.method == "POST" and "a2a-version" not in request.headers:
             try:
                 body = await request.body()
                 import json as _json
+
                 method = _json.loads(body).get("method", "")
                 if method in _V1_METHODS:
                     request.scope["headers"] = list(request.scope["headers"]) + [
@@ -127,10 +137,12 @@ class A2AAuthMiddleware(BaseHTTPMiddleware):
     """Extract auth + identity headers and populate ``a2a_request_ctx``."""
 
     def __init__(self, app, cfg: "Settings"):
+        """Store the app settings for auth configuration."""
         super().__init__(app)
         self.cfg = cfg
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        """Extract auth headers and populate the A2A request context."""
         # Agent card endpoint is unauthenticated per A2A spec
         if request.url.path.endswith(_WELL_KNOWN_SUFFIX):
             return await call_next(request)
@@ -149,12 +161,12 @@ class A2AAuthMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(
                     status_code=401,
                     content={"error": "Invalid or expired token"},
-                    headers={"WWW-Authenticate": 'Bearer realm="a2a", error="invalid_token"'},
+                    headers={
+                        "WWW-Authenticate": 'Bearer realm="a2a", error="invalid_token"'
+                    },
                 )
 
-        correlation_id = (
-            request.headers.get("x-correlation-id") or str(uuid.uuid4())
-        )
+        correlation_id = request.headers.get("x-correlation-id") or str(uuid.uuid4())
 
         ctx = A2ARequestContext(
             access_token=token,

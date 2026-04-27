@@ -20,7 +20,10 @@ from a2a.types import (
 )
 from starlette.applications import Starlette
 
-from template_agent.src.a2a.middleware import A2AAuthMiddleware, A2AVersionDefaultMiddleware
+from template_agent.src.a2a.middleware import (
+    A2AAuthMiddleware,
+    A2AVersionDefaultMiddleware,
+)
 from template_agent.src.a2a.registry import get_registry
 from template_agent.src.core.a2a_executor import TemplateAgentA2AExecutor
 from template_agent.src.settings import Settings, settings

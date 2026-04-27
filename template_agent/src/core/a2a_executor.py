@@ -58,6 +58,7 @@ class TemplateAgentA2AExecutor(AgentExecutor):
     """
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        """Run the agent pipeline for an A2A task, streaming events to the queue."""
         prompt = context.get_user_input().strip()
         task_id = context.task_id
         context_id = context.context_id

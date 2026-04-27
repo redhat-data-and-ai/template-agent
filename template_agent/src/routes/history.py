@@ -12,7 +12,10 @@ from langchain_core.runnables import RunnableConfig
 
 from template_agent.src.core.agent_utils import langchain_to_chat_message
 from template_agent.src.core.storage import get_shared_checkpointer
-from template_agent.src.request_auth import MISSING_AUTH_DETAIL, access_token_from_request
+from template_agent.src.request_auth import (
+    MISSING_AUTH_DETAIL,
+    access_token_from_request,
+)
 from template_agent.src.schema import ChatHistoryResponse, ChatMessage, ToolCall
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger

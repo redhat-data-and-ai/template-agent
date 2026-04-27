@@ -23,6 +23,7 @@ class A2AAgentRegistry:
     """In-memory registry of downstream A2A agents."""
 
     def __init__(self, timeout: float = 30.0):
+        """Initialize the registry with an HTTP client."""
         self._agents: dict[str, A2ATargetAgent] = {}
         self._client = httpx.AsyncClient(timeout=timeout)
 
@@ -70,15 +71,19 @@ class A2AAgentRegistry:
         return None
 
     def get(self, agent_id: str) -> A2ATargetAgent | None:
+        """Return the agent for *agent_id*, or ``None`` if not registered."""
         return self._agents.get(agent_id)
 
     def list_agents(self) -> list[A2ATargetAgent]:
+        """Return all registered agents."""
         return list(self._agents.values())
 
     def list_agent_ids(self) -> list[str]:
+        """Return all registered agent IDs."""
         return list(self._agents.keys())
 
     async def close(self) -> None:
+        """Close the underlying HTTP client."""
         await self._client.aclose()
 
 
@@ -102,7 +107,9 @@ async def initialize_registry() -> None:
             agent_count=len(_registry.list_agents()),
         )
     else:
-        logger.info("a2a_registry_initialized", agent_count=0, note="no targets configured")
+        logger.info(
+            "a2a_registry_initialized", agent_count=0, note="no targets configured"
+        )
 
 
 async def cleanup_registry() -> None:

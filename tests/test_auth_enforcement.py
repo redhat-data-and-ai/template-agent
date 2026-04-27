@@ -30,7 +30,11 @@ def _settings(**overrides) -> Settings:
 
 
 def _make_token(secret: str = JWT_SECRET, **extra_claims) -> str:
-    payload = {"sub": "test-agent", "iat": int(time.time()), "exp": int(time.time()) + 300}
+    payload = {
+        "sub": "test-agent",
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 300,
+    }
     payload.update(extra_claims)
     return jwt.encode(payload, secret, algorithm="HS256")
 
