@@ -52,12 +52,14 @@ async def delegate_to_a2a_agent(
         headers["X-Correlation-ID"] = ctx.correlation_id
 
     task_id = str(uuid.uuid4())
+    message_id = str(uuid.uuid4())
     payload = {
         "jsonrpc": "2.0",
         "id": task_id,
         "method": "message/send",
         "params": {
             "message": {
+                "messageId": message_id,
                 "role": "user",
                 "parts": [{"kind": "text", "text": message}],
                 "metadata": {
@@ -68,7 +70,7 @@ async def delegate_to_a2a_agent(
         },
     }
 
-    target_url = agent.base_url.rstrip("/") + "/"
+    target_url = agent.base_url.rstrip("/") + "/a2a/"
     try:
         async with httpx.AsyncClient(timeout=settings.A2A_REQUEST_TIMEOUT) as client:
             resp = await client.post(target_url, json=payload, headers=headers)
@@ -85,13 +87,21 @@ async def delegate_to_a2a_agent(
         logger.error("a2a_delegation_failed", agent_id=agent_id, error=str(exc))
         return f"Error: failed to reach downstream agent '{agent_id}': {exc}"
 
+    logger.debug("a2a_delegation_response", agent_id=agent_id, body=body)
+
     result = body.get("result", {})
-    artifacts = result.get("artifacts", [])
     parts_text: list[str] = []
-    for artifact in artifacts:
-        for part in artifact.get("parts", []):
-            if part.get("kind") == "text":
+
+    result_kind = result.get("kind")
+    if result_kind == "message":
+        for part in result.get("parts", []):
+            if part.get("kind") == "text" and part.get("text"):
                 parts_text.append(part["text"])
+    else:
+        for artifact in result.get("artifacts", []):
+            for part in artifact.get("parts", []):
+                if part.get("kind") == "text" and part.get("text"):
+                    parts_text.append(part["text"])
 
     if parts_text:
         return "\n".join(parts_text)
