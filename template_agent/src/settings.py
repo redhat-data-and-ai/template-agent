@@ -5,7 +5,7 @@ BaseSettings for environment variable loading, validation, and default
 value handling for the template agent service.
 """
 
-from typing import Optional
+from typing import Dict, Optional
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -48,6 +48,92 @@ class Settings(BaseSettings):
     )
     AGENT_SSL_CERTFILE: Optional[str] = Field(
         default=None, json_schema_extra={"env": "AGENT_SSL_CERTFILE"}
+    )
+    AGENT_PUBLIC_BASE_URL: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "env": "AGENT_PUBLIC_BASE_URL",
+            "description": "Public HTTPS base URL for agent (no path); used for A2A AgentCard if AGENT_URL unset",
+        },
+    )
+    A2A_ENABLED: bool = Field(
+        default=True,
+        json_schema_extra={
+            "env": "A2A_ENABLED",
+            "description": "Mount A2A protocol under A2A_PATH_PREFIX",
+        },
+    )
+    A2A_PATH_PREFIX: str = Field(
+        default="/a2a",
+        json_schema_extra={
+            "env": "A2A_PATH_PREFIX",
+            "description": "URL path prefix for A2A (e.g. /a2a)",
+        },
+    )
+    A2A_AGENT_ID: str = Field(
+        default="template-agent",
+        json_schema_extra={
+            "env": "A2A_AGENT_ID",
+            "description": "This agent's identity sent in X-Calling-Agent-ID when calling downstream agents",
+        },
+    )
+    A2A_AGENT_VERSION: str = Field(
+        default="1.0.0",
+        json_schema_extra={"env": "A2A_AGENT_VERSION"},
+    )
+    A2A_PROVIDER_NAME: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"env": "A2A_PROVIDER_NAME"},
+    )
+    A2A_PROVIDER_URL: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"env": "A2A_PROVIDER_URL"},
+    )
+    A2A_AUTH_REQUIRED: bool = Field(
+        default=True,
+        json_schema_extra={
+            "env": "A2A_AUTH_REQUIRED",
+            "description": "Require Bearer token on A2A requests; advertise securitySchemes in AgentCard",
+        },
+    )
+    A2A_JWT_SECRET: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "env": "A2A_JWT_SECRET",
+            "description": "Shared secret for HS256 JWT validation",
+        },
+    )
+    A2A_JWT_JWKS_URL: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "env": "A2A_JWT_JWKS_URL",
+            "description": "JWKS endpoint URL for RS256/ES256 JWT validation",
+        },
+    )
+    A2A_JWT_AUDIENCE: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"env": "A2A_JWT_AUDIENCE"},
+    )
+    A2A_JWT_ISSUER: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"env": "A2A_JWT_ISSUER"},
+    )
+    A2A_TARGET_AGENTS: Optional[Dict[str, Dict[str, str]]] = Field(
+        default=None,
+        json_schema_extra={
+            "env": "A2A_TARGET_AGENTS",
+            "description": (
+                'JSON mapping of agent_id → {"base_url": "...", "description": "..."}. '
+                "Each entry is discovered at startup via its A2A agent card."
+            ),
+        },
+    )
+    A2A_REQUEST_TIMEOUT: float = Field(
+        default=30.0,
+        json_schema_extra={
+            "env": "A2A_REQUEST_TIMEOUT",
+            "description": "Timeout in seconds for outbound A2A HTTP requests",
+        },
     )
     PYTHON_LOG_LEVEL: str = Field(
         default="INFO", json_schema_extra={"env": "PYTHON_LOG_LEVEL"}

@@ -107,32 +107,25 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Configure application lifespan.
 
-    This context manager handles the application startup and shutdown
-    lifecycle. Database schema is initialized on startup, while agent
-    initialization is deferred to per-request handling to allow for
-    authenticated MCP connections.
-
-    Args:
-        app: The FastAPI application instance to manage.
-
-    Yields:
-        None: The lifespan context for the application.
-
-    Raises:
-        AppException: If database initialization fails on startup.
+    Startup: database schema + A2A agent registry discovery.
+    Shutdown: registry HTTP client cleanup.
     """
     logger.info("Agent server starting up")
 
-    # Initialize database schema on startup
     try:
         await initialize_database()
     except Exception as e:
         logger.critical(f"Failed to initialize database on startup: {e}")
         raise
 
+    from template_agent.src.a2a.registry import cleanup_registry, initialize_registry
+
+    await initialize_registry()
+
     logger.info("Agent server ready - MCP connection will be established per-request")
     yield
     logger.info("Agent server shutting down")
+    await cleanup_registry()
 
 
 # Create FastAPI application with lifespan management
@@ -159,6 +152,32 @@ app.include_router(stream_router)
 app.include_router(feedback_router)
 app.include_router(history_router)
 app.include_router(threads_router)
+
+if settings.A2A_ENABLED:
+    from template_agent.src.a2a.app import build_a2a_starlette_app, build_agent_card
+
+    _prefix = (settings.A2A_PATH_PREFIX or "/a2a").strip()
+    if not _prefix.startswith("/"):
+        _prefix = f"/{_prefix}"
+    app.mount(_prefix, build_a2a_starlette_app())
+
+    @app.get("/.well-known/agent-card.json")
+    async def root_agent_card(request: Request):
+        """Root-level agent card whose supportedInterfaces URL reflects the caller's Host header.
+
+        Also injects a top-level ``url`` for v0.3 clients (e.g. A2A Inspector)
+        that validate the card against the older schema.
+        """
+        from google.protobuf.json_format import MessageToDict
+
+        card = build_agent_card(settings)
+        scheme = "https" if request.url.scheme == "https" else "http"
+        caller_base = f"{scheme}://{request.headers['host']}{_prefix}/"
+        if card.supported_interfaces:
+            card.supported_interfaces[0].url = caller_base
+        data = MessageToDict(card, preserving_proto_field_name=False)
+        data.setdefault("url", caller_base)
+        return data
 
 
 @app.exception_handler(Exception)

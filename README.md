@@ -17,6 +17,7 @@ A production-ready template for building AI agents with streaming capabilities, 
 - **Modular Architecture**: AgentManager abstraction with clean separation of concerns
 - **Production Ready**: Health checks, error handling, and comprehensive logging
 - **Google AI Integration**: Built-in support for Google Generative AI models
+- **Agent2Agent (A2A)**: Optional `/a2a` mount with agent card discovery and JSON-RPC
 
 ## 🏗️ Architecture
 
@@ -119,6 +120,90 @@ Ready-to-use client examples are available in the [`examples/`](./examples/) dir
 - **[Python Async Client](./examples/client_python.py)** - Server-to-server integration
 
 See the [examples README](./examples/README.md) for detailed usage instructions.
+
+## Agent2Agent (A2A)
+
+The server exposes the [Agent2Agent (A2A) protocol](https://a2a-protocol.org/) on a Starlette sub-app mounted at **`A2A_PATH_PREFIX`** (default `/a2a`). Clients discover the agent at:
+
+`GET {A2A_PATH_PREFIX}/.well-known/agent-card.json`
+
+### Deployment Modes
+
+The template-agent operates in three modes driven entirely by environment variables:
+
+| Mode | Condition | Behaviour |
+|------|-----------|-----------|
+| **Standalone** | `A2A_TARGET_AGENTS` unset | MCP tools only, no downstream delegation |
+| **Upstream / Orchestrator** | `A2A_TARGET_AGENTS` set | MCP tools + `delegate_to_a2a_agent` LangChain tool |
+| **Downstream / Leaf** | No special config | Any parent discovers the agent card and calls it |
+
+### Authentication & Security
+
+When `A2A_AUTH_REQUIRED=true` (default), the AgentCard advertises a `bearer` security scheme and the middleware enforces `Authorization: Bearer <token>` on all JSON-RPC requests. The agent card endpoint itself is unauthenticated per the A2A spec.
+
+JWT validation strategies (in order of precedence):
+1. **HS256 shared secret** – set `A2A_JWT_SECRET`
+2. **RS256/ES256 via JWKS** – set `A2A_JWT_JWKS_URL`
+3. **Presence-only** – if neither is set, the token is forwarded to MCP which does the real validation
+
+Identity and correlation headers (`X-Calling-Agent-ID`, `X-Correlation-ID`, `traceparent`) are extracted by the middleware and propagated to downstream calls.
+
+### A2A Configuration Reference
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `A2A_ENABLED` | `true` | Mount the A2A sub-app |
+| `A2A_PATH_PREFIX` | `/a2a` | URL path prefix |
+| `AGENT_PUBLIC_BASE_URL` | *(unset)* | Public `https://host` for the agent card |
+| `A2A_AGENT_ID` | `template-agent` | Identity sent in `X-Calling-Agent-ID` |
+| `A2A_AGENT_VERSION` | `1.0.0` | Version advertised in the agent card |
+| `A2A_PROVIDER_NAME` | *(unset)* | Provider organization in the agent card |
+| `A2A_PROVIDER_URL` | *(unset)* | Provider URL in the agent card |
+| `A2A_AUTH_REQUIRED` | `true` | Require Bearer token on A2A requests |
+| `A2A_JWT_SECRET` | *(unset)* | Shared secret for HS256 JWT validation |
+| `A2A_JWT_JWKS_URL` | *(unset)* | JWKS endpoint for RS256/ES256 validation |
+| `A2A_JWT_AUDIENCE` | *(unset)* | Expected JWT `aud` claim |
+| `A2A_JWT_ISSUER` | *(unset)* | Expected JWT `iss` claim |
+| `A2A_TARGET_AGENTS` | *(unset)* | JSON map of downstream agents (see below) |
+| `A2A_REQUEST_TIMEOUT` | `30.0` | Timeout for outbound A2A requests (seconds) |
+
+### Configuration Examples
+
+**Standalone mode** (MCP only, no downstream agents):
+```bash
+A2A_ENABLED=true
+A2A_AGENT_ID=template-agent
+A2A_AUTH_REQUIRED=true
+```
+
+**Upstream mode** (orchestrating downstream agents):
+```bash
+A2A_ENABLED=true
+A2A_AGENT_ID=template-agent
+A2A_AUTH_REQUIRED=true
+A2A_TARGET_AGENTS='{"data-agent":{"base_url":"http://data-agent:8082","description":"Data analysis agent"},"search-agent":{"base_url":"http://search-agent:8083"}}'
+```
+
+**Downstream mode** (plugged into a parent agent):
+No special config needed. The parent discovers the agent card and calls it.
+
+### TCK & Inspector Validation
+
+Use the [A2A Inspector](https://github.com/a2aproject/a2a-inspector) during development and the [A2A TCK](https://github.com/a2aproject/a2a-tck) in CI:
+
+```bash
+# Interactive debugging with Inspector
+# Connect to http://localhost:8081 and verify agent card, security schemes, and message exchange
+
+# Mandatory compliance (must pass for A2A compliance)
+./run_tck.py --sut-url http://localhost:8081/a2a --category mandatory
+
+# Capability validation
+./run_tck.py --sut-url http://localhost:8081/a2a --category capabilities
+
+# Full compliance report
+./run_tck.py --sut-url http://localhost:8081/a2a --category all --compliance-report report.json
+```
 
 ## 🚀 Quick Start
 

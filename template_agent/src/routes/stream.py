@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from template_agent.src.core.manager import AgentManager
+from template_agent.src.request_auth import MISSING_AUTH_DETAIL, access_token_from_request
 from template_agent.src.schema import StreamRequest
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
@@ -119,7 +120,7 @@ async def stream(user_input: StreamRequest, request: Request) -> StreamingRespon
     - `stream_tokens`: Whether to stream individual tokens (`true`) or just complete messages (`false`) (optional)
 
     **Enterprise Features (Preserved):**
-    - SSO authentication via X-Token header
+    - SSO authentication via X-Token or Authorization: Bearer
     - Langfuse tracing and analytics
     - PostgreSQL checkpointing for conversation persistence
     - Comprehensive error handling and logging
@@ -139,9 +140,10 @@ async def stream(user_input: StreamRequest, request: Request) -> StreamingRespon
     Raises:
         HTTPException: If initialization fails (returns 500 status code).
     """
-    # Get token from request headers
-    access_token = request.headers.get("X-Token")
+    access_token = access_token_from_request(request)
     app_logger.info(f"Received token: {'Yes' if access_token else 'No'}")
+    if not access_token:
+        raise HTTPException(status_code=401, detail=MISSING_AUTH_DETAIL)
 
     # Initialize AgentManager BEFORE streaming to catch initialization errors
     try:

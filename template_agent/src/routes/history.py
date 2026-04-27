@@ -12,6 +12,7 @@ from langchain_core.runnables import RunnableConfig
 
 from template_agent.src.core.agent_utils import langchain_to_chat_message
 from template_agent.src.core.storage import get_shared_checkpointer
+from template_agent.src.request_auth import MISSING_AUTH_DETAIL, access_token_from_request
 from template_agent.src.schema import ChatHistoryResponse, ChatMessage, ToolCall
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
@@ -21,7 +22,10 @@ router = APIRouter()
 logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
 
-@router.get("/v1/history/{thread_id}")
+@router.get(
+    "/v1/history/{thread_id}",
+    responses={401: {"description": "Missing X-Token or Authorization: Bearer"}},
+)
 async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
     """Get chat history for a specific thread by reading from checkpoints table.
 
@@ -51,7 +55,9 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
         - Authentication tokens are logged but not currently used for validation
         - In-memory storage mode returns empty history as conversations are not persisted
     """
-    access_token = request.headers.get("X-Token")
+    access_token = access_token_from_request(request)
+    if not access_token:
+        raise HTTPException(status_code=401, detail=MISSING_AUTH_DETAIL)
     logger.info(f"Retrieving history for thread_id: {thread_id}")
     logger.info(f"Access token present: {access_token is not None}")
 

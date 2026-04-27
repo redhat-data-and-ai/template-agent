@@ -118,6 +118,15 @@ async def get_template_agent(
         logger.info(
             f"Successfully connected to MCP server and loaded {len(tools)} tools"
         )
+
+        from template_agent.src.a2a.delegation import build_a2a_delegation_tool
+
+        delegation_tool = build_a2a_delegation_tool(
+            access_token=sso_token,
+        )
+        if delegation_tool:
+            tools.append(delegation_tool)
+            logger.info("A2A delegation tool injected into agent tool list")
     except asyncio.TimeoutError:
         # Handle timeout specifically
         error_msg = (
