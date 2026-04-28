@@ -160,3 +160,161 @@ class TestDelegateToA2AAgent:
         assert headers["X-Calling-Agent-ID"] == "template-agent"
         assert headers["X-Correlation-ID"] == "corr-123"
         assert "traceparent" not in headers
+
+    async def test_message_result_kind(self, populated_registry):
+        """Result with 'kind': 'message' extracts text from parts."""
+        response_body = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "result": {
+                "kind": "message",
+                "parts": [{"kind": "text", "text": "message response"}],
+                "status": {"state": "completed"},
+            },
+        }
+        mock_resp = _mock_httpx_response(200, response_body)
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "template_agent.src.a2a.delegation.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await delegate_to_a2a_agent("echo", "hello")
+        assert "message response" in result
+
+    async def test_no_text_artifacts_returned(self, populated_registry):
+        """Returns appropriate message when no text artifacts in response."""
+        response_body = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "result": {
+                "artifacts": [],
+                "status": {"state": "completed"},
+            },
+        }
+        mock_resp = _mock_httpx_response(200, response_body)
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "template_agent.src.a2a.delegation.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await delegate_to_a2a_agent("echo", "hello")
+        assert "no text artifacts" in result.lower()
+
+    async def test_connection_error(self, populated_registry):
+        """Connection error returns appropriate error message."""
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(
+            side_effect=httpx.ConnectError("Connection refused")
+        )
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "template_agent.src.a2a.delegation.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await delegate_to_a2a_agent("echo", "hello")
+        assert "failed to reach" in result.lower()
+
+    async def test_thread_id_in_metadata(self, populated_registry):
+        """Thread ID is included in message metadata when provided."""
+        response_body = _a2a_response(
+            artifacts=[{"parts": [{"kind": "text", "text": "ok"}]}]
+        )
+        mock_resp = _mock_httpx_response(200, response_body)
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "template_agent.src.a2a.delegation.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            await delegate_to_a2a_agent(
+                "echo", "hello", thread_id="thread-123", user_id="user-456"
+            )
+
+        call_args = mock_client.post.call_args
+        payload = call_args.kwargs.get("json", {})
+        metadata = payload.get("params", {}).get("message", {}).get("metadata", {})
+        assert metadata.get("thread_id") == "thread-123"
+        assert metadata.get("user_id") == "user-456"
+
+    async def test_no_thread_id_omitted_from_metadata(self, populated_registry):
+        """Thread ID is omitted from metadata when not provided."""
+        response_body = _a2a_response(
+            artifacts=[{"parts": [{"kind": "text", "text": "ok"}]}]
+        )
+        mock_resp = _mock_httpx_response(200, response_body)
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "template_agent.src.a2a.delegation.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            await delegate_to_a2a_agent("echo", "hello")
+
+        call_args = mock_client.post.call_args
+        payload = call_args.kwargs.get("json", {})
+        metadata = payload.get("params", {}).get("message", {}).get("metadata", {})
+        assert "thread_id" not in metadata
+
+    async def test_no_correlation_id_in_context(self, populated_registry):
+        """When no correlation ID in context, header is not sent."""
+        response_body = _a2a_response(
+            artifacts=[{"parts": [{"kind": "text", "text": "ok"}]}]
+        )
+        mock_resp = _mock_httpx_response(200, response_body)
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        ctx = A2ARequestContext(access_token="token")
+        token = a2a_request_ctx.set(ctx)
+        try:
+            with patch(
+                "template_agent.src.a2a.delegation.httpx.AsyncClient",
+                return_value=mock_client,
+            ):
+                await delegate_to_a2a_agent("echo", "hello")
+        finally:
+            a2a_request_ctx.reset(token)
+
+        call_args = mock_client.post.call_args
+        headers = call_args.kwargs.get("headers", {})
+        assert "X-Correlation-ID" not in headers
+
+
+class TestDelegateInput:
+    """Tests for DelegateInput schema."""
+
+    def test_valid_input(self):
+        """Valid input creates DelegateInput instance."""
+        inp = DelegateInput(agent_id="echo", message="hello")
+        assert inp.agent_id == "echo"
+        assert inp.message == "hello"
+
+    def test_input_validation(self):
+        """DelegateInput validates required fields."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            DelegateInput(agent_id="echo")
