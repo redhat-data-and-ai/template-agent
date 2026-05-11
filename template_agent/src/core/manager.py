@@ -72,10 +72,13 @@ class AgentManager:
         Yields:
             Simplified event dictionaries with 'type' and 'content' fields.
         """
-        # Use persistent agent for both streaming and state persistence
-        # This ensures LangGraph handles state management automatically
+        # Resolve thread_id early so downstream A2A tools can use it as context_id
+        thread_id = request.thread_id or str(uuid4())
+
         async with get_template_agent(
-            self.redhat_sso_token, enable_checkpointing=True
+            self.redhat_sso_token,
+            enable_checkpointing=True,
+            a2a_context_id=thread_id,
         ) as persistent_agent:
             try:
                 # Prepare input for the persistent agent

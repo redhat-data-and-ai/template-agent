@@ -107,25 +107,32 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Configure application lifespan.
 
-    Startup: database schema + A2A agent registry discovery.
-    Shutdown: registry HTTP client cleanup.
+    This context manager handles the application startup and shutdown
+    lifecycle. Database schema is initialized on startup, while agent
+    initialization is deferred to per-request handling to allow for
+    authenticated MCP connections.
+
+    Args:
+        app: The FastAPI application instance to manage.
+
+    Yields:
+        None: The lifespan context for the application.
+
+    Raises:
+        AppException: If database initialization fails on startup.
     """
     logger.info("Agent server starting up")
 
+    # Initialize database schema on startup
     try:
         await initialize_database()
     except Exception as e:
         logger.critical(f"Failed to initialize database on startup: {e}")
         raise
 
-    from template_agent.src.a2a.registry import cleanup_registry, initialize_registry
-
-    await initialize_registry()
-
     logger.info("Agent server ready - MCP connection will be established per-request")
     yield
     logger.info("Agent server shutting down")
-    await cleanup_registry()
 
 
 # Create FastAPI application with lifespan management
@@ -153,31 +160,89 @@ app.include_router(feedback_router)
 app.include_router(history_router)
 app.include_router(threads_router)
 
+# --- A2A Protocol (mounted as a Starlette sub-application) ---
 if settings.A2A_ENABLED:
-    from template_agent.src.a2a.app import build_a2a_starlette_app, build_agent_card
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.server.routes import (
+        create_agent_card_routes,
+        create_jsonrpc_routes,
+        create_rest_routes,
+    )
+    from a2a.server.tasks import DatabaseTaskStore, InMemoryTaskStore, TaskStore
+    from starlette.applications import Starlette
 
-    _prefix = (settings.A2A_PATH_PREFIX or "/a2a").strip()
-    if not _prefix.startswith("/"):
-        _prefix = f"/{_prefix}"
-    app.mount(_prefix, build_a2a_starlette_app())
+    from template_agent.src.a2a.agent_card import build_agent_card
+    from template_agent.src.a2a.auth import A2AServerCallContextBuilder
+    from template_agent.src.a2a.executor import TemplateAgentExecutor
 
-    @app.get("/.well-known/agent-card.json")
-    async def root_agent_card(request: Request):
-        """Root-level agent card whose supportedInterfaces URL reflects the caller's Host header.
+    agent_card = build_agent_card()
 
-        Also injects a top-level ``url`` for v0.3 clients (e.g. A2A Inspector)
-        that validate the card against the older schema.
-        """
-        from google.protobuf.json_format import MessageToDict
+    task_store: TaskStore
+    if settings.USE_INMEMORY_SAVER:
+        task_store = InMemoryTaskStore()
+        logger.info("A2A task store: in-memory (development mode)")
+    else:
+        from sqlalchemy.ext.asyncio import create_async_engine
 
-        card = build_agent_card(settings)
-        scheme = "https" if request.url.scheme == "https" else "http"
-        caller_base = f"{scheme}://{request.headers['host']}{_prefix}/"
-        if card.supported_interfaces:
-            card.supported_interfaces[0].url = caller_base
-        data = MessageToDict(card, preserving_proto_field_name=False)
-        data.setdefault("url", caller_base)
-        return data
+        a2a_engine = create_async_engine(
+            settings.async_database_uri,
+            echo=False,
+            pool_pre_ping=True,
+        )
+        task_store = DatabaseTaskStore(engine=a2a_engine)
+        logger.info("A2A task store: PostgreSQL (persistent)")
+
+    a2a_request_handler = DefaultRequestHandler(
+        agent_executor=TemplateAgentExecutor(
+            supported_output_modes=list(agent_card.default_output_modes),
+        ),
+        task_store=task_store,
+        agent_card=agent_card,
+    )
+
+    a2a_context_builder = A2AServerCallContextBuilder()
+
+    # Collect all SDK-managed routes into a single Starlette sub-app.
+    # This keeps A2A error handling self-contained (JSON-RPC errors stay
+    # JSON-RPC shaped) and avoids FastAPI's generic exception handlers
+    # interfering with A2A responses.
+    a2a_routes = []
+
+    # Agent Card discovery (public, no auth)
+    a2a_routes.extend(create_agent_card_routes(agent_card))
+
+    # JSON-RPC binding at /a2a with v0.3 backward compatibility
+    a2a_routes.extend(
+        create_jsonrpc_routes(
+            request_handler=a2a_request_handler,
+            rpc_url="/a2a",
+            context_builder=a2a_context_builder,
+            enable_v0_3_compat=True,
+        )
+    )
+
+    # HTTP+JSON/REST binding (spec Section 11 / Section 5.3)
+    # Provides: POST /message:send, POST /message:stream,
+    #           GET /tasks, GET /tasks/{id}, POST /tasks/{id}:cancel,
+    #           POST /tasks/{id}:subscribe, push notification CRUD,
+    #           GET /extendedAgentCard
+    a2a_routes.extend(
+        create_rest_routes(
+            request_handler=a2a_request_handler,
+            context_builder=a2a_context_builder,
+            enable_v0_3_compat=True,
+            path_prefix="/a2a",
+        )
+    )
+
+    a2a_app = Starlette(routes=a2a_routes)
+    app.mount("/", a2a_app)
+
+    logger.info(
+        "A2A protocol enabled: card at /.well-known/agent-card.json, "
+        "JSON-RPC at /a2a (v1.0 + v0.3 compat), "
+        "REST at /message:send, /tasks, etc."
+    )
 
 
 @app.exception_handler(Exception)

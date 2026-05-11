@@ -58,7 +58,9 @@ async def initialize_database() -> None:
 
 @asynccontextmanager
 async def get_template_agent(
-    sso_token: Optional[str] = None, enable_checkpointing: bool = True
+    sso_token: Optional[str] = None,
+    enable_checkpointing: bool = True,
+    a2a_context_id: str | None = None,
 ):
     """Get a fully initialized template agent.
 
@@ -71,6 +73,8 @@ async def get_template_agent(
             it will be used for authorization headers in MCP client requests.
         enable_checkpointing: Whether to enable checkpointing/persistence.
             Set to False for streaming-only operations that shouldn't save to DB.
+        a2a_context_id: Optional A2A context ID to forward to downstream agents
+            so they can maintain multi-turn conversation state.
 
     Yields:
         The initialized template agent instance.
@@ -118,15 +122,13 @@ async def get_template_agent(
         logger.info(
             f"Successfully connected to MCP server and loaded {len(tools)} tools"
         )
+        
+        # Discover downstream A2A agents and register as tools
+        from template_agent.src.a2a.tools import build_a2a_tools
 
-        from template_agent.src.a2a.delegation import build_a2a_delegation_tool
-
-        delegation_tool = build_a2a_delegation_tool(
-            access_token=sso_token,
-        )
-        if delegation_tool:
-            tools.append(delegation_tool)
-            logger.info("A2A delegation tool injected into agent tool list")
+        a2a_tools = await build_a2a_tools(sso_token, context_id=a2a_context_id)
+        tools.extend(a2a_tools)
+        logger.info(f"Registered {len(a2a_tools)} downstream A2A tool(s) total")
     except asyncio.TimeoutError:
         # Handle timeout specifically
         error_msg = (

@@ -1,302 +1,264 @@
-"""Tests for A2A executor - bridging template agent to A2A protocol."""
+"""Tests for a2a/executor.py -- TemplateAgentExecutor."""
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from a2a.types import Task, TaskArtifactUpdateEvent, TaskState, TaskStatusUpdateEvent
 
-from template_agent.src.a2a.context import A2ARequestContext, a2a_request_ctx
-from template_agent.src.core.a2a_executor import (
-    TemplateAgentA2AExecutor,
-    _meta_str,
-    _optional_thread_id,
-)
+from template_agent.src.a2a.executor import ACCESS_TOKEN_STATE_KEY, TemplateAgentExecutor
 
 
-class TestMetaStrFunction:
-    """Tests for _meta_str helper function."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _make_context(
+    *,
+    task_id: str = "task-1",
+    context_id: str = "ctx-1",
+    user_input: str | None = "Hello",
+    accepted_output_modes: list[str] | None = None,
+    current_task=None,
+    access_token: str | None = "tok",
+) -> MagicMock:
+    """Build a minimal RequestContext mock."""
+    from a2a.types import Message, Part, Role
 
-    def test_returns_string_value(self):
-        """Returns trimmed string when key exists with valid string."""
-        metadata = {"user_id": "  test-user  "}
-        assert _meta_str(metadata, "user_id", "default") == "test-user"
+    ctx = MagicMock()
+    ctx.task_id = task_id
+    ctx.context_id = context_id
+    ctx.current_task = current_task
+    ctx.get_user_input.return_value = user_input
 
-    def test_returns_default_when_key_missing(self):
-        """Returns default when key is not in metadata."""
-        metadata = {}
-        assert _meta_str(metadata, "user_id", "default-user") == "default-user"
+    if accepted_output_modes is not None:
+        ctx.configuration = MagicMock()
+        ctx.configuration.accepted_output_modes = accepted_output_modes
+    else:
+        ctx.configuration = None
 
-    def test_returns_default_when_value_empty(self):
-        """Returns default when value is empty string."""
-        metadata = {"user_id": ""}
-        assert _meta_str(metadata, "user_id", "default-user") == "default-user"
+    ctx.call_context = MagicMock()
+    ctx.call_context.state = {ACCESS_TOKEN_STATE_KEY: access_token}
 
-    def test_returns_default_when_value_whitespace_only(self):
-        """Returns default when value is only whitespace."""
-        metadata = {"user_id": "   "}
-        assert _meta_str(metadata, "user_id", "default-user") == "default-user"
-
-    def test_returns_default_when_value_not_string(self):
-        """Returns default when value is not a string."""
-        metadata = {"user_id": 123}
-        assert _meta_str(metadata, "user_id", "default-user") == "default-user"
-
-    def test_returns_default_when_value_is_none(self):
-        """Returns default when value is None."""
-        metadata = {"user_id": None}
-        assert _meta_str(metadata, "user_id", "default-user") == "default-user"
-
-
-class TestOptionalThreadIdFunction:
-    """Tests for _optional_thread_id helper function."""
-
-    def test_returns_string_value(self):
-        """Returns trimmed string when thread_id exists."""
-        metadata = {"thread_id": "  thread-123  "}
-        assert _optional_thread_id(metadata) == "thread-123"
-
-    def test_returns_none_when_key_missing(self):
-        """Returns None when thread_id is not in metadata."""
-        metadata = {}
-        assert _optional_thread_id(metadata) is None
-
-    def test_returns_none_when_value_empty(self):
-        """Returns None when thread_id is empty string."""
-        metadata = {"thread_id": ""}
-        assert _optional_thread_id(metadata) is None
-
-    def test_returns_none_when_value_whitespace_only(self):
-        """Returns None when thread_id is only whitespace."""
-        metadata = {"thread_id": "   "}
-        assert _optional_thread_id(metadata) is None
-
-    def test_returns_none_when_value_not_string(self):
-        """Returns None when thread_id is not a string."""
-        metadata = {"thread_id": 123}
-        assert _optional_thread_id(metadata) is None
+    ctx.message = Message(
+        message_id="msg-1",
+        role=Role.ROLE_USER,
+        parts=[Part(text=user_input or "")],
+    )
+    return ctx
 
 
-class TestTemplateAgentA2AExecutor:
-    """Tests for TemplateAgentA2AExecutor."""
+def _make_event_queue() -> MagicMock:
+    """Build an async EventQueue mock."""
+    eq = MagicMock()
+    eq.enqueue_event = AsyncMock()
+    return eq
 
-    @pytest.fixture
-    def executor(self):
-        """Create executor instance."""
-        return TemplateAgentA2AExecutor()
 
-    @pytest.fixture
-    def mock_context(self):
-        """Create mock request context."""
-        ctx = MagicMock()
-        ctx.get_user_input.return_value = "test prompt"
-        ctx.task_id = "task-123"
-        ctx.context_id = "ctx-123"
-        ctx.metadata = {}
-        return ctx
+# ---------------------------------------------------------------------------
+# Output mode compatibility
+# ---------------------------------------------------------------------------
+class TestOutputModeCheck:
+    def test_compatible_when_no_preference(self):
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
+        ctx = _make_context(accepted_output_modes=None)
+        assert executor._is_output_mode_incompatible(ctx) is False
 
-    @pytest.fixture
-    def spy_event_queue(self):
-        """Create event queue that captures events."""
-        events = []
+    def test_compatible_when_empty_list(self):
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
+        ctx = _make_context(accepted_output_modes=[])
+        assert executor._is_output_mode_incompatible(ctx) is False
 
-        class SpyQueue:
-            async def enqueue_event(self, event):
-                events.append(event)
+    def test_compatible_when_overlap(self):
+        executor = TemplateAgentExecutor(
+            supported_output_modes=["text/plain", "application/json"]
+        )
+        ctx = _make_context(accepted_output_modes=["text/plain", "text/html"])
+        assert executor._is_output_mode_incompatible(ctx) is False
 
-        return SpyQueue(), events
+    def test_incompatible_when_no_overlap(self):
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
+        ctx = _make_context(accepted_output_modes=["image/png"])
+        assert executor._is_output_mode_incompatible(ctx) is True
 
-    @pytest.fixture(autouse=True)
-    def setup_a2a_context(self):
-        """Setup A2A request context for tests."""
-        ctx = A2ARequestContext(access_token="test-token")
-        token = a2a_request_ctx.set(ctx)
-        yield
-        a2a_request_ctx.reset(token)
 
-    async def test_empty_prompt_completes_immediately(
-        self, executor, mock_context, spy_event_queue
-    ):
-        """Empty prompt returns completed task with message."""
-        mock_context.get_user_input.return_value = "   "
-        queue, events = spy_event_queue
+# ---------------------------------------------------------------------------
+# execute() - entry point
+# ---------------------------------------------------------------------------
+class TestExecute:
+    @pytest.mark.asyncio
+    async def test_rejects_unsupported_output_modes(self):
+        from a2a.types import ContentTypeNotSupportedError
 
-        await executor.execute(mock_context, queue)
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
+        ctx = _make_context(accepted_output_modes=["image/png"])
+        eq = _make_event_queue()
 
-        assert len(events) == 2
-        task_event = events[0]
-        assert isinstance(task_event, Task)
-        assert task_event.status.state == TaskState.TASK_STATE_COMPLETED
+        with pytest.raises(ContentTypeNotSupportedError):
+            await executor.execute(ctx, eq)
 
-        status_event = events[1]
-        assert isinstance(status_event, TaskStatusUpdateEvent)
-        assert "No text message" in status_event.status.message.parts[0].text
+    @pytest.mark.asyncio
+    async def test_tracks_and_cleans_running_task(self):
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
 
-    async def test_agent_manager_init_failure(
-        self, executor, mock_context, spy_event_queue
-    ):
-        """AgentManager initialization failure results in FAILED task."""
-        queue, events = spy_event_queue
+        with patch.object(
+            executor, "_execute_inner", new_callable=AsyncMock
+        ) as mock_inner:
+            ctx = _make_context()
+            eq = _make_event_queue()
+            await executor.execute(ctx, eq)
+
+            mock_inner.assert_awaited_once()
+            assert "task-1" not in executor._running_tasks
+
+    @pytest.mark.asyncio
+    async def test_cleans_task_on_cancel(self):
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
+
+        async def _inner_cancel(*_args, **_kwargs):
+            raise asyncio.CancelledError()
+
+        with patch.object(executor, "_execute_inner", side_effect=_inner_cancel):
+            ctx = _make_context()
+            eq = _make_event_queue()
+            with pytest.raises(asyncio.CancelledError):
+                await executor.execute(ctx, eq)
+
+            assert "task-1" not in executor._running_tasks
+
+
+# ---------------------------------------------------------------------------
+# _execute_inner() - core logic
+# ---------------------------------------------------------------------------
+class TestExecuteInner:
+    @pytest.mark.asyncio
+    async def test_fails_when_no_user_input(self):
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
+        ctx = _make_context(user_input=None)
+        eq = _make_event_queue()
 
         with patch(
-            "template_agent.src.core.a2a_executor.AgentManager",
-            side_effect=Exception("Init failed"),
+            "template_agent.src.a2a.executor.TaskUpdater"
+        ) as MockUpdater:
+            mock_updater = MagicMock()
+            mock_updater.new_agent_message = MagicMock(return_value="msg")
+            mock_updater.failed = AsyncMock()
+            MockUpdater.return_value = mock_updater
+
+            await executor._execute_inner(ctx, eq)
+
+            mock_updater.failed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_creates_new_task_when_no_current(self):
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
+        ctx = _make_context(current_task=None)
+        eq = _make_event_queue()
+
+        with patch(
+            "template_agent.src.a2a.executor.TaskUpdater"
+        ) as MockUpdater, patch.object(
+            executor, "_run_agent_streaming", new_callable=AsyncMock
         ):
-            await executor.execute(mock_context, queue)
+            mock_updater = MagicMock()
+            mock_updater.new_agent_message = MagicMock(return_value="msg")
+            mock_updater.start_work = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            MockUpdater.return_value = mock_updater
 
-        task_events = [e for e in events if isinstance(e, Task)]
-        assert len(task_events) == 1
-        assert task_events[0].status.state == TaskState.TASK_STATE_FAILED
+            await executor._execute_inner(ctx, eq)
 
-        status_events = [e for e in events if isinstance(e, TaskStatusUpdateEvent)]
-        assert len(status_events) == 1
-        assert "initialization failed" in status_events[0].status.message.parts[0].text
+            eq.enqueue_event.assert_awaited_once()
+            event_arg = eq.enqueue_event.call_args[0][0]
+            assert event_arg.id == "task-1"
 
-    async def test_stream_response_exception(
-        self, executor, mock_context, spy_event_queue
-    ):
-        """Exception during stream_response results in FAILED status."""
-        queue, events = spy_event_queue
+    @pytest.mark.asyncio
+    async def test_uses_current_task_when_provided(self):
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
+        existing_task = MagicMock()
+        existing_task.id = "task-existing"
+        ctx = _make_context(current_task=existing_task)
+        eq = _make_event_queue()
 
-        async def _failing_stream(request):
-            yield {"type": "token", "content": "partial"}
-            raise RuntimeError("Stream crashed")
+        with patch(
+            "template_agent.src.a2a.executor.TaskUpdater"
+        ) as MockUpdater, patch.object(
+            executor, "_run_agent_streaming", new_callable=AsyncMock
+        ):
+            mock_updater = MagicMock()
+            mock_updater.new_agent_message = MagicMock(return_value="msg")
+            mock_updater.start_work = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            MockUpdater.return_value = mock_updater
 
-        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
-            instance = MockManager.return_value
-            instance.stream_response = _failing_stream
-            await executor.execute(mock_context, queue)
+            await executor._execute_inner(ctx, eq)
 
-        status_events = [e for e in events if isinstance(e, TaskStatusUpdateEvent)]
-        failed = [
-            e for e in status_events if e.status.state == TaskState.TASK_STATE_FAILED
-        ]
-        assert len(failed) == 1
-        assert "Stream crashed" in failed[0].status.message.parts[0].text
+            event_arg = eq.enqueue_event.call_args[0][0]
+            assert event_arg is existing_task
 
-    async def test_no_ai_response_returns_placeholder(
-        self, executor, mock_context, spy_event_queue
-    ):
-        """When no AI response is received, returns placeholder text."""
-        queue, events = spy_event_queue
+    @pytest.mark.asyncio
+    async def test_agent_error_calls_failed(self):
+        executor = TemplateAgentExecutor(supported_output_modes=["text/plain"])
+        ctx = _make_context()
+        eq = _make_event_queue()
 
-        async def _empty_stream(request):
-            yield {"type": "token", "content": ""}
+        with patch(
+            "template_agent.src.a2a.executor.TaskUpdater"
+        ) as MockUpdater, patch.object(
+            executor,
+            "_run_agent_streaming",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("boom"),
+        ):
+            mock_updater = MagicMock()
+            mock_updater.new_agent_message = MagicMock(return_value="msg")
+            mock_updater.start_work = AsyncMock()
+            mock_updater.failed = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            MockUpdater.return_value = mock_updater
 
-        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
-            instance = MockManager.return_value
-            instance.stream_response = _empty_stream
-            await executor.execute(mock_context, queue)
+            await executor._execute_inner(ctx, eq)
 
-        artifact_events = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
-        final = [e for e in artifact_events if e.last_chunk]
-        assert len(final) == 1
-        assert "(no assistant response)" in final[0].artifact.parts[0].text
+            mock_updater.failed.assert_awaited_once()
+            mock_updater.complete.assert_not_awaited()
 
-    async def test_metadata_extraction(self, executor, spy_event_queue):
-        """User ID, session ID, and thread ID are extracted from metadata."""
-        mock_context = MagicMock()
-        mock_context.get_user_input.return_value = "test"
-        mock_context.task_id = "task-1"
-        mock_context.context_id = "ctx-1"
-        mock_context.metadata = {
-            "user_id": "custom-user",
-            "session_id": "custom-session",
-            "thread_id": "custom-thread",
-        }
-        queue, events = spy_event_queue
 
-        captured_request = None
+# ---------------------------------------------------------------------------
+# cancel()
+# ---------------------------------------------------------------------------
+class TestCancel:
+    @pytest.mark.asyncio
+    async def test_cancel_running_task(self):
+        executor = TemplateAgentExecutor(supported_output_modes=[])
 
-        async def _capture_stream(request):
-            nonlocal captured_request
-            captured_request = request
-            yield {"type": "message", "content": {"type": "ai", "content": "ok"}}
+        mock_asyncio_task = MagicMock()
+        mock_asyncio_task.done.return_value = False
+        executor._running_tasks["task-1"] = mock_asyncio_task
 
-        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
-            instance = MockManager.return_value
-            instance.stream_response = _capture_stream
-            await executor.execute(mock_context, queue)
+        ctx = _make_context(task_id="task-1")
+        eq = _make_event_queue()
 
-        assert captured_request is not None
-        assert captured_request.user_id == "custom-user"
-        assert captured_request.session_id == "custom-session"
-        assert captured_request.thread_id == "custom-thread"
+        with patch("template_agent.src.a2a.executor.TaskUpdater") as MockUpdater:
+            mock_updater = MagicMock()
+            mock_updater.cancel = AsyncMock()
+            MockUpdater.return_value = mock_updater
 
-    async def test_correlation_id_logged(self, executor, mock_context, spy_event_queue):
-        """Correlation ID from context is logged."""
-        queue, events = spy_event_queue
+            await executor.cancel(ctx, eq)
 
-        ctx = A2ARequestContext(
-            access_token="token",
-            correlation_id="corr-test-123",
-            calling_agent_id="test-agent",
-        )
-        token = a2a_request_ctx.set(ctx)
+        mock_asyncio_task.cancel.assert_called_once()
+        assert "task-1" not in executor._running_tasks
 
-        async def _simple_stream(request):
-            yield {"type": "message", "content": {"type": "ai", "content": "ok"}}
+    @pytest.mark.asyncio
+    async def test_cancel_nonexistent_task_is_safe(self):
+        executor = TemplateAgentExecutor(supported_output_modes=[])
+        ctx = _make_context(task_id="no-such-task")
+        eq = _make_event_queue()
 
-        try:
-            with patch(
-                "template_agent.src.core.a2a_executor.AgentManager"
-            ) as MockManager:
-                instance = MockManager.return_value
-                instance.stream_response = _simple_stream
-                with patch(
-                    "template_agent.src.core.a2a_executor.logger"
-                ) as mock_logger:
-                    await executor.execute(mock_context, queue)
-                    mock_logger.info.assert_any_call(
-                        "a2a_execute",
-                        correlation_id="corr-test-123",
-                        calling_agent=("test-agent"),
-                    )
-        finally:
-            a2a_request_ctx.reset(token)
+        with patch("template_agent.src.a2a.executor.TaskUpdater") as MockUpdater:
+            mock_updater = MagicMock()
+            mock_updater.cancel = AsyncMock()
+            MockUpdater.return_value = mock_updater
 
-    async def test_cancel_is_noop(self, executor, mock_context, spy_event_queue):
-        """Cancel method is a no-op (best effort)."""
-        queue, _ = spy_event_queue
-        await executor.cancel(mock_context, queue)
+            await executor.cancel(ctx, eq)
 
-    async def test_token_streaming(self, executor, mock_context, spy_event_queue):
-        """Token events are streamed as artifact updates."""
-        queue, events = spy_event_queue
-
-        async def _token_stream(request):
-            yield {"type": "token", "content": "Hello"}
-            yield {"type": "token", "content": " world"}
-            yield {
-                "type": "message",
-                "content": {"type": "ai", "content": "Hello world"},
-            }
-
-        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
-            instance = MockManager.return_value
-            instance.stream_response = _token_stream
-            await executor.execute(mock_context, queue)
-
-        artifact_events = [e for e in events if isinstance(e, TaskArtifactUpdateEvent)]
-        append_events = [e for e in artifact_events if e.append]
-        assert len(append_events) == 2
-
-    async def test_error_event_in_stream(self, executor, mock_context, spy_event_queue):
-        """Error event in stream results in FAILED status."""
-        queue, events = spy_event_queue
-
-        async def _error_stream(request):
-            yield {"type": "error", "content": {"message": "Something broke"}}
-
-        with patch("template_agent.src.core.a2a_executor.AgentManager") as MockManager:
-            instance = MockManager.return_value
-            instance.stream_response = _error_stream
-            await executor.execute(mock_context, queue)
-
-        status_events = [e for e in events if isinstance(e, TaskStatusUpdateEvent)]
-        failed = [
-            e for e in status_events if e.status.state == TaskState.TASK_STATE_FAILED
-        ]
-        assert len(failed) == 1
-        assert "Something broke" in failed[0].status.message.parts[0].text
+        mock_updater.cancel.assert_awaited_once()

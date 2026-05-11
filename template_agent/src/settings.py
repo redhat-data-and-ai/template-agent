@@ -5,7 +5,7 @@ BaseSettings for environment variable loading, validation, and default
 value handling for the template agent service.
 """
 
-from typing import Dict, Optional
+from typing import Optional
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -48,92 +48,6 @@ class Settings(BaseSettings):
     )
     AGENT_SSL_CERTFILE: Optional[str] = Field(
         default=None, json_schema_extra={"env": "AGENT_SSL_CERTFILE"}
-    )
-    AGENT_PUBLIC_BASE_URL: Optional[str] = Field(
-        default=None,
-        json_schema_extra={
-            "env": "AGENT_PUBLIC_BASE_URL",
-            "description": "Public HTTPS base URL for agent (no path); used for A2A AgentCard if AGENT_URL unset",
-        },
-    )
-    A2A_ENABLED: bool = Field(
-        default=True,
-        json_schema_extra={
-            "env": "A2A_ENABLED",
-            "description": "Mount A2A protocol under A2A_PATH_PREFIX",
-        },
-    )
-    A2A_PATH_PREFIX: str = Field(
-        default="/a2a",
-        json_schema_extra={
-            "env": "A2A_PATH_PREFIX",
-            "description": "URL path prefix for A2A (e.g. /a2a)",
-        },
-    )
-    A2A_AGENT_ID: str = Field(
-        default="template-agent",
-        json_schema_extra={
-            "env": "A2A_AGENT_ID",
-            "description": "This agent's identity sent in X-Calling-Agent-ID when calling downstream agents",
-        },
-    )
-    A2A_AGENT_VERSION: str = Field(
-        default="1.0.0",
-        json_schema_extra={"env": "A2A_AGENT_VERSION"},
-    )
-    A2A_PROVIDER_NAME: Optional[str] = Field(
-        default=None,
-        json_schema_extra={"env": "A2A_PROVIDER_NAME"},
-    )
-    A2A_PROVIDER_URL: Optional[str] = Field(
-        default=None,
-        json_schema_extra={"env": "A2A_PROVIDER_URL"},
-    )
-    A2A_AUTH_REQUIRED: bool = Field(
-        default=True,
-        json_schema_extra={
-            "env": "A2A_AUTH_REQUIRED",
-            "description": "Require Bearer token on A2A requests; advertise securitySchemes in AgentCard",
-        },
-    )
-    A2A_JWT_SECRET: Optional[str] = Field(
-        default=None,
-        json_schema_extra={
-            "env": "A2A_JWT_SECRET",
-            "description": "Shared secret for HS256 JWT validation",
-        },
-    )
-    A2A_JWT_JWKS_URL: Optional[str] = Field(
-        default=None,
-        json_schema_extra={
-            "env": "A2A_JWT_JWKS_URL",
-            "description": "JWKS endpoint URL for RS256/ES256 JWT validation",
-        },
-    )
-    A2A_JWT_AUDIENCE: Optional[str] = Field(
-        default=None,
-        json_schema_extra={"env": "A2A_JWT_AUDIENCE"},
-    )
-    A2A_JWT_ISSUER: Optional[str] = Field(
-        default=None,
-        json_schema_extra={"env": "A2A_JWT_ISSUER"},
-    )
-    A2A_TARGET_AGENTS: Optional[Dict[str, Dict[str, str]]] = Field(
-        default=None,
-        json_schema_extra={
-            "env": "A2A_TARGET_AGENTS",
-            "description": (
-                'JSON mapping of agent_id → {"base_url": "...", "description": "..."}. '
-                "Each entry is discovered at startup via its A2A agent card."
-            ),
-        },
-    )
-    A2A_REQUEST_TIMEOUT: float = Field(
-        default=30.0,
-        json_schema_extra={
-            "env": "A2A_REQUEST_TIMEOUT",
-            "description": "Timeout in seconds for outbound A2A HTTP requests",
-        },
     )
     PYTHON_LOG_LEVEL: str = Field(
         default="INFO", json_schema_extra={"env": "PYTHON_LOG_LEVEL"}
@@ -237,6 +151,65 @@ class Settings(BaseSettings):
         },
     )
 
+    # A2A Protocol Configuration
+    A2A_ENABLED: bool = Field(
+        default=True,
+        json_schema_extra={
+            "env": "A2A_ENABLED",
+            "description": "Enable A2A protocol endpoints alongside existing API",
+        },
+    )
+    A2A_AGENT_NAME: str = Field(
+        default="Template Agent",
+        json_schema_extra={"env": "A2A_AGENT_NAME"},
+    )
+    A2A_AGENT_DESCRIPTION: str = Field(
+        default="A template AI agent with tool capabilities via MCP",
+        json_schema_extra={"env": "A2A_AGENT_DESCRIPTION"},
+    )
+    A2A_AGENT_VERSION: str = Field(
+        default="1.0.0",
+        json_schema_extra={"env": "A2A_AGENT_VERSION"},
+    )
+    A2A_PROVIDER_ORG: str = Field(
+        default="",
+        json_schema_extra={
+            "env": "A2A_PROVIDER_ORG",
+            "description": "Organization name for the Agent Card provider field",
+        },
+    )
+    A2A_PROVIDER_URL: str = Field(
+        default="",
+        json_schema_extra={
+            "env": "A2A_PROVIDER_URL",
+            "description": "URL for the Agent Card provider field",
+        },
+    )
+    A2A_DOWNSTREAM_AGENT_URLS: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "env": "A2A_DOWNSTREAM_AGENT_URLS",
+            "description": "Comma-separated list of downstream A2A agent card URLs",
+        },
+    )
+
+    @property
+    def a2a_downstream_urls(self) -> list[str]:
+        """Parse comma-separated downstream agent URLs into a list."""
+        if not self.A2A_DOWNSTREAM_AGENT_URLS:
+            return []
+        return [
+            url.strip()
+            for url in self.A2A_DOWNSTREAM_AGENT_URLS.split(",")
+            if url.strip()
+        ]
+
+    @property
+    def a2a_base_url(self) -> str:
+        """Build the base URL for this agent's A2A endpoints."""
+        scheme = "https" if self.AGENT_SSL_CERTFILE else "http"
+        return f"{scheme}://{self.AGENT_HOST}:{self.AGENT_PORT}"
+
     @property
     def database_uri(self) -> str:
         """Generate database URI from individual components.
@@ -249,6 +222,18 @@ class Settings(BaseSettings):
             The complete PostgreSQL database URI string.
         """
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+
+    @property
+    def async_database_uri(self) -> str:
+        """Generate async-compatible database URI for SQLAlchemy AsyncEngine.
+
+        Uses the psycopg async dialect required by SQLAlchemy's
+        create_async_engine.
+
+        Returns:
+            The PostgreSQL URI with the +psycopg async dialect.
+        """
+        return f"postgresql+psycopg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
 
 def validate_config(settings: Settings) -> None:

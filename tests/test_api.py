@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from template_agent.src.core.exceptions.exceptions import AppException, AppExceptionCode
 
@@ -121,49 +118,3 @@ class TestExceptionHandlers:
         assert "Custom error detail" in body["detail_message"]
 
 
-class TestA2AAgentCardEndpoint:
-    """Tests for root_agent_card endpoint when A2A is enabled."""
-
-    @pytest.fixture
-    def a2a_enabled_app(self, monkeypatch):
-        """Create a minimal app that simulates A2A enabled behavior."""
-        monkeypatch.setenv("USE_INMEMORY_SAVER", "true")
-        monkeypatch.setenv("A2A_ENABLED", "true")
-        monkeypatch.setenv("A2A_PATH_PREFIX", "/a2a")
-
-        app = FastAPI()
-
-        @app.get("/.well-known/agent-card.json")
-        async def root_agent_card(request: Request):
-            """Simulated root-level agent card endpoint."""
-            prefix = "/a2a"
-            scheme = "https" if request.url.scheme == "https" else "http"
-            host = request.headers.get("host", "localhost:8000")
-            caller_base = f"{scheme}://{host}{prefix}/"
-            return {
-                "name": "Template Agent",
-                "url": caller_base,
-                "supportedInterfaces": [{"url": caller_base, "protocol": "JSONRPC"}],
-            }
-
-        return app
-
-    def test_agent_card_returns_correct_url(self, a2a_enabled_app):
-        """Agent card endpoint returns correct URL based on Host header."""
-        client = TestClient(a2a_enabled_app)
-        resp = client.get(
-            "/.well-known/agent-card.json",
-            headers={"Host": "my-agent.example.com:9090"},
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "my-agent.example.com:9090" in body["url"]
-        assert body["name"] == "Template Agent"
-
-    def test_agent_card_uses_http_scheme(self, a2a_enabled_app):
-        """Agent card endpoint uses http scheme by default."""
-        client = TestClient(a2a_enabled_app)
-        resp = client.get("/.well-known/agent-card.json")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["url"].startswith("http://")

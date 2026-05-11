@@ -84,3 +84,62 @@ class TestValidateConfig:
 
     # Note: MCP_PORT and MCP_TRANSPORT_PROTOCOL were removed from settings
     # so these tests are no longer applicable
+
+
+class TestA2ASettings:
+    """Tests for A2A-related settings fields and properties."""
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_a2a_default_values(self):
+        s = Settings()
+        assert s.A2A_ENABLED is True
+        assert s.A2A_AGENT_NAME == "Template Agent"
+        assert s.A2A_AGENT_VERSION == "1.0.0"
+        assert s.A2A_PROVIDER_ORG == ""
+        assert s.A2A_PROVIDER_URL == ""
+        assert s.A2A_DOWNSTREAM_AGENT_URLS is None
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_a2a_downstream_urls_empty_when_not_set(self):
+        s = Settings()
+        assert s.a2a_downstream_urls == []
+
+    @patch.dict(
+        "os.environ",
+        {"A2A_DOWNSTREAM_AGENT_URLS": "http://a:8080,http://b:9090"},
+        clear=True,
+    )
+    def test_a2a_downstream_urls_parsed(self):
+        s = Settings()
+        assert s.a2a_downstream_urls == ["http://a:8080", "http://b:9090"]
+
+    @patch.dict(
+        "os.environ",
+        {"A2A_DOWNSTREAM_AGENT_URLS": "  http://a:8080 , , http://b:9090 "},
+        clear=True,
+    )
+    def test_a2a_downstream_urls_strips_whitespace_and_blanks(self):
+        s = Settings()
+        assert s.a2a_downstream_urls == ["http://a:8080", "http://b:9090"]
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_a2a_base_url_http_default(self):
+        s = Settings()
+        assert s.a2a_base_url == "http://0.0.0.0:8081"
+
+    @patch.dict(
+        "os.environ",
+        {"AGENT_SSL_CERTFILE": "/path/to/cert.pem", "AGENT_PORT": "9443"},
+        clear=True,
+    )
+    def test_a2a_base_url_https_when_ssl(self):
+        s = Settings()
+        assert s.a2a_base_url.startswith("https://")
+        assert ":9443" in s.a2a_base_url
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_async_database_uri(self):
+        s = Settings()
+        uri = s.async_database_uri
+        assert uri.startswith("postgresql+psycopg://")
+        assert "pgvector" in uri
