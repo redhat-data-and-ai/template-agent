@@ -14,6 +14,7 @@ Classes:
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -26,8 +27,13 @@ from .resolver import resolve_skill_paths, resolve_tools
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
-# Default agent_config directory path
-_AGENT_CONFIG_DIR = Path(__file__).parent.parent.parent.parent / "agent_config"
+# Default agent_config directory path; overridable via AGENT_CONFIG_DIR env var
+_AGENT_CONFIG_DIR = Path(
+    os.environ.get(
+        "AGENT_CONFIG_DIR",
+        str(Path(__file__).parent.parent.parent.parent / "agent_config"),
+    )
+)
 
 
 class AgentConfig:
