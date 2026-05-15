@@ -13,8 +13,7 @@ A template for building AI agents with SSE streaming, conversation management, a
 ```bash
 git clone https://github.com/redhat-data-and-ai/template-agent.git
 cd template-agent
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+uv sync --extra dev
 cp .env.example .env          # edit with your config
 uv run python -m template_agent.src.main
 ```
