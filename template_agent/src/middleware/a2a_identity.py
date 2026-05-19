@@ -1,10 +1,13 @@
-"""A2A Agent Identity middleware.
+"""A2A Agent Identity and Authentication middleware.
 
-Validates inbound A2A requests on /a2a/ by requiring:
-- X-Calling-Agent-ID in combined 'agent_name+uuid' format
+Validates inbound A2A requests on /a2a/ (and optionally /v1/stream) by:
+1. Requiring X-Calling-Agent-ID in combined 'agent_name+uuid' format
+2. Checking the allowlist (A2A_ALLOWED_INBOUND_AGENTS, when configured)
+3. Validating the bearer token (X-Token or Authorization: Bearer)
 
-The combined value must be present in the A2A_ALLOWED_INBOUND_AGENTS list
-(when configured). Also captures X-Correlation-ID for end-to-end tracing.
+On success, populates request.state with access_token, token_format,
+jwt_claims, and username so downstream code (the A2A context builder
+and route handlers) can read them without re-validating.
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ from __future__ import annotations
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+
+import jwt
 
 from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
@@ -63,10 +68,7 @@ class A2AIdentityMiddleware(BaseHTTPMiddleware):
 
         # Allowlist check (skip if not configured)
         allowed = settings.A2A_ALLOWED_INBOUND_AGENTS
-        if allowed is None:
-            return await call_next(request)
-
-        if identity not in allowed:
+        if allowed is not None and identity not in allowed:
             logger.warning(
                 "a2a_inbound_agent_denied",
                 calling_agent_id=agent_id,
@@ -76,6 +78,44 @@ class A2AIdentityMiddleware(BaseHTTPMiddleware):
             return self._forbidden(
                 f"Agent '{agent_id}' is not in the allowed inbound agents list."
             )
+
+        # Validate bearer token (X-Token or Authorization: Bearer)
+        token = self._extract_token(request)
+        if not token:
+            logger.warning(
+                "a2a_missing_token",
+                path=request.url.path,
+                calling_agent_id=agent_id,
+                correlation_id=correlation_id,
+            )
+            return self._unauthorized(
+                "Missing authentication token: send X-Token or Authorization: Bearer"
+            )
+
+        try:
+            claims, token_format = self._validate_token(token)
+        except Exception as e:
+            logger.warning(
+                "a2a_invalid_token",
+                path=request.url.path,
+                calling_agent_id=agent_id,
+                correlation_id=correlation_id,
+                error=str(e),
+            )
+            return self._unauthorized(f"Invalid bearer token: {e}")
+
+        request.state.access_token = token
+        request.state.token_format = token_format
+        request.state.jwt_claims = claims
+        if token_format == "jwt":
+            request.state.username = (
+                claims.get("preferred_username")
+                or claims.get("sub")
+                or claims.get("email")
+                or "unknown"
+            )
+        else:
+            request.state.username = "jwe-authenticated"
 
         return await call_next(request)
 
@@ -88,3 +128,43 @@ class A2AIdentityMiddleware(BaseHTTPMiddleware):
             status_code=403,
             content={"detail": detail},
         )
+
+    @staticmethod
+    def _unauthorized(detail: str) -> JSONResponse:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": detail},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    @staticmethod
+    def _extract_token(request: Request) -> str | None:
+        """Extract token from X-Token header or Authorization: Bearer."""
+        raw = request.headers.get("X-Token")
+        if raw:
+            return raw.strip()
+        auth = request.headers.get("authorization")
+        if not auth:
+            return None
+        parts = auth.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            return parts[1].strip()
+        return None
+
+    @staticmethod
+    def _validate_token(token: str) -> tuple[dict, str]:
+        """Detect JWT vs JWE and decode JWT claims without signature verification."""
+        if token.count(".") == 4:
+            logger.info("A2A auth: JWE token detected, storing for forwarding")
+            return {"token_format": "jwe"}, "jwe"
+        claims = jwt.decode(
+            token,
+            options={
+                "verify_signature": False,
+                "verify_exp": False,
+                "verify_aud": False,
+                "verify_iss": False,
+            },
+            algorithms=["RS256", "HS256", "ES256"],
+        )
+        return claims, "jwt"

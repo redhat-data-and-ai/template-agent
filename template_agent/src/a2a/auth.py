@@ -1,20 +1,15 @@
-"""Bearer token authentication and context enrichment for A2A requests.
+"""Context bridge from A2AIdentityMiddleware into the A2A SDK.
 
-Accepts both JWT (3-part) and JWE (5-part) tokens in the Authorization
-header. JWT tokens are decoded for claims; JWE tokens are stored as-is
-for forwarding to downstream agents that can decrypt them.
-
-Agent identity verification (X-Calling-Agent-ID header + allowlist) is
-handled by A2AIdentityMiddleware at the HTTP layer, which returns a
-proper 403 per A2A spec Section 7.4.  This builder reads the validated
-identity from request.state (set by the middleware) and carries it into
-ServerCallContext.state for the executor.
+A2AIdentityMiddleware validates agent identity and bearer tokens at the
+HTTP layer, populating request.state with access_token, jwt_claims,
+token_format, username, etc.  This builder reads that validated state
+and carries it into ServerCallContext.state for the executor — it never
+raises and never re-validates.
 
 The /.well-known/agent-card.json endpoint is NOT routed through this
 builder (it uses separate routes), so it remains public.
 """
 
-import jwt
 from a2a.auth.user import User
 from a2a.server.context import ServerCallContext
 from a2a.server.routes.common import (
@@ -55,86 +50,20 @@ class AuthenticatedUser(User):
         return self._claims
 
 
-def _extract_bearer_token(request: Request) -> str | None:
-    """Pull the raw token from 'Authorization: Bearer <token>'."""
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        return auth_header[7:].strip()
-    return None
-
-
-def _is_jwe(token: str) -> bool:
-    """JWE compact serialization has 5 dot-separated segments."""
-    return token.count(".") == 4
-
-
-def _decode_jwt(token: str) -> dict:
-    """Decode a JWT without signature verification for claim extraction."""
-    return jwt.decode(
-        token,
-        options={
-            "verify_signature": False,
-            "verify_exp": False,
-            "verify_aud": False,
-            "verify_iss": False,
-        },
-        algorithms=["RS256", "HS256", "ES256"],
-    )
-
-
-def _validate_token(token: str) -> tuple[dict, str]:
-    """Validate a bearer token and extract identity information.
-
-    Returns:
-        A tuple of (claims_dict, token_format) where token_format is "jwt" or "jwe".
-        For JWE tokens, claims will contain only {"token_format": "jwe"} since
-        we cannot decrypt them here — they are forwarded as-is to downstream agents.
-    """
-    if _is_jwe(token):
-        logger.info("A2A auth: JWE token detected, storing for forwarding")
-        return {"token_format": "jwe"}, "jwe"
-
-    claims = _decode_jwt(token)
-    return claims, "jwt"
-
-
 class A2AServerCallContextBuilder(DefaultServerCallContextBuilder):
-    """Extends the default context builder with bearer token validation.
+    """Thin bridge from request.state into ServerCallContext.
 
-    For every A2A request this:
-    1. Reads caller identity from request.state (set by A2AIdentityMiddleware)
-    2. Captures X-Correlation-ID for end-to-end tracing
-    3. Extracts the Authorization: Bearer token
-    4. Detects format: JWT (3-part) or JWE (5-part)
-    5. For JWT: decodes claims to extract user identity
-    6. For JWE: accepts as-is for downstream forwarding
-    7. Stores all context in state so the executor can forward it
+    A2AIdentityMiddleware has already validated the bearer token and
+    populated request.state.  This builder reads that state and packages
+    it into a ServerCallContext for the executor.  It never raises.
     """
 
     def build(self, request: Request) -> ServerCallContext:
-        """Extract and validate the bearer token, then build the call context."""
-        token = _extract_bearer_token(request)
-
-        if not token:
-            raise PermissionError("Missing Authorization: Bearer token")
-
-        try:
-            claims, token_format = _validate_token(token)
-        except jwt.ExpiredSignatureError:
-            raise PermissionError("Bearer token has expired")
-        except jwt.InvalidTokenError as e:
-            raise PermissionError(f"Invalid bearer token: {e}")
-
-        if token_format == "jwt":
-            user_name = (
-                claims.get("preferred_username")
-                or claims.get("sub")
-                or claims.get("email")
-                or "unknown"
-            )
-        else:
-            user_name = "jwe-authenticated"
-
+        """Read validated auth state from request.state and build the call context."""
+        token = getattr(request.state, "access_token", None)
+        token_format = getattr(request.state, "token_format", "unknown")
+        claims = getattr(request.state, "jwt_claims", {})
+        user_name = getattr(request.state, "username", "unknown")
         calling_agent_id = getattr(request.state, "calling_agent_id", None)
 
         logger.info(
