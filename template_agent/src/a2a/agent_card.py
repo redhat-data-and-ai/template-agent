@@ -23,7 +23,7 @@ def build_agent_card() -> AgentCard:
     - JSON-RPC v1.0 and v0.3 interfaces (preferred)
     - HTTP+JSON/REST v1.0 interface
     - Streaming capability
-    - Bearer token + X-Calling-Agent-ID auth requirements
+    - (Bearer OR X-Token) + X-Calling-Agent-ID auth requirements
     - Agent skills describing what this agent can do
     """
     base_url = settings.a2a_base_url
@@ -82,7 +82,14 @@ def build_agent_card() -> AgentCard:
                 http_auth_security_scheme=HTTPAuthSecurityScheme(
                     scheme="Bearer",
                     bearer_format="JWT",
-                    description="JWT bearer token required for all A2A requests",
+                    description="JWT bearer token via Authorization header",
+                )
+            ),
+            "xToken": SecurityScheme(
+                api_key_security_scheme=APIKeySecurityScheme(
+                    description="Alternative bearer token passed via X-Token header",
+                    location="header",
+                    name="X-Token",
                 )
             ),
             "agentIdentity": SecurityScheme(
@@ -99,8 +106,12 @@ def build_agent_card() -> AgentCard:
             ),
         },
         security_requirements=[
+            # OR semantics: satisfy either option to authenticate
             SecurityRequirement(
                 schemes={"bearer": StringList(), "agentIdentity": StringList()}
-            )
+            ),
+            SecurityRequirement(
+                schemes={"xToken": StringList(), "agentIdentity": StringList()}
+            ),
         ],
     )

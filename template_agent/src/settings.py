@@ -225,6 +225,18 @@ class Settings(BaseSettings):
             "description": "Comma-separated list of downstream A2A agent card URLs",
         },
     )
+    A2A_EXTERNAL_BASE_URL: Optional[str] = Field(
+        default=None,
+        json_schema_extra={
+            "env": "A2A_EXTERNAL_BASE_URL",
+            "description": (
+                "Externally reachable base URL for this agent's A2A endpoints "
+                "(e.g. 'https://my-agent.corp.example.com'). "
+                "Used in the Agent Card's supportedInterfaces URLs. "
+                "Falls back to http(s)://AGENT_HOST:AGENT_PORT when not set."
+            ),
+        },
+    )
 
     @property
     def a2a_downstream_urls(self) -> list[str]:
@@ -239,7 +251,13 @@ class Settings(BaseSettings):
 
     @property
     def a2a_base_url(self) -> str:
-        """Build the base URL for this agent's A2A endpoints."""
+        """Return the externally reachable base URL for Agent Card interfaces.
+
+        Prefers A2A_EXTERNAL_BASE_URL when configured (production).
+        Falls back to a URL derived from AGENT_HOST:AGENT_PORT (local dev).
+        """
+        if self.A2A_EXTERNAL_BASE_URL:
+            return self.A2A_EXTERNAL_BASE_URL.rstrip("/")
         scheme = "https" if self.AGENT_SSL_CERTFILE else "http"
         return f"{scheme}://{self.AGENT_HOST}:{self.AGENT_PORT}"
 
