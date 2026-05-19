@@ -6,6 +6,7 @@ from a2a.types import (
     AgentInterface,
     AgentProvider,
     AgentSkill,
+    APIKeySecurityScheme,
     HTTPAuthSecurityScheme,
     SecurityRequirement,
     SecurityScheme,
@@ -22,7 +23,7 @@ def build_agent_card() -> AgentCard:
     - JSON-RPC v1.0 and v0.3 interfaces (preferred)
     - HTTP+JSON/REST v1.0 interface
     - Streaming capability
-    - Bearer token auth requirement
+    - Bearer token + X-Calling-Agent-ID auth requirements
     - Agent skills describing what this agent can do
     """
     base_url = settings.a2a_base_url
@@ -83,7 +84,23 @@ def build_agent_card() -> AgentCard:
                     bearer_format="JWT",
                     description="JWT bearer token required for all A2A requests",
                 )
-            )
+            ),
+            "agentIdentity": SecurityScheme(
+                api_key_security_scheme=APIKeySecurityScheme(
+                    description=(
+                        "Calling agent identity in 'name+uuid' format "
+                        "(e.g. 'my-agent+550e8400-e29b-41d4-a716-446655440000'). "
+                        "Required for agent-to-agent identity verification "
+                        "and allowlist enforcement."
+                    ),
+                    location="header",
+                    name="X-Calling-Agent-ID",
+                )
+            ),
         },
-        security_requirements=[SecurityRequirement(schemes={"bearer": StringList()})],
+        security_requirements=[
+            SecurityRequirement(
+                schemes={"bearer": StringList(), "agentIdentity": StringList()}
+            )
+        ],
     )
