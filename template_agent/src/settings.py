@@ -208,13 +208,13 @@ class Settings(BaseSettings):
         },
     )
     PROTECT_STREAM_ENDPOINT: bool = Field(
-        default=True,
+        default=False,
         json_schema_extra={
             "env": "PROTECT_STREAM_ENDPOINT",
             "description": (
-                "When True (default), /v1/stream is protected by A2AIdentityMiddleware "
+                "When True, /v1/stream is protected by A2AIdentityMiddleware "
                 "(requires X-Calling-Agent-ID + allowlist). "
-                "When False, /v1/stream remains accessible to UI clients without agent headers."
+                "When False (default), /v1/stream remains accessible to UI clients without agent headers. This is for local development only."
             ),
         },
     )

@@ -166,6 +166,11 @@ async def send_to_downstream_agent(
 
     event: StreamResponse
     async for event in client.send_message(request):
+        if event.HasField("message"):
+            for part in event.message.parts:
+                if part.HasField("text") and part.text:
+                    result_parts.append(part.text)
+
         if event.HasField("artifact_update"):
             for part in event.artifact_update.artifact.parts:
                 if part.HasField("text") and part.text:
