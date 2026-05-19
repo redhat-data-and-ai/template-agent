@@ -94,6 +94,7 @@ class TemplateAgentExecutor(AgentExecutor):
             return
 
         access_token = context.call_context.state.get(ACCESS_TOKEN_STATE_KEY)
+        correlation_id = context.call_context.state.get("correlation_id")
 
         logger.info(
             f"A2A execute: task_id={context.task_id}, "
@@ -106,7 +107,7 @@ class TemplateAgentExecutor(AgentExecutor):
 
         try:
             await self._run_agent_streaming(
-                user_input, access_token, updater, context.context_id
+                user_input, access_token, updater, context.context_id, correlation_id
             )
         except asyncio.CancelledError:
             raise
@@ -158,6 +159,7 @@ class TemplateAgentExecutor(AgentExecutor):
         access_token: str | None,
         updater: TaskUpdater,
         context_id: str | None,
+        correlation_id: str | None = None,
     ) -> None:
         """Run the LangGraph agent and stream token chunks via TaskUpdater."""
         from langchain_core.messages import AIMessageChunk, HumanMessage
@@ -170,6 +172,7 @@ class TemplateAgentExecutor(AgentExecutor):
             sso_token=access_token,
             enable_checkpointing=True,
             a2a_context_id=thread_id,
+            correlation_id=correlation_id,
         ) as agent:
             config = RunnableConfig(
                 configurable={"thread_id": thread_id, "run_id": str(run_id)},

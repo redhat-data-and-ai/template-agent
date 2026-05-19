@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Callable
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +34,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable):
         """Process and log incoming requests and outgoing responses."""
+        request.state.request_id = request.headers.get("X-Request-ID") or str(uuid4())
+
         if not settings.REQUEST_LOGGING_ENABLED:
             return await call_next(request)
 
@@ -138,10 +141,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 # Create FastAPI application with lifespan management
 app = FastAPI(lifespan=lifespan)
 
-# Register request logging middleware first to capture all requests
+# =============================================================================
+# Middleware registration order (Starlette executes LAST registered = OUTERMOST):
+# Execution order: CORS → RequestLogging → A2AIdentity → Route
+# A2AIdentityMiddleware enforces X-Calling-Agent-ID on /a2a/* and (when
+# PROTECT_STREAM_ENDPOINT is True) /v1/stream.  Rejected callers get HTTP 403
+# per A2A spec Section 7.4.  The context builder then reads the validated
+# identity from request.state — it does not re-enforce.
+# Registration order: A2AIdentity → RequestLogging → CORS
+# =============================================================================
+
+# 1. A2A Identity middleware (innermost — protects /a2a and optionally /v1/stream)
+if settings.A2A_ENABLED:
+    from template_agent.src.middleware.a2a_identity import A2AIdentityMiddleware
+
+    app.add_middleware(A2AIdentityMiddleware)
+
+# 2. Request logging middleware (sets request.state.request_id, logs requests)
 app.add_middleware(RequestLoggingMiddleware)
 
-# Configure CORS middleware for cross-origin requests
+# 3. CORS middleware (outermost — handles preflight before anything else)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

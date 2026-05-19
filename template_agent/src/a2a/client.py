@@ -50,30 +50,38 @@ class ForwardingCredentialService(CredentialService):
 
 
 class CallingAgentInterceptor(ClientCallInterceptor):
-    """Injects an X-Calling-Agent-ID header into every outbound A2A request.
+    """Injects A2A identity and correlation headers into every outbound request.
 
-    This lets downstream agents identify which agent is calling them,
-    using the A2A spec's Service Parameters mechanism (Section 3.2.6).
+    Sets X-Calling-Agent-ID (composite name+uuid) and optionally
+    X-Correlation-ID via the A2A spec's Service Parameters mechanism
+    (Section 3.2.6).
     """
 
-    def __init__(self, agent_name: str):
-        """Initialize with the calling agent's identifier."""
-        self._agent_name = agent_name
+    def __init__(self, agent_id: str, correlation_id: str | None = None):
+        """Initialize with the agent's composite identity and optional correlation ID."""
+        self._agent_id = agent_id
+        self._correlation_id = correlation_id
 
     async def before(self, args: BeforeArgs) -> None:
-        """Inject X-Calling-Agent-ID into outbound service parameters."""
+        """Inject X-Calling-Agent-ID and X-Correlation-ID into outbound service parameters."""
         if args.context is None:
             args.context = ClientCallContext()
         if args.context.service_parameters is None:
             args.context.service_parameters = {}
-        args.context.service_parameters["X-Calling-Agent-ID"] = self._agent_name
+        args.context.service_parameters["X-Calling-Agent-ID"] = self._agent_id
+        if self._correlation_id:
+            args.context.service_parameters["X-Correlation-ID"] = self._correlation_id
 
     async def after(self, args: AfterArgs) -> None:
         """No-op post-request hook (required by interface)."""
         pass
 
 
-async def create_a2a_client(agent_url: str, access_token: str | None = None) -> Client:
+async def create_a2a_client(
+    agent_url: str,
+    access_token: str | None = None,
+    correlation_id: str | None = None,
+) -> Client:
     """Create an A2A client for a downstream agent with token forwarding.
 
     Discovers the downstream agent's Agent Card, then creates a Client
@@ -82,11 +90,12 @@ async def create_a2a_client(agent_url: str, access_token: str | None = None) -> 
     Args:
         agent_url: Base URL of the downstream A2A agent.
         access_token: Bearer token to forward. If None, no auth is attached.
+        correlation_id: Optional correlation ID for end-to-end tracing.
 
     Returns:
         A configured A2A Client ready to send messages.
     """
-    interceptors = [CallingAgentInterceptor(settings.A2A_AGENT_NAME)]
+    interceptors = [CallingAgentInterceptor(settings.A2A_AGENT_ID, correlation_id)]
     if access_token:
         cred_service = ForwardingCredentialService(access_token)
         interceptors.append(AuthInterceptor(cred_service))
@@ -117,6 +126,7 @@ async def send_to_downstream_agent(
     message_text: str,
     access_token: str | None = None,
     context_id: str | None = None,
+    correlation_id: str | None = None,
 ) -> str:
     """Send a message to a downstream A2A agent and collect the response.
 
@@ -128,11 +138,12 @@ async def send_to_downstream_agent(
         message_text: The text message to send.
         access_token: Bearer token to forward to the downstream agent.
         context_id: Optional context ID for multi-turn conversations.
+        correlation_id: Optional correlation ID for end-to-end tracing.
 
     Returns:
         The text content from the downstream agent's response artifacts.
     """
-    client = await create_a2a_client(agent_url, access_token)
+    client = await create_a2a_client(agent_url, access_token, correlation_id)
 
     message = Message(
         message_id=str(uuid4()),

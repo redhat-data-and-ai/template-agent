@@ -5,7 +5,7 @@ BaseSettings for environment variable loading, validation, and default
 value handling for the template agent service.
 """
 
-from typing import Optional
+from typing import Optional, List
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -183,6 +183,39 @@ class Settings(BaseSettings):
         json_schema_extra={
             "env": "A2A_PROVIDER_URL",
             "description": "URL for the Agent Card provider field",
+        },
+    )
+    A2A_AGENT_ID: str = Field(
+        default="template-agent+00000000-0000-0000-0000-000000000000",
+        json_schema_extra={
+            "env": "A2A_AGENT_ID",
+            "description": (
+                "Combined agent identity in 'name+uuid' format "
+                "(e.g. 'template-agent+550e8400-e29b-41d4-a716-446655440000'). "
+                "Sent as X-Calling-Agent-ID outbound and used for peer allowlist matching. "
+                "MUST be configured with a real UUID for production deployments."
+            ),
+        },
+    )
+    A2A_ALLOWED_INBOUND_AGENTS: Optional[List[str]] = Field(
+        default=None,
+        json_schema_extra={
+            "env": "A2A_ALLOWED_INBOUND_AGENTS",
+            "description": (
+                "JSON list of agent identities (name+uuid) allowed to call this agent. "
+                "When None, any well-formed identity is accepted."
+            ),
+        },
+    )
+    PROTECT_STREAM_ENDPOINT: bool = Field(
+        default=True,
+        json_schema_extra={
+            "env": "PROTECT_STREAM_ENDPOINT",
+            "description": (
+                "When True (default), /v1/stream is protected by A2AIdentityMiddleware "
+                "(requires X-Calling-Agent-ID + allowlist). "
+                "When False, /v1/stream remains accessible to UI clients without agent headers."
+            ),
         },
     )
     A2A_DOWNSTREAM_AGENT_URLS: Optional[str] = Field(

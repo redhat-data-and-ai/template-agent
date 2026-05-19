@@ -1,11 +1,17 @@
-"""Bearer token authentication for incoming A2A requests.
+"""Bearer token authentication and context enrichment for A2A requests.
 
 Accepts both JWT (3-part) and JWE (5-part) tokens in the Authorization
 header. JWT tokens are decoded for claims; JWE tokens are stored as-is
 for forwarding to downstream agents that can decrypt them.
 
-The raw token is stored in ServerCallContext.state so the AgentExecutor
-can forward it to downstream agents/MCP servers.
+Agent identity verification (X-Calling-Agent-ID header + allowlist) is
+handled by A2AIdentityMiddleware at the HTTP layer, which returns a
+proper 403 per A2A spec Section 7.4.  This builder reads the validated
+identity from request.state (set by the middleware) and carries it into
+ServerCallContext.state for the executor.
+
+The /.well-known/agent-card.json endpoint is NOT routed through this
+builder (it uses separate routes), so it remains public.
 """
 
 import jwt
@@ -96,14 +102,13 @@ class A2AServerCallContextBuilder(DefaultServerCallContextBuilder):
     """Extends the default context builder with bearer token validation.
 
     For every A2A request this:
-    1. Extracts the Authorization: Bearer token
-    2. Detects format: JWT (3-part) or JWE (5-part)
-    3. For JWT: decodes claims to extract user identity
-    4. For JWE: accepts as-is for downstream forwarding
-    5. Stores the raw token in state so the executor can forward it
-
-    The /.well-known/agent-card.json endpoint is NOT routed through
-    this builder (it uses separate routes), so it remains public.
+    1. Reads caller identity from request.state (set by A2AIdentityMiddleware)
+    2. Captures X-Correlation-ID for end-to-end tracing
+    3. Extracts the Authorization: Bearer token
+    4. Detects format: JWT (3-part) or JWE (5-part)
+    5. For JWT: decodes claims to extract user identity
+    6. For JWE: accepts as-is for downstream forwarding
+    7. Stores all context in state so the executor can forward it
     """
 
     def build(self, request: Request) -> ServerCallContext:
@@ -130,8 +135,11 @@ class A2AServerCallContextBuilder(DefaultServerCallContextBuilder):
         else:
             user_name = "jwe-authenticated"
 
+        calling_agent_id = getattr(request.state, "calling_agent_id", None)
+
         logger.info(
             f"A2A request authenticated: user={user_name}, format={token_format}"
+            + (f", calling_agent={calling_agent_id}" if calling_agent_id else "")
         )
 
         state = {
@@ -139,6 +147,9 @@ class A2AServerCallContextBuilder(DefaultServerCallContextBuilder):
             "headers": dict(request.headers),
             "token_format": token_format,
             "jwt_claims": claims,
+            "correlation_id": getattr(request.state, "correlation_id", None),
+            "calling_agent_id": calling_agent_id,
+            "calling_agent_uuid": getattr(request.state, "calling_agent_uuid", None),
         }
 
         return ServerCallContext(

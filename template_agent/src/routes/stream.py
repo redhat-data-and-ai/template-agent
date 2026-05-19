@@ -148,9 +148,15 @@ async def stream(user_input: StreamRequest, request: Request) -> StreamingRespon
     if not access_token:
         raise HTTPException(status_code=401, detail=MISSING_AUTH_DETAIL)
 
+    correlation_id = (
+        getattr(request.state, "correlation_id", None)
+        or request.headers.get("X-Correlation-ID")
+        or getattr(request.state, "request_id", None)
+    )
+
     # Initialize AgentManager BEFORE streaming to catch initialization errors
     try:
-        agent_manager = AgentManager(redhat_sso_token=access_token)
+        agent_manager = AgentManager(redhat_sso_token=access_token, correlation_id=correlation_id)
     except Exception as e:
         app_logger.error(f"Failed to initialize AgentManager: {e}")
         raise HTTPException(

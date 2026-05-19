@@ -17,6 +17,7 @@ def _make_tool_for_agent(
     agent_url: str,
     access_token: str | None,
     context_id: str | None = None,
+    correlation_id: str | None = None,
 ) -> list[StructuredTool]:
     """Create LangChain tools from an Agent Card's skills."""
     tools = []
@@ -37,13 +38,15 @@ def _make_tool_for_agent(
         _token = access_token
         _skill_id = skill.id
         _ctx = context_id
+        _corr_id = correlation_id
 
-        async def _invoke(query: str, url=_url, token=_token, ctx=_ctx) -> str:
+        async def _invoke(query: str, url=_url, token=_token, ctx=_ctx, corr_id=_corr_id) -> str:
             return await send_to_downstream_agent(
                 agent_url=url,
                 message_text=query,
                 access_token=token,
                 context_id=ctx,
+                correlation_id=corr_id,
             )
 
         tool_name = f"a2a_{card.name.lower().replace(' ', '_')}_{_skill_id}"
@@ -66,12 +69,14 @@ def _make_tool_for_agent(
 async def build_a2a_tools(
     access_token: str | None = None,
     context_id: str | None = None,
+    correlation_id: str | None = None,
 ) -> list[StructuredTool]:
     """Discover downstream A2A agents and build LangChain tools from their skills.
 
     Fetches Agent Cards from configured URLs, then creates a tool per skill.
-    The access token and context_id are captured in each tool's closure so
-    downstream calls reuse the same conversation thread.
+    The access token, context_id, and correlation_id are captured in each
+    tool's closure so downstream calls reuse the same conversation thread
+    and propagate tracing headers.
 
     Returns an empty list if no downstream agents are configured or if
     discovery fails (non-fatal).
@@ -87,7 +92,7 @@ async def build_a2a_tools(
             try:
                 resolver = A2ACardResolver(httpx_client=http_client, base_url=url)
                 card = await resolver.get_agent_card()
-                agent_tools = _make_tool_for_agent(card, url, access_token, context_id)
+                agent_tools = _make_tool_for_agent(card, url, access_token, context_id, correlation_id)
                 all_tools.extend(agent_tools)
                 logger.info(
                     f"Discovered A2A agent '{card.name}' at {url} "

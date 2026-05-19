@@ -61,6 +61,7 @@ async def get_template_agent(
     sso_token: Optional[str] = None,
     enable_checkpointing: bool = True,
     a2a_context_id: str | None = None,
+    correlation_id: str | None = None,
 ):
     """Get a fully initialized template agent.
 
@@ -75,6 +76,8 @@ async def get_template_agent(
             Set to False for streaming-only operations that shouldn't save to DB.
         a2a_context_id: Optional A2A context ID to forward to downstream agents
             so they can maintain multi-turn conversation state.
+        correlation_id: Optional correlation ID for end-to-end tracing across
+            agent-to-agent calls.
 
     Yields:
         The initialized template agent instance.
@@ -126,7 +129,7 @@ async def get_template_agent(
         # Discover downstream A2A agents and register as tools
         from template_agent.src.a2a.tools import build_a2a_tools
 
-        a2a_tools = await build_a2a_tools(sso_token, context_id=a2a_context_id)
+        a2a_tools = await build_a2a_tools(sso_token, context_id=a2a_context_id, correlation_id=correlation_id)
         tools.extend(a2a_tools)
         logger.info(f"Registered {len(a2a_tools)} downstream A2A tool(s) total")
     except asyncio.TimeoutError:

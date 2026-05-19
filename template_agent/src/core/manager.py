@@ -48,13 +48,15 @@ class AgentManager:
     error handling from the original implementation.
     """
 
-    def __init__(self, redhat_sso_token: str | None = None):
+    def __init__(self, redhat_sso_token: str | None = None, correlation_id: str | None = None):
         """Initialize the AgentManager.
 
         Args:
             redhat_sso_token: Optional SSO token for enterprise authentication.
+            correlation_id: Optional correlation ID for end-to-end tracing across agents.
         """
         self.redhat_sso_token = redhat_sso_token
+        self.correlation_id = correlation_id
         self._agent: Pregel | None = None
         self._current_tool_call_id: str | None = None  # Track current active tool call
 
@@ -79,6 +81,7 @@ class AgentManager:
             self.redhat_sso_token,
             enable_checkpointing=True,
             a2a_context_id=thread_id,
+            correlation_id=self.correlation_id,
         ) as persistent_agent:
             try:
                 # Prepare input for the persistent agent
