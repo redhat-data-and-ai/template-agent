@@ -35,7 +35,7 @@ from deep_agent.utils.pylogger import (
 
 logger = get_python_logger()
 
-app = FastAPI(title="template-agent-custom", docs_url=None, redoc_url=None)
+app = FastAPI(title="template-agent-custom")
 
 
 class TraceIDMiddleware(BaseHTTPMiddleware):

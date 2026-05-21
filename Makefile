@@ -101,10 +101,17 @@ local-with-mock:
 local:
 	@echo "Setting up local environment..."
 	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
+	@lsof -ti :5002 | xargs kill -9 2>/dev/null || true
+	@echo "Starting infrastructure (Postgres + Redis)..."
+	@podman-compose -f compose.yaml up -d pgvector redis
+	@echo "Waiting for Postgres to be ready..."
+	@until podman exec demo-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
+	@podman exec demo-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
+		|| podman exec demo-pgvector psql -U postgres -c "CREATE DATABASE aegra;"
 	@echo "Starting agent with LangGraph Platform..."
 	@echo "API available at: http://localhost:5002"
 	@echo "Press Ctrl+C to stop the server"
-	@. .venv/bin/activate && aegra dev --port 5002
+	@. .venv/bin/activate && REDIS_BROKER_ENABLED=true REDIS_URL=redis://localhost:6379/0 aegra dev --port 5002 --no-db-check
 
 container:
 	export PODMAN_COMPOSE_SILENT=true
