@@ -246,3 +246,7 @@ logs/
 docker-compose.override.yml
 .envrc
 .direnv/
+
+# Aegra-generated scaffolding (conflicts with existing compose.yaml + k8s deployment)
+Dockerfile
+docker-compose.yml

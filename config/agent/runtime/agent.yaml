@@ -132,8 +132,6 @@ middleware:
   pii:
     enabled: true
     rules:
-      - type: email
-        strategy: redact
       - type: credit_card
         strategy: mask
       - type: ip
