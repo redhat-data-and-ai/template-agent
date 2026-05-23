@@ -1,0 +1,117 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: NAMESPACE_PLACEHOLDER
+
+resources:
+  - ../../base
+  - buildconfig.yaml
+  - imagestream.yaml
+  - deployment.yaml
+  - service.yaml
+  - route.yaml
+  - pdb.yaml
+  - hpa.yaml
+
+labels:
+  - pairs:
+      app: agent
+      component: agent
+
+images:
+  - name: agent
+    newTag: latest
+
+patches:
+  - path: configmap-patch.yaml
+  - path: secret-patch.yaml
+
+  # Agent deployment patches
+  - target:
+      kind: Deployment
+      name: agent
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "250m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+
+  # PostgreSQL deployment patches (from base)
+  - target:
+      kind: Deployment
+      name: postgres
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "200m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+      - op: add
+        path: /spec/template/spec/containers/0/args
+        value: ["-c", "max_connections=200"]
+
+  # PostgreSQL PVC size (OpenShift gets more storage)
+  - target:
+      kind: PersistentVolumeClaim
+      name: postgres-pvc
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: "10Gi"
+
+  # Redis deployment patches (from base)
+  - target:
+      kind: Deployment
+      name: redis
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "256Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "500m"
+
+  # Redis PVC size (OpenShift gets more storage)
+  - target:
+      kind: PersistentVolumeClaim
+      name: redis-pvc
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: "2Gi"
+
+  # BuildConfig patches
+  - target:
+      kind: BuildConfig
+      name: agent
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/memory
+        value: "2Gi"
+      - op: replace
+        path: /spec/resources/requests/cpu
+        value: "1000m"
+      - op: replace
+        path: /spec/resources/limits/memory
+        value: "4Gi"
+      - op: replace
+        path: /spec/resources/limits/cpu
+        value: "4"

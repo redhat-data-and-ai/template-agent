@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.oauth2 import service_account
 
-from template_agent.utils.google_creds import (
+from deep_agent.utils.google_creds import (
     clear_credentials_cache,
     get_service_account_credentials,
 )
@@ -42,14 +42,14 @@ class TestGetServiceAccountCredentials:
         """Test successful loading of credentials from valid JSON."""
         mock_creds = MagicMock(spec=service_account.Credentials)
 
-        with patch("template_agent.utils.google_creds.settings") as mock_settings:
+        with patch("deep_agent.utils.google_creds.settings") as mock_settings:
             mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = json.dumps(
                 mock_service_account_info
             )
             mock_settings.PYTHON_LOG_LEVEL = "INFO"
 
             with patch(
-                "template_agent.utils.google_creds.service_account.Credentials.from_service_account_info",
+                "deep_agent.utils.google_creds.service_account.Credentials.from_service_account_info",
                 return_value=mock_creds,
             ) as mock_from_info:
                 credentials, project = get_service_account_credentials()
@@ -66,14 +66,14 @@ class TestGetServiceAccountCredentials:
         """Test that credentials are cached after first call."""
         mock_creds = MagicMock(spec=service_account.Credentials)
 
-        with patch("template_agent.utils.google_creds.settings") as mock_settings:
+        with patch("deep_agent.utils.google_creds.settings") as mock_settings:
             mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = json.dumps(
                 mock_service_account_info
             )
             mock_settings.PYTHON_LOG_LEVEL = "INFO"
 
             with patch(
-                "template_agent.utils.google_creds.service_account.Credentials.from_service_account_info",
+                "deep_agent.utils.google_creds.service_account.Credentials.from_service_account_info",
                 return_value=mock_creds,
             ) as mock_from_info:
                 # First call
@@ -92,7 +92,7 @@ class TestGetServiceAccountCredentials:
     @pytest.mark.parametrize("creds_content", [None, ""])
     def test_missing_or_empty_credentials(self, creds_content):
         """Test error when credentials are None or empty."""
-        with patch("template_agent.utils.google_creds.settings") as mock_settings:
+        with patch("deep_agent.utils.google_creds.settings") as mock_settings:
             mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = creds_content
             mock_settings.PYTHON_LOG_LEVEL = "INFO"
 
@@ -103,7 +103,7 @@ class TestGetServiceAccountCredentials:
 
     def test_invalid_json(self):
         """Test error when credentials content is not valid JSON."""
-        with patch("template_agent.utils.google_creds.settings") as mock_settings:
+        with patch("deep_agent.utils.google_creds.settings") as mock_settings:
             mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = "not valid json {"
             mock_settings.PYTHON_LOG_LEVEL = "INFO"
 
@@ -118,7 +118,7 @@ class TestGetServiceAccountCredentials:
         else:
             mock_service_account_info["project_id"] = ""
 
-        with patch("template_agent.utils.google_creds.settings") as mock_settings:
+        with patch("deep_agent.utils.google_creds.settings") as mock_settings:
             mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = json.dumps(
                 mock_service_account_info
             )
@@ -135,14 +135,14 @@ class TestGetServiceAccountCredentials:
         mock_creds1 = MagicMock(spec=service_account.Credentials)
         mock_creds2 = MagicMock(spec=service_account.Credentials)
 
-        with patch("template_agent.utils.google_creds.settings") as mock_settings:
+        with patch("deep_agent.utils.google_creds.settings") as mock_settings:
             mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = json.dumps(
                 mock_service_account_info
             )
             mock_settings.PYTHON_LOG_LEVEL = "INFO"
 
             with patch(
-                "template_agent.utils.google_creds.service_account.Credentials.from_service_account_info",
+                "deep_agent.utils.google_creds.service_account.Credentials.from_service_account_info",
                 side_effect=[mock_creds1, mock_creds2],
             ) as mock_from_info:
                 # First load

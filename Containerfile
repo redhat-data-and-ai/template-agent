@@ -1,40 +1,25 @@
-FROM registry.access.redhat.com/ubi9/python-312:latest
-
-# --------------------------------------------------------------------------------------------------
-# set the working directory to /app
-# --------------------------------------------------------------------------------------------------
+# Available tags: latest, 3.14.4, 3.14, 3
+ARG PYTHON_TAG=3.14.4-builder
+FROM registry.access.redhat.com/hi/python:${PYTHON_TAG}
 
 WORKDIR /app
-
-# --------------------------------------------------------------------------------------------------
-# Copy manifest files and install python packages
-# --------------------------------------------------------------------------------------------------
-
 USER root
+
 COPY pyproject.toml /app/pyproject.toml
-# Install deps into /app/.venv explicitly (each RUN is a new shell; "source activate" does not persist).
+
 RUN pip install --no-cache-dir uv && \
-    cd /app && \
     uv venv /app/.venv && \
     uv pip install --python /app/.venv/bin/python -r pyproject.toml && \
-    mkdir -p /app/.cache && chown -R default:root /app/.cache
-USER default
+    mkdir -p /app/.cache && chown -R 65532:root /app/.cache
+USER 65532
 
-# --------------------------------------------------------------------------------------------------
-# copy source code and files
-# --------------------------------------------------------------------------------------------------
-
-COPY template_agent /app/template_agent
-
-# --------------------------------------------------------------------------------------------------
-# Set PYTHONPATH to include /app
-# --------------------------------------------------------------------------------------------------
+COPY --chown=65532:root deep_agent /app/deep_agent
+COPY --chown=65532:root config /app/config
+COPY --chown=65532:root aegra.json /app/aegra.json
 
 ENV PYTHONPATH=/app
+ENV AGENT_HOST=0.0.0.0
+ENV AGENT_PORT=5002
 
-
-# --------------------------------------------------------------------------------------------------
-# add entrypoint for the container
-# --------------------------------------------------------------------------------------------------
-
-CMD ["/app/.venv/bin/python", "-m", "template_agent.src.main"]
+EXPOSE 5002
+CMD ["/bin/sh", "-c", "/app/.venv/bin/aegra serve --host ${AGENT_HOST} --port ${AGENT_PORT}"]

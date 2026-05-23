@@ -7,8 +7,8 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
-    name: Test Suite
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -30,11 +30,11 @@ jobs:
       run: |
         uv pip install -e ".[dev]"
 
-    - name: Run tests with coverage
+    - name: Run unit tests with coverage
       env:
         GOOGLE_APPLICATION_CREDENTIALS_CONTENT: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_CONTENT }}
       run: |
-        source .venv/bin/activate && pytest --cov=template_agent --cov-report=xml --cov-report=term-missing --cov-fail-under=19
+        source .venv/bin/activate && pytest tests/unit -m "not e2e" --cov=deep_agent --cov-report=xml --cov-report=html --cov-report=term-missing --cov-fail-under=81
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v4
@@ -45,3 +45,167 @@ jobs:
         fail_ci_if_error: false
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  skills-evals:
+    name: Skills Evaluations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+
+    - name: Set up virtual env
+      run: uv venv --python ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        uv pip install -e ".[dev]"
+
+    - name: Run skills evals
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS_CONTENT: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_CONTENT }}
+      run: |
+        source .venv/bin/activate && pytest tests/skills -m skills -v
+
+    - name: Upload skills eval results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: skills-eval-results
+        path: tests/workspaces/
+
+  agent-evals-promptfoo:
+    name: Agent Evals (Promptfoo)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+        node-version: ["20"]
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: pgvector
+          POSTGRES_PASSWORD: pgvector
+          POSTGRES_DB: pgvector
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+
+    - name: Set up Python virtual env
+      run: uv venv --python ${{ matrix.python-version }}
+
+    - name: Install Python dependencies
+      run: |
+        uv pip install -e ".[dev]"
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+
+    - name: Install jq
+      run: sudo apt-get update && sudo apt-get install -y jq
+
+    - name: Start Mock MCP Server
+      run: |
+        source .venv/bin/activate
+        python tests/mocks/mock_mcp_server.py > mock-mcp.log 2>&1 &
+        echo $! > mock-mcp.pid
+        sleep 3
+        # Verify mock MCP server is running
+        curl -f http://localhost:5001/health || (echo "Mock MCP server failed to start" && cat mock-mcp.log && exit 1)
+        echo "Mock MCP server started successfully"
+
+    - name: Start agent server
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS_CONTENT: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_CONTENT }}
+        POSTGRES_USER: pgvector
+        POSTGRES_PASSWORD: pgvector
+        POSTGRES_DB: pgvector
+        POSTGRES_HOST: localhost
+        POSTGRES_PORT: 5432
+        AGENT_HOST: 0.0.0.0
+        AGENT_PORT: 5002
+        PYTHON_LOG_LEVEL: INFO
+      run: |
+        source .venv/bin/activate
+        python -m deep_agent.src.main > agent.log 2>&1 &
+        echo $! > agent.pid
+        echo "Agent PID: $(cat agent.pid)"
+
+    - name: Wait for agent to be ready
+      run: |
+        echo "Waiting for agent to start..."
+        for i in {1..30}; do
+          if curl -f http://localhost:5002/health 2>/dev/null; then
+            echo "✓ Agent is ready after ${i} seconds"
+            exit 0
+          fi
+          echo "Waiting... ($i/30)"
+          sleep 1
+        done
+        echo "✗ Agent failed to start within 30 seconds"
+        echo "=== Agent logs ==="
+        cat agent.log
+        exit 1
+
+    - name: Run Promptfoo evals
+      env:
+        AGENT_URL: http://localhost:5002
+      working-directory: config/agent/evals/promptfoo
+      run: |
+        npx promptfoo@latest eval --output ../../../promptfoo-results.json
+
+    - name: Upload agent logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: agent-logs
+        path: agent.log
+
+    - name: Stop agent server
+      if: always()
+      run: |
+        if [ -f agent.pid ]; then
+          kill $(cat agent.pid) || true
+          rm agent.pid
+        fi
+
+    - name: Stop Mock MCP Server
+      if: always()
+      run: |
+        if [ -f mock-mcp.pid ]; then
+          kill $(cat mock-mcp.pid) || true
+          rm mock-mcp.pid
+        fi
+
+    - name: Upload Promptfoo results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: promptfoo-results
+        path: promptfoo-results.json
+        if-no-files-found: warn

@@ -16,10 +16,13 @@ cd template-agent
 uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 cp .env.example .env          # edit with your config
-uv run python -m template_agent.src.main
+uv run python -m deep_agent.src.main
 ```
 
-The [template-mcp-server](https://github.com/redhat-data-and-ai/template-mcp-server) must be running before starting the agent.
+**MCP Server Required:** The agent needs an MCP server for BMI calculations and email features.
+
+- **For Testing:** Use the included Mock MCP Server: `make mock-mcp` (see [SETUP.md](./SETUP.md))
+- **For Production:** Clone and run [template-mcp-server](https://github.com/redhat-data-and-ai/template-mcp-server)
 
 ## API
 
@@ -43,25 +46,26 @@ Client examples (Streamlit, Python async) are in [`examples/`](./examples/).
 
 | Variable | Default | Required |
 |---|---|---|
-| `AGENT_HOST` | `0.0.0.0` | No |
-| `AGENT_PORT` | `5002` | No |
-| `PYTHON_LOG_LEVEL` | `INFO` | No |
 | `POSTGRES_USER` | `pgvector` | Yes |
 | `POSTGRES_PASSWORD` | `pgvector` | Yes |
 | `POSTGRES_DB` | `pgvector` | Yes |
 | `POSTGRES_HOST` | `pgvector` | Yes |
 | `POSTGRES_PORT` | `5432` | Yes |
+| `REDIS_URL` | `redis://redis:6379/0` | No |
 | `GOOGLE_SERVICE_ACCOUNT_FILE` | — | Yes |
 | `LANGFUSE_PUBLIC_KEY` | — | No |
 | `LANGFUSE_SECRET_KEY` | — | No |
 | `LANGFUSE_BASE_URL` | — | No |
-| `AGENT_SSL_KEYFILE` | — | No |
-| `AGENT_SSL_CERTFILE` | — | No |
+| `LANGFUSE_TRACING_ENVIRONMENT` | `development` | No |
+| `SSL_KEYFILE` | — | No |
+| `SSL_CERTFILE` | — | No |
+
+Runtime configuration (cache TTLs, memory settings, agent identity) is in `config/agent/runtime/agent.yaml`.
 
 ## Project Structure
 
 ```
-template_agent/
+deep_agent/
 ├── src/
 │   ├── core/
 │   │   ├── agent.py          # Agent initialisation + subagent loading
@@ -98,7 +102,7 @@ template_agent/
 pytest
 
 # With coverage
-pytest --cov=template_agent.src --cov-report=html
+pytest --cov=deep_agent.src --cov-report=html
 
 # Agent-level tests only
 pytest tests/agents/ -v
@@ -123,17 +127,17 @@ Tests are organized by agent (orchestrator + subagents), each with its associate
 **Analyst** (`test_analyst.py`)
 - Skill: `bmi-report`
 - Tools: `calculate_bmi`, `search_web`
-- Evals: `template_agent/agent_config/skills/bmi-report/evals/evals.json`
+- Evals: `deep_agent/agent_config/skills/bmi-report/evals/evals.json`
 
 **Publisher** (`test_publisher.py`)
 - Skill: `email-formatter`
 - Tools: `send_email`
-- Evals: `template_agent/agent_config/skills/email-formatter/evals/evals.json`
+- Evals: `deep_agent/agent_config/skills/email-formatter/evals/evals.json`
 
 **Orchestrator** (`test_orchestrator.py`)
 - Skill: `client-intake`
 - Subagents: Analyst + Publisher
-- Evals: `template_agent/agent_config/skills/client-intake/evals/evals.json`
+- Evals: `deep_agent/agent_config/skills/client-intake/evals/evals.json`
 
 Test results saved to `tests/workspaces/{agent}-workspace/eval-{id}/`:
 - `outputs/report.md` - Agent output
@@ -141,13 +145,69 @@ Test results saved to `tests/workspaces/{agent}-workspace/eval-{id}/`:
 
 ## Deployment
 
+### Custom FastAPI Server (default)
+
 ```bash
 podman-compose up -d --build
 ```
 
 For production: configure SSL certs (`AGENT_SSL_KEYFILE`, `AGENT_SSL_CERTFILE`), use managed PostgreSQL, and enable Langfuse tracing.
 
+### Aegra / LangGraph Platform (with deep-agents-ui)
+
+Serve the agent via the standard [LangGraph Platform](https://docs.langchain.com/langsmith/cli) API.
+Compatible with [deep-agents-ui](https://github.com/langchain-ai/deep-agents-ui).
+
+**Option A — Local dev (no Docker):**
+
+```bash
+# Terminal 1: Start the mock MCP server
+make mock-mcp
+
+# Terminal 2: Start LangGraph dev server
+pip install "langgraph-cli[inmem]"
+make aegra-dev
+
+# Terminal 3: Start the UI
+make aegra-clone-ui
+make aegra-ui
+```
+
+Open http://localhost:3000, set **Deployment URL** = `http://127.0.0.1:2024`, **Assistant ID** = `agent`.
+
+**Option B — Docker Compose:**
+
+```bash
+# Clone the UI
+make aegra-clone-ui
+
+# Start everything via LangGraph CLI
+langgraph up -d compose.yaml --port 2024 --wait
+```
+
+**Option C — Build a standalone Docker image:**
+
+```bash
+make aegra-build
+docker run -p 2024:8123 --env-file .env template-agent-aegra
+```
+
+#### Aegra directory structure
+
+```
+deep_agent/
+└── aegra/
+    ├── __init__.py       # Package metadata
+    ├── graph.py          # Graph builder + exported agent (aegra.json entry)
+    ├── state.py          # Extended state schema and health types
+    ├── converters.py     # State conversion utilities
+    └── nodes.py          # Error-handling node decorators
+aegra.json                # Aegra Platform configuration
+```
+
 ## Links
 
 - [Issues](https://github.com/redhat-data-and-ai/template-agent/issues)
 - [template-mcp-server](https://github.com/redhat-data-and-ai/template-mcp-server)
+- [deep-agents-ui](https://github.com/langchain-ai/deep-agents-ui)
+- [LangGraph Platform docs](https://docs.langchain.com/langsmith/cli)

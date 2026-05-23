@@ -1,55 +1,169 @@
+## Unified Compose Stack
+##
+## Default (dev):  Agent + infra only (pgvector, redis)
+##   make dev           - Start dev stack
+##   make dev-down      - Stop dev stack
+##
+## Demo profile:   Adds UI + MCP Server with SSO authentication
+##   make demo          - Clone repos, configure, start full stack
+##   make clean         - Stop stack, remove data + cloned repos
+##
+## Services (always):
+##   pgvector              - Postgres (agent checkpoints)
+##   redis                 - Aegra broker (SSE streaming, job queue)
+##   template-agent        - Agent (port 5002)
+##
+## Services (demo profile):
+##   template-mcp-server   - MCP server with SSO auth (port 5001)
+##   template-ui           - React/Fastify frontend with SSO auth (port 8080)
+
 services:
   pgvector:
     image: ankane/pgvector
-    container_name: template-agent-pgvector
+    container_name: demo-pgvector
     environment:
-      POSTGRES_DB: pgvector
-      POSTGRES_USER: pgvector
-      POSTGRES_PASSWORD: pgvector
+      POSTGRES_DB: template_agent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
     volumes:
-      - pgvector_data:/var/lib/postgresql/data
-    restart: always
+      - demo_pgvector_data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/10-create-databases.sql:ro
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pgvector -d pgvector"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d template_agent"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
     networks:
-      - template-network
+      - demo-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: demo-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - demo_redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - demo-network
+
+  template-mcp-server:
+    profiles: [demo]
+    build:
+      context: .demo/template-mcp-server
+      dockerfile: Containerfile
+    container_name: demo-mcp-server
+    ports:
+      - "5001:5001"
+    env_file:
+      - .demo/mcp-server.env
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=5001
+      - ENABLE_AUTH=True
+      - POSTGRES_HOST=pgvector
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=mcp_server
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-k", "http://0.0.0.0:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - demo-network
 
   template-agent:
     build:
       context: .
       dockerfile: Containerfile
-    container_name: template-agent
+    container_name: demo-agent
     ports:
       - "5002:5002"
     env_file:
       - .env
     environment:
-      - AGENT_PORT=5002
+      # Framework-required: Aegra/LangGraph read these directly from env,
+      # not from settings.py. Container hostnames differ from local dev.
+      - ENABLE_AUTH=true
       - POSTGRES_HOST=pgvector
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=pgvector
-      - POSTGRES_USER=pgvector
-      - POSTGRES_PASSWORD=pgvector
+      - POSTGRES_DB=template_agent
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_BROKER_ENABLED=true
     depends_on:
       pgvector:
         condition: service_healthy
-    restart: always
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "curl", "-f", "-k", "http://0.0.0.0:5002/health"]
-      interval: 5s
+      test: ["CMD", "curl", "-f", "http://0.0.0.0:5002/health"]
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    volumes:
+      - ./deep_agent:/app/deep_agent:ro
+      - ./config:/app/config:ro
     networks:
-      - template-network
+      - demo-network
+
+  template-ui:
+    profiles: [demo]
+    build:
+      context: .demo/template-ui
+      dockerfile: Containerfile
+    container_name: demo-ui
+    ports:
+      - "8080:8080"
+    env_file:
+      - .demo/ui.env
+    environment:
+      - PORT=8080
+      - AGENT_HOST=http://template-agent:5002
+      - AUTH_ENABLED=true
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      template-agent:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://0.0.0.0:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    networks:
+      - demo-network
 
 volumes:
-  pgvector_data:
+  demo_pgvector_data:
+    driver: local
+  demo_redis_data:
     driver: local
 
 networks:
-  template-network:
+  demo-network:
     driver: bridge

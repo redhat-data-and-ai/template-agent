@@ -3,11 +3,11 @@
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from template_agent.src.adapters.langchain import (
+from deep_agent.src.adapters.langchain import (
     convert_message_content_to_string,
     langchain_to_chat_message,
 )
-from template_agent.src.schema import ChatMessage
+from deep_agent.src.schema import ChatMessage
 
 
 class TestConvertMessageContentToString:

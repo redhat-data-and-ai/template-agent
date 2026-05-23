@@ -1,0 +1,250 @@
+# Agent Configuration
+#
+# Unified runtime config for the template agent. Sections marked [YAML-loaded]
+# are parsed by the Python config loader at startup. Sections marked [env-var]
+# are read from environment variables via Pydantic BaseSettings — they appear
+# here as the canonical reference for what those settings do and their defaults.
+#
+# Template users configure everything here. No Python code needed.
+#
+# OpenShift notes:
+#   - Secrets (DB passwords, API keys) come via OpenShift Secrets → env vars.
+#   - Infrastructure endpoints (DB host, Redis host) come via ConfigMaps → env vars.
+#   - Everything else lives here.
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Identity                                                        [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+name: "Health Assistant"
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Model                                                              [env-var]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+model:
+  max_output_tokens: 8192
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Providers                                                      [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Model resolution strategy:
+#   legacy: Use built-in create_model() — Vertex AI (Gemini + Claude) + vLLM.
+#   deepagents: Use deepagents resolve_model() + ProviderProfile registry.
+resolve_strategy: legacy
+# Provider profiles — register with deepagents.register_provider_profile()
+# Only used when resolve_strategy: deepagents
+providers:
+  google_genai:
+    init_kwargs:
+      # project: ${GCP_PROJECT}
+      temperature: 0.0
+  anthropic_vertex:
+    init_kwargs:
+      # project: ${GCP_PROJECT}
+      temperature: 0.0
+  openai:
+    init_kwargs:
+      temperature: 0.0
+# ── vLLM / OpenAI-compatible models ──────────────────────────────
+# Any model not in the built-in Gemini/Claude lists is routed to the
+# vLLM endpoint. Set VLLM_BASE_URL to your inference server.
+#
+# Examples:
+#   VLLM_BASE_URL=http://vllm-server:8000/v1
+#   VLLM_BASE_URL=http://ollama:11434/v1
+#   VLLM_BASE_URL=https://my-tgi-endpoint.example.com/v1
+#
+# Then use any model name in PROMPT.md:
+#   model: mistralai/Mistral-7B-Instruct-v0.3
+#   model: meta-llama/Llama-3.1-8B-Instruct
+#   model: ibm-granite/granite-3.3-8b-instruct
+#
+# VLLM_API_KEY defaults to "EMPTY" (vLLM default). Set if your
+# endpoint requires authentication.
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Harness Profiles                                               [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Per-model runtime adjustments. Single source of truth — used by both
+# the provider registry (deepagents HarnessProfile) and middleware resolution.
+#
+# Key format: "provider:model" or just "model" for provider-agnostic matching.
+harness_profiles:
+  gemini-2.5-pro:
+    system_prompt_suffix: ""
+    excluded_tools: []
+    excluded_middleware: []
+    general_purpose_subagent:
+      enabled: true
+  gemini-2.5-flash:
+    system_prompt_suffix: ""
+    excluded_tools: []
+    excluded_middleware: []
+    general_purpose_subagent:
+      enabled: true
+  gemini-3.1-pro-preview:
+    system_prompt_suffix: ""
+    excluded_tools: []
+    excluded_middleware: []
+    general_purpose_subagent:
+      enabled: true
+  claude-sonnet-4:
+    system_prompt_suffix: ""
+    excluded_tools: []
+    excluded_middleware:
+      - patch_tool_calls
+    general_purpose_subagent:
+      enabled: true
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Middleware Pipeline                                            [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Controls which deepagents middleware is active and how it behaves.
+# Resolution order: defaults → profile (matched from model: field) → per-agent overrides
+middleware:
+  summarization_tool:
+    enabled: true
+  memory:
+    enabled: true
+    namespaces:
+      - "memories"
+  patch_tool_calls:
+    enabled: true
+  skills:
+    enabled: true
+  # --- Production guardrails ---
+  model_call_limit:
+    enabled: true
+    run_limit: 50
+  tool_call_limit:
+    enabled: true
+    run_limit: 200
+  model_retry:
+    enabled: true
+    max_retries: 3
+    backoff_factor: 2.0
+    initial_delay: 1.0
+  model_fallback:
+    enabled: false
+    fallback_model: "google_genai:gemini-2.5-flash"
+    # Requires GOOGLE_API_KEY for Developer API, or matching Vertex AI config.
+    # Enable when fallback model uses same auth as primary.
+  tool_retry:
+    enabled: true
+    max_retries: 2
+    tools: ["calculate_bmi", "search_web", "send_email"]
+  pii:
+    enabled: true
+    rules:
+      - type: credit_card
+        strategy: mask
+      - type: ip
+        strategy: redact
+      - type: url
+        strategy: redact
+  extra: []
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Async Tasks                                                    [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async_tasks:
+  enabled: true
+  system_prompt: null
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Filesystem & Storage                                           [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Backend type: state | composite | store | local_shell
+#   state (default): Thread-scoped scratch. Recommended for production / OpenShift.
+#   composite: Routes paths to different backends (scratch + persistent memory).
+#   store: Cross-thread persistent storage via LangGraph Store.
+#   local_shell: Real filesystem with isolated venv. LOCAL DEV ONLY.
+#
+# OpenShift notes:
+#   - Runs as non-root with arbitrary UID (no guaranteed $HOME).
+#   - local_shell writes to /app/.cache (always writable).
+#   - For readOnlyRootFilesystem SCC, use state or composite with emptyDir volume.
+filesystem:
+  backend:
+    type: state
+    local_shell:
+      timeout: 120
+      max_output_bytes: 100000
+    store:
+      enabled: true
+      scope: user
+    routes:
+      "/memories/": store
+      "/reports/": store
+      "/": state
+  permissions:
+    - operations: [read, glob, grep, ls]
+      paths: ["config/**", "docs/**", "reports/**"]
+      mode: allow
+    - operations: [write, edit]
+      paths: ["reports/**", "memories/**"]
+      mode: allow
+    - operations: [write, edit]
+      paths: ["config/**", "*.py", "*.sh"]
+      mode: deny
+  permission_inheritance: false
+  settings:
+    tool_token_limit_before_evict: 20000
+    human_message_token_limit_before_evict: 50000
+    max_execute_timeout: 3600
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Cache                                                            [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+cache:
+  enabled: true
+  model:
+    enabled: true
+    ttl: 600
+    max_size: 50
+  personalization:
+    enabled: true
+    ttl: 120
+  mcp:
+    ttl: 300 # MCP tool list cache — avoids reconnecting to MCP servers per request
+  graph:
+    ttl: 300 # Compiled graph cache — avoids rebuilding the LangGraph per request
+  redis:
+    enabled: true
+  warming:
+    enabled: true
+  metrics:
+    enabled: true
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Memory Processing                                                  [env-var]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+memory:
+  consolidation:
+    enabled: true
+  decay:
+    enabled: true
+    lambda: 0.05
+  clustering:
+    enabled: true
+    threshold: 0.4
+    min_cluster_size: 3
+  relationships:
+    enabled: true
+  scheduler:
+    interval_hours: 6
+  max_inject: 20
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Observability                                                      [env-var]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Langfuse auto-activates when secrets are provided. No additional config needed.
+# OTEL traces export to Jaeger/Tempo/Collector via OTEL_EXPORTER_OTLP_ENDPOINT.
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Logging                                                            [env-var]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+logging:
+  level: INFO
+  request:
+    enabled: true
+    headers: true
+    body: true
+    body_max_size: 10240
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Server                                                             [env-var]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+server:
+  host: "0.0.0.0"
+  port: 5002

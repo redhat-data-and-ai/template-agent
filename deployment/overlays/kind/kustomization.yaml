@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: template-agent
+
+resources:
+  - ../../base
+  - deployment.yaml
+  - service.yaml
+  - ui.yaml
+  - ingress.yaml
+
+labels:
+  - pairs:
+      app: template-agent
+
+images:
+  - name: agent
+    newName: localhost/template-agent
+    newTag: local
+  - name: template-ui
+    newName: localhost/template-ui
+    newTag: local

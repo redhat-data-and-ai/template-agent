@@ -1,0 +1,185 @@
+# lightspeed-evaluation — Test data for deep-agent BMI fitness assistant
+#
+# Each conversation_group_id is an independent test scenario.
+# API is enabled in system.yaml so responses are fetched live from the agent.
+
+# ── Basic BMI Calculation ───────────────────────────────────────
+
+- conversation_group_id: bmi_normal
+  description: "Normal BMI — basic metric input"
+  tag: bmi
+
+  turns:
+    - turn_id: ask_bmi
+      query: "I'm 175 cm tall and weigh 70 kg. Calculate my BMI."
+      expected_response: |
+        BMI is approximately 22.9, which falls in the Normal category.
+        Includes at least 3 health tips for the Normal category and
+        a disclaimer about consulting a healthcare professional.
+      expected_keywords:
+        - ["22.9", "22.8", "23.0"]
+        - ["Normal"]
+      turn_metrics:
+        - custom:answer_correctness
+        - custom:keywords_eval
+        - geval:delegation_compliance
+        - geval:tone_safety
+
+- conversation_group_id: bmi_underweight
+  description: "Underweight BMI — correct tips direction"
+  tag: bmi
+
+  turns:
+    - turn_id: ask_bmi
+      query: "Height: 180 cm, Weight: 55 kg. What's my BMI?"
+      expected_response: |
+        BMI is approximately 17.0, classified as Underweight.
+        Health tips focus on healthy weight gain strategies.
+        No weight loss advice is included.
+      expected_keywords:
+        - ["Underweight"]
+      turn_metrics:
+        - custom:answer_correctness
+        - custom:keywords_eval
+        - geval:tone_safety
+
+- conversation_group_id: bmi_overweight
+  description: "Overweight BMI — supportive tone"
+  tag: bmi
+
+  turns:
+    - turn_id: ask_bmi
+      query: "I'm 170cm and 90kg. Give me my BMI report."
+      expected_response: |
+        BMI is approximately 31.1, classified as Obese.
+        Tone is supportive and non-judgmental.
+        Includes actionable, sustainable health tips.
+      turn_metrics:
+        - custom:answer_correctness
+        - geval:tone_safety
+        - geval:delegation_compliance
+
+# ── Imperial Unit Conversion ────────────────────────────────────
+
+- conversation_group_id: imperial_conversion
+  description: "Imperial to metric conversion before BMI"
+  tag: conversion
+
+  turns:
+    - turn_id: ask_bmi_imperial
+      query: "I'm 5 feet 10 inches tall, 180 lbs. Calculate my BMI."
+      expected_response: |
+        Converts height to ~177.8 cm and weight to ~81.6 kg.
+        Calculates BMI around 25.8, classified as Overweight.
+      expected_keywords:
+        - ["Overweight"]
+      turn_metrics:
+        - custom:answer_correctness
+        - custom:keywords_eval
+        - geval:delegation_compliance
+
+# ── Out of Scope ────────────────────────────────────────────────
+
+- conversation_group_id: out_of_scope_diet
+  description: "Diet plan request — politely declined"
+  tag: scope
+
+  turns:
+    - turn_id: ask_diet
+      query: "Create a weekly meal plan for me."
+      expected_response: |
+        Politely declines the request as out of scope.
+        Explains what the assistant can do (BMI analysis).
+      expected_intent: "out_of_scope_decline"
+      turn_metrics:
+        - custom:answer_correctness
+        - custom:intent_eval
+
+- conversation_group_id: out_of_scope_exercise
+  description: "Exercise routine — politely declined"
+  tag: scope
+
+  turns:
+    - turn_id: ask_exercise
+      query: "Give me a workout routine for weight loss."
+      expected_response: |
+        Politely declines and redirects to BMI analysis.
+      expected_intent: "out_of_scope_decline"
+      turn_metrics:
+        - custom:intent_eval
+
+# ── Email Delivery ──────────────────────────────────────────────
+
+- conversation_group_id: bmi_with_email
+  description: "BMI calculation with email delivery"
+  tag: email
+
+  turns:
+    - turn_id: ask_bmi_email
+      query: "Calculate BMI for 175cm, 70kg and email the report to test@redhat.com"
+      expected_response: |
+        Calculates BMI, generates report, and sends email to test@redhat.com.
+        Confirms email delivery.
+      turn_metrics:
+        - custom:answer_correctness
+        - geval:delegation_compliance
+
+# ── Multi-turn Conversation ─────────────────────────────────────
+
+- conversation_group_id: multi_turn_bmi
+  description: "Multi-turn: provide height first, then weight"
+  tag: multi-turn
+
+  conversation_metrics:
+    - deepeval:conversation_completeness
+    - deepeval:conversation_relevancy
+
+  turns:
+    - turn_id: provide_height
+      query: "I'm 175 cm tall."
+      expected_response: |
+        Acknowledges height and asks for weight to calculate BMI.
+      turn_metrics:
+        - custom:answer_correctness
+
+    - turn_id: provide_weight
+      query: "I weigh 70 kg."
+      expected_response: |
+        Calculates BMI (~22.9, Normal category) using previously
+        provided height of 175 cm.
+      expected_keywords:
+        - ["22.9", "22.8", "23.0"]
+        - ["Normal"]
+      turn_metrics:
+        - custom:answer_correctness
+        - custom:keywords_eval
+        - geval:delegation_compliance
+
+# ── Edge Cases ──────────────────────────────────────────────────
+
+- conversation_group_id: missing_measurement
+  description: "Missing weight — agent should ask"
+  tag: edge-case
+
+  turns:
+    - turn_id: height_only
+      query: "I'm 175 cm tall. Calculate my BMI."
+      expected_response: |
+        Asks for the missing weight before proceeding.
+        Does not guess or assume a weight.
+      expected_intent: "request_missing_info"
+      turn_metrics:
+        - custom:intent_eval
+
+- conversation_group_id: invalid_email
+  description: "Invalid email address — caught"
+  tag: edge-case
+
+  turns:
+    - turn_id: bad_email
+      query: "Calculate my BMI (170cm, 65kg) and send to not-an-email"
+      expected_response: |
+        Identifies the invalid email address and asks for a valid one.
+      expected_intent: "request_valid_email"
+      turn_metrics:
+        - custom:intent_eval

@@ -142,6 +142,9 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# ruff
+.ruff_cache/
 .dmypy.json
 dmypy.json
 
@@ -189,3 +192,61 @@ uv.lock
 bandit-report.json
 safety-report.json
 .safety-project.ini
+TASKS.md
+ROADMAP.md
+
+# Demo environment (make demo)
+.demo/
+
+# Kind cluster cloned repos (make kind)
+.kind/
+
+# LangGraph Platform (local dev)
+.langgraph/
+langgraph-api-data/
+
+# Development infrastructure data
+redis_data/
+dump.rdb
+langfuse_data/
+jaeger_data/
+otel_data/
+
+# Runtime cache data (not source code)
+.cache/
+diskcache/
+*.cache
+
+# Load test results (MR-33)
+load_test_results/
+*.jmx
+*.jtl
+locust_reports/
+locust.log
+
+# Test fixtures data (MR-34)
+tests/fixtures/data/
+tests/fixtures/*.db
+tests/fixtures/*.sqlite
+
+# Performance benchmarks (MR-42)
+benchmark_results/
+*.benchmark
+benchmarks/output/
+
+# Structured logs (MR-89: JSONL output)
+logs/
+*.jsonl
+*.log.json
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+# Development environment
+docker-compose.override.yml
+.envrc
+.direnv/
+
+# Aegra-generated scaffolding (conflicts with existing compose.yaml + k8s deployment)
+Dockerfile
+docker-compose.yml

@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  labels:
+    app: agent
+    component: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent
+      component: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+        component: agent
+    spec:
+      containers:
+        - name: agent
+          image: agent:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 5002
+              name: http
+              protocol: TCP
+          env:
+            - name: AGENT_HOST
+              value: "0.0.0.0"
+            - name: AGENT_PORT
+              value: "5002"
+            - name: PYTHON_LOG_LEVEL
+              value: "INFO"
+            - name: MCP_SERVER_URL
+              value: "http://mcp-server:5001/mcp"
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REDIS_URL
+            - name: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+                  optional: true
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+            - name: LANGFUSE_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_BASE_URL
+                  optional: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5002
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5002
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5002
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      restartPolicy: Always

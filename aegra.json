@@ -1,0 +1,21 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./deep_agent/aegra/graph.py:agent"
+  },
+  "auth": {
+    "path": "./deep_agent/aegra/auth.py:auth"
+  },
+  "env": ".env",
+  "python_version": "3.12",
+  "http": {
+    "app": "./deep_agent/aegra/feedback.py:app",
+    "cors": {
+      "allow_origins": ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8080", "http://127.0.0.1:8080"],
+      "allow_methods": ["*"],
+      "allow_headers": ["*"],
+      "allow_credentials": true
+    }
+  }
+}

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from template_agent.src.infrastructure.mcp import (
+from deep_agent.aegra.mcp import (
     _build_server_config,
     _connect_single_server,
     _get_server_configs,
@@ -29,7 +29,7 @@ class TestGetServerConfigs:
         }
 
         with patch(
-            "template_agent.src.infrastructure.mcp.agent_config.get_mcp_servers"
+            "deep_agent.src.infrastructure.mcp.agent_config.get_mcp_servers"
         ) as mock_get_servers:
             mock_get_servers.return_value = mock_servers
 
@@ -41,7 +41,7 @@ class TestGetServerConfigs:
     def test_returns_empty_dict_when_no_servers(self):
         """Test returns empty dict when no MCP servers configured."""
         with patch(
-            "template_agent.src.infrastructure.mcp.agent_config.get_mcp_servers"
+            "deep_agent.src.infrastructure.mcp.agent_config.get_mcp_servers"
         ) as mock_get_servers:
             mock_get_servers.return_value = {}
 
@@ -136,7 +136,7 @@ class TestConnectSingleServer:
         config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
 
         with patch(
-            "template_agent.src.infrastructure.mcp.MultiServerMCPClient",
+            "deep_agent.src.infrastructure.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
             tools = await _connect_single_server("test_server", config, timeout=5)
@@ -155,7 +155,7 @@ class TestConnectSingleServer:
         config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
 
         with patch(
-            "template_agent.src.infrastructure.mcp.MultiServerMCPClient",
+            "deep_agent.src.infrastructure.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
             tools = await _connect_single_server("slow_server", config, timeout=1)
@@ -173,7 +173,7 @@ class TestConnectSingleServer:
         config = {"url": "http://unreachable:8000/mcp/", "transport": "http"}
 
         with patch(
-            "template_agent.src.infrastructure.mcp.MultiServerMCPClient",
+            "deep_agent.src.infrastructure.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
             tools = await _connect_single_server("broken_server", config, timeout=5)
@@ -189,7 +189,7 @@ class TestConnectSingleServer:
         config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
 
         with patch(
-            "template_agent.src.infrastructure.mcp.MultiServerMCPClient",
+            "deep_agent.src.infrastructure.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
             tools = await _connect_single_server("faulty_server", config, timeout=5)
@@ -219,10 +219,10 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "template_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.src.infrastructure.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "template_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.src.infrastructure.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
@@ -264,10 +264,10 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "template_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.src.infrastructure.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "template_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.src.infrastructure.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
@@ -293,7 +293,7 @@ class TestGetMCPTools:
         }
 
         with patch(
-            "template_agent.src.infrastructure.mcp._get_server_configs"
+            "deep_agent.src.infrastructure.mcp._get_server_configs"
         ) as mock_get_configs:
             mock_get_configs.return_value = mock_servers
 
@@ -305,7 +305,7 @@ class TestGetMCPTools:
     async def test_no_servers_configured_returns_empty_list(self):
         """Test that no MCP servers configured returns empty list."""
         with patch(
-            "template_agent.src.infrastructure.mcp._get_server_configs"
+            "deep_agent.src.infrastructure.mcp._get_server_configs"
         ) as mock_get_configs:
             mock_get_configs.return_value = {}
 
@@ -331,10 +331,10 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "template_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.src.infrastructure.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "template_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.src.infrastructure.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
@@ -361,13 +361,13 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "template_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.src.infrastructure.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "template_agent.src.infrastructure.mcp._build_server_config"
+                "deep_agent.src.infrastructure.mcp._build_server_config"
             ) as mock_build_config,
             patch(
-                "template_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.src.infrastructure.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
@@ -399,10 +399,10 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "template_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.src.infrastructure.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "template_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.src.infrastructure.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
