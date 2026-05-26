@@ -121,6 +121,7 @@ async def agent(runtime: ServerRuntime) -> Any:
     system_prompt = orchestrator_cfg.get("body", "")
     skill_paths = orchestrator_cfg.get("skill_paths", [])
     tool_names = orchestrator_cfg.get("tools", [])
+    mcp_server_names = orchestrator_cfg.get("mcps", [])
 
     user_identity = getattr(user, "identity", None) if user else None
     if user_identity:
@@ -182,6 +183,13 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     mcp_tools = await get_mcp_tools(sso_token=sso_token)
     tools = agent_config.resolve_tools(tool_names, mcp_tools, agent_name=agent_name)
+    if not tools and mcp_server_names and mcp_tools:
+        logger.info(
+            "Agent '%s' declared MCP servers but no explicit tools; exposing all %d MCP tool(s)",
+            agent_name,
+            len(mcp_tools),
+        )
+        tools = mcp_tools
 
     cache_key = _graph_fingerprint(
         model_name,
