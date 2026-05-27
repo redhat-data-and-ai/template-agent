@@ -183,7 +183,7 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     mcp_tools = await get_mcp_tools(sso_token=sso_token)
     tools = agent_config.resolve_tools(tool_names, mcp_tools, agent_name=agent_name)
-    if not tools and mcp_server_names and mcp_tools:
+    if not tools and not tool_names and mcp_server_names and mcp_tools:
         logger.info(
             "Agent '%s' declared MCP servers but no explicit tools; exposing all %d MCP tool(s)",
             agent_name,
