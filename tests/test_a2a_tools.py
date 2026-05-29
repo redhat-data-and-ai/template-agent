@@ -14,11 +14,13 @@ from template_agent.src.a2a.tools import _make_tool_for_agent, build_a2a_tools
 # ---------------------------------------------------------------------------
 def _make_agent_card(
     name: str = "HelperAgent",
+    description: str = "A helpful agent",
     skills: list[dict] | None = None,
 ) -> MagicMock:
     """Build a minimal AgentCard mock."""
     card = MagicMock()
     card.name = name
+    card.description = description
 
     if skills is None:
         skills = [
@@ -45,64 +47,67 @@ def _make_agent_card(
 # _make_tool_for_agent
 # ---------------------------------------------------------------------------
 class TestMakeToolForAgent:
-    def test_creates_one_tool_per_skill(self):
+    def test_creates_one_tool_per_agent(self):
         card = _make_agent_card(
             skills=[
                 {"id": "s1", "description": "Skill 1", "examples": []},
                 {"id": "s2", "description": "Skill 2", "examples": ["ex"]},
             ]
         )
-        tools = _make_tool_for_agent(card, "http://url", "token")
-        assert len(tools) == 2
+        tool = _make_tool_for_agent(card, "http://url", "token")
+        assert isinstance(tool, MagicMock) is False
+        assert hasattr(tool, "name")
 
     def test_tool_name_format(self):
-        card = _make_agent_card(name="My Agent", skills=[{"id": "test-skill", "description": "d", "examples": []}])
-        tools = _make_tool_for_agent(card, "http://url", "token")
-        assert len(tools) == 1
-        name = tools[0].name
-        assert name.startswith("a2a_my_agent_")
-        assert all(c.isalnum() or c == "_" for c in name)
+        card = _make_agent_card(name="My Agent")
+        tool = _make_tool_for_agent(card, "http://url", "token")
+        assert tool.name == "a2a_my_agent"
+        assert all(c.isalnum() or c == "_" for c in tool.name)
 
     def test_tool_name_truncated_to_64_chars(self):
         long_name = "A" * 100
-        card = _make_agent_card(
-            name=long_name,
-            skills=[{"id": "skill", "description": "d", "examples": []}],
-        )
-        tools = _make_tool_for_agent(card, "http://url", "token")
-        assert len(tools[0].name) <= 64
+        card = _make_agent_card(name=long_name)
+        tool = _make_tool_for_agent(card, "http://url", "token")
+        assert len(tool.name) <= 64
 
     def test_tool_name_sanitized(self):
-        card = _make_agent_card(
-            name="Agent With Spaces & Symbols!",
-            skills=[{"id": "my-skill", "description": "d", "examples": []}],
-        )
-        tools = _make_tool_for_agent(card, "http://url", "token")
-        name = tools[0].name
-        assert all(c.isalnum() or c == "_" for c in name)
+        card = _make_agent_card(name="Agent With Spaces & Symbols!")
+        tool = _make_tool_for_agent(card, "http://url", "token")
+        assert all(c.isalnum() or c == "_" for c in tool.name)
 
     def test_tool_description_contains_agent_name(self):
         card = _make_agent_card(name="HelperBot")
-        tools = _make_tool_for_agent(card, "http://url", "token")
-        assert "HelperBot" in tools[0].description
+        tool = _make_tool_for_agent(card, "http://url", "token")
+        assert "HelperBot" in tool.description
 
     def test_tool_description_includes_examples(self):
         card = _make_agent_card(
             skills=[{"id": "s", "description": "d", "examples": ["ex1", "ex2"]}]
         )
-        tools = _make_tool_for_agent(card, "http://url", "token")
-        assert "ex1" in tools[0].description
-        assert "ex2" in tools[0].description
+        tool = _make_tool_for_agent(card, "http://url", "token")
+        assert "ex1" in tool.description
+        assert "ex2" in tool.description
+
+    def test_tool_description_aggregates_multiple_skills(self):
+        card = _make_agent_card(
+            skills=[
+                {"id": "s1", "description": "Skill 1", "examples": []},
+                {"id": "s2", "description": "Skill 2", "examples": ["ex"]},
+            ]
+        )
+        tool = _make_tool_for_agent(card, "http://url", "token")
+        assert "Skill 1" in tool.description
+        assert "Skill 2" in tool.description
 
     def test_tool_is_async_callable(self):
         card = _make_agent_card()
-        tools = _make_tool_for_agent(card, "http://url", "token")
-        assert tools[0].coroutine is not None
+        tool = _make_tool_for_agent(card, "http://url", "token")
+        assert tool.coroutine is not None
 
-    def test_no_skills_returns_empty(self):
+    def test_no_skills_still_returns_tool(self):
         card = _make_agent_card(skills=[])
-        tools = _make_tool_for_agent(card, "http://url", "token")
-        assert tools == []
+        tool = _make_tool_for_agent(card, "http://url", "token")
+        assert "general-purpose" in tool.description
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +152,40 @@ class TestBuildA2aTools:
 
         assert len(tools) == 1
         assert "Downstream" in tools[0].description
+
+    @pytest.mark.asyncio
+    async def test_one_tool_per_agent_not_per_skill(self):
+        card = _make_agent_card(
+            name="MultiSkill",
+            skills=[
+                {"id": "s1", "description": "Skill 1", "examples": []},
+                {"id": "s2", "description": "Skill 2", "examples": []},
+                {"id": "s3", "description": "Skill 3", "examples": []},
+            ],
+        )
+
+        with patch(
+            "template_agent.src.a2a.tools.settings"
+        ) as mock_settings, patch(
+            "template_agent.src.a2a.tools.A2ACardResolver"
+        ) as MockResolver, patch(
+            "template_agent.src.a2a.tools.httpx.AsyncClient"
+        ) as MockHttpx:
+            mock_settings.a2a_downstream_urls = ["http://agent:8080"]
+
+            mock_resolver_instance = MagicMock()
+            mock_resolver_instance.get_agent_card = AsyncMock(return_value=card)
+            MockResolver.return_value = mock_resolver_instance
+
+            mock_http = AsyncMock()
+            MockHttpx.return_value = mock_http
+            mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http.__aexit__ = AsyncMock(return_value=False)
+
+            tools = await build_a2a_tools(access_token="tok")
+
+        assert len(tools) == 1
+        assert tools[0].name == "a2a_multiskill"
 
     @pytest.mark.asyncio
     async def test_skips_failed_discovery_gracefully(self):
@@ -221,7 +260,7 @@ class TestBuildA2aTools:
             mock_http.__aexit__ = AsyncMock(return_value=False)
 
             tools = await build_a2a_tools(
-                access_token="tok", context_id="ctx-99"
+                access_token="tok", context_id="ctx-99", correlation_id="corr-1"
             )
 
             assert len(tools) == 1
@@ -232,5 +271,6 @@ class TestBuildA2aTools:
             message_text="test query",
             access_token="tok",
             context_id="ctx-99",
+            correlation_id="corr-1",
         )
         assert result == "response"

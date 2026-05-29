@@ -1,4 +1,11 @@
-"""Dynamic LangChain tools for calling downstream A2A agents."""
+"""Dynamic LangChain tools for calling downstream A2A agents.
+
+Discovers downstream agents via the SDK's A2ACardResolver, then creates
+one StructuredTool per agent (not per skill).  Skill descriptions are
+aggregated into the tool description so the LLM can make informed routing
+decisions, while the downstream agent retains ownership of internal skill
+selection (A2A spec §4.4.5 — opaque execution).
+"""
 
 import httpx
 from a2a.client import A2ACardResolver
@@ -12,58 +19,66 @@ from template_agent.utils.pylogger import get_python_logger
 logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
 
+def _build_agent_description(card: AgentCard) -> str:
+    """Build an LLM-facing description from the agent's card and skills."""
+    skill_parts: list[str] = []
+    for skill in card.skills:
+        entry = skill.description
+        if skill.examples:
+            examples = ", ".join(f"'{e}'" for e in skill.examples[:3])
+            entry += f" (e.g. {examples})"
+        skill_parts.append(entry)
+
+    skills_summary = "; ".join(skill_parts) if skill_parts else "general-purpose"
+    return (
+        f"Delegate to '{card.name}' agent: {card.description or 'downstream agent'}. "
+        f"Skills: {skills_summary}"
+    )
+
+
 def _make_tool_for_agent(
     card: AgentCard,
     agent_url: str,
     access_token: str | None,
     context_id: str | None = None,
     correlation_id: str | None = None,
-) -> list[StructuredTool]:
-    """Create LangChain tools from an Agent Card's skills."""
-    tools = []
+) -> StructuredTool:
+    """Create one LangChain tool for a downstream A2A agent.
 
-    for skill in card.skills:
-        examples_str = ""
-        if skill.examples:
-            examples_str = " Examples: " + ", ".join(
-                f"'{e}'" for e in skill.examples[:3]
-            )
+    The tool description aggregates the agent's skills so the LLM
+    can make informed routing decisions, while the downstream agent
+    retains ownership of internal skill selection (A2A opaque execution).
+    """
+    description = _build_agent_description(card)
 
-        description = (
-            f"Delegate to '{card.name}' agent — {skill.description}.{examples_str}"
+    _url = agent_url
+    _token = access_token
+    _ctx = context_id
+    _corr_id = correlation_id
+
+    async def _invoke(
+        query: str,
+        url: str = _url,
+        token: str | None = _token,
+        ctx: str | None = _ctx,
+        corr_id: str | None = _corr_id,
+    ) -> str:
+        return await send_to_downstream_agent(
+            agent_url=url,
+            message_text=query,
+            access_token=token,
+            context_id=ctx,
+            correlation_id=corr_id,
         )
 
-        # Capture in closure
-        _url = agent_url
-        _token = access_token
-        _skill_id = skill.id
-        _ctx = context_id
-        _corr_id = correlation_id
+    tool_name = f"a2a_{card.name.lower().replace(' ', '_')}"
+    tool_name = "".join(c if c.isalnum() or c == "_" else "_" for c in tool_name)[:64]
 
-        async def _invoke(query: str, url=_url, token=_token, ctx=_ctx, corr_id=_corr_id) -> str:
-            return await send_to_downstream_agent(
-                agent_url=url,
-                message_text=query,
-                access_token=token,
-                context_id=ctx,
-                correlation_id=corr_id,
-            )
-
-        tool_name = f"a2a_{card.name.lower().replace(' ', '_')}_{_skill_id}"
-        # LangChain tool names must be <= 64 chars and alphanumeric/underscore
-        tool_name = "".join(c if c.isalnum() or c == "_" else "_" for c in tool_name)[
-            :64
-        ]
-
-        tools.append(
-            StructuredTool.from_function(
-                coroutine=_invoke,
-                name=tool_name,
-                description=description,
-            )
-        )
-
-    return tools
+    return StructuredTool.from_function(
+        coroutine=_invoke,
+        name=tool_name,
+        description=description,
+    )
 
 
 async def build_a2a_tools(
@@ -71,12 +86,11 @@ async def build_a2a_tools(
     context_id: str | None = None,
     correlation_id: str | None = None,
 ) -> list[StructuredTool]:
-    """Discover downstream A2A agents and build LangChain tools from their skills.
+    """Discover downstream A2A agents and build LangChain tools.
 
-    Fetches Agent Cards from configured URLs, then creates a tool per skill.
-    The access token, context_id, and correlation_id are captured in each
-    tool's closure so downstream calls reuse the same conversation thread
-    and propagate tracing headers.
+    Fetches Agent Cards from configured URLs via the SDK's A2ACardResolver,
+    then creates one tool per agent.  Auth credentials and correlation
+    context are captured in each tool's closure.
 
     Returns an empty list if no downstream agents are configured or if
     discovery fails (non-fatal).
@@ -92,11 +106,11 @@ async def build_a2a_tools(
             try:
                 resolver = A2ACardResolver(httpx_client=http_client, base_url=url)
                 card = await resolver.get_agent_card()
-                agent_tools = _make_tool_for_agent(card, url, access_token, context_id, correlation_id)
-                all_tools.extend(agent_tools)
+                tool = _make_tool_for_agent(card, url, access_token, context_id, correlation_id)
+                all_tools.append(tool)
                 logger.info(
                     f"Discovered A2A agent '{card.name}' at {url} "
-                    f"with {len(agent_tools)} tool(s)"
+                    f"with {len(card.skills)} skill(s)"
                 )
             except Exception as e:
                 logger.warning(f"Failed to discover A2A agent at {url}: {e}. Skipping.")
