@@ -213,7 +213,7 @@ class TestAgentFactory:
                 "deep_agent.aegra.mcp.get_mcp_tools",
                 new_callable=AsyncMock,
                 return_value=[mock_tool],
-            ),
+            ) as mock_get_mcp,
             patch(
                 "deep_agent.src.infrastructure.subagents.load_subagents",
                 return_value=None,
@@ -243,3 +243,6 @@ class TestAgentFactory:
 
         assert result is mock_compiled
         assert mock_create.call_args.kwargs["tools"] == [mock_tool]
+        mock_get_mcp.assert_awaited_once_with(
+            sso_token=None, server_names=["dataverse-mcp-prod1"]
+        )

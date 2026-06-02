@@ -170,6 +170,25 @@ class AgentConfig:
         """Get the config base directory path."""
         return self._base_dir
 
+    @staticmethod
+    def _validate_mcps_field(mcps: Any, agent_name: str) -> None:
+        """Validate the ``mcps`` frontmatter field is a list of strings.
+
+        Args:
+            mcps: The raw value from frontmatter.
+            agent_name: Agent name for error messages.
+
+        Raises:
+            AppException: If ``mcps`` is not a list of strings.
+        """
+        if not isinstance(mcps, list) or not all(
+            isinstance(s, str) for s in mcps
+        ):
+            raise AppException(
+                f"Agent '{agent_name}': 'mcps' must be a list of strings",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
     def _load_orchestrator(self) -> dict[str, Any]:
         """Load orchestrator configuration at initialization.
 
@@ -184,6 +203,11 @@ class AgentConfig:
             config = parse_frontmatter(orchestrator_path)
             if "body" in config:
                 config["body"] = inject_runtime_values(config["body"])
+
+            if "mcps" in config:
+                self._validate_mcps_field(
+                    config["mcps"], config.get("name", "orchestrator")
+                )
 
             # Resolve skill names to paths eagerly
             skill_names = config.get("skills", [])
@@ -225,6 +249,9 @@ class AgentConfig:
                     config["body"] = inject_runtime_values(config["body"])
 
                 name = config.get("name", agent_file.stem)
+
+                if "mcps" in config:
+                    self._validate_mcps_field(config["mcps"], name)
 
                 # Resolve skill names to paths eagerly
                 skill_names = config.get("skills", [])
