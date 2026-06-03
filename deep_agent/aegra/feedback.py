@@ -35,6 +35,40 @@ from deep_agent.utils.pylogger import (
 
 logger = get_python_logger()
 
+
+def _patch_aegra_persistence_if_inmemory() -> None:
+    """Disable aegra_api database initialization when running in-memory mode.
+
+    The aegra_api lifespan unconditionally calls db_manager.initialize() which
+    opens a PostgreSQL connection pool. When deploying without a database
+    (USE_INMEMORY_SAVER=true), this causes the pod to crash. This patch
+    replaces initialize() with a no-op so the lifespan completes cleanly.
+    """
+    import os
+
+    disable_persistence = os.environ.get("AEGRA_DISABLE_PERSISTENCE", "").lower() in (
+        "true",
+        "1",
+    )
+    use_inmemory = os.environ.get("USE_INMEMORY_SAVER", "").lower() in ("true", "1")
+
+    if not (disable_persistence or use_inmemory):
+        return
+
+    try:
+        from aegra_api.core.database import db_manager
+
+        async def _noop_initialize() -> None:
+            logger.info("aegra_db_initialize_skipped_inmemory_mode")
+
+        db_manager.initialize = _noop_initialize  # type: ignore[method-assign]
+        logger.info("aegra_persistence_patched_for_inmemory_mode")
+    except ImportError:
+        pass
+
+
+_patch_aegra_persistence_if_inmemory()
+
 app = FastAPI(title="template-agent-custom")
 
 
