@@ -29,7 +29,7 @@ class TestGetServerConfigs:
         }
 
         with patch(
-            "deep_agent.src.infrastructure.mcp.agent_config.get_mcp_servers"
+            "deep_agent.aegra.mcp.agent_config.get_mcp_servers"
         ) as mock_get_servers:
             mock_get_servers.return_value = mock_servers
 
@@ -41,7 +41,7 @@ class TestGetServerConfigs:
     def test_returns_empty_dict_when_no_servers(self):
         """Test returns empty dict when no MCP servers configured."""
         with patch(
-            "deep_agent.src.infrastructure.mcp.agent_config.get_mcp_servers"
+            "deep_agent.aegra.mcp.agent_config.get_mcp_servers"
         ) as mock_get_servers:
             mock_get_servers.return_value = {}
 
@@ -136,7 +136,7 @@ class TestConnectSingleServer:
         config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
 
         with patch(
-            "deep_agent.src.infrastructure.mcp.MultiServerMCPClient",
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
             tools = await _connect_single_server("test_server", config, timeout=5)
@@ -155,7 +155,7 @@ class TestConnectSingleServer:
         config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
 
         with patch(
-            "deep_agent.src.infrastructure.mcp.MultiServerMCPClient",
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
             tools = await _connect_single_server("slow_server", config, timeout=1)
@@ -173,7 +173,7 @@ class TestConnectSingleServer:
         config = {"url": "http://unreachable:8000/mcp/", "transport": "http"}
 
         with patch(
-            "deep_agent.src.infrastructure.mcp.MultiServerMCPClient",
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
             tools = await _connect_single_server("broken_server", config, timeout=5)
@@ -189,12 +189,20 @@ class TestConnectSingleServer:
         config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
 
         with patch(
-            "deep_agent.src.infrastructure.mcp.MultiServerMCPClient",
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
             tools = await _connect_single_server("faulty_server", config, timeout=5)
 
             assert tools == []
+
+
+def _reset_mcp_cache() -> None:
+    """Clear MCP tool cache between tests."""
+    from deep_agent.aegra import mcp
+
+    mcp._cached_tools = []
+    mcp._cached_tools_ts = 0.0
 
 
 class TestGetMCPTools:
@@ -203,6 +211,7 @@ class TestGetMCPTools:
     @pytest.mark.asyncio
     async def test_successful_connection_with_tools(self):
         """Test successful MCP connection with tools."""
+        _reset_mcp_cache()
         mock_servers = {
             "test_server": {
                 "url": "http://localhost:8000/mcp/",
@@ -219,10 +228,10 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "deep_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.aegra.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.aegra.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
@@ -237,6 +246,7 @@ class TestGetMCPTools:
     @pytest.mark.asyncio
     async def test_deduplicates_tools_from_multiple_servers(self):
         """Test that duplicate tool names are deduplicated (first wins)."""
+        _reset_mcp_cache()
         mock_servers = {
             "server-a": {
                 "url": "http://a/mcp/",
@@ -264,10 +274,10 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "deep_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.aegra.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.aegra.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
@@ -285,6 +295,7 @@ class TestGetMCPTools:
     @pytest.mark.asyncio
     async def test_no_enabled_servers_returns_empty_list(self):
         """Test that no enabled servers returns empty list."""
+        _reset_mcp_cache()
         mock_servers = {
             "disabled": {
                 "url": "http://localhost/mcp/",
@@ -293,7 +304,7 @@ class TestGetMCPTools:
         }
 
         with patch(
-            "deep_agent.src.infrastructure.mcp._get_server_configs"
+            "deep_agent.aegra.mcp._get_server_configs"
         ) as mock_get_configs:
             mock_get_configs.return_value = mock_servers
 
@@ -304,8 +315,9 @@ class TestGetMCPTools:
     @pytest.mark.asyncio
     async def test_no_servers_configured_returns_empty_list(self):
         """Test that no MCP servers configured returns empty list."""
+        _reset_mcp_cache()
         with patch(
-            "deep_agent.src.infrastructure.mcp._get_server_configs"
+            "deep_agent.aegra.mcp._get_server_configs"
         ) as mock_get_configs:
             mock_get_configs.return_value = {}
 
@@ -316,6 +328,7 @@ class TestGetMCPTools:
     @pytest.mark.asyncio
     async def test_all_connections_fail_returns_empty_list(self):
         """Test that all connection failures return empty list gracefully."""
+        _reset_mcp_cache()
         mock_servers = {
             "server-a": {
                 "url": "http://a/mcp/",
@@ -331,10 +344,10 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "deep_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.aegra.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.aegra.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
@@ -347,6 +360,7 @@ class TestGetMCPTools:
     @pytest.mark.asyncio
     async def test_sso_token_passed_to_build_config(self):
         """Test that SSO token is passed through to _build_server_config."""
+        _reset_mcp_cache()
         mock_servers = {
             "test": {
                 "url": "http://localhost/mcp/",
@@ -361,13 +375,13 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "deep_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.aegra.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.mcp._build_server_config"
+                "deep_agent.aegra.mcp._build_server_config"
             ) as mock_build_config,
             patch(
-                "deep_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.aegra.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
@@ -384,6 +398,7 @@ class TestGetMCPTools:
     @pytest.mark.asyncio
     async def test_parallel_connection_to_multiple_servers(self):
         """Test that multiple servers are connected in parallel."""
+        _reset_mcp_cache()
         mock_servers = {
             "server-1": {"url": "http://1/mcp/", "enabled": True, "timeout": 5},
             "server-2": {"url": "http://2/mcp/", "enabled": True, "timeout": 5},
@@ -399,10 +414,10 @@ class TestGetMCPTools:
 
         with (
             patch(
-                "deep_agent.src.infrastructure.mcp._get_server_configs"
+                "deep_agent.aegra.mcp._get_server_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.mcp._connect_single_server"
+                "deep_agent.aegra.mcp._connect_single_server"
             ) as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
@@ -413,3 +428,32 @@ class TestGetMCPTools:
             # All three servers should be connected
             assert mock_connect.call_count == 3
             assert len(tools) == 3
+
+    @pytest.mark.asyncio
+    async def test_server_names_filters_enabled_servers(self):
+        """Test that server_names restricts which servers are connected."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "wanted": {"url": "http://w/mcp/", "enabled": True, "timeout": 5},
+            "unwanted": {"url": "http://u/mcp/", "enabled": True, "timeout": 5},
+        }
+
+        tool_w = MagicMock()
+        tool_w.name = "wanted_tool"
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.aegra.mcp._connect_single_server"
+            ) as mock_connect,
+        ):
+            mock_get_configs.return_value = mock_servers
+            mock_connect.return_value = [tool_w]
+
+            tools = await get_mcp_tools(server_names=["wanted"])
+
+            mock_connect.assert_called_once()
+            assert len(tools) == 1
+            assert tools[0].name == "wanted_tool"

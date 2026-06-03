@@ -1,6 +1,9 @@
 """Unit tests for agent_config skill path resolution."""
 
+import pytest
+
 from deep_agent.src.agent.config import AgentConfig
+from deep_agent.src.exceptions import AppException
 
 
 class TestAgentConfigSkillResolution:
@@ -102,3 +105,77 @@ Test orchestrator prompt.
         assert len(skill_paths) == 0
 
         assert "unknown skills" in caplog.text.lower()
+
+
+class TestMcpsValidation:
+    """Test mcps field validation for orchestrator and subagents."""
+
+    def setup_method(self):
+        AgentConfig._instance = None
+
+    def test_orchestrator_valid_mcps(self, tmp_path):
+        """Valid mcps list of strings loads without error."""
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+        (config_dir / "skills").mkdir()
+
+        (config_dir / "PROMPT.md").write_text("""---
+name: orch
+model: gemini-2.5-flash
+mcps:
+  - web-search
+  - dataverse-mcp
+---
+Orchestrator.
+""")
+
+        cfg = AgentConfig(config_dir)
+        orch = cfg.get_orchestrator_config()
+        assert orch["mcps"] == ["web-search", "dataverse-mcp"]
+
+    def test_orchestrator_invalid_mcps_raises(self, tmp_path):
+        """Non-list mcps raises AppException."""
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+        (config_dir / "skills").mkdir()
+
+        (config_dir / "PROMPT.md").write_text("""---
+name: orch
+model: gemini-2.5-flash
+mcps: "not-a-list"
+---
+Orchestrator.
+""")
+
+        with pytest.raises(AppException, match="must be a list of strings"):
+            cfg = AgentConfig(config_dir)
+            cfg.get_orchestrator_config()
+
+    def test_subagent_invalid_mcps_is_skipped(self, tmp_path, caplog):
+        """Subagent with non-string mcps entries is skipped and logged."""
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+        (config_dir / "skills").mkdir()
+
+        (config_dir / "PROMPT.md").write_text("""---
+name: orch
+model: gemini-2.5-flash
+---
+Orchestrator.
+""")
+
+        sub_dir = config_dir / "subagents"
+        sub_dir.mkdir()
+        (sub_dir / "bad.md").write_text("""---
+name: bad-agent
+model: gemini-2.5-flash
+mcps:
+  - 123
+---
+Bad agent.
+""")
+
+        cfg = AgentConfig(config_dir)
+        subs = cfg.get_all_subagent_configs()
+        assert "bad-agent" not in subs
+        assert "must be a list of strings" in caplog.text

@@ -247,8 +247,26 @@ def _is_connection_error(exc: BaseException) -> bool:
     return False
 
 
+def _filter_by_names(
+    enabled: dict[str, dict[str, Any]],
+    server_names: list[str] | None,
+) -> dict[str, dict[str, Any]]:
+    """Restrict *enabled* servers to only those declared in *server_names*."""
+    if not server_names:
+        return enabled
+    requested = set(server_names)
+    missing = requested - set(enabled)
+    if missing:
+        logger.warning(
+            "Declared MCP server(s) not found or not enabled: %s",
+            ", ".join(sorted(missing)),
+        )
+    return {k: v for k, v in enabled.items() if k in requested}
+
+
 async def get_mcp_tools(
     sso_token: str | None = None,
+    server_names: list[str] | None = None,
 ) -> list[Any]:
     """Connect to MCP server(s) and retrieve available tools.
 
@@ -259,6 +277,10 @@ async def get_mcp_tools(
     Loads server definitions from ``config/mcp.json``, connects to
     each enabled server in parallel, and returns a deduplicated flat list.
 
+    When ``server_names`` is provided, only the servers whose names match
+    are connected to, preventing unintended tool exposure from globally
+    enabled servers that the agent did not declare.
+
     The ``sso_token`` should already be **refreshed** by the caller via
     ``refresh_access_token()`` before calling this function.
 
@@ -267,13 +289,20 @@ async def get_mcp_tools(
 
     Args:
         sso_token: Optional SSO token for authentication (pre-refreshed).
+        server_names: Optional list of MCP server names to connect to.
+            When provided, only these servers are used (must also be
+            enabled in mcp.json). When ``None``, all enabled servers
+            are connected.
 
     Returns:
         List of available MCP tools (empty list if all connections fail).
     """
     global _cached_tools, _cached_tools_ts  # noqa: PLW0603
 
-    if _cached_tools and (time.time() - _cached_tools_ts) < _MCP_TOOL_CACHE_TTL:
+    if (
+        _cached_tools
+        and (time.time() - _cached_tools_ts) < _MCP_TOOL_CACHE_TTL
+    ):
         logger.info(
             "MCP tool cache hit (%d tools, %.0fs old)",
             len(_cached_tools),
@@ -285,6 +314,8 @@ async def get_mcp_tools(
     enabled: dict[str, dict[str, Any]] = {
         k: v for k, v in servers.items() if v.get("enabled", False)
     }
+
+    enabled = _filter_by_names(enabled, server_names)
 
     if not enabled:
         logger.warning("No MCP servers enabled")
