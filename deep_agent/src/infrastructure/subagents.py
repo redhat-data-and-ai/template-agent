@@ -89,6 +89,9 @@ def load_subagents(
     return subagents_list
 
 
+_DEFAULT_FALLBACK_MODEL = "gemini-3.1-pro-preview"
+
+
 def _inherit_from_orchestrator(
     agent_cfg: dict[str, Any],
     orchestrator_cfg: dict[str, Any],
@@ -97,7 +100,8 @@ def _inherit_from_orchestrator(
     """Fill in missing model/mcps from the parent orchestrator config.
 
     Mutates *agent_cfg* in place. Only inherits fields the subagent did not
-    explicitly set.
+    explicitly set. Falls back to _DEFAULT_FALLBACK_MODEL when neither the
+    subagent nor the orchestrator specifies a model.
     """
     if not agent_cfg.get("model"):
         parent_model = orchestrator_cfg.get("model", "")
@@ -108,6 +112,14 @@ def _inherit_from_orchestrator(
                 parent_model,
             )
             agent_cfg["model"] = parent_model
+        else:
+            logger.warning(
+                "Subagent '%s' has no model and orchestrator has no model — "
+                "falling back to default: %s",
+                name,
+                _DEFAULT_FALLBACK_MODEL,
+            )
+            agent_cfg["model"] = _DEFAULT_FALLBACK_MODEL
 
     if not agent_cfg.get("mcps"):
         parent_mcps = orchestrator_cfg.get("mcps", [])
@@ -170,11 +182,23 @@ def _build_default_subagent(
     logger.info(f"Subagent '{name}' [default] using model: {model_name}")
 
     tool_names: list[str] = agent_cfg.get("tools", [])
-    resolved_tools: list[Any] = (
-        agent_config.resolve_tools(tool_names, tools, agent_name=name)
-        if tool_names
-        else []
-    )
+    mcp_names: list[str] = agent_cfg.get("mcps", [])
+
+    if tool_names:
+        resolved_tools: list[Any] = agent_config.resolve_tools(
+            tool_names, tools, agent_name=name
+        )
+    elif mcp_names and tools:
+        logger.info(
+            "Subagent '%s' declared MCP servers %s but no explicit tools; "
+            "exposing all %d available MCP tool(s)",
+            name,
+            mcp_names,
+            len(tools),
+        )
+        resolved_tools = list(tools)
+    else:
+        resolved_tools = []
 
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
@@ -217,11 +241,23 @@ def _build_compiled_subagent(
     logger.info(f"Subagent '{name}' [compiled] using model: {model_name}")
 
     tool_names: list[str] = agent_cfg.get("tools", [])
-    resolved_tools: list[Any] = (
-        agent_config.resolve_tools(tool_names, tools, agent_name=name)
-        if tool_names
-        else []
-    )
+    mcp_names: list[str] = agent_cfg.get("mcps", [])
+
+    if tool_names:
+        resolved_tools: list[Any] = agent_config.resolve_tools(
+            tool_names, tools, agent_name=name
+        )
+    elif mcp_names and tools:
+        logger.info(
+            "Subagent '%s' [compiled] declared MCP servers %s but no explicit tools; "
+            "exposing all %d available MCP tool(s)",
+            name,
+            mcp_names,
+            len(tools),
+        )
+        resolved_tools = list(tools)
+    else:
+        resolved_tools = []
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
     compiled_graph = create_deep_agent(
