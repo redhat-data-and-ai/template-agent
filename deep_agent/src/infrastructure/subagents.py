@@ -46,6 +46,10 @@ def load_subagents(
     - ``compiled`` → CompiledSubAgent (pre-compiled graph as Runnable)
     - ``async`` → AsyncSubAgent (remote Agent Protocol server)
 
+    Subagents that don't specify a ``model`` inherit the orchestrator's model.
+    Subagents that don't specify ``mcps`` inherit the orchestrator's MCPs
+    (which determines tool visibility).
+
     Args:
         tools: List of available MCP tools.
 
@@ -63,11 +67,14 @@ def load_subagents(
         logger.warning("No subagent configurations found")
         return None
 
+    orchestrator_cfg = agent_config.get_orchestrator_config()
+
     logger.info(f"Building {len(all_subagent_configs)} subagent(s)")
 
     subagents_list: list[Any] = []
 
     for name, agent_cfg in all_subagent_configs.items():
+        _inherit_from_orchestrator(agent_cfg, orchestrator_cfg, name)
         try:
             sa = _build_single_subagent(name, agent_cfg, tools)
             subagents_list.append(sa)
@@ -80,6 +87,37 @@ def load_subagents(
 
     logger.info(f"Built {len(subagents_list)} subagent(s) successfully")
     return subagents_list
+
+
+def _inherit_from_orchestrator(
+    agent_cfg: dict[str, Any],
+    orchestrator_cfg: dict[str, Any],
+    name: str,
+) -> None:
+    """Fill in missing model/mcps from the parent orchestrator config.
+
+    Mutates *agent_cfg* in place. Only inherits fields the subagent did not
+    explicitly set.
+    """
+    if not agent_cfg.get("model"):
+        parent_model = orchestrator_cfg.get("model", "")
+        if parent_model:
+            logger.info(
+                "Subagent '%s' inheriting model from orchestrator: %s",
+                name,
+                parent_model,
+            )
+            agent_cfg["model"] = parent_model
+
+    if not agent_cfg.get("mcps"):
+        parent_mcps = orchestrator_cfg.get("mcps", [])
+        if parent_mcps:
+            logger.info(
+                "Subagent '%s' inheriting %d MCP(s) from orchestrator",
+                name,
+                len(parent_mcps),
+            )
+            agent_cfg["mcps"] = list(parent_mcps)
 
 
 def _build_single_subagent(
