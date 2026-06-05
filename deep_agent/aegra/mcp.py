@@ -9,6 +9,13 @@ Why this exists:
     that agents can use. This module bridges the gap between our agent system
     and external MCP-compatible services.
 
+Architecture (auth-at-call-time):
+    Tool discovery happens once (cached for MCP_TOOL_CACHE_TTL seconds) and
+    returns lightweight wrapper tools. When the LLM actually invokes a tool,
+    the wrapper refreshes the SSO token and opens a fresh authenticated session
+    to the MCP server. This prevents 401 errors from expired tokens that were
+    baked in at discovery time.
+
 Functions:
     refresh_access_token: Exchange a refresh token for a fresh access token
     get_mcp_tools: Connect to all MCP servers and retrieve their tools
@@ -16,12 +23,14 @@ Functions:
 
 import asyncio
 import base64
+import contextvars
 import json
 import os
 import time
 from typing import Any
 
 import httpx
+from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from deep_agent.src.agent.config import agent_config
@@ -38,6 +47,13 @@ _mcp_breaker: CircuitBreaker | None = None
 _MCP_TOOL_CACHE_TTL: float = float(agent_config.get_cache_config().mcp.ttl)
 _cached_tools: list[Any] = []
 _cached_tools_ts: float = 0.0
+
+_current_access_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_current_access_token", default=None
+)
+_current_refresh_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_current_refresh_token", default=None
+)
 
 
 def _get_mcp_breaker() -> CircuitBreaker:
@@ -247,6 +263,86 @@ def _is_connection_error(exc: BaseException) -> bool:
     return False
 
 
+def set_mcp_auth_context(
+    access_token: str | None,
+    refresh_token: str | None,
+) -> None:
+    """Store the current request's tokens in context vars for tool-call-time auth.
+
+    Must be called at the start of each request (e.g. in the graph factory)
+    BEFORE the LLM may invoke any MCP tools.  The wrapper tools read these
+    context vars at invocation time to obtain a fresh bearer token.
+
+    Args:
+        access_token: The user's current JWT access token.
+        refresh_token: The user's OIDC refresh token.
+    """
+    _current_access_token.set(access_token)
+    _current_refresh_token.set(refresh_token)
+
+
+def _make_auth_refreshing_tool(
+    original_tool: Any,
+    server_name: str,
+    server_entry: dict[str, Any],
+) -> StructuredTool:
+    """Wrap an MCP tool so it injects a fresh token at each invocation.
+
+    The returned tool preserves the original's name, description, and
+    args_schema but replaces the execution logic: on each call it reads
+    the current request's tokens from context vars, refreshes if needed,
+    opens a fresh authenticated session to the MCP server, and executes
+    the tool call with valid credentials.
+
+    Args:
+        original_tool: The tool object returned by MultiServerMCPClient.
+        server_name: Name of the MCP server this tool belongs to.
+        server_entry: Raw server config entry (url, auth, transport, etc).
+
+    Returns:
+        A StructuredTool with identical schema but fresh-auth execution.
+    """
+
+    async def _invoke_with_fresh_auth(**kwargs: Any) -> Any:
+        access = _current_access_token.get()
+        refresh = _current_refresh_token.get()
+
+        if access:
+            access = await refresh_access_token(access, refresh)
+            _current_access_token.set(access)
+
+        config = _build_server_config(server_entry, access)
+        timeout = server_entry.get("timeout", 30)
+
+        try:
+            async with asyncio.timeout(timeout):
+                client = MultiServerMCPClient({server_name: config})
+                tools = await client.get_tools()
+        except Exception as exc:
+            logger.error(
+                "[%s] tool '%s' failed to reconnect: %s",
+                server_name,
+                original_tool.name,
+                exc,
+            )
+            raise
+
+        target = next((t for t in tools if t.name == original_tool.name), None)
+        if target is None:
+            raise RuntimeError(
+                f"Tool '{original_tool.name}' not found on server '{server_name}' "
+                "after reconnection"
+            )
+        return await target.ainvoke(kwargs)
+
+    return StructuredTool.from_function(
+        coroutine=_invoke_with_fresh_auth,
+        name=original_tool.name,
+        description=original_tool.description or "",
+        args_schema=getattr(original_tool, "args_schema", None),
+    )
+
+
 def _filter_by_names(
     enabled: dict[str, dict[str, Any]],
     server_names: list[str] | None,
@@ -271,8 +367,10 @@ async def get_mcp_tools(
     """Connect to MCP server(s) and retrieve available tools.
 
     Results are cached for ``MCP_TOOL_CACHE_TTL`` seconds (default 300).
-    Subsequent calls within the TTL window return the cached tool list
-    without reconnecting, eliminating ~3-4s of overhead per request.
+    Cached tool objects are auth-refreshing wrappers: they do NOT embed
+    a static token.  At invocation time each wrapper reads the current
+    request's tokens from context vars (set via ``set_mcp_auth_context``)
+    and opens a fresh authenticated session.
 
     Loads server definitions from ``config/mcp.json``, connects to
     each enabled server in parallel, and returns a deduplicated flat list.
@@ -281,14 +379,13 @@ async def get_mcp_tools(
     are connected to, preventing unintended tool exposure from globally
     enabled servers that the agent did not declare.
 
-    The ``sso_token`` should already be **refreshed** by the caller via
-    ``refresh_access_token()`` before calling this function.
-
     Connection failures are logged but do not raise exceptions, ensuring
     the application continues with an empty tool list.
 
     Args:
-        sso_token: Optional SSO token for authentication (pre-refreshed).
+        sso_token: Optional SSO token for initial discovery handshake.
+            This token is used ONLY for the discovery connection, not
+            baked into the returned tool wrappers.
         server_names: Optional list of MCP server names to connect to.
             When provided, only these servers are used (must also be
             enabled in mcp.json). When ``None``, all enabled servers
@@ -336,13 +433,18 @@ async def get_mcp_tools(
         ]
     )
 
+    server_tool_map: dict[str, list[Any]] = {}
+    for (name, _entry), tool_list in zip(enabled.items(), results):
+        server_tool_map[name] = tool_list
+
     seen: set[str] = set()
     tools: list[Any] = []
-    for tool_list in results:
-        for tool in tool_list:
+    for name, entry in enabled.items():
+        for tool in server_tool_map.get(name, []):
             if tool.name not in seen:
                 seen.add(tool.name)
-                tools.append(tool)
+                wrapped = _make_auth_refreshing_tool(tool, name, entry)
+                tools.append(wrapped)
             else:
                 logger.warning(f"Duplicate tool '{tool.name}' skipped")
 

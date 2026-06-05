@@ -9,6 +9,7 @@ from deep_agent.aegra.mcp import (
     _connect_single_server,
     _get_server_configs,
     get_mcp_tools,
+    set_mcp_auth_context,
 )
 
 
@@ -225,6 +226,8 @@ class TestGetMCPTools:
 
         mock_tool = MagicMock()
         mock_tool.name = "tool1"
+        mock_tool.description = "A test tool"
+        mock_tool.args_schema = None
 
         with (
             patch(
@@ -264,13 +267,21 @@ class TestGetMCPTools:
 
         tool_a1 = MagicMock()
         tool_a1.name = "shared_tool"
+        tool_a1.description = "from server a"
+        tool_a1.args_schema = None
         tool_a2 = MagicMock()
         tool_a2.name = "unique_a"
+        tool_a2.description = "unique to a"
+        tool_a2.args_schema = None
 
         tool_b1 = MagicMock()
         tool_b1.name = "shared_tool"
+        tool_b1.description = "from server b"
+        tool_b1.args_schema = None
         tool_b2 = MagicMock()
         tool_b2.name = "unique_b"
+        tool_b2.description = "unique to b"
+        tool_b2.args_schema = None
 
         with (
             patch(
@@ -285,12 +296,11 @@ class TestGetMCPTools:
 
             tools = await get_mcp_tools()
 
-            # Should have 3 tools: shared_tool (from server-a), unique_a, unique_b
             assert len(tools) == 3
             tool_names = {t.name for t in tools}
             assert tool_names == {"shared_tool", "unique_a", "unique_b"}
-            # First occurrence of shared_tool wins
-            assert tools[0] is tool_a1
+            assert tools[0].name == "shared_tool"
+            assert tools[0].description == "from server a"
 
     @pytest.mark.asyncio
     async def test_no_enabled_servers_returns_empty_list(self):
@@ -372,6 +382,8 @@ class TestGetMCPTools:
 
         mock_tool = MagicMock()
         mock_tool.name = "tool1"
+        mock_tool.description = "test"
+        mock_tool.args_schema = None
 
         with (
             patch(
@@ -407,10 +419,16 @@ class TestGetMCPTools:
 
         tool1 = MagicMock()
         tool1.name = "tool1"
+        tool1.description = "t1"
+        tool1.args_schema = None
         tool2 = MagicMock()
         tool2.name = "tool2"
+        tool2.description = "t2"
+        tool2.args_schema = None
         tool3 = MagicMock()
         tool3.name = "tool3"
+        tool3.description = "t3"
+        tool3.args_schema = None
 
         with (
             patch(
@@ -425,7 +443,6 @@ class TestGetMCPTools:
 
             tools = await get_mcp_tools()
 
-            # All three servers should be connected
             assert mock_connect.call_count == 3
             assert len(tools) == 3
 
@@ -440,6 +457,8 @@ class TestGetMCPTools:
 
         tool_w = MagicMock()
         tool_w.name = "wanted_tool"
+        tool_w.description = "wanted"
+        tool_w.args_schema = None
 
         with (
             patch(
@@ -457,3 +476,95 @@ class TestGetMCPTools:
             mock_connect.assert_called_once()
             assert len(tools) == 1
             assert tools[0].name == "wanted_tool"
+
+
+class TestSetMcpAuthContext:
+    """Tests for set_mcp_auth_context and context-var-based auth."""
+
+    def test_sets_and_reads_access_token(self):
+        """Test that set_mcp_auth_context populates access token context var."""
+        from deep_agent.aegra.mcp import (
+            _current_access_token,
+            _current_refresh_token,
+            set_mcp_auth_context,
+        )
+
+        set_mcp_auth_context("access_123", "refresh_456")
+
+        assert _current_access_token.get() == "access_123"
+        assert _current_refresh_token.get() == "refresh_456"
+
+    def test_handles_none_tokens(self):
+        """Test that None tokens are stored without error."""
+        from deep_agent.aegra.mcp import (
+            _current_access_token,
+            _current_refresh_token,
+            set_mcp_auth_context,
+        )
+
+        set_mcp_auth_context(None, None)
+
+        assert _current_access_token.get() is None
+        assert _current_refresh_token.get() is None
+
+
+class TestMakeAuthRefreshingTool:
+    """Tests for _make_auth_refreshing_tool wrapper."""
+
+    def test_preserves_tool_name_and_description(self):
+        """Test that wrapped tool preserves original name and description."""
+        from deep_agent.aegra.mcp import _make_auth_refreshing_tool
+
+        original = MagicMock()
+        original.name = "web_search"
+        original.description = "Search the web"
+        original.args_schema = None
+
+        server_entry = {"url": "http://mcp/", "auth": True, "timeout": 10}
+        wrapped = _make_auth_refreshing_tool(original, "search-server", server_entry)
+
+        assert wrapped.name == "web_search"
+        assert wrapped.description == "Search the web"
+
+    @pytest.mark.asyncio
+    async def test_invocation_refreshes_token_and_reconnects(self):
+        """Test that tool invocation triggers token refresh and reconnection."""
+        from deep_agent.aegra.mcp import (
+            _make_auth_refreshing_tool,
+            set_mcp_auth_context,
+        )
+
+        original = MagicMock()
+        original.name = "web_search"
+        original.description = "Search the web"
+        original.args_schema = None
+
+        server_entry = {"url": "http://mcp/", "auth": True, "timeout": 10}
+        wrapped = _make_auth_refreshing_tool(original, "search-server", server_entry)
+
+        set_mcp_auth_context("stale_token", "refresh_tok")
+
+        fresh_tool = MagicMock()
+        fresh_tool.name = "web_search"
+        fresh_tool.ainvoke = AsyncMock(return_value="search result")
+
+        mock_client = MagicMock()
+        mock_client.get_tools = AsyncMock(return_value=[fresh_tool])
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp.refresh_access_token",
+                new_callable=AsyncMock,
+                return_value="fresh_token",
+            ) as mock_refresh,
+            patch(
+                "deep_agent.aegra.mcp.MultiServerMCPClient",
+                return_value=mock_client,
+            ) as mock_mcp_client,
+        ):
+            result = await wrapped.ainvoke({"query": "test"})
+
+            mock_refresh.assert_called_once_with("stale_token", "refresh_tok")
+            mock_mcp_client.assert_called_once()
+            fresh_tool.ainvoke.assert_called_once_with({"query": "test"})
+            assert result == "search result"
