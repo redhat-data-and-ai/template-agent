@@ -215,8 +215,8 @@ def _reset_mcp_cache() -> None:
     """Clear MCP tool cache between tests."""
     from deep_agent.aegra import mcp
 
-    mcp._cached_tools = []
-    mcp._cached_tools_ts = 0.0
+    mcp._tool_cache = {}
+    mcp._tool_cache_ts = {}
 
 
 class TestGetMCPTools:
