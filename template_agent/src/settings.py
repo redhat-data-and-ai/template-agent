@@ -73,6 +73,11 @@ class Settings(BaseSettings):
         default=None, json_schema_extra={"env": "GOOGLE_SERVICE_ACCOUNT_FILE"}
     )
 
+    # Agent Identity
+    AGENT_NAME: str = Field(
+        default="template-agent", json_schema_extra={"env": "AGENT_NAME"}
+    )
+
     # Langfuse Configuration
     LANGFUSE_PUBLIC_KEY: Optional[str] = Field(
         default=None, json_schema_extra={"env": "LANGFUSE_PUBLIC_KEY"}

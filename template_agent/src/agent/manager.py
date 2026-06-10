@@ -170,7 +170,9 @@ class AgentManager:
         # Note: CallbackHandler must be created per request (tracks trace-specific state)
         # We inject the shared Langfuse client to avoid creating a new one each time
         if self.langfuse_client:
-            langfuse_handler = CallbackHandler(trace_context={"trace_id": trace_id})
+            langfuse_handler = CallbackHandler(
+                trace_context={"trace_id": trace_id, "name": settings.AGENT_NAME}
+            )
             # Inject the shared client instead of letting it create a new one
             langfuse_handler.client = self.langfuse_client
             callbacks.append(langfuse_handler)
@@ -186,7 +188,7 @@ class AgentManager:
                 "trace_id": trace_id,
             },
             run_id=run_id,
-            run_name="template-agent",
+            run_name=settings.AGENT_NAME,
             callbacks=callbacks,
             metadata={
                 "run_id": run_id,
