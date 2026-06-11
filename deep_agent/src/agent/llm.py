@@ -32,6 +32,7 @@ GEMINI_MODELS: list[str] = [
 
 CLAUDE_MODELS: list[str] = [
     "claude-sonnet-4",
+    "claude-sonnet-4-6@default",
 ]
 
 

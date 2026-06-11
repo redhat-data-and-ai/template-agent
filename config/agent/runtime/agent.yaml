@@ -92,6 +92,13 @@ harness_profiles:
       - patch_tool_calls
     general_purpose_subagent:
       enabled: true
+  claude-sonnet-4-6@default:
+    system_prompt_suffix: ""
+    excluded_tools: []
+    excluded_middleware:
+      - patch_tool_calls
+    general_purpose_subagent:
+      enabled: true
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Middleware Pipeline                                            [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

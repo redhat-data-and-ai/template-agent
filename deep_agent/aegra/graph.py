@@ -98,7 +98,11 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     from deepagents import create_deep_agent
 
-    from deep_agent.aegra.mcp import get_mcp_tools, refresh_access_token
+    from deep_agent.aegra.mcp import (
+        get_mcp_tools,
+        refresh_access_token,
+        set_mcp_auth_context,
+    )
     from deep_agent.src.agent.config import agent_config
     from deep_agent.src.infrastructure.async_tasks import build_async_middleware
     from deep_agent.src.infrastructure.backend import get_configured_backend
@@ -114,6 +118,8 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     if sso_token:
         sso_token = await refresh_access_token(sso_token, refresh_token)
+
+    set_mcp_auth_context(sso_token, refresh_token)
 
     orchestrator_cfg = agent_config.get_orchestrator_config()
     agent_name = orchestrator_cfg.get("name", "orchestrator")
