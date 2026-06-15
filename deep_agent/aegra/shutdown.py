@@ -43,6 +43,7 @@ logger = get_python_logger()
 
 _shutting_down = False
 _shutdown_complete = False
+_atexit_registered = False
 
 SHUTDOWN_DRAIN_SECONDS = int(os.environ.get("SHUTDOWN_DRAIN_SECONDS", "15"))
 SHUTDOWN_LANGFUSE_TIMEOUT_SECONDS = int(
@@ -51,6 +52,27 @@ SHUTDOWN_LANGFUSE_TIMEOUT_SECONDS = int(
 SHUTDOWN_SCHEDULER_TIMEOUT_SECONDS = int(
     os.environ.get("SHUTDOWN_SCHEDULER_TIMEOUT_SECONDS", "10")
 )
+SHUTDOWN_GRACE_PERIOD_SECONDS = int(
+    os.environ.get("SHUTDOWN_GRACE_PERIOD_SECONDS", "60")
+)
+
+_TOTAL_BUDGET = (
+    SHUTDOWN_DRAIN_SECONDS
+    + SHUTDOWN_LANGFUSE_TIMEOUT_SECONDS
+    + SHUTDOWN_SCHEDULER_TIMEOUT_SECONDS
+)
+_HEADROOM = SHUTDOWN_GRACE_PERIOD_SECONDS - _TOTAL_BUDGET
+if _HEADROOM < 5:
+    logger.warning(
+        "Shutdown budget (%ds drain + %ds langfuse + %ds scheduler = %ds) "
+        "leaves only %ds before SIGKILL at %ds. Risk of incomplete cleanup.",
+        SHUTDOWN_DRAIN_SECONDS,
+        SHUTDOWN_LANGFUSE_TIMEOUT_SECONDS,
+        SHUTDOWN_SCHEDULER_TIMEOUT_SECONDS,
+        _TOTAL_BUDGET,
+        _HEADROOM,
+        SHUTDOWN_GRACE_PERIOD_SECONDS,
+    )
 
 
 def is_shutting_down() -> bool:
@@ -65,8 +87,14 @@ def register_atexit() -> None:
     """Register the sync shutdown as an atexit callback.
 
     Called at import time from ``feedback.py``. Unlike signal handlers,
-    atexit callbacks are not overwritten by uvicorn.
+    atexit callbacks are not overwritten by uvicorn. Idempotent — safe
+    to call multiple times (tests, reloads).
     """
+    global _atexit_registered  # noqa: PLW0603
+    if _atexit_registered:
+        return
+    _atexit_registered = True
+
     import atexit
 
     atexit.register(run_shutdown_sync)

@@ -28,10 +28,12 @@ def _reset_shutdown_state():
     shutdown_mod._shutting_down = False
     shutdown_mod._shutdown_complete = False
     shutdown_mod._async_shutdown_started = False
+    shutdown_mod._atexit_registered = False
     yield
     shutdown_mod._shutting_down = False
     shutdown_mod._shutdown_complete = False
     shutdown_mod._async_shutdown_started = False
+    shutdown_mod._atexit_registered = False
 
 
 class TestIsShuttingDown:
@@ -314,6 +316,14 @@ class TestRegisterAtexit:
         with patch.object(atexit, "register") as mock_register:
             register_atexit()
             mock_register.assert_called_once_with(run_shutdown_sync)
+
+    def test_idempotent(self):
+        import atexit
+
+        with patch.object(atexit, "register") as mock_register:
+            register_atexit()
+            register_atexit()
+            mock_register.assert_called_once()
 
 
 class TestRegisterSignalHandlers:

@@ -20,9 +20,11 @@ COPY --chown=65532:root aegra.json /app/aegra.json
 ENV PYTHONPATH=/app
 ENV AGENT_HOST=0.0.0.0
 ENV AGENT_PORT=5002
+ENV AEGRA_CONFIG=/app/aegra.json
 
 EXPOSE 5002
-# Run uvicorn directly as PID 1 so logs go to container stdout
-# and SIGTERM triggers graceful shutdown. The aegra serve wrapper
-# uses subprocess.run() which swallows child output and signals.
+# Run uvicorn directly as PID 1 so container logs capture all output
+# and SIGTERM triggers graceful shutdown. The aegra serve wrapper uses
+# subprocess.run() which swallows child stdout and signals.
+# AEGRA_CONFIG is set above to replicate what aegra serve does.
 CMD ["/bin/sh", "-c", "exec /app/.venv/bin/python -m uvicorn aegra_api.main:app --host ${AGENT_HOST} --port ${AGENT_PORT}"]
