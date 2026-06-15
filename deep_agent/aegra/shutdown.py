@@ -93,6 +93,9 @@ def run_shutdown_sync() -> None:
     t0 = time.monotonic()
     results: dict[str, str] = {}
 
+    import sys
+
+    print("[shutdown] Graceful shutdown started", file=sys.stderr, flush=True)
     logger.info("Sync shutdown initiated (atexit)")
 
     for key, step in [
@@ -108,7 +111,11 @@ def run_shutdown_sync() -> None:
 
     _shutdown_complete = True
     elapsed = round((time.monotonic() - t0) * 1000, 1)
-    logger.info("Sync shutdown complete in %.1fms: %s", elapsed, results)
+    print(
+        f"[shutdown] Graceful shutdown complete in {elapsed}ms: {results}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 # -- Secondary path: signal handler (async) ----------------------------------
@@ -220,18 +227,25 @@ async def _shutdown_langfuse() -> str:
 
 
 def _shutdown_langfuse_sync() -> str:
-    """Sync Langfuse flush for atexit path."""
-    try:
-        from deep_agent.aegra.telemetry import get_langfuse_client
+    """Sync Langfuse flush for atexit path.
 
-        client = get_langfuse_client()
-        if client is None:
+    Only flushes if a client was already initialized — avoids creating
+    a new client during interpreter shutdown (which triggers
+    ``RuntimeError: cannot schedule new futures``).
+    """
+    try:
+        from deep_agent.aegra.telemetry import _langfuse_configured
+
+        if not _langfuse_configured():
             return "skipped: not configured"
+
+        from langfuse import get_client
+
+        client = get_client()
         _langfuse_shutdown_blocking(client)
         return "ok"
     except Exception as exc:
-        logger.warning("Langfuse shutdown failed: %s", exc)
-        return f"error: {exc}"
+        return f"skipped: {exc}"
 
 
 def _langfuse_shutdown_blocking(client: Any) -> None:

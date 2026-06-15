@@ -22,4 +22,7 @@ ENV AGENT_HOST=0.0.0.0
 ENV AGENT_PORT=5002
 
 EXPOSE 5002
-CMD ["/bin/sh", "-c", "/app/.venv/bin/aegra serve --host ${AGENT_HOST} --port ${AGENT_PORT}"]
+# Run uvicorn directly as PID 1 so logs go to container stdout
+# and SIGTERM triggers graceful shutdown. The aegra serve wrapper
+# uses subprocess.run() which swallows child output and signals.
+CMD ["/bin/sh", "-c", "exec /app/.venv/bin/python -m uvicorn aegra_api.main:app --host ${AGENT_HOST} --port ${AGENT_PORT}"]
