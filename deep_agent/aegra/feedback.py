@@ -14,6 +14,7 @@ persisted to Postgres for cross-session history.
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -69,7 +70,16 @@ def _patch_aegra_persistence_if_inmemory() -> None:
 
 _patch_aegra_persistence_if_inmemory()
 
-app = FastAPI(title="template-agent-custom")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):  # noqa: ARG001
+    yield
+    from deep_agent.aegra.shutdown import run_shutdown
+
+    await run_shutdown()
+
+
+app = FastAPI(title="template-agent-custom", lifespan=_lifespan)
 
 
 class TraceIDMiddleware(BaseHTTPMiddleware):

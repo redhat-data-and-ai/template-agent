@@ -21,6 +21,7 @@ The health module can be used standalone (imported and called)
 or wired as ASGI middleware for ``aegra serve``.
 """
 
+import asyncio
 import time
 from typing import Any
 
@@ -61,7 +62,7 @@ async def check_redis() -> dict[str, Any]:
             return {"status": "skipped", "reason": "redis not configured"}
 
         t0 = time.monotonic()
-        pong = await client.ping()
+        pong = await asyncio.to_thread(client.ping)
         latency_ms = (time.monotonic() - t0) * 1000
 
         return {
@@ -129,6 +130,15 @@ async def get_health_status() -> dict[str, Any]:
 
 async def health_response() -> tuple[int, dict[str, Any]]:
     """Return (status_code, body) for the health endpoint."""
+    from deep_agent.aegra.shutdown import is_shutting_down
+
+    if is_shutting_down():
+        return 503, {
+            "status": "shutting_down",
+            "version": "0.1.0",
+            "uptime_seconds": round(time.monotonic() - _start_time, 1),
+        }
+
     result = await get_health_status()
     code = 200 if result["status"] in ("healthy", "degraded") else 503
     return code, result

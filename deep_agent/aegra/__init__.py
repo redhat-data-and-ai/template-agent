@@ -14,6 +14,7 @@ Modules:
     middleware: Authentication middleware (API key, JWT)
     telemetry: Langfuse integration
     redis: Redis caching layer
+    shutdown: Graceful SIGTERM shutdown orchestrator
 """
 
 __version__ = "0.1.0"

@@ -74,6 +74,20 @@ def get_redis_client() -> Any:
         return None
 
 
+def close_redis_client() -> None:
+    """Close the Redis client connection if open. Idempotent."""
+    global _client  # noqa: PLW0603
+    if _client is None:
+        return
+    try:
+        _client.close()
+        logger.info("Redis client closed")
+    except Exception:
+        logger.debug("Redis close error", exc_info=True)
+    finally:
+        _client = None
+
+
 def cache_get(key: str) -> str | None:
     """Read a value from Redis cache. Returns None on miss or error."""
     client = get_redis_client()
