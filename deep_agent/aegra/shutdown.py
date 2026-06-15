@@ -3,28 +3,37 @@
 Mirrors ``startup.py``: idempotent orchestrator, individual step
 functions, structured logging, defensive error handling.
 
-Three independent paths trigger shutdown (belt-and-suspenders for
-uncertain Aegra lifespan behavior):
+Two independent paths trigger shutdown:
 
-1. FastAPI lifespan exit (feedback.py)
-2. SIGTERM/SIGINT signal handler (registered at startup)
-3. atexit callback (fallback for normal process exit)
+1. ``atexit`` callback (registered at import time from ``feedback.py``)
+   — fires reliably when uvicorn handles SIGTERM and exits normally.
+   Runs a synchronous cleanup (Langfuse flush, Redis close, graph
+   cache clear). No event loop needed.
 
-All three call ``run_shutdown()`` which is idempotent — the second
-call returns immediately.
+2. ``loop.add_signal_handler`` (registered on first graph request via
+   ``startup.py``) — overrides uvicorn's handler, runs the full async
+   shutdown with drain period. Only active after the first graph
+   request, but that's when there's actually work to drain.
+
+Aegra strips our custom app's lifespan and middleware, so neither
+ASGI lifespan nor middleware-based registration works. The atexit
+path is guaranteed because Aegra always imports ``feedback.py``.
+
+Both paths call idempotent cleanup — the second call is a no-op.
 
 Shutdown sequence (within ``terminationGracePeriodSeconds: 60``):
 
     1. Set ``_shutting_down`` flag → health probes return 503
-    2. Drain period — in-flight requests finish
+    2. Drain period — in-flight requests finish (async path only)
     3. Flush and stop Langfuse
-    4. Stop memory scheduler
+    4. Stop memory scheduler (async path only)
     5. Clear graph cache
     6. Close Redis
 """
 
 import asyncio
 import os
+import signal
 import time
 from typing import Any
 
@@ -49,22 +58,109 @@ def is_shutting_down() -> bool:
     return _shutting_down
 
 
-async def run_shutdown() -> dict[str, str]:
-    """Execute the shutdown sequence. Returns a status dict.
+# -- Primary path: atexit (sync) ---------------------------------------------
 
-    Safe to call multiple times — subsequent calls are no-ops.
+
+def register_atexit() -> None:
+    """Register the sync shutdown as an atexit callback.
+
+    Called at import time from ``feedback.py``. Unlike signal handlers,
+    atexit callbacks are not overwritten by uvicorn.
+    """
+    import atexit
+
+    atexit.register(run_shutdown_sync)
+    logger.info("Shutdown atexit handler registered")
+
+
+def run_shutdown_sync() -> None:
+    """Synchronous shutdown — runs at process exit via atexit.
+
+    Handles cleanup that doesn't need an event loop: Langfuse flush,
+    Redis close, graph cache clear. Skips drain and async scheduler
+    stop (those only run in the async path).
     """
     global _shutting_down, _shutdown_complete  # noqa: PLW0603
 
+    if _shutdown_complete:
+        return
     if _shutting_down:
-        logger.debug("Shutdown already initiated — skipping")
-        return {"status": "already_complete"}
+        logger.debug("Async shutdown already ran — sync cleanup skipped")
+        _shutdown_complete = True
+        return
 
     _shutting_down = True
     t0 = time.monotonic()
     results: dict[str, str] = {}
 
-    logger.info("Shutdown initiated")
+    logger.info("Sync shutdown initiated (atexit)")
+
+    for key, step in [
+        ("langfuse", _shutdown_langfuse_sync),
+        ("graph_cache", _clear_graph_cache),
+        ("redis", _close_redis),
+    ]:
+        try:
+            results[key] = step()
+        except Exception as exc:
+            logger.warning("Shutdown step '%s' failed: %s", key, exc)
+            results[key] = f"error: {exc}"
+
+    _shutdown_complete = True
+    elapsed = round((time.monotonic() - t0) * 1000, 1)
+    logger.info("Sync shutdown complete in %.1fms: %s", elapsed, results)
+
+
+# -- Secondary path: signal handler (async) ----------------------------------
+
+
+def register_signal_handlers() -> None:
+    """Install loop-aware SIGTERM/SIGINT handlers.
+
+    Uses ``loop.add_signal_handler`` which overrides uvicorn's handler.
+    Must be called from inside a running event loop. Called from
+    ``startup.py`` after the first graph request.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning("No running event loop — signal handlers not registered")
+        return
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, _handle_signal, sig, loop)
+
+    logger.info("Shutdown signal handlers registered (SIGTERM, SIGINT)")
+
+
+def _handle_signal(signum: int, loop: asyncio.AbstractEventLoop) -> None:
+    global _shutting_down  # noqa: PLW0603
+    _shutting_down = True
+    logger.info("Signal %d received — scheduling async shutdown", signum)
+    loop.create_task(run_shutdown())
+
+
+_async_shutdown_started = False
+
+
+async def run_shutdown() -> dict[str, str]:
+    """Full async shutdown with drain period.
+
+    Only runs when signal handlers were registered (after first graph
+    request). Safe to call multiple times — subsequent calls are no-ops.
+    """
+    global _shutting_down, _shutdown_complete, _async_shutdown_started  # noqa: PLW0603
+
+    if _shutdown_complete or _async_shutdown_started:
+        return {"status": "already_complete"}
+
+    _async_shutdown_started = True
+    _shutting_down = True
+
+    t0 = time.monotonic()
+    results: dict[str, str] = {}
+
+    logger.info("Async shutdown initiated")
 
     for key, step in [
         ("drain", _drain),
@@ -85,53 +181,8 @@ async def run_shutdown() -> dict[str, str]:
     _shutdown_complete = True
     elapsed = round((time.monotonic() - t0) * 1000, 1)
 
-    logger.info("Shutdown complete in %.1fms: %s", elapsed, results)
+    logger.info("Async shutdown complete in %.1fms: %s", elapsed, results)
     return results
-
-
-def run_shutdown_sync() -> None:
-    """Synchronous fallback for atexit. Bootstraps a loop if needed."""
-    if _shutdown_complete or _shutting_down:
-        return
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(run_shutdown())
-            return
-        loop.run_until_complete(run_shutdown())
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(run_shutdown())
-        finally:
-            loop.close()
-
-
-def register_signal_handlers() -> None:
-    """Install SIGTERM/SIGINT handlers on the running event loop.
-
-    Must be called from the main thread while a loop is running.
-    Uses ``loop.add_signal_handler`` (Unix-only — fine for OpenShift).
-    """
-    import signal
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        logger.warning("No running event loop — signal handlers not registered")
-        return
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, _handle_signal, sig, loop)
-
-    logger.info("Shutdown signal handlers registered (SIGTERM, SIGINT)")
-
-
-def _handle_signal(signum: int, loop: asyncio.AbstractEventLoop) -> None:
-    global _shutting_down  # noqa: PLW0603
-    _shutting_down = True
-    logger.info("Signal %d received — scheduling shutdown", signum)
-    loop.create_task(run_shutdown())
 
 
 # -- Individual shutdown steps -----------------------------------------------
@@ -168,8 +219,23 @@ async def _shutdown_langfuse() -> str:
         return f"error: {exc}"
 
 
+def _shutdown_langfuse_sync() -> str:
+    """Sync Langfuse flush for atexit path."""
+    try:
+        from deep_agent.aegra.telemetry import get_langfuse_client
+
+        client = get_langfuse_client()
+        if client is None:
+            return "skipped: not configured"
+        _langfuse_shutdown_blocking(client)
+        return "ok"
+    except Exception as exc:
+        logger.warning("Langfuse shutdown failed: %s", exc)
+        return f"error: {exc}"
+
+
 def _langfuse_shutdown_blocking(client: Any) -> None:
-    """Run the sync Langfuse shutdown in a thread."""
+    """Run the sync Langfuse shutdown."""
     if hasattr(client, "shutdown"):
         client.shutdown()
     elif hasattr(client, "flush"):

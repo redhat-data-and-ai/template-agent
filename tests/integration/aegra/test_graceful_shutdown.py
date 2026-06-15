@@ -20,9 +20,11 @@ pytestmark = pytest.mark.integration
 def _reset_shutdown_state():
     shutdown_mod._shutting_down = False
     shutdown_mod._shutdown_complete = False
+    shutdown_mod._async_shutdown_started = False
     yield
     shutdown_mod._shutting_down = False
     shutdown_mod._shutdown_complete = False
+    shutdown_mod._async_shutdown_started = False
 
 
 def _mock_all_subsystems(drain_seconds=0):

@@ -45,10 +45,10 @@ async def run_startup() -> dict[str, str]:
     results["scheduler"] = await _start_scheduler()
     results["telemetry"] = _setup_telemetry()
 
+    _upgrade_signal_handlers()
+
     elapsed = round((time.monotonic() - t0) * 1000, 1)
     _startup_complete = True
-
-    _register_shutdown_handlers()
 
     logger.info(
         "Startup complete in %.1fms: %s",
@@ -56,6 +56,16 @@ async def run_startup() -> dict[str, str]:
         results,
     )
     return results
+
+
+def _upgrade_signal_handlers() -> None:
+    """Upgrade to loop-aware signal handlers for async drain."""
+    try:
+        from deep_agent.aegra.shutdown import register_signal_handlers
+
+        register_signal_handlers()
+    except Exception:
+        logger.warning("Failed to register signal handlers", exc_info=True)
 
 
 async def _validate_config() -> str:
@@ -137,24 +147,6 @@ def _setup_telemetry() -> str:
     except Exception as exc:
         logger.warning("Telemetry setup failed: %s", exc)
         return f"warning: {exc}"
-
-
-def _register_shutdown_handlers() -> None:
-    """Register signal and atexit shutdown handlers."""
-    import atexit
-
-    try:
-        from deep_agent.aegra.shutdown import register_signal_handlers, run_shutdown_sync
-
-        try:
-            register_signal_handlers()
-        except Exception:
-            logger.warning("Failed to register signal handlers", exc_info=True)
-
-        atexit.register(run_shutdown_sync)
-        logger.info("Shutdown handlers registered")
-    except Exception:
-        logger.warning("Failed to register shutdown handlers", exc_info=True)
 
 
 def is_ready() -> bool:

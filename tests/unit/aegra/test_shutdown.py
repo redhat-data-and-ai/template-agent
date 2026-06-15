@@ -12,8 +12,10 @@ from deep_agent.aegra.shutdown import (
     _close_redis,
     _drain,
     _shutdown_langfuse,
+    _shutdown_langfuse_sync,
     _stop_scheduler,
     is_shutting_down,
+    register_atexit,
     register_signal_handlers,
     run_shutdown,
     run_shutdown_sync,
@@ -25,9 +27,11 @@ def _reset_shutdown_state():
     """Reset module-level flags before each test."""
     shutdown_mod._shutting_down = False
     shutdown_mod._shutdown_complete = False
+    shutdown_mod._async_shutdown_started = False
     yield
     shutdown_mod._shutting_down = False
     shutdown_mod._shutdown_complete = False
+    shutdown_mod._async_shutdown_started = False
 
 
 class TestIsShuttingDown:
@@ -72,6 +76,7 @@ class TestRunShutdown:
 
     async def test_idempotent(self):
         shutdown_mod._shutting_down = True
+        shutdown_mod._shutdown_complete = True
         result = await run_shutdown()
         assert result["status"] == "already_complete"
 
@@ -286,9 +291,29 @@ class TestRunShutdownSync:
         shutdown_mod._shutdown_complete = True
         run_shutdown_sync()
 
-    def test_noop_when_shutting_down(self):
+    def test_skips_when_async_already_ran(self):
         shutdown_mod._shutting_down = True
         run_shutdown_sync()
+        assert shutdown_mod._shutdown_complete is True
+
+    def test_runs_sync_cleanup(self):
+        with (
+            patch.object(shutdown_mod, "_shutdown_langfuse_sync", return_value="ok"),
+            patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
+            patch.object(shutdown_mod, "_close_redis", return_value="ok"),
+        ):
+            run_shutdown_sync()
+        assert shutdown_mod._shutting_down is True
+        assert shutdown_mod._shutdown_complete is True
+
+
+class TestRegisterAtexit:
+    def test_registers_callback(self):
+        import atexit
+
+        with patch.object(atexit, "register") as mock_register:
+            register_atexit()
+            mock_register.assert_called_once_with(run_shutdown_sync)
 
 
 class TestRegisterSignalHandlers:
