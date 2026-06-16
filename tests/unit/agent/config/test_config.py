@@ -179,3 +179,54 @@ Bad agent.
         subs = cfg.get_all_subagent_configs()
         assert "bad-agent" not in subs
         assert "must be a list of strings" in caplog.text
+
+
+class TestConfigLoaderEdgeCases:
+    """Tests for config loader behavior with missing files."""
+
+    def setup_method(self):
+        AgentConfig._instance = None
+
+    def test_missing_prompt_md_raises(self, tmp_path):
+        """Config loader raises AppException when PROMPT.md doesn't exist."""
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+        (config_dir / "skills").mkdir()
+
+        with pytest.raises(AppException, match="Orchestrator config not found"):
+            cfg = AgentConfig(config_dir)
+            cfg.get_orchestrator_config()
+
+    def test_missing_agent_yaml_uses_defaults(self, tmp_path):
+        """Missing runtime/agent.yaml returns empty defaults without error."""
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+        (config_dir / "skills").mkdir()
+
+        (config_dir / "PROMPT.md").write_text("""---
+name: test
+model: gemini-2.5-flash
+---
+Test prompt.
+""")
+
+        cfg = AgentConfig(config_dir)
+        middleware = cfg.get_middleware_config()
+        assert middleware is not None
+
+    def test_missing_subagents_dir_returns_empty(self, tmp_path):
+        """Missing subagents/ directory returns empty dict."""
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+        (config_dir / "skills").mkdir()
+
+        (config_dir / "PROMPT.md").write_text("""---
+name: test
+model: gemini-2.5-flash
+---
+Test prompt.
+""")
+
+        cfg = AgentConfig(config_dir)
+        subagents = cfg.get_all_subagent_configs()
+        assert subagents == {}
