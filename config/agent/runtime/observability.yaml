@@ -1,0 +1,40 @@
+# Observability Configuration
+#
+# Separate from agent.yaml because observability is infrastructure,
+# not agent behavior. Template users configure tracing and metrics here.
+#
+# Two layers:
+#   - Langfuse: LLM trace quality (what was asked, returned, cost).
+#     Auto-activates when secrets are provided via env vars.
+#   - OTEL: Operational metrics + distributed tracing (request counts,
+#     latency, errors). Exports to an OpenTelemetry Collector.
+#
+# OpenShift notes:
+#   - Langfuse secrets come via OpenShift Secrets → env vars.
+#   - OTEL endpoint comes via ConfigMap → env vars (overrides YAML).
+#   - The OTEL collector runs in the same namespace as the agent.
+
+# ── Langfuse ─────────────────────────────────────────────────────── [env-var]
+# Auto-activates when these env vars are set:
+#   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL
+# No YAML config needed — the SDK reads env vars directly.
+# LANGFUSE_TRACING_ENVIRONMENT is set via ConfigMap (default: production).
+
+# ── OpenTelemetry ────────────────────────────────────────────── [YAML-loaded]
+# Disabled by default for local dev (metrics stay in-memory).
+# Enable by setting enabled: true or ENABLE_OTEL=true env var.
+#
+# Env var overrides (OpenShift ConfigMap → env var wins over YAML):
+#   ENABLE_OTEL                  → otel.enabled
+#   OTEL_EXPORTER_OTLP_ENDPOINT  → otel.exporter.endpoint
+#   OTEL_EXPORTER_OTLP_INSECURE  → otel.exporter.insecure
+#   OTEL_METRIC_EXPORT_INTERVAL  → otel.metrics.export_interval_ms
+otel:
+  enabled: false
+  exporter:
+    endpoint: "http://localhost:4317"
+    insecure: true
+  metrics:
+    export_interval_ms: 5000
+  tracing:
+    fastapi_auto_instrument: true

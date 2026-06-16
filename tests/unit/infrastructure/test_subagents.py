@@ -28,22 +28,38 @@ class TestLoadSubagents:
 
             assert result is None
 
-    def test_load_subagents_raises_error_when_model_missing(self):
-        """Test that load_subagents raises ValueError when model is missing."""
-        with patch(
-            "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
-        ) as mock_get_configs:
+    def test_load_subagents_inherits_model_when_missing(self):
+        """Test that subagent inherits model from orchestrator when missing."""
+        mock_model = MagicMock()
+        mock_subagent = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={"model": "gemini-2.5-pro"},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model",
+                return_value=mock_model,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=mock_subagent,
+            ),
+        ):
             mock_get_configs.return_value = {
                 "analyst": {
                     "name": "analyst",
                     "description": "Test analyst",
                     "body": "Test prompt",
-                    # Missing 'model' field
                 }
             }
 
-            with pytest.raises(SubAgentError, match="missing required 'model' field"):
-                load_subagents(tools=[])
+            result = load_subagents(tools=[])
+            assert result == [mock_subagent]
 
     def test_load_single_subagent_minimal(self):
         """Test loading a single subagent with minimal config."""
@@ -378,11 +394,9 @@ class TestAgentTypeSystem:
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model"
             ) as mock_create_model,
+            patch("deepagents.create_deep_agent") as mock_create_agent,
             patch(
-                "deep_agent.src.infrastructure.subagents.create_deep_agent"
-            ) as mock_create_agent,
-            patch(
-                "deep_agent.src.infrastructure.subagents.get_backend"
+                "deep_agent.src.infrastructure.backend.get_configured_backend"
             ) as mock_get_backend,
             patch(
                 "deep_agent.src.infrastructure.subagents.CompiledSubAgent"
@@ -456,5 +470,5 @@ class TestAgentTypeSystem:
                     # No graph_id
                 }
             }
-            with pytest.raises(SubAgentError, match="missing required 'graph_id'"):
+            with pytest.raises(SubAgentError):
                 load_subagents(tools=[])

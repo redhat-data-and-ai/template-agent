@@ -88,6 +88,8 @@ spec:
                   name: agent-secrets
                   key: LANGFUSE_BASE_URL
                   optional: true
+            - name: ENABLE_OTEL
+              value: "false"
           startupProbe:
             httpGet:
               path: /health

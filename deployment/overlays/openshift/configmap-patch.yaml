@@ -16,3 +16,9 @@ data:
 
   # Redis
   REDIS_URL: "redis://redis:6379/0"
+
+  # OTEL
+  ENABLE_OTEL: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  OTEL_METRIC_EXPORT_INTERVAL: "5000"

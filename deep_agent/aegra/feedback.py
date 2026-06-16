@@ -61,7 +61,7 @@ def _patch_aegra_persistence_if_inmemory() -> None:
         async def _noop_initialize() -> None:
             logger.info("aegra_db_initialize_skipped_inmemory_mode")
 
-        db_manager.initialize = _noop_initialize  # type: ignore[method-assign]
+        db_manager.initialize = _noop_initialize
         logger.info("aegra_persistence_patched_for_inmemory_mode")
     except ImportError:
         pass
@@ -69,7 +69,7 @@ def _patch_aegra_persistence_if_inmemory() -> None:
 
 _patch_aegra_persistence_if_inmemory()
 
-from deep_agent.aegra.shutdown import register_atexit
+from deep_agent.aegra.shutdown import register_atexit  # noqa: E402
 
 register_atexit()
 
@@ -83,7 +83,7 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
     enabling end-to-end correlation across UI → BFF → Agent.
     """
 
-    async def dispatch(self, request: Request, call_next: Any) -> Any:
+    async def dispatch(self, request: Request, call_next: Any) -> Any:  # noqa: D102
         trace_id = request.headers.get("x-trace-id") or uuid4().hex
         bind_request_context(trace_id=trace_id)
         response = await call_next(request)
@@ -93,6 +93,14 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(TraceIDMiddleware)
+
+try:
+    from deep_agent.aegra.otel import initialize_telemetry, instrument_fastapi
+
+    initialize_telemetry()
+    instrument_fastapi(app)
+except ImportError:
+    logger.debug("opentelemetry SDK not installed — OTEL instrumentation skipped")
 
 
 def _score_to_feedback_polarity(req: FeedbackRequest) -> Literal["up", "down"]:

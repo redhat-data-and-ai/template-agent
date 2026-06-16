@@ -114,7 +114,7 @@ class TestResolveModel:
     def test_legacy_strategy_uses_cache(self):
         config = ProvidersFileConfig(resolve_strategy="legacy")
         with patch(
-            "deep_agent.src.infrastructure.providers.get_or_create_model",
+            "deep_agent.src.cache.model_cache.get_or_create_model",
             return_value="mock_model",
         ) as mock:
             result = resolve_model_from_config("gemini-2.5-pro", config)
@@ -128,8 +128,9 @@ class TestResolveModel:
     def test_deepagents_strategy_calls_resolve_model(self):
         config = ProvidersFileConfig(resolve_strategy="deepagents")
         with patch(
-            "deep_agent.src.infrastructure.providers.resolve_model",
+            "deepagents.resolve_model",
             return_value="da_model",
+            create=True,
         ):
             result = resolve_model_from_config("openai:gpt-5.4", config)
         assert result == "da_model"
@@ -217,16 +218,19 @@ class TestAsyncMiddleware:
         config = AsyncTaskConfig(enabled=True, system_prompt="Custom prompt")
         async_sub = MagicMock()
         mock_mw = MagicMock()
+        mock_cls = MagicMock(return_value=mock_mw)
+
+        mock_module = MagicMock(AsyncSubAgentMiddleware=mock_cls)
 
         with (
             patch(
                 "deep_agent.src.infrastructure.async_tasks._extract_async_subagents",
                 return_value=[async_sub],
             ),
-            patch(
-                "deep_agent.src.infrastructure.async_tasks.AsyncSubAgentMiddleware",
-                return_value=mock_mw,
-            ) as mock_cls,
+            patch.dict(
+                "sys.modules",
+                {"deepagents.middleware.async_subagents": mock_module},
+            ),
         ):
             result = build_async_middleware([async_sub], config)
 

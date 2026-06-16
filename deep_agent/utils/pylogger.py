@@ -76,6 +76,10 @@ OBSERVABILITY_LOGGERS = {
     "langfuse.client",
     "langfuse.api",
     "langfuse.callback",
+    "opentelemetry",
+    "opentelemetry.sdk",
+    "opentelemetry.exporter",
+    "opentelemetry.instrumentation",
 }
 
 SILENT_LOGGERS: set[str] = set()

@@ -104,6 +104,10 @@ local:
 	@lsof -ti :5002 | xargs kill -9 2>/dev/null || true
 	@echo "Starting infrastructure (Postgres + Redis)..."
 	@podman-compose -f compose.yaml up -d pgvector redis
+	@if grep -q '^ENABLE_OTEL=true' .env 2>/dev/null; then \
+		echo "OTEL enabled — starting collector..."; \
+		podman-compose -f compose.yaml --profile observability up -d otel-collector; \
+	fi
 	@echo "Waiting for Postgres to be ready..."
 	@until podman exec demo-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
 	@podman exec demo-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
@@ -111,7 +115,7 @@ local:
 	@echo "Starting agent with LangGraph Platform..."
 	@echo "API available at: http://localhost:5002"
 	@echo "Press Ctrl+C to stop the server"
-	@. .venv/bin/activate && REDIS_BROKER_ENABLED=true REDIS_URL=redis://localhost:6379/0 aegra dev --port 5002 --no-db-check
+	@. .venv/bin/activate && REDIS_BROKER_ENABLED=true REDIS_URL=redis://localhost:6379/0 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 aegra dev --port 5002 --no-db-check
 
 container:
 	export PODMAN_COMPOSE_SILENT=true
@@ -127,7 +131,11 @@ dev: ## Start full dev stack with all services (Redis, Postgres)
 	@echo "Agent:    http://localhost:5002"
 	@echo ""
 	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
-	podman-compose up --build -d
+	podman-compose up --build -d || podman-compose start pgvector redis template-agent 2>/dev/null || true
+	@if grep -q '^ENABLE_OTEL=true' .env 2>/dev/null; then \
+		echo "OTEL enabled — starting collector (metrics at http://localhost:8889/metrics)..."; \
+		podman-compose --profile observability up -d otel-collector || true; \
+	fi
 	@echo ""
 	@echo "Tailing agent logs (Ctrl+C to stop)..."
 	@echo ""

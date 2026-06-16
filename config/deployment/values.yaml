@@ -97,6 +97,10 @@ config:
   REQUEST_LOG_BODY: "false"
   REQUEST_LOG_BODY_MAX_SIZE: "10240"
   REDIS_URL: "redis://redis:6379/0"
+  ENABLE_OTEL: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  OTEL_METRIC_EXPORT_INTERVAL: "5000"
 
 # --- Sensitive configuration (maps to Secret) ---
 # Values are injected by the ArgoCD Vault Plugin (AVP) at deploy time.

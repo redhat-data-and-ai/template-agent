@@ -1,0 +1,17 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: otel-collector
+  labels:
+    app: agent
+    component: otel-collector
+    shard: internal
+spec:
+  to:
+    kind: Service
+    name: otel-collector
+  port:
+    targetPort: prometheus
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

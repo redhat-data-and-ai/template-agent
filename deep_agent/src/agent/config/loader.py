@@ -32,6 +32,7 @@ from .middleware import (
     ResolvedMiddlewareConfig,
     resolve_middleware,
 )
+from .otel import OtelFileConfig
 from .parser import inject_runtime_values, parse_frontmatter
 from .providers import ProvidersFileConfig
 from .resolver import resolve_skill_paths, resolve_tools
@@ -64,6 +65,7 @@ class AgentConfig:
     _filesystem_config: FilesystemFileConfig
     _providers_config: ProvidersFileConfig
     _cache_config: CacheFileConfig
+    _otel_config: OtelFileConfig
     _name: str
 
     def __new__(cls, base_dir: Path | None = None) -> "AgentConfig":
@@ -113,6 +115,25 @@ class AgentConfig:
             logger.warning("Failed to parse runtime/agent.yaml, using defaults: %s", e)
             return {}
 
+    def _load_observability_yaml(self) -> dict[str, Any]:
+        """Load runtime/observability.yaml for OTEL and tracing config.
+
+        Returns:
+            Raw dict from observability.yaml, or empty dict if missing.
+        """
+        obs_yaml = self._base_dir / "runtime" / "observability.yaml"
+        if not obs_yaml.is_file():
+            logger.debug("No runtime/observability.yaml found — using defaults")
+            return {}
+
+        try:
+            raw = yaml.safe_load(obs_yaml.read_text()) or {}
+            logger.info("Loaded runtime/observability.yaml")
+            return raw
+        except Exception as e:
+            logger.warning("Failed to parse runtime/observability.yaml: %s", e)
+            return {}
+
     def _ensure_loaded(self) -> None:
         """Lazy load configurations on first access.
 
@@ -151,6 +172,10 @@ class AgentConfig:
         # Extract cache section
         self._cache_config = CacheFileConfig.model_validate(raw.get("cache", {}))
 
+        # Extract OTEL section from observability.yaml
+        obs_raw = self._load_observability_yaml()
+        self._otel_config = OtelFileConfig.model_validate(obs_raw.get("otel", {}))
+
         # Extract top-level identity
         self._name = raw.get("name", "Agent")
         # Scan skills first, as orchestrator and subagents need them for resolution
@@ -181,9 +206,7 @@ class AgentConfig:
         Raises:
             AppException: If ``mcps`` is not a list of strings.
         """
-        if not isinstance(mcps, list) or not all(
-            isinstance(s, str) for s in mcps
-        ):
+        if not isinstance(mcps, list) or not all(isinstance(s, str) for s in mcps):
             raise AppException(
                 f"Agent '{agent_name}': 'mcps' must be a list of strings",
                 ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
@@ -380,6 +403,15 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return self._cache_config
+
+    def get_otel_config(self) -> OtelFileConfig:
+        """Get the pre-loaded OTEL configuration.
+
+        Returns:
+            The parsed otel section from observability.yaml.
+        """
+        self._ensure_loaded()
+        return self._otel_config
 
     def get_name(self) -> str:
         """Get the agent display name from config.

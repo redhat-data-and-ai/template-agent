@@ -234,10 +234,8 @@ memory:
     interval_hours: 6
   max_inject: 20
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Observability                                                      [env-var]
+# Observability                                     → runtime/observability.yaml
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Langfuse auto-activates when secrets are provided. No additional config needed.
-# OTEL traces export to Jaeger/Tempo/Collector via OTEL_EXPORTER_OTLP_ENDPOINT.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Logging                                                            [env-var]

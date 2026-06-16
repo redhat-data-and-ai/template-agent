@@ -128,6 +128,7 @@ def run_shutdown_sync() -> None:
 
     for key, step in [
         ("langfuse", _shutdown_langfuse_sync),
+        ("otel", _shutdown_otel_sync),
         ("graph_cache", _clear_graph_cache),
         ("redis", _close_redis),
     ]:
@@ -200,6 +201,7 @@ async def run_shutdown() -> dict[str, str]:
     for key, step in [
         ("drain", _drain),
         ("langfuse", _shutdown_langfuse),
+        ("otel", _shutdown_otel),
         ("scheduler", _stop_scheduler),
         ("graph_cache", _clear_graph_cache),
         ("redis", _close_redis),
@@ -208,7 +210,7 @@ async def run_shutdown() -> dict[str, str]:
             result = step()
             if asyncio.iscoroutine(result):
                 result = await result
-            results[key] = result
+            results[key] = str(result)
         except Exception as exc:
             logger.warning("Shutdown step '%s' failed: %s", key, exc)
             results[key] = f"error: {exc}"
@@ -282,6 +284,35 @@ def _langfuse_shutdown_blocking(client: Any) -> None:
         client.shutdown()
     elif hasattr(client, "flush"):
         client.flush()
+
+
+def _shutdown_otel_sync() -> str:
+    """Sync OTEL shutdown for atexit path."""
+    try:
+        from deep_agent.aegra.otel import shutdown_telemetry
+
+        shutdown_telemetry()
+        return "ok"
+    except Exception as exc:
+        return f"skipped: {exc}"
+
+
+async def _shutdown_otel() -> str:
+    """Async OTEL shutdown with timeout."""
+    try:
+        from deep_agent.aegra.otel import shutdown_telemetry
+
+        await asyncio.wait_for(
+            asyncio.to_thread(shutdown_telemetry),
+            timeout=5,
+        )
+        return "ok"
+    except asyncio.TimeoutError:
+        logger.warning("OTEL shutdown timed out after 5s")
+        return "timeout"
+    except Exception as exc:
+        logger.warning("OTEL shutdown failed: %s", exc)
+        return f"error: {exc}"
 
 
 async def _stop_scheduler() -> str:

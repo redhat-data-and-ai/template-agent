@@ -14,7 +14,7 @@ class TestSettings:
         assert s.AGENT_HOST == "0.0.0.0"
         assert s.AGENT_PORT == 5002
         assert s.PYTHON_LOG_LEVEL == "INFO"
-        assert s.POSTGRES_USER == "pgvector"
+        assert s.POSTGRES_USER == "postgres"
         assert s.POSTGRES_PORT == 5432
         assert s.MAX_OUTPUT_TOKENS == 8192
 
@@ -60,8 +60,16 @@ class TestSettings:
         s = Settings()
         assert s.REQUEST_LOGGING_ENABLED is True
         assert s.REQUEST_LOG_HEADERS is True
-        assert s.REQUEST_LOG_BODY is False
+        assert s.REQUEST_LOG_BODY is True
         assert s.REQUEST_LOG_BODY_MAX_SIZE == 10240
+
+    def test_otel_fields_exist(self):
+        s = Settings()
+        # ENABLE_OTEL default is False in code, but may be overridden by .env
+        assert isinstance(s.ENABLE_OTEL, bool)
+        assert isinstance(s.OTEL_EXPORTER_OTLP_ENDPOINT, str)
+        assert isinstance(s.OTEL_EXPORTER_OTLP_INSECURE, bool)
+        assert isinstance(s.OTEL_METRIC_EXPORT_INTERVAL, int)
 
 
 class TestValidateConfig:

@@ -4,7 +4,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from deep_agent.src.agent.config.middleware import ResolvedMiddlewareConfig
+from deep_agent.src.agent.config.middleware import (
+    ModelCallLimitConfig,
+    ModelFallbackConfig,
+    ModelRetryConfig,
+    ResolvedMiddlewareConfig,
+    ToolCallLimitConfig,
+)
 from deep_agent.src.infrastructure.middleware import (
     _import_middleware,
     build_excluded_middleware,
@@ -41,7 +47,12 @@ class TestBuildMiddlewareList:
 
     def test_excludes_summarization_tool_when_disabled(self):
         resolved = ResolvedMiddlewareConfig(
-            summarization_tool_enabled=False, extra_middleware=[]
+            summarization_tool_enabled=False,
+            extra_middleware=[],
+            model_call_limit=ModelCallLimitConfig(enabled=False),
+            tool_call_limit=ToolCallLimitConfig(enabled=False),
+            model_retry=ModelRetryConfig(enabled=False),
+            model_fallback=ModelFallbackConfig(enabled=False),
         )
         with patch(
             "deep_agent.src.infrastructure.middleware.settings"
@@ -56,6 +67,10 @@ class TestBuildMiddlewareList:
             extra_middleware=[
                 "tests.unit.test_infrastructure_middleware:_DummyMiddleware"
             ],
+            model_call_limit=ModelCallLimitConfig(enabled=False),
+            tool_call_limit=ToolCallLimitConfig(enabled=False),
+            model_retry=ModelRetryConfig(enabled=False),
+            model_fallback=ModelFallbackConfig(enabled=False),
         )
         with patch(
             "deep_agent.src.infrastructure.middleware.settings"

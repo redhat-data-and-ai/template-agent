@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     LANGFUSE_BASE_URL: Optional[str] = Field(default=None)
     LANGFUSE_TRACING_ENVIRONMENT: str = Field(default="development")
 
+    # ── Observability (OTEL) ─────────────────────────────────────────
+    # Env var overrides for observability.yaml otel: section.
+    ENABLE_OTEL: bool = Field(default=False)
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = Field(default="http://localhost:4317")
+    OTEL_EXPORTER_OTLP_INSECURE: bool = Field(default=True)
+    OTEL_METRIC_EXPORT_INTERVAL: int = Field(default=5000)
+
     # ── Google Cloud ──────────────────────────────────────────────────
     GOOGLE_APPLICATION_CREDENTIALS_CONTENT: Optional[str] = Field(default=None)
 

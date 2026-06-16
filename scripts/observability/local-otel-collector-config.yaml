@@ -1,0 +1,47 @@
+# OTEL Collector config for LOCAL DEV ONLY.
+# OpenShift deploys the collector via deployment/overlays/openshift/.
+#
+# Usage: docker compose --profile observability up
+# Then set ENABLE_OTEL=true in .env or otel.enabled: true in observability.yaml.
+#
+# Prometheus scrapes metrics at http://localhost:8889/metrics.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1000
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    const_labels:
+      source: "otel-collector"
+  debug:
+    verbosity: normal
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, debug]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

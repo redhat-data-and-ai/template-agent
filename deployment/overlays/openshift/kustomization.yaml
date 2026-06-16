@@ -12,6 +12,10 @@ resources:
   - route.yaml
   - pdb.yaml
   - hpa.yaml
+  - otel-collector-configmap.yaml
+  - otel-collector-deployment.yaml
+  - otel-collector-service.yaml
+  - otel-collector-route.yaml
 
 labels:
   - pairs:

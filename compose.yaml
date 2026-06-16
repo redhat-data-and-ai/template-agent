@@ -89,6 +89,21 @@ services:
     networks:
       - demo-network
 
+  otel-collector:
+    profiles: [observability]
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: demo-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./scripts/observability/local-otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+    networks:
+      - demo-network
+    restart: unless-stopped
+
   template-agent:
     build:
       context: .
@@ -109,6 +124,8 @@ services:
       - POSTGRES_PASSWORD=postgres
       - REDIS_URL=redis://redis:6379/0
       - REDIS_BROKER_ENABLED=true
+      - ENABLE_OTEL=${ENABLE_OTEL:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
     depends_on:
       pgvector:
         condition: service_healthy
