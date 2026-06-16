@@ -163,9 +163,9 @@ dev-agent: ## Restart just the agent service
 
 DEMO_DIR := .demo
 DEMO_MCP_REPO := https://github.com/redhat-data-and-ai/template-mcp-server.git
-DEMO_MCP_BRANCH := feat/rh-flavour
+DEMO_MCP_BRANCH := deep-agent
 DEMO_UI_REPO := https://github.com/redhat-data-and-ai/template-ui.git
-DEMO_UI_BRANCH := feat/rh-flavour
+DEMO_UI_BRANCH := deep-agent
 
 demo: ## Start demo: UI + agent + MCP server with SSO auth (end-to-end)
 	@echo "╔═══════════════════════════════════════════════════════════════════╗"
@@ -240,7 +240,11 @@ demo: ## Start demo: UI + agent + MCP server with SSO auth (end-to-end)
 	@echo "Agent:      http://localhost:5002"
 	@echo "MCP Server: http://localhost:5001  (SSO auth enabled)"
 	@echo ""
-	podman-compose --profile demo up --build --force-recreate -d
+	podman-compose --profile demo up --build --force-recreate -d || podman-compose --profile demo start 2>/dev/null || true
+	@if grep -q '^ENABLE_OTEL=true' .env 2>/dev/null; then \
+		echo "OTEL enabled — starting collector (metrics at http://localhost:8889/metrics)..."; \
+		podman-compose --profile observability up -d otel-collector || true; \
+	fi
 	@echo ""
 	@echo "Waiting for services to be healthy..."
 	@sleep 15
