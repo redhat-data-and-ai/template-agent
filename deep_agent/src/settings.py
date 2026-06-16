@@ -9,6 +9,7 @@ Hierarchy (highest wins):
   3. Defaults below (tuned for containerized demo stack)
 """
 
+from enum import StrEnum
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -23,6 +24,15 @@ logger = get_python_logger()
 
 _DEV_PUBLIC_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
+
+class Environment(StrEnum):
+    """Deployment environment for the agent."""
+
+    LOCAL = "local"
+    DEMO = "demo"
+    STAGING = "staging"
+    PRODUCTION = "production"
+
 try:
     load_dotenv()
 except Exception as e:
@@ -35,6 +45,9 @@ class Settings(BaseSettings):
     Grouped by concern. Every field has a sensible default so the agent
     starts with zero configuration beyond secrets in .env.
     """
+
+    # ── Deployment ────────────────────────────────────────────────────
+    ENVIRONMENT: Environment = Field(default=Environment.LOCAL)
 
     # ── Server ────────────────────────────────────────────────────────
     AGENT_HOST: str = Field(default="0.0.0.0")
@@ -92,17 +105,10 @@ class Settings(BaseSettings):
     SSO_DEV_USER_ID: str = Field(default="dev-user")
     ENABLE_USER_ID_ENCRYPTION: bool = Field(default=False)
 
-    # ── Environment ───────────────────────────────────────────────────
-    ENVIRONMENT: str = Field(
-        default="development",
-        description="Runtime environment: development, production, staging. "
-        "Production mode enforces auth, SSL verification, and PII scrubbing.",
-    )
-
     @property
     def is_production(self) -> bool:
         """True when running in production environment."""
-        return self.ENVIRONMENT.lower() == "production"
+        return self.ENVIRONMENT == Environment.PRODUCTION
 
     # ── Observability (Langfuse) ──────────────────────────────────────
     LANGFUSE_PUBLIC_KEY: Optional[str] = Field(default=None)

@@ -14,7 +14,7 @@ class TestSettings:
         assert s.AGENT_HOST == "0.0.0.0"
         assert s.AGENT_PORT == 5002
         assert s.PYTHON_LOG_LEVEL == "INFO"
-        assert s.POSTGRES_USER == "pgvector"
+        assert s.POSTGRES_USER == "postgres"
         assert s.POSTGRES_PORT == 5432
         assert s.MAX_OUTPUT_TOKENS == 8192
 
@@ -60,8 +60,21 @@ class TestSettings:
         s = Settings()
         assert s.REQUEST_LOGGING_ENABLED is True
         assert s.REQUEST_LOG_HEADERS is True
-        assert s.REQUEST_LOG_BODY is False
+        assert s.REQUEST_LOG_BODY is True
         assert s.REQUEST_LOG_BODY_MAX_SIZE == 10240
+
+    def test_environment_default_is_local(self):
+        s = Settings()
+        assert s.ENVIRONMENT == "local"
+
+    def test_environment_accepts_valid_values(self):
+        for env in ("local", "demo", "staging", "production"):
+            s = Settings(ENVIRONMENT=env)
+            assert s.ENVIRONMENT == env
+
+    def test_environment_rejects_invalid(self):
+        with pytest.raises(Exception):
+            Settings(ENVIRONMENT="invalid")
 
 
 class TestValidateConfig:
