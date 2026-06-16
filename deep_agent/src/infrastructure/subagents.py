@@ -219,18 +219,76 @@ def _inject_fallback_if_missing(
     return model_dict
 
 
+def _create_primary_model(spec: ModelSpec) -> object:
+    """Create only the primary BaseChatModel from a ModelSpec, without fallback wrapper.
+
+    Uses the model cache for efficient reuse. Fallbacks should be handled via
+    deepagents' ModelFallbackMiddleware, not LangChain's with_fallbacks().
+
+    Args:
+        spec: Parsed model specification (fallback config ignored).
+
+    Returns:
+        A BaseChatModel instance for the primary model only.
+    """
+    from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
+
+    # Create a spec without fallback for the primary model
+    primary_spec = ModelSpec(provider=spec.provider, name=spec.name, fallback=None)
+
+    # Use the cache to get or create the model
+    return get_or_create_model_from_spec(primary_spec)
+
+
 def _resolve_subagent_model(agent_cfg: dict[str, Any]) -> object:
-    """Parse frontmatter model config and return a cached BaseChatModel."""
+    """Parse frontmatter model config and return only the primary BaseChatModel.
+
+    Strips any fallback configuration since deepagents doesn't support RunnableWithFallbacks.
+    Fallback handling should be done via deepagents' ModelFallbackMiddleware instead.
+    """
     raw_model = agent_cfg.get("model")
     if raw_model is None:
         raise ValueError("missing required 'model' field in frontmatter")
+
+    # Parse model spec (may include fallback config)
     spec = parse_model_config(raw_model)
-    return get_or_create_model_from_spec(spec)
+
+    # Create only the primary model using the cache
+    return _create_primary_model(spec)
 
 
 def _format_model_log(spec: ModelSpec) -> str:
     """Format model spec for log messages."""
     return spec.display_name()
+
+
+def _build_fallback_middleware(spec: ModelSpec) -> list[Any]:
+    """Build ModelFallbackMiddleware with BaseChatModel if spec has fallback configured.
+
+    Creates the fallback model using get_or_create_model_from_spec to preserve custom
+    initialization logic (MAAS base URLs, Vertex credentials, etc) and enable caching.
+
+    Args:
+        spec: Parsed model specification.
+
+    Returns:
+        List containing ModelFallbackMiddleware if fallback exists, empty list otherwise.
+    """
+    if spec.fallback is None:
+        return []
+
+    from deep_agent.src.infrastructure.model_fallback_middleware import ModelFallbackMiddleware
+
+    # Create fallback model using the model cache
+    fallback_model = _create_primary_model(spec.fallback)
+
+    middleware = ModelFallbackMiddleware(fallbacks=[fallback_model])
+    logger.info(
+        "Configured fallback middleware: %s -> %s",
+        spec.display_name(),
+        spec.fallback.display_name(),
+    )
+    return [middleware]
 
 
 def _build_single_subagent(
@@ -303,6 +361,9 @@ def _build_default_subagent(
 
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
+    # Build fallback middleware if spec has fallback configured
+    fallback_mw = _build_fallback_middleware(spec)
+
     subagent_params: dict[str, Any] = {
         "name": name,
         "model": _resolve_subagent_model(agent_cfg),
@@ -314,6 +375,8 @@ def _build_default_subagent(
         subagent_params["tools"] = resolved_tools
     if skill_paths:
         subagent_params["skills"] = skill_paths
+    if fallback_mw:
+        subagent_params["middleware"] = fallback_mw
 
     return SubAgent(**subagent_params)
 
@@ -363,14 +426,22 @@ def _build_compiled_subagent(
         resolved_tools = []
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
-    compiled_graph = create_deep_agent(
-        name=name,
-        model=_resolve_subagent_model(agent_cfg),
-        system_prompt=agent_cfg.get("body", ""),
-        tools=resolved_tools or None,
-        skills=skill_paths or None,
-        backend=get_configured_backend(),
-    )
+    # Build fallback middleware if spec has fallback configured
+    fallback_mw = _build_fallback_middleware(spec)
+
+    create_kwargs = {
+        "name": name,
+        "model": _resolve_subagent_model(agent_cfg),
+        "system_prompt": agent_cfg.get("body", ""),
+        "tools": resolved_tools or None,
+        "skills": skill_paths or None,
+        "backend": get_configured_backend(),
+    }
+
+    if fallback_mw:
+        create_kwargs["middleware"] = fallback_mw
+
+    compiled_graph = create_deep_agent(**create_kwargs)
 
     return CompiledSubAgent(
         name=name,
