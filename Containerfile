@@ -6,8 +6,7 @@
 # Build: podman build -t template-agent .
 # Run:   podman run -v ./config:/app/config:ro -p 5002:5002 template-agent
 
-ARG PYTHON_TAG=3.12
-FROM registry.access.redhat.com/hi/python:${PYTHON_TAG}
+FROM registry.access.redhat.com/ubi9/python-312:latest
 
 WORKDIR /app
 USER root
