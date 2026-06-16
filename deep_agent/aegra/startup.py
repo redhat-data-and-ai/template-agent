@@ -19,7 +19,10 @@ times is safe (each step guards against double-init).
 import asyncio
 import os
 import time
+from pathlib import Path
 
+from deep_agent.src.exceptions import ConfigurationError
+from deep_agent.src.settings import Environment, settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -41,6 +44,7 @@ async def run_startup() -> dict[str, str]:
     t0 = time.monotonic()
     results: dict[str, str] = {}
 
+    results["prerequisites"] = await _check_prerequisites()
     results["config"] = await _validate_config()
     results["database"] = await _ensure_database()
     _check_mcp_encryption_key()
@@ -70,6 +74,101 @@ def _upgrade_signal_handlers() -> None:
         register_signal_handlers()
     except Exception:
         logger.warning("Failed to register signal handlers", exc_info=True)
+
+
+def _check_db(database_uri: str) -> None:
+    """Try a TCP+auth connection to Postgres. Raises on failure."""
+    import psycopg
+
+    conn = psycopg.connect(database_uri, connect_timeout=5)
+    conn.close()
+
+
+def _check_redis(redis_url: str) -> None:
+    """Ping Redis. Raises on failure."""
+    import redis as redis_lib
+
+    client = redis_lib.from_url(redis_url, socket_connect_timeout=5)
+    client.ping()
+    client.close()
+
+
+def _prompt_md_exists() -> bool:
+    """Check that the orchestrator config file exists."""
+    config_dir = Path(__file__).parent.parent.parent / "config" / "agent"
+    return (config_dir / "PROMPT.md").is_file()
+
+
+async def _check_prerequisites() -> str:
+    """Run environment-aware prerequisite checks.
+
+    Hard failures raise ConfigurationError.
+    Soft failures log warnings and continue.
+    """
+    env = settings.ENVIRONMENT
+    is_local = env == Environment.LOCAL
+    is_strict = env in (Environment.STAGING, Environment.PRODUCTION)
+
+    if not _prompt_md_exists():
+        raise ConfigurationError(
+            "PROMPT.md not found in config/agent/ — cannot start without orchestrator config"
+        )
+
+    has_google = settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT is not None
+    has_vllm = settings.VLLM_BASE_URL is not None
+    has_openai = os.environ.get("OPENAI_API_KEY") is not None
+    if not (has_google or has_vllm or has_openai):
+        raise ConfigurationError(
+            "Model provider not configured — set GOOGLE_APPLICATION_CREDENTIALS_CONTENT, "
+            "VLLM_BASE_URL, or OPENAI_API_KEY"
+        )
+
+    warnings = []
+    try:
+        _check_db(settings.database_uri)
+    except Exception as exc:
+        if is_local:
+            logger.warning("Database not reachable (non-fatal in local mode): %s", exc)
+            warnings.append("db")
+        else:
+            raise ConfigurationError(
+                f"database not reachable — check POSTGRES_HOST/PORT/USER/PASSWORD: {exc}"
+            ) from exc
+
+    try:
+        _check_redis(settings.REDIS_URL)
+    except Exception as exc:
+        if is_local:
+            logger.warning("Redis not reachable (non-fatal in local mode): %s", exc)
+            warnings.append("redis")
+        else:
+            raise ConfigurationError(
+                f"Redis not reachable — check REDIS_URL: {exc}"
+            ) from exc
+
+    if is_strict:
+        missing_sso = [
+            name
+            for name, val in [
+                ("SSO_ISSUER_URL", settings.SSO_ISSUER_URL),
+                ("SSO_CLIENT_ID", settings.SSO_CLIENT_ID),
+                ("SSO_CLIENT_SECRET", settings.SSO_CLIENT_SECRET),
+            ]
+            if val is None
+        ]
+        if missing_sso:
+            raise ConfigurationError(
+                f"SSO configuration incomplete — missing: {', '.join(missing_sso)}"
+            )
+
+    if is_strict:
+        if not settings.LANGFUSE_PUBLIC_KEY or not settings.LANGFUSE_SECRET_KEY:
+            logger.warning("Langfuse not configured — tracing will be disabled")
+            warnings.append("langfuse")
+
+    if warnings:
+        return f"warn: {', '.join(warnings)}"
+    return "ok"
 
 
 async def _validate_config() -> str:
