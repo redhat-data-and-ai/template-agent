@@ -20,21 +20,24 @@ class TestWarmCaches:
             CACHE_MODEL_ENABLED=True,
         )
         mock_config = MagicMock()
-        mock_config.get_orchestrator_config.return_value = {"model": "test-model"}
+        mock_config.get_orchestrator_config.return_value = {"model": "gemini-2.5-flash"}
         mock_config.get_all_subagent_configs.return_value = {
-            "sub1": {"model": "sub-model"},
+            "sub1": {
+                "model": {"provider": "vertex", "name": "gemini-2.5-pro"},
+            },
         }
 
         with (
             patch.object(warming, "cache_settings", enabled),
             patch("deep_agent.src.agent.config.agent_config", mock_config),
             patch(
-                "deep_agent.src.cache.model_cache.get_or_create_model"
-            ) as mock_create,
+                "deep_agent.src.cache.model_cache.get_or_create_model_from_spec"
+            ) as mock_from_spec,
         ):
             result = warming.warm_caches()
             assert result["models"] is True
-            assert mock_create.call_count == 2
+            # Both orchestrator and subagent use get_or_create_model_from_spec
+            assert mock_from_spec.call_count == 2
 
     def test_handles_model_warming_failure(self):
         enabled = CacheSettings(
@@ -61,3 +64,36 @@ class TestWarmCaches:
         with patch.object(warming, "cache_settings", enabled):
             result = warming.warm_caches()
             assert result["models"] is False
+
+    def test_parses_orchestrator_model_with_provider(self):
+        """Orchestrator models support provider specification."""
+        enabled = CacheSettings(
+            CACHE_ENABLED=True,
+            CACHE_WARMING_ENABLED=True,
+            CACHE_MODEL_ENABLED=True,
+        )
+        mock_config = MagicMock()
+        # Orchestrator with explicit provider
+        mock_config.get_orchestrator_config.return_value = {
+            "model": {
+                "provider": "vertex",
+                "name": "gemini-2.5-pro",
+            }
+        }
+        mock_config.get_all_subagent_configs.return_value = {}
+
+        with (
+            patch.object(warming, "cache_settings", enabled),
+            patch("deep_agent.src.agent.config.agent_config", mock_config),
+            patch(
+                "deep_agent.src.cache.model_cache.get_or_create_model_from_spec"
+            ) as mock_from_spec,
+        ):
+            result = warming.warm_caches()
+            assert result["models"] is True
+            assert mock_from_spec.call_count == 1
+
+            # Verify the spec has correct provider
+            spec = mock_from_spec.call_args[0][0]
+            assert spec.name == "gemini-2.5-pro"
+            assert spec.provider.value == "vertex"

@@ -4,14 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deep_agent.src.agent.config.model import ModelSpec, Provider
 from deep_agent.src.exceptions import SubAgentError
-from deep_agent.src.infrastructure.subagents import (
-    VALID_AGENT_TYPES,
-    _build_async_subagent,
-    _build_compiled_subagent,
-    _build_default_subagent,
-    load_subagents,
-)
+from deep_agent.src.infrastructure.subagents import VALID_AGENT_TYPES, load_subagents
 
 
 class TestLoadSubagents:
@@ -29,21 +24,34 @@ class TestLoadSubagents:
             assert result is None
 
     def test_load_subagents_raises_error_when_model_missing(self):
-        """Test that load_subagents raises ValueError when model is missing."""
-        with patch(
-            "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
-        ) as mock_get_configs:
+        """Test that load_subagents uses default model when none configured."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},  # No orchestrator model either
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+        ):
             mock_get_configs.return_value = {
                 "analyst": {
                     "name": "analyst",
                     "description": "Test analyst",
                     "body": "Test prompt",
-                    # Missing 'model' field
+                    # Missing 'model' field - will use default
                 }
             }
 
-            with pytest.raises(SubAgentError, match="missing required 'model' field"):
-                load_subagents(tools=[])
+            result = load_subagents(tools=[])
+            assert result is not None  # Successfully creates with default model
 
     def test_load_single_subagent_minimal(self):
         """Test loading a single subagent with minimal config."""
@@ -55,7 +63,7 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_or_create_model"
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
         ):
@@ -73,9 +81,7 @@ class TestLoadSubagents:
             result = load_subagents(tools=[])
 
             assert result == [mock_subagent]
-            mock_create_model.assert_called_once_with(
-                model_name="gemini-2.5-flash"
-            )  # now get_or_create_model
+            mock_create_model.assert_called_once()
             mock_sa.assert_called_once_with(
                 name="analyst",
                 model=mock_model,
@@ -98,7 +104,7 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
             ) as mock_resolve_tools,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_or_create_model"
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
         ):
@@ -140,7 +146,7 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_or_create_model"
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
         ):
@@ -179,7 +185,7 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_or_create_model"
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
         ):
@@ -219,7 +225,7 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
             ) as mock_resolve_tools,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_or_create_model"
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
         ):
@@ -257,7 +263,7 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_or_create_model"
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
         ):
@@ -319,7 +325,7 @@ class TestAgentTypeSystem:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_or_create_model"
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
         ):
@@ -348,7 +354,7 @@ class TestAgentTypeSystem:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_or_create_model"
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
         ):
@@ -376,13 +382,13 @@ class TestAgentTypeSystem:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_or_create_model"
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch(
-                "deep_agent.src.infrastructure.subagents.create_deep_agent"
+                "deepagents.create_deep_agent"
             ) as mock_create_agent,
             patch(
-                "deep_agent.src.infrastructure.subagents.get_backend"
+                "deep_agent.src.infrastructure.backend.get_configured_backend"
             ) as mock_get_backend,
             patch(
                 "deep_agent.src.infrastructure.subagents.CompiledSubAgent"
@@ -446,6 +452,13 @@ class TestAgentTypeSystem:
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.AsyncSubAgent", None
+            ),  # Simulate async support not available
         ):
             mock_get_configs.return_value = {
                 "bad_async": {
@@ -456,5 +469,224 @@ class TestAgentTypeSystem:
                     # No graph_id
                 }
             }
-            with pytest.raises(SubAgentError, match="missing required 'graph_id'"):
+            with pytest.raises(SubAgentError, match="requires deepagents with async support"):
                 load_subagents(tools=[])
+
+
+class TestSubagentProviderConfig:
+    """Tests for provider-aware model configuration."""
+
+    def test_inherits_orchestrator_string_model(self):
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={"model": "gemini-2.5-flash"},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ) as mock_from_spec,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                }
+            }
+
+            load_subagents(tools=[])
+
+            spec = mock_from_spec.call_args[0][0]
+            assert spec.name == "gemini-2.5-flash"
+
+    def test_orchestrator_as_fallback_when_subagent_has_string_model(self):
+        """Subagent with string model and no fallback → orchestrator becomes fallback."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={"model": "gemini-2.5-flash"},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ) as mock_from_spec,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                    "model": "gpt-4",  # String model, no fallback
+                }
+            }
+
+            load_subagents(tools=[])
+
+            spec = mock_from_spec.call_args[0][0]
+            assert spec.name == "gpt-4"
+            assert spec.fallback is not None
+            assert spec.fallback.name == "gemini-2.5-flash"
+
+    def test_orchestrator_as_fallback_when_subagent_has_dict_model_no_fallback(self):
+        """Subagent with dict model and no fallback → orchestrator becomes fallback."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={"model": "gemini-2.5-flash"},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ) as mock_from_spec,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                    "model": {"provider": "openai", "name": "gpt-4"},
+                }
+            }
+
+            load_subagents(tools=[])
+
+            spec = mock_from_spec.call_args[0][0]
+            assert spec.name == "gpt-4"
+            assert spec.provider.value == "openai"
+            assert spec.fallback is not None
+            assert spec.fallback.name == "gemini-2.5-flash"
+
+    def test_keeps_explicit_fallback_when_provided(self):
+        """Subagent with explicit fallback → keep as-is (don't override)."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={"model": "gemini-2.5-flash"},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ) as mock_from_spec,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                    "model": {
+                        "provider": "openai",
+                        "name": "gpt-4",
+                        "fallback": {"provider": "vertex", "name": "gemini-3.1-pro"},
+                    },
+                }
+            }
+
+            load_subagents(tools=[])
+
+            spec = mock_from_spec.call_args[0][0]
+            assert spec.name == "gpt-4"
+            assert spec.fallback is not None
+            # Should keep explicit fallback, not orchestrator
+            assert spec.fallback.name == "gemini-3.1-pro"
+
+    def test_no_fallback_when_no_orchestrator_model(self):
+        """Subagent with model but orchestrator has no model → no fallback added."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},  # No orchestrator model
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ) as mock_from_spec,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                    "model": "gpt-4",
+                }
+            }
+
+            load_subagents(tools=[])
+
+            spec = mock_from_spec.call_args[0][0]
+            assert spec.name == "gpt-4"
+            # No orchestrator model → no fallback
+            assert spec.fallback is None
+
+    def test_strips_nested_fallback_from_orchestrator(self):
+        """Orchestrator with fallback → strip when using as subagent fallback."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={
+                    "model": {
+                        "provider": "vertex",
+                        "name": "gemini-2.5-flash",
+                        "fallback": {"provider": "openai", "name": "gpt-4o-mini"},
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ) as mock_from_spec,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                    "model": "gpt-4",
+                }
+            }
+
+            load_subagents(tools=[])
+
+            spec = mock_from_spec.call_args[0][0]
+            assert spec.name == "gpt-4"
+            assert spec.fallback is not None
+            # Should use orchestrator primary as fallback, NOT orchestrator's fallback
+            assert spec.fallback.name == "gemini-2.5-flash"
+            # And orchestrator's fallback should be stripped (no nested chain)
+            assert spec.fallback.fallback is None

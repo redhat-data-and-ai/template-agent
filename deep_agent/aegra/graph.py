@@ -123,7 +123,7 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     orchestrator_cfg = agent_config.get_orchestrator_config()
     agent_name = orchestrator_cfg.get("name", "orchestrator")
-    model_name = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
+    orch_model_raw = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
     system_prompt = orchestrator_cfg.get("body", "")
     skill_paths = orchestrator_cfg.get("skill_paths", [])
     tool_names = orchestrator_cfg.get("tools", [])
@@ -176,16 +176,25 @@ async def agent(runtime: ServerRuntime) -> Any:
                 "Personalization unavailable, continuing without", exc_info=True
             )
 
+    # Parse orchestrator model to support provider
+    from deep_agent.src.agent.config.model import parse_model_config
+    from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
+
+    orch_spec = parse_model_config(orch_model_raw)
+    model_name = orch_spec.name  # For logging and cache key
+
     logger.info(
-        "Building agent '%s' (model=%s, mcp_auth=%s)",
+        "Building agent '%s' (model=%s, provider=%s, mcp_auth=%s)",
         agent_name,
-        model_name,
+        orch_spec.name,
+        orch_spec.provider.value,
         bool(sso_token),
     )
 
+    model = get_or_create_model_from_spec(orch_spec)
+
     providers_config = agent_config.get_providers_config()
     register_profiles_from_config(providers_config)
-    model = resolve_model_from_config(model_name, providers_config)
 
     mcp_tools = await get_mcp_tools(
         sso_token=sso_token,

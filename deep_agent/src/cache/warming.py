@@ -39,18 +39,29 @@ def _warm_models() -> bool:
 
     try:
         from deep_agent.src.agent.config import agent_config
-        from deep_agent.src.cache.model_cache import get_or_create_model
+        from deep_agent.src.agent.config.model import parse_model_config
+        from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
 
         orch = agent_config.get_orchestrator_config()
-        model_name = orch.get("model", "gemini-3.1-pro-preview")
-        get_or_create_model(model_name)
-        logger.info("Warmed orchestrator model: %s", model_name)
+        orch_model = orch.get("model", "gemini-3.1-pro-preview")
+
+        # Parse orchestrator model to ModelSpec (supports provider)
+        orch_spec = parse_model_config(orch_model)
+        get_or_create_model_from_spec(orch_spec)
+        logger.info(
+            "Warmed orchestrator model: %s (provider: %s)",
+            orch_spec.name,
+            orch_spec.provider.value,
+        )
 
         for name, cfg in agent_config.get_all_subagent_configs().items():
             sub_model = cfg.get("model")
             if sub_model:
-                get_or_create_model(sub_model)
-                logger.info("Warmed subagent '%s' model: %s", name, sub_model)
+                spec = parse_model_config(sub_model)
+                get_or_create_model_from_spec(spec)
+                logger.info(
+                    "Warmed subagent '%s' model: %s", name, spec.display_name()
+                )
 
         return True
     except Exception:

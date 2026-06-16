@@ -25,7 +25,8 @@ except ImportError:
     AsyncSubAgent = None
 
 from deep_agent.src.agent.config import agent_config
-from deep_agent.src.cache.model_cache import get_or_create_model
+from deep_agent.src.agent.config.model import ModelSpec, infer_provider, parse_model_config
+from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
 from deep_agent.src.exceptions import LLMError, SubAgentError
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -99,12 +100,19 @@ def _inherit_from_orchestrator(
 ) -> None:
     """Fill in missing model/mcps from the parent orchestrator config.
 
-    Mutates *agent_cfg* in place. Only inherits fields the subagent did not
-    explicitly set. Falls back to _DEFAULT_FALLBACK_MODEL when neither the
-    subagent nor the orchestrator specifies a model.
+    Mutates *agent_cfg* in place. Model inheritance follows these rules:
+    1. If subagent has no model → use orchestrator model (no fallback)
+    2. If subagent has model but no fallback → use orchestrator model as fallback
+    3. If subagent has model with fallback → keep as-is
+
+    Falls back to _DEFAULT_FALLBACK_MODEL when neither the subagent nor the
+    orchestrator specifies a model.
     """
-    if not agent_cfg.get("model"):
-        parent_model = orchestrator_cfg.get("model", "")
+    parent_model = orchestrator_cfg.get("model")
+    subagent_model = agent_cfg.get("model")
+
+    if not subagent_model:
+        # Case 1: No subagent model → inherit orchestrator model (no fallback)
         if parent_model:
             logger.info(
                 "Subagent '%s' inheriting model from orchestrator: %s",
@@ -120,6 +128,11 @@ def _inherit_from_orchestrator(
                 _DEFAULT_FALLBACK_MODEL,
             )
             agent_cfg["model"] = _DEFAULT_FALLBACK_MODEL
+    elif parent_model:
+        # Case 2 & 3: Subagent has model → inject orchestrator as fallback if missing
+        agent_cfg["model"] = _inject_fallback_if_missing(
+            subagent_model, parent_model, name
+        )
 
     if not agent_cfg.get("mcps"):
         parent_mcps = orchestrator_cfg.get("mcps", [])
@@ -130,6 +143,94 @@ def _inherit_from_orchestrator(
                 len(parent_mcps),
             )
             agent_cfg["mcps"] = list(parent_mcps)
+
+
+def _normalize_model_to_dict(
+    raw_model: str | dict[str, Any],
+    strip_fallback: bool = False,
+) -> dict[str, Any] | Any:
+    """Normalize model config (string or dict) to dict format.
+
+    Args:
+        raw_model: Model config in string or dict format.
+        strip_fallback: If True, remove fallback key from dict configs.
+
+    Returns:
+        Normalized dict with provider and name keys, or original value if invalid type.
+    """
+    if isinstance(raw_model, str):
+        return {
+            "provider": infer_provider(raw_model).value,
+            "name": raw_model,
+        }
+    elif isinstance(raw_model, dict):
+        result = dict(raw_model)  # Copy to avoid mutation
+        if strip_fallback and "fallback" in result:
+            del result["fallback"]
+        return result
+    else:
+        # Invalid type - return as-is and let parse_model_config fail later
+        logger.warning(
+            "Invalid model config type: %s, letting parse_model_config handle error",
+            type(raw_model).__name__,
+        )
+        return raw_model
+
+
+def _inject_fallback_if_missing(
+    subagent_model: str | dict[str, Any],
+    parent_model: str | dict[str, Any],
+    name: str,
+) -> str | dict[str, Any]:
+    """Inject orchestrator model as fallback if subagent model has no fallback.
+
+    Args:
+        subagent_model: Subagent's model config (string or dict).
+        parent_model: Orchestrator's model config.
+        name: Subagent name (for logging).
+
+    Returns:
+        Normalized model config dict with fallback injected if needed,
+        or original value if invalid type (will fail in parse_model_config).
+    """
+    # Normalize subagent model to dict
+    model_dict = _normalize_model_to_dict(subagent_model)
+    if not isinstance(model_dict, dict):
+        return model_dict  # Invalid type, will fail later in parse_model_config
+
+    # Case 3: Subagent already has fallback → keep as-is
+    if "fallback" in model_dict:
+        return model_dict
+
+    # Case 2: Subagent has no fallback → inject orchestrator as fallback
+    logger.debug(
+        "Subagent '%s' inheriting orchestrator model as fallback: %s",
+        name,
+        parent_model,
+    )
+
+    # Normalize parent model to dict for fallback (strip nested fallback)
+    fallback_dict = _normalize_model_to_dict(parent_model, strip_fallback=True)
+    if not isinstance(fallback_dict, dict):
+        # Invalid parent, skip fallback injection
+        return model_dict
+
+    model_dict["fallback"] = fallback_dict
+    return model_dict
+
+
+def _resolve_subagent_model(agent_cfg: dict[str, Any]) -> object:
+    """Parse frontmatter model config and return a cached BaseChatModel."""
+    raw_model = agent_cfg.get("model")
+    if raw_model is None:
+        raise ValueError("missing required 'model' field in frontmatter")
+    spec = parse_model_config(raw_model)
+    return get_or_create_model_from_spec(spec)
+
+
+def _format_model_log(spec: ModelSpec) -> str:
+    """Format model spec for log messages."""
+    return spec.display_name()
 
 
 def _build_single_subagent(
@@ -173,13 +274,13 @@ def _build_default_subagent(
     tools: list[Any],
 ) -> SubAgent:
     """Build a standard SubAgent (in-process delegation)."""
-    model_name: str | None = agent_cfg.get("model")
-    if not model_name:
+    if not agent_cfg.get("model"):
         raise ValueError(
             f"Subagent '{name}' is missing required 'model' field in frontmatter"
         )
 
-    logger.info(f"Subagent '{name}' [default] using model: {model_name}")
+    spec = parse_model_config(agent_cfg["model"])
+    logger.info("Subagent '%s' [default] using model: %s", name, _format_model_log(spec))
 
     tool_names: list[str] = agent_cfg.get("tools", [])
     mcp_names: list[str] = agent_cfg.get("mcps", [])
@@ -204,7 +305,7 @@ def _build_default_subagent(
 
     subagent_params: dict[str, Any] = {
         "name": name,
-        "model": get_or_create_model(model_name=model_name),
+        "model": _resolve_subagent_model(agent_cfg),
         "description": agent_cfg.get("description", ""),
         "system_prompt": agent_cfg.get("body", ""),
     }
@@ -232,13 +333,15 @@ def _build_compiled_subagent(
 
     from deep_agent.src.infrastructure.backend import get_configured_backend
 
-    model_name: str | None = agent_cfg.get("model")
-    if not model_name:
+    if not agent_cfg.get("model"):
         raise ValueError(
             f"Subagent '{name}' (compiled) is missing required 'model' field"
         )
 
-    logger.info(f"Subagent '{name}' [compiled] using model: {model_name}")
+    spec = parse_model_config(agent_cfg["model"])
+    logger.info(
+        "Subagent '%s' [compiled] using model: %s", name, _format_model_log(spec)
+    )
 
     tool_names: list[str] = agent_cfg.get("tools", [])
     mcp_names: list[str] = agent_cfg.get("mcps", [])
@@ -262,7 +365,7 @@ def _build_compiled_subagent(
 
     compiled_graph = create_deep_agent(
         name=name,
-        model=get_or_create_model(model_name=model_name),
+        model=_resolve_subagent_model(agent_cfg),
         system_prompt=agent_cfg.get("body", ""),
         tools=resolved_tools or None,
         skills=skill_paths or None,
