@@ -13,9 +13,6 @@ from deep_agent.src.settings import Environment
 class TestCheckPrerequisites:
     """Tests for environment-aware startup prerequisite checks."""
 
-    def setup_method(self):
-        startup._startup_complete = False
-
     def _make_settings(self, env=Environment.LOCAL, **overrides):
         """Build a mock settings object with sane defaults."""
         defaults = {
@@ -36,7 +33,7 @@ class TestCheckPrerequisites:
             setattr(mock, k, v)
         return mock
 
-    async def test_local_warns_on_missing_db(self, caplog):
+    def test_local_warns_on_missing_db(self, caplog):
         mock_settings = self._make_settings(env=Environment.LOCAL)
         with (
             patch("deep_agent.aegra.startup.settings", mock_settings),
@@ -46,11 +43,11 @@ class TestCheckPrerequisites:
             patch("deep_agent.aegra.startup._check_redis"),
             patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
         ):
-            result = await startup._check_prerequisites()
+            result = startup.check_prerequisites()
         assert "warn" in result
         assert "db" in caplog.text.lower() or "database" in caplog.text.lower()
 
-    async def test_demo_fails_on_missing_db(self):
+    def test_demo_fails_on_missing_db(self):
         mock_settings = self._make_settings(env=Environment.DEMO)
         with (
             patch("deep_agent.aegra.startup.settings", mock_settings),
@@ -61,9 +58,9 @@ class TestCheckPrerequisites:
             patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
         ):
             with pytest.raises(ConfigurationError, match="database"):
-                await startup._check_prerequisites()
+                startup.check_prerequisites()
 
-    async def test_production_fails_on_missing_db(self):
+    def test_production_fails_on_missing_db(self):
         mock_settings = self._make_settings(env=Environment.PRODUCTION)
         with (
             patch("deep_agent.aegra.startup.settings", mock_settings),
@@ -74,9 +71,9 @@ class TestCheckPrerequisites:
             patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
         ):
             with pytest.raises(ConfigurationError, match="database"):
-                await startup._check_prerequisites()
+                startup.check_prerequisites()
 
-    async def test_local_warns_on_missing_redis(self, caplog):
+    def test_local_warns_on_missing_redis(self, caplog):
         mock_settings = self._make_settings(env=Environment.LOCAL)
         with (
             patch("deep_agent.aegra.startup.settings", mock_settings),
@@ -87,10 +84,10 @@ class TestCheckPrerequisites:
             ),
             patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
         ):
-            result = await startup._check_prerequisites()
+            result = startup.check_prerequisites()
         assert "warn" in result
 
-    async def test_demo_fails_on_missing_redis(self):
+    def test_demo_fails_on_missing_redis(self):
         mock_settings = self._make_settings(env=Environment.DEMO)
         with (
             patch("deep_agent.aegra.startup.settings", mock_settings),
@@ -102,9 +99,9 @@ class TestCheckPrerequisites:
             patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
         ):
             with pytest.raises(ConfigurationError, match="[Rr]edis"):
-                await startup._check_prerequisites()
+                startup.check_prerequisites()
 
-    async def test_all_envs_fail_on_missing_model_config(self):
+    def test_all_envs_fail_on_missing_model_config(self):
         for env in Environment:
             mock_settings = self._make_settings(
                 env=env,
@@ -120,9 +117,9 @@ class TestCheckPrerequisites:
             ):
                 os.environ.pop("OPENAI_API_KEY", None)
                 with pytest.raises(ConfigurationError, match="[Mm]odel"):
-                    await startup._check_prerequisites()
+                    startup.check_prerequisites()
 
-    async def test_all_envs_fail_on_missing_prompt_md(self):
+    def test_all_envs_fail_on_missing_prompt_md(self):
         for env in Environment:
             mock_settings = self._make_settings(env=env)
             with (
@@ -132,9 +129,9 @@ class TestCheckPrerequisites:
                 patch("deep_agent.aegra.startup._prompt_md_exists", return_value=False),
             ):
                 with pytest.raises(ConfigurationError, match="PROMPT.md"):
-                    await startup._check_prerequisites()
+                    startup.check_prerequisites()
 
-    async def test_staging_fails_on_missing_sso(self):
+    def test_staging_fails_on_missing_sso(self):
         mock_settings = self._make_settings(
             env=Environment.STAGING,
             SSO_ISSUER_URL=None,
@@ -148,9 +145,9 @@ class TestCheckPrerequisites:
             patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
         ):
             with pytest.raises(ConfigurationError, match="SSO"):
-                await startup._check_prerequisites()
+                startup.check_prerequisites()
 
-    async def test_local_skips_sso_check(self):
+    def test_local_skips_sso_check(self):
         mock_settings = self._make_settings(
             env=Environment.LOCAL,
             SSO_ISSUER_URL=None,
@@ -163,10 +160,10 @@ class TestCheckPrerequisites:
             patch("deep_agent.aegra.startup._check_redis"),
             patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
         ):
-            result = await startup._check_prerequisites()
+            result = startup.check_prerequisites()
         assert result == "ok"
 
-    async def test_happy_path_all_checks_pass(self):
+    def test_happy_path_all_checks_pass(self):
         mock_settings = self._make_settings(env=Environment.PRODUCTION)
         with (
             patch("deep_agent.aegra.startup.settings", mock_settings),
@@ -174,7 +171,7 @@ class TestCheckPrerequisites:
             patch("deep_agent.aegra.startup._check_redis"),
             patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
         ):
-            result = await startup._check_prerequisites()
+            result = startup.check_prerequisites()
         assert result == "ok"
 
 
@@ -184,12 +181,6 @@ class TestRunStartup:
 
     async def test_runs_all_steps(self):
         with (
-            patch.object(
-                startup,
-                "_check_prerequisites",
-                new_callable=AsyncMock,
-                return_value="ok",
-            ),
             patch.object(
                 startup, "_validate_config", new_callable=AsyncMock, return_value="ok"
             ),
@@ -208,7 +199,6 @@ class TestRunStartup:
             patch.object(startup, "_setup_telemetry", return_value="ok"),
         ):
             result = await startup.run_startup()
-        assert result["prerequisites"] == "ok"
         assert result["config"] == "ok"
         assert result["database"] == "ok"
         assert result["cache"] == "ok"

@@ -5,12 +5,13 @@ are initialized in the correct order before the server accepts
 traffic.
 
 Startup sequence:
-    1. Validate configuration
-    2. Ensure database tables exist
-    3. Warm caches (if enabled)
-    4. Start memory scheduler (if enabled)
-    5. Set up Langfuse tracing (if configured)
-    6. Log readiness
+    1. Check prerequisites (runs at import time via feedback.py)
+    2. Validate configuration
+    3. Ensure database tables exist
+    4. Warm caches (if enabled)
+    5. Start memory scheduler (if enabled)
+    6. Set up Langfuse tracing (if configured)
+    7. Log readiness
 
 This module is idempotent — calling ``run_startup()`` multiple
 times is safe (each step guards against double-init).
@@ -34,6 +35,7 @@ async def run_startup() -> dict[str, str]:
     """Execute the startup sequence. Returns a status dict.
 
     Safe to call multiple times — subsequent calls are no-ops.
+    Prerequisites are checked at import time (feedback.py), not here.
     """
     global _startup_complete  # noqa: PLW0603
 
@@ -44,7 +46,6 @@ async def run_startup() -> dict[str, str]:
     t0 = time.monotonic()
     results: dict[str, str] = {}
 
-    results["prerequisites"] = await _check_prerequisites()
     results["config"] = await _validate_config()
     results["database"] = await _ensure_database()
     _check_mcp_encryption_key()
@@ -99,11 +100,14 @@ def _prompt_md_exists() -> bool:
     return (config_dir / "PROMPT.md").is_file()
 
 
-async def _check_prerequisites() -> str:
-    """Run environment-aware prerequisite checks.
+def check_prerequisites() -> str:
+    """Run environment-aware prerequisite checks at import time.
 
-    Hard failures raise ConfigurationError.
-    Soft failures log warnings and continue.
+    Called from feedback.py before aegra's lifespan starts.
+    Hard failures raise ConfigurationError — process dies immediately.
+    Soft failures (local mode) log warnings and return.
+
+    Returns 'ok' or 'warn: db, redis' etc.
     """
     env = settings.ENVIRONMENT
     is_local = env == Environment.LOCAL
