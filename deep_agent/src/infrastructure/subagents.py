@@ -223,7 +223,7 @@ def _create_primary_model(spec: ModelSpec) -> object:
     """Create only the primary BaseChatModel from a ModelSpec, without fallback wrapper.
 
     Uses the model cache for efficient reuse. Fallbacks should be handled via
-    deepagents' ModelFallbackMiddleware, not LangChain's with_fallbacks().
+    LangChain's ModelFallbackMiddleware.
 
     Args:
         spec: Parsed model specification (fallback config ignored).
@@ -231,7 +231,6 @@ def _create_primary_model(spec: ModelSpec) -> object:
     Returns:
         A BaseChatModel instance for the primary model only.
     """
-    from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
 
     # Create a spec without fallback for the primary model
     primary_spec = ModelSpec(provider=spec.provider, name=spec.name, fallback=None)
@@ -244,7 +243,7 @@ def _resolve_subagent_model(agent_cfg: dict[str, Any]) -> object:
     """Parse frontmatter model config and return only the primary BaseChatModel.
 
     Strips any fallback configuration since deepagents doesn't support RunnableWithFallbacks.
-    Fallback handling should be done via deepagents' ModelFallbackMiddleware instead.
+    Fallback handling should be done via LangChain's ModelFallbackMiddleware instead.
     """
     raw_model = agent_cfg.get("model")
     if raw_model is None:
@@ -277,12 +276,16 @@ def _build_fallback_middleware(spec: ModelSpec) -> list[Any]:
     if spec.fallback is None:
         return []
 
-    from deep_agent.src.infrastructure.model_fallback_middleware import ModelFallbackMiddleware
+    try:
+        from langchain.agents.middleware import ModelFallbackMiddleware
+    except ImportError:
+        logger.warning("ModelFallbackMiddleware not available, skipping fallback configuration")
+        return []
 
     # Create fallback model using the model cache
     fallback_model = _create_primary_model(spec.fallback)
 
-    middleware = ModelFallbackMiddleware(fallbacks=[fallback_model])
+    middleware = ModelFallbackMiddleware(fallback_model)
     logger.info(
         "Configured fallback middleware: %s -> %s",
         spec.display_name(),
