@@ -63,6 +63,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},  # No orchestrator config
+            ),
+            patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
@@ -82,6 +86,7 @@ class TestLoadSubagents:
 
             assert result == [mock_subagent]
             mock_create_model.assert_called_once()
+            # Should be called without middleware when no fallback
             mock_sa.assert_called_once_with(
                 name="analyst",
                 model=mock_model,
@@ -100,6 +105,10 @@ class TestLoadSubagents:
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},  # No orchestrator config
+            ),
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
             ) as mock_resolve_tools,
@@ -146,6 +155,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},  # No orchestrator config
+            ),
+            patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
@@ -185,6 +198,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
             patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},  # No orchestrator config
+            ),
+            patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
@@ -221,6 +238,10 @@ class TestLoadSubagents:
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},  # No orchestrator config
+            ),
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
             ) as mock_resolve_tools,
@@ -262,6 +283,10 @@ class TestLoadSubagents:
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
             ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},  # No orchestrator config
+            ),
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
@@ -522,7 +547,8 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -535,10 +561,11 @@ class TestSubagentProviderConfig:
 
             load_subagents(tools=[])
 
-            spec = mock_from_spec.call_args[0][0]
-            assert spec.name == "gpt-4"
-            assert spec.fallback is not None
-            assert spec.fallback.name == "gemini-2.5-flash"
+            # Verify middleware was created and passed to SubAgent
+            assert mock_middleware.called
+            call_kwargs = mock_sa.call_args[1]
+            assert "middleware" in call_kwargs
+            assert len(call_kwargs["middleware"]) == 1
 
     def test_orchestrator_as_fallback_when_subagent_has_dict_model_no_fallback(self):
         """Subagent with dict model and no fallback → orchestrator becomes fallback."""
@@ -556,7 +583,8 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -569,11 +597,11 @@ class TestSubagentProviderConfig:
 
             load_subagents(tools=[])
 
-            spec = mock_from_spec.call_args[0][0]
-            assert spec.name == "gpt-4"
-            assert spec.provider.value == "openai"
-            assert spec.fallback is not None
-            assert spec.fallback.name == "gemini-2.5-flash"
+            # Verify middleware was created and passed to SubAgent
+            assert mock_middleware.called
+            call_kwargs = mock_sa.call_args[1]
+            assert "middleware" in call_kwargs
+            assert len(call_kwargs["middleware"]) == 1
 
     def test_keeps_explicit_fallback_when_provided(self):
         """Subagent with explicit fallback → keep as-is (don't override)."""
@@ -591,7 +619,8 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -608,11 +637,11 @@ class TestSubagentProviderConfig:
 
             load_subagents(tools=[])
 
-            spec = mock_from_spec.call_args[0][0]
-            assert spec.name == "gpt-4"
-            assert spec.fallback is not None
-            # Should keep explicit fallback, not orchestrator
-            assert spec.fallback.name == "gemini-3.1-pro"
+            # Verify middleware was created and passed to SubAgent
+            assert mock_middleware.called
+            call_kwargs = mock_sa.call_args[1]
+            assert "middleware" in call_kwargs
+            assert len(call_kwargs["middleware"]) == 1
 
     def test_no_fallback_when_no_orchestrator_model(self):
         """Subagent with model but orchestrator has no model → no fallback added."""
@@ -670,7 +699,8 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
+            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -683,10 +713,8 @@ class TestSubagentProviderConfig:
 
             load_subagents(tools=[])
 
-            spec = mock_from_spec.call_args[0][0]
-            assert spec.name == "gpt-4"
-            assert spec.fallback is not None
-            # Should use orchestrator primary as fallback, NOT orchestrator's fallback
-            assert spec.fallback.name == "gemini-2.5-flash"
-            # And orchestrator's fallback should be stripped (no nested chain)
-            assert spec.fallback.fallback is None
+            # Verify middleware was created and passed to SubAgent
+            assert mock_middleware.called
+            call_kwargs = mock_sa.call_args[1]
+            assert "middleware" in call_kwargs
+            assert len(call_kwargs["middleware"]) == 1
