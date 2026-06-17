@@ -153,6 +153,8 @@ def _build_single_subagent(
         ValueError: If required fields are missing or type is invalid.
         LLMError: If model creation fails.
     """
+    from deep_agent.aegra.tracing import trace_subagent_delegation
+
     agent_type: str = agent_cfg.get("type", "default")
     if agent_type not in VALID_AGENT_TYPES:
         raise ValueError(
@@ -160,11 +162,16 @@ def _build_single_subagent(
             f"Valid types: {VALID_AGENT_TYPES}"
         )
 
-    if agent_type == "async":
-        return _build_async_subagent(name, agent_cfg)
-    if agent_type == "compiled":
-        return _build_compiled_subagent(name, agent_cfg, tools)
-    return _build_default_subagent(name, agent_cfg, tools)
+    with trace_subagent_delegation(
+        parent_agent="orchestrator",
+        subagent_name=name,
+        subagent_type=agent_type,
+    ):
+        if agent_type == "async":
+            return _build_async_subagent(name, agent_cfg)
+        if agent_type == "compiled":
+            return _build_compiled_subagent(name, agent_cfg, tools)
+        return _build_default_subagent(name, agent_cfg, tools)
 
 
 def _build_default_subagent(

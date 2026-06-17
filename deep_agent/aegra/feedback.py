@@ -81,15 +81,38 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
 
     Every log line emitted during a request will include the trace_id,
     enabling end-to-end correlation across UI → BFF → Agent.
+
+    Also extracts the W3C ``traceparent`` header (if present) so that
+    incoming requests are linked to the OTEL distributed trace.  The
+    custom ``X-Trace-ID`` remains the primary log correlation key.
     """
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:  # noqa: D102
         trace_id = request.headers.get("x-trace-id") or uuid4().hex
         bind_request_context(trace_id=trace_id)
-        response = await call_next(request)
-        response.headers["X-Trace-ID"] = trace_id
-        clear_request_context()
-        return response
+
+        # Extract W3C trace context from incoming request so OTEL spans
+        # created during this request are linked to the caller's trace.
+        try:
+            from opentelemetry import context as otel_context
+            from opentelemetry.propagate import extract
+
+            ctx = extract(carrier=dict(request.headers))
+            token = otel_context.attach(ctx)
+        except ImportError:
+            token = None
+
+        try:
+            response = await call_next(request)
+            response.headers["X-Trace-ID"] = trace_id
+            return response
+        finally:
+            if token is not None:
+                try:
+                    otel_context.detach(token)
+                except Exception:
+                    pass
+            clear_request_context()
 
 
 app.add_middleware(TraceIDMiddleware)

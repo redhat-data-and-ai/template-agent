@@ -82,42 +82,45 @@ async def _run_memory_jobs(database_uri: str) -> dict[str, int]:
 
     Returns a summary dict of results.
     """
-    results: dict[str, int] = {}
+    from deep_agent.aegra.tracing import trace_memory_op
 
-    try:
-        from deep_agent.src.memory.scoring import decay_all_memories
+    with trace_memory_op(operation="scheduler_tick"):
+        results: dict[str, int] = {}
 
-        results["decay"] = await decay_all_memories(database_uri)
-    except Exception:
-        logger.error("Decay job failed", exc_info=True)
-        results["decay"] = -1
+        try:
+            from deep_agent.src.memory.scoring import decay_all_memories
 
-    try:
-        from deep_agent.src.memory.consolidation import consolidate_all_users
+            results["decay"] = await decay_all_memories(database_uri)
+        except Exception:
+            logger.error("Decay job failed", exc_info=True)
+            results["decay"] = -1
 
-        results["consolidation"] = await consolidate_all_users(database_uri)
-    except Exception:
-        logger.error("Consolidation job failed", exc_info=True)
-        results["consolidation"] = -1
+        try:
+            from deep_agent.src.memory.consolidation import consolidate_all_users
 
-    try:
-        from deep_agent.src.memory.clustering import cluster_all_users
+            results["consolidation"] = await consolidate_all_users(database_uri)
+        except Exception:
+            logger.error("Consolidation job failed", exc_info=True)
+            results["consolidation"] = -1
 
-        results["clustering"] = await cluster_all_users(database_uri)
-    except Exception:
-        logger.error("Clustering job failed", exc_info=True)
-        results["clustering"] = -1
+        try:
+            from deep_agent.src.memory.clustering import cluster_all_users
 
-    try:
-        from deep_agent.src.memory.relationships import infer_all_relationships
+            results["clustering"] = await cluster_all_users(database_uri)
+        except Exception:
+            logger.error("Clustering job failed", exc_info=True)
+            results["clustering"] = -1
 
-        results["relationships"] = await infer_all_relationships(database_uri)
-    except Exception:
-        logger.error("Relationships job failed", exc_info=True)
-        results["relationships"] = -1
+        try:
+            from deep_agent.src.memory.relationships import infer_all_relationships
 
-    logger.info("Memory jobs complete: %s", results)
-    return results
+            results["relationships"] = await infer_all_relationships(database_uri)
+        except Exception:
+            logger.error("Relationships job failed", exc_info=True)
+            results["relationships"] = -1
+
+        logger.info("Memory jobs complete: %s", results)
+        return results
 
 
 async def run_once(database_uri: str) -> dict[str, int]:

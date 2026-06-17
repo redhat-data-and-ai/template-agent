@@ -71,6 +71,27 @@ MESSAGES_COUNT_BUCKETS = [
     500,
 ]
 
+# ---------------------------------------------------------------------------
+# Dual tracing architecture
+# ---------------------------------------------------------------------------
+# This agent has TWO independent observability systems:
+#
+# 1. OpenTelemetry (this module) — metrics + distributed tracing.
+#    Uses an SDK TracerProvider stored in ``_tracer_provider`` AND set as
+#    the global provider (required by FastAPI auto-instrumentation).
+#    Custom spans are created via ``get_tracer()`` which reads from
+#    ``_tracer_provider`` directly, not the global.
+#
+# 2. Langfuse (telemetry.py) — LLM-specific tracing via LangChain's
+#    ``register_configure_hook`` + ``CallbackHandler``.  Langfuse does
+#    NOT use the OTEL TracerProvider; it has its own SDK.
+#
+# The two systems coexist without conflict.  Langfuse traces LLM calls
+# with prompt/completion detail; OTEL traces infrastructure spans
+# (graph builds, MCP connections, memory ops) and exports metrics.
+# ---------------------------------------------------------------------------
+
+_tracer_provider: Optional[TracerProvider] = None
 _meter: Optional[metrics.Meter] = None
 _metrics_container: Optional["MetricsContainer"] = None
 _initialized: bool = False
@@ -241,8 +262,11 @@ def initialize_telemetry() -> None:
     Reads config from observability.yaml with env var overrides.
     When disabled (default), uses InMemoryMetricReader and NoOpTracerProvider.
     When enabled, configures OTLP gRPC exporters for both metrics and traces.
+
+    The TracerProvider is both stored in ``_tracer_provider`` (for
+    ``get_tracer()``) and set as the global (for FastAPI auto-instrumentation).
     """
-    global _meter, _metrics_container, _initialized, _otel_enabled
+    global _meter, _metrics_container, _initialized, _otel_enabled, _tracer_provider
 
     if _initialized:
         return
@@ -296,7 +320,12 @@ def initialize_telemetry() -> None:
         tracer_provider = TracerProvider(resource=resource)
         tracer_provider.add_span_processor(BatchSpanProcessor(otlp_span_exporter))
 
+    _tracer_provider = tracer_provider
+
     metrics.set_meter_provider(meter_provider)
+    # Set global TracerProvider — required by FastAPI auto-instrumentation
+    # which reads from trace.get_tracer_provider(). Custom spans use
+    # get_tracer() which reads _tracer_provider directly.
     trace.set_tracer_provider(tracer_provider)
 
     service_name = _resolve_service_name()
@@ -330,11 +359,11 @@ def instrument_fastapi(app: Any) -> None:
 
 def shutdown_telemetry() -> None:
     """Flush and shut down both meter and tracer providers."""
-    global _initialized
+    global _initialized, _tracer_provider
 
-    tracer_provider = trace.get_tracer_provider()
-    if hasattr(tracer_provider, "shutdown"):
-        tracer_provider.shutdown()
+    if _tracer_provider is not None and hasattr(_tracer_provider, "shutdown"):
+        _tracer_provider.shutdown()
+    _tracer_provider = None
 
     meter_provider = metrics.get_meter_provider()
     if hasattr(meter_provider, "shutdown"):
@@ -347,6 +376,30 @@ def shutdown_telemetry() -> None:
 def get_metrics() -> Optional[MetricsContainer]:
     """Return the global metrics container, or None if not initialized."""
     return _metrics_container
+
+
+def get_tracer(name: str = "template-agent") -> trace.Tracer:
+    """Return a tracer from the module-owned TracerProvider.
+
+    Uses ``_tracer_provider`` (set during ``initialize_telemetry``) rather
+    than the global provider, keeping ownership explicit.  If telemetry has
+    not been initialised yet, falls back to the global (which may be a
+    no-op ``ProxyTracerProvider``).
+
+    Args:
+        name: Instrumentation scope name for the tracer.
+
+    Returns:
+        An OTEL ``Tracer`` instance.
+    """
+    if _tracer_provider is not None:
+        return _tracer_provider.get_tracer(name)
+    return trace.get_tracer(name)
+
+
+def is_tracing_enabled() -> bool:
+    """Return True if OTEL has been initialised and is enabled."""
+    return _initialized and _otel_enabled
 
 
 # ---------------------------------------------------------------------------

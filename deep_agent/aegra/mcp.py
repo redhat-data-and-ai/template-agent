@@ -69,16 +69,34 @@ class _TokenInjectorInterceptor:
     (set per-request by ``set_mcp_auth_context``) and overrides the
     ``Authorization`` header on the outgoing MCP request. This ensures
     cached tool objects always use the correct user's token.
+
+    Also injects the W3C ``traceparent`` header so distributed traces
+    flow from agent to MCP server.
     """
 
     async def __call__(self, request: Any, handler: Any) -> Any:
+        headers: dict[str, str] = {}
+
         access = _current_access_token.get()
         if access:
-            request = request.override(headers={"Authorization": f"Bearer {access}"})
+            headers["Authorization"] = f"Bearer {access}"
         else:
             logger.warning(
                 "TokenInjector: no access token in ContextVar — MCP call will use cached/anonymous auth"
             )
+
+        # Inject W3C trace context (traceparent / tracestate) for
+        # distributed trace propagation from agent → MCP server.
+        try:
+            from opentelemetry.propagate import inject
+
+            inject(headers)
+        except ImportError:
+            pass
+
+        if headers:
+            request = request.override(headers=headers)
+
         return await handler(request)
 
 
@@ -234,18 +252,21 @@ async def _connect_single_server(
         required: If True the server is explicitly enabled in config,
             so connection failures are logged at error level.
     """
+    from deep_agent.aegra.tracing import trace_mcp_connection
+
     breaker = _get_mcp_breaker()
     if breaker.is_open:
         logger.warning(f"[{name}] circuit breaker open — skipping connection")
         return []
 
     try:
-        async with asyncio.timeout(timeout):
-            client = MultiServerMCPClient(
-                {name: config},
-                tool_interceptors=[_TokenInjectorInterceptor()],
-            )
-            tools: list[Any] = await client.get_tools()
+        with trace_mcp_connection(server_name=name, url=config.get("url", "")):
+            async with asyncio.timeout(timeout):
+                client = MultiServerMCPClient(
+                    {name: config},
+                    tool_interceptors=[_TokenInjectorInterceptor()],
+                )
+                tools: list[Any] = await client.get_tools()
         logger.info(f"[{name}] loaded {len(tools)} tool(s)")
         breaker.record_success()
         return tools
@@ -344,6 +365,8 @@ async def get_mcp_tools(
     Returns:
         List of available MCP tools (empty list if all connections fail).
     """
+    from deep_agent.aegra.tracing import trace_mcp_tool_call
+
     global _cached_tools, _cached_tools_ts  # noqa: PLW0603
 
     if _cached_tools and (time.time() - _cached_tools_ts) < _MCP_TOOL_CACHE_TTL:
@@ -367,18 +390,22 @@ async def get_mcp_tools(
 
     logger.warning(f"Connecting to {len(enabled)} MCP server(s): {', '.join(enabled)}")
 
-    has_auth: bool = bool(sso_token)
-    results: list[list[Any]] = await asyncio.gather(
-        *[
-            _connect_single_server(
-                name=name,
-                config=_build_server_config(entry, sso_token),
-                timeout=entry.get("timeout", 30),
-                required=has_auth,
-            )
-            for name, entry in enabled.items()
-        ]
-    )
+    with trace_mcp_tool_call(
+        tool_name="get_mcp_tools",
+        server_name=",".join(enabled.keys()),
+    ):
+        has_auth: bool = bool(sso_token)
+        results: list[list[Any]] = await asyncio.gather(
+            *[
+                _connect_single_server(
+                    name=name,
+                    config=_build_server_config(entry, sso_token),
+                    timeout=entry.get("timeout", 30),
+                    required=has_auth,
+                )
+                for name, entry in enabled.items()
+            ]
+        )
 
     seen: set[str] = set()
     tools: list[Any] = []

@@ -103,6 +103,7 @@ async def agent(runtime: ServerRuntime) -> Any:
         refresh_access_token,
         set_mcp_auth_context,
     )
+    from deep_agent.aegra.tracing import trace_graph_build, trace_graph_request
     from deep_agent.src.agent.config import agent_config
     from deep_agent.src.infrastructure.async_tasks import build_async_middleware
     from deep_agent.src.infrastructure.backend import get_configured_backend
@@ -130,6 +131,8 @@ async def agent(runtime: ServerRuntime) -> Any:
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
     user_identity = getattr(user, "identity", None) if user else None
+    thread_id = getattr(runtime, "thread_id", None)
+
     if user_identity:
         try:
             from deep_agent.src.cache.personalization_cache import (
@@ -176,104 +179,114 @@ async def agent(runtime: ServerRuntime) -> Any:
                 "Personalization unavailable, continuing without", exc_info=True
             )
 
-    logger.info(
-        "Building agent '%s' (model=%s, mcp_auth=%s)",
-        agent_name,
-        model_name,
-        bool(sso_token),
-    )
-
-    providers_config = agent_config.get_providers_config()
-    register_profiles_from_config(providers_config)
-    model = resolve_model_from_config(model_name, providers_config)
-
-    mcp_tools = await get_mcp_tools(
-        sso_token=sso_token,
-        server_names=mcp_server_names or None,
-    )
-    tools = agent_config.resolve_tools(tool_names, mcp_tools, agent_name=agent_name)
-    if not tools and not tool_names and mcp_server_names and mcp_tools:
+    with trace_graph_request(
+        agent_name=agent_name,
+        user_id=user_identity,
+        thread_id=thread_id,
+    ):
         logger.info(
-            "Agent '%s' declared MCP servers %s but no explicit tools; exposing all %d MCP tool(s)",
+            "Building agent '%s' (model=%s, mcp_auth=%s)",
             agent_name,
-            mcp_server_names,
-            len(mcp_tools),
+            model_name,
+            bool(sso_token),
         )
-        tools = mcp_tools
 
-    cache_key = _graph_fingerprint(
-        model_name,
-        system_prompt,
-        [t.name for t in tools],
-    )
-    now = time.time()
-    graph_ttl = float(agent_config.get_cache_config().graph.ttl)
-    cached = _graph_cache.get(cache_key)
-    if cached is not None and (now - _graph_cache_ts.get(cache_key, 0)) < graph_ttl:
-        age = now - _graph_cache_ts[cache_key]
-        logger.warning("Graph cache HIT (age=%.1fs) — skipping rebuild", age)
-        return cached
+        providers_config = agent_config.get_providers_config()
+        register_profiles_from_config(providers_config)
+        model = resolve_model_from_config(model_name, providers_config)
 
-    logger.warning("Graph cache MISS — full rebuild")
+        mcp_tools = await get_mcp_tools(
+            sso_token=sso_token,
+            server_names=mcp_server_names or None,
+        )
+        tools = agent_config.resolve_tools(tool_names, mcp_tools, agent_name=agent_name)
+        if not tools and not tool_names and mcp_server_names and mcp_tools:
+            logger.info(
+                "Agent '%s' declared MCP servers %s but no explicit tools; exposing all %d MCP tool(s)",
+                agent_name,
+                mcp_server_names,
+                len(mcp_tools),
+            )
+            tools = mcp_tools
 
-    subagents = load_subagents(tools=mcp_tools)
-    backend = get_configured_backend()
+        cache_key = _graph_fingerprint(
+            model_name,
+            system_prompt,
+            [t.name for t in tools],
+        )
+        now = time.time()
+        graph_ttl = float(agent_config.get_cache_config().graph.ttl)
+        cached = _graph_cache.get(cache_key)
+        if cached is not None and (now - _graph_cache_ts.get(cache_key, 0)) < graph_ttl:
+            age = now - _graph_cache_ts[cache_key]
+            logger.warning("Graph cache HIT (age=%.1fs) — skipping rebuild", age)
+            return cached
 
-    from deep_agent.src.infrastructure.middleware import (
-        build_middleware_list,
-        resolve_memory_param,
-    )
+        logger.warning("Graph cache MISS — full rebuild")
 
-    middleware_overrides = orchestrator_cfg.get("middleware")
-    resolved_mw = agent_config.resolve_agent_middleware(
-        model_name, middleware_overrides
-    )
-    middleware = build_middleware_list(resolved_mw, model=model, backend=backend)
-    memory = resolve_memory_param(resolved_mw)
-    skills_param = skill_paths if resolved_mw.skills_enabled else None
+        subagents = load_subagents(tools=mcp_tools)
+        backend = get_configured_backend()
 
-    async_mw = build_async_middleware(subagents, providers_config.async_tasks)
-    if async_mw is not None:
-        middleware.append(async_mw)
+        from deep_agent.src.infrastructure.middleware import (
+            build_middleware_list,
+            resolve_memory_param,
+        )
 
-    create_kwargs: dict[str, Any] = {
-        "name": agent_name,
-        "model": model,
-        "system_prompt": system_prompt,
-        "skills": skills_param,
-        "tools": tools,
-        "subagents": subagents,
-        "backend": backend,
-        "middleware": middleware,
-        "memory": memory,
-    }
+        middleware_overrides = orchestrator_cfg.get("middleware")
+        resolved_mw = agent_config.resolve_agent_middleware(
+            model_name, middleware_overrides
+        )
+        middleware = build_middleware_list(resolved_mw, model=model, backend=backend)
+        memory = resolve_memory_param(resolved_mw)
+        skills_param = skill_paths if resolved_mw.skills_enabled else None
 
-    import inspect
+        async_mw = build_async_middleware(subagents, providers_config.async_tasks)
+        if async_mw is not None:
+            middleware.append(async_mw)
 
-    create_sig = inspect.signature(create_deep_agent)
-    if "permissions" in create_sig.parameters:
-        try:
-            from deep_agent.src.infrastructure.permissions import build_permissions
+        create_kwargs: dict[str, Any] = {
+            "name": agent_name,
+            "model": model,
+            "system_prompt": system_prompt,
+            "skills": skills_param,
+            "tools": tools,
+            "subagents": subagents,
+            "backend": backend,
+            "middleware": middleware,
+            "memory": memory,
+        }
 
-            permissions = build_permissions(agent_config.get_filesystem_config())
-            if permissions:
-                create_kwargs["permissions"] = permissions
-        except (ImportError, TypeError):
-            pass
+        import inspect
 
-    compiled = create_deep_agent(**create_kwargs)
+        create_sig = inspect.signature(create_deep_agent)
+        if "permissions" in create_sig.parameters:
+            try:
+                from deep_agent.src.infrastructure.permissions import build_permissions
 
-    _graph_cache[cache_key] = compiled
-    _graph_cache_ts[cache_key] = time.time()
+                permissions = build_permissions(agent_config.get_filesystem_config())
+                if permissions:
+                    create_kwargs["permissions"] = permissions
+            except (ImportError, TypeError):
+                pass
 
-    tool_count = len(tools)
-    sub_count = len(subagents) if subagents else 0
-    logger.info(
-        "Agent ready: %d tool(s), %d subagent(s), %d middleware, mcp_auth=%s",
-        tool_count,
-        sub_count,
-        len(middleware),
-        bool(sso_token),
-    )
+        with trace_graph_build(
+            agent_name=agent_name,
+            model_name=model_name,
+            tool_count=len(tools),
+        ):
+            compiled = create_deep_agent(**create_kwargs)
 
-    return compiled
+        _graph_cache[cache_key] = compiled
+        _graph_cache_ts[cache_key] = time.time()
+
+        tool_count = len(tools)
+        sub_count = len(subagents) if subagents else 0
+        logger.info(
+            "Agent ready: %d tool(s), %d subagent(s), %d middleware, mcp_auth=%s",
+            tool_count,
+            sub_count,
+            len(middleware),
+            bool(sso_token),
+        )
+
+        return compiled

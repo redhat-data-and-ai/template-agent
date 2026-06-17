@@ -51,33 +51,36 @@ def find_duplicates(
         List of groups, where each group is a list of indices
         into *memories* that should be consolidated.
     """
-    threshold = threshold or memory_settings.MEMORY_CLUSTER_THRESHOLD
+    from deep_agent.aegra.tracing import trace_memory_op
 
-    n = len(memories)
-    parent = list(range(n))
+    with trace_memory_op(operation="consolidation"):
+        threshold = threshold or memory_settings.MEMORY_CLUSTER_THRESHOLD
 
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
+        n = len(memories)
+        parent = list(range(n))
 
-    def union(i: int, j: int) -> None:
-        ri, rj = find(i), find(j)
-        if ri != rj:
-            parent[ri] = rj
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            sim = token_similarity(memories[i]["content"], memories[j]["content"])
-            if sim >= threshold:
-                union(i, j)
+        def union(i: int, j: int) -> None:
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[ri] = rj
 
-    groups: defaultdict[int, list[int]] = defaultdict(list)
-    for i in range(n):
-        groups[find(i)].append(i)
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = token_similarity(memories[i]["content"], memories[j]["content"])
+                if sim >= threshold:
+                    union(i, j)
 
-    return [g for g in groups.values() if len(g) >= 2]
+        groups: defaultdict[int, list[int]] = defaultdict(list)
+        for i in range(n):
+            groups[find(i)].append(i)
+
+        return [g for g in groups.values() if len(g) >= 2]
 
 
 def pick_representative(
