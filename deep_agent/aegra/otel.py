@@ -94,6 +94,7 @@ MESSAGES_COUNT_BUCKETS = [
 _tracer_provider: Optional[TracerProvider] = None
 _meter: Optional[metrics.Meter] = None
 _metrics_container: Optional["MetricsContainer"] = None
+_snapshot_reader: Optional[Any] = None
 _initialized: bool = False
 _otel_enabled: bool = False
 
@@ -170,6 +171,21 @@ class MetricsContainer:
             description="Messages per thread",
             unit="1",
         )
+
+        # ponytail: seed all instruments so /api/metrics shows them from startup.
+        # OTEL SDK only reports instruments after first measurement.
+        self.conversations_total.add(0)
+        self.messages_total.add(0)
+        self.conversation_duration_seconds.record(0)
+        self.active_conversations.add(0)
+        self.stream_tokens_total.add(0)
+        self.stream_duration_seconds.record(0)
+        self.stream_errors_total.add(0)
+        self.time_to_first_token_seconds.record(0)
+        self.threads_created_total.add(0)
+        self.threads_active.add(0)
+        self.threads_deleted_total.add(0)
+        self.thread_messages_count.record(0)
 
 
 def _resolve_service_name() -> str:
@@ -267,6 +283,7 @@ def initialize_telemetry() -> None:
     ``get_tracer()``) and set as the global (for FastAPI auto-instrumentation).
     """
     global _meter, _metrics_container, _initialized, _otel_enabled, _tracer_provider
+    global _snapshot_reader
 
     if _initialized:
         return
@@ -277,15 +294,19 @@ def initialize_telemetry() -> None:
     resource = _build_resource()
     views = _create_histogram_views()
 
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    # Always keep an InMemoryMetricReader so /api/metrics can read values back.
+    _snapshot_reader = InMemoryMetricReader()
+
     if not enabled:
         logger.info(
             "OTEL disabled (ENABLE_OTEL not true) — metrics and traces are in-memory"
         )
-        from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
         meter_provider = MeterProvider(
             resource=resource,
-            metric_readers=[InMemoryMetricReader()],
+            metric_readers=[_snapshot_reader],
             views=views,
         )
         tracer_provider = TracerProvider(resource=resource)
@@ -312,7 +333,7 @@ def initialize_telemetry() -> None:
         )
         meter_provider = MeterProvider(
             resource=resource,
-            metric_readers=[otlp_reader],
+            metric_readers=[otlp_reader, _snapshot_reader],
             views=views,
         )
 
@@ -400,6 +421,40 @@ def get_tracer(name: str = "template-agent") -> trace.Tracer:
 def is_tracing_enabled() -> bool:
     """Return True if OTEL has been initialised and is enabled."""
     return _initialized and _otel_enabled
+
+
+def get_metrics_snapshot() -> dict[str, Any]:
+    """Read current metric values from the InMemoryMetricReader.
+
+    Returns a flat dict keyed by metric name. Counters/UpDownCounters
+    are summed across all attribute sets. Histograms aggregate count
+    and sum across all attribute sets.
+    """
+    if _snapshot_reader is None:
+        return {}
+
+    data = _snapshot_reader.get_metrics_data()
+    result: dict[str, Any] = {}
+
+    for resource_metrics in data.resource_metrics:
+        for scope_metrics in resource_metrics.scope_metrics:
+            for metric in scope_metrics.metrics:
+                name = metric.name
+                points = list(metric.data.data_points)
+                if not points:
+                    continue
+
+                if hasattr(points[0], "bucket_counts"):
+                    total_count = sum(pt.count for pt in points)
+                    total_sum = sum(pt.sum for pt in points)
+                    result[name] = {
+                        "count": total_count,
+                        "sum": round(total_sum, 3),
+                    }
+                else:
+                    result[name] = sum(pt.value for pt in points)
+
+    return result
 
 
 # ---------------------------------------------------------------------------

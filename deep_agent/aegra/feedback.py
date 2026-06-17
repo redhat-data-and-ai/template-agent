@@ -326,3 +326,23 @@ async def get_agent_info() -> dict[str, str]:
 
 
 app.add_api_route("/feedback", feedback_handler, methods=["POST"])
+
+
+@app.get("/api/metrics")
+async def get_product_metrics() -> dict[str, Any]:
+    """Return product-level metrics as JSON for the UI dashboard."""
+    try:
+        from deep_agent.aegra.otel import get_metrics_snapshot
+
+        otel = get_metrics_snapshot()
+    except Exception:
+        otel = {}
+
+    try:
+        from deep_agent.src.cache.metrics import get_stats
+
+        cache = get_stats()
+    except Exception:
+        cache = {}
+
+    return {"otel": otel, "cache": cache}
