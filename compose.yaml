@@ -89,6 +89,18 @@ services:
     networks:
       - demo-network
 
+  jaeger:
+    profiles: [observability]
+    image: jaegertracing/all-in-one:1.56
+    container_name: demo-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+    networks:
+      - demo-network
+    restart: unless-stopped
+
   otel-collector:
     profiles: [observability]
     image: otel/opentelemetry-collector-contrib:0.96.0
@@ -100,6 +112,8 @@ services:
       - "4317:4317"
       - "4318:4318"
       - "8889:8889"
+    depends_on:
+      - jaeger
     networks:
       - demo-network
     restart: unless-stopped

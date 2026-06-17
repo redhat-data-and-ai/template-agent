@@ -28,6 +28,10 @@ exporters:
     endpoint: "0.0.0.0:8889"
     const_labels:
       source: "otel-collector"
+  otlp/jaeger:
+    endpoint: "jaeger:4317"
+    tls:
+      insecure: true
   debug:
     verbosity: normal
 
@@ -44,4 +48,4 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [otlp/jaeger, debug]
