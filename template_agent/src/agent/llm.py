@@ -26,7 +26,7 @@ from template_agent.utils.pylogger import get_python_logger
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
 # Supported Gemini models on Vertex AI
-GEMINI_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-pro-preview"]
+GEMINI_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview"]
 
 # Supported Claude models on Vertex AI
 CLAUDE_MODELS = [
