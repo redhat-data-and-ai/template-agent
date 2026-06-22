@@ -145,6 +145,10 @@ middleware:
         strategy: redact
       - type: url
         strategy: redact
+  rego_trajectory:
+    enabled: true
+    # opa_url: ""  # empty = OPA_URL env var (http://opa:8181/... in compose)
+    timeout: 2.0
   extra: []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]

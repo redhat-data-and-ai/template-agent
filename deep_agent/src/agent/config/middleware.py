@@ -100,6 +100,14 @@ class PIIConfig(BaseModel):
     rules: list[PIIRule] = Field(default_factory=list)
 
 
+class RegoTrajectoryConfig(BaseModel):
+    """Config for RegoTrajectoryMiddleware — OPA trajectory policy checks."""
+
+    enabled: bool = True
+    opa_url: str = ""
+    timeout: float = 2.0
+
+
 class MiddlewareDefaults(BaseModel):
     """Global middleware defaults from middleware.yaml."""
 
@@ -115,6 +123,7 @@ class MiddlewareDefaults(BaseModel):
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
     pii: PIIConfig = Field(default_factory=PIIConfig)
+    rego_trajectory: RegoTrajectoryConfig = Field(default_factory=RegoTrajectoryConfig)
     extra: list[str] = Field(default_factory=list)
 
 
@@ -148,6 +157,7 @@ class ResolvedMiddlewareConfig(BaseModel):
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
     pii: PIIConfig = Field(default_factory=PIIConfig)
+    rego_trajectory: RegoTrajectoryConfig = Field(default_factory=RegoTrajectoryConfig)
     extra_middleware: list[str] = Field(default_factory=list)
     excluded_middleware: list[str] = Field(default_factory=list)
 
@@ -236,6 +246,7 @@ def resolve_middleware(
         model_fallback=defaults.model_fallback,
         tool_retry=defaults.tool_retry,
         pii=defaults.pii,
+        rego_trajectory=defaults.rego_trajectory,
         extra_middleware=extra,
         excluded_middleware=profile.excluded_middleware,
     )

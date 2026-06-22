@@ -95,6 +95,9 @@ def _append_guardrails(target: list[Any], resolved: ResolvedMiddlewareConfig) ->
     if resolved.pii.enabled and resolved.pii.rules:
         target.extend(_build_pii_middleware(resolved.pii))
 
+    if resolved.rego_trajectory.enabled:
+        _append_if_built(target, _build_rego_trajectory(resolved.rego_trajectory))
+
 
 def build_excluded_middleware(
     resolved: ResolvedMiddlewareConfig,
@@ -201,6 +204,20 @@ def _build_tool_retry(config: Any) -> Any | None:
         )
     except ImportError:
         logger.debug("ToolRetryMiddleware not available")
+        return None
+
+
+def _build_rego_trajectory(config: Any) -> Any | None:
+    """Build RegoTrajectoryMiddleware for OPA trajectory policy checks."""
+    try:
+        from deep_agent.src.infrastructure.rego_trajectory_middleware import (
+            RegoTrajectoryMiddleware,
+        )
+
+        opa_url = config.opa_url or settings.OPA_URL
+        return RegoTrajectoryMiddleware(opa_url=opa_url, timeout=config.timeout)
+    except ImportError:
+        logger.debug("RegoTrajectoryMiddleware not available")
         return None
 
 

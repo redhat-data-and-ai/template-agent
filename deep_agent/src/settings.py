@@ -103,6 +103,8 @@ class Settings(BaseSettings):
 
     # ── Middleware ────────────────────────────────────────────────────
     MIDDLEWARE_ENABLED: bool = Field(default=True)
+    OPA_URL: str = Field(default="http://localhost:8181/v1/data/agent/authz")
+    OPA_TIMEOUT: float = Field(default=2.0)
 
     # ── CLI ───────────────────────────────────────────────────────────
     ENABLE_CLI: bool = Field(default=True)

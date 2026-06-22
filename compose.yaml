@@ -1,6 +1,6 @@
 ## Unified Compose Stack
 ##
-## Default (dev):  Agent + infra only (pgvector, redis)
+## Default (dev):  Agent + infra only (pgvector, redis, opa)
 ##   make dev           - Start dev stack
 ##   make dev-down      - Stop dev stack
 ##
@@ -11,6 +11,7 @@
 ## Services (always):
 ##   pgvector              - Postgres (agent checkpoints)
 ##   redis                 - Aegra broker (SSE streaming, job queue)
+##   opa                   - Open Policy Agent (port 8181)
 ##   template-agent        - Agent (port 5002)
 ##
 ## Services (demo profile):
@@ -54,6 +55,31 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    networks:
+      - demo-network
+
+  opa:
+    # Multi-arch tag (arm64 + amd64). Pinning 1.4.2/0.70.0 breaks on Apple Silicon
+    # because those tags are amd64-only and crash under QEMU emulation.
+    image: openpolicyagent/opa:1.17.1
+    container_name: demo-opa
+    command:
+      - run
+      - --server
+      - --addr=0.0.0.0:8181
+      - --ignore=.*
+      - /policies
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./config/compliance/policies:/policies:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "true"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     networks:
       - demo-network
 
@@ -109,11 +135,14 @@ services:
       - POSTGRES_PASSWORD=postgres
       - REDIS_URL=redis://redis:6379/0
       - REDIS_BROKER_ENABLED=true
+      - OPA_URL=http://opa:8181/v1/data/agent/authz
     depends_on:
       pgvector:
         condition: service_healthy
       redis:
         condition: service_healthy
+      opa:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://0.0.0.0:5002/health"]
