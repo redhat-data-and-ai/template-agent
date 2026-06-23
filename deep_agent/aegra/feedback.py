@@ -17,7 +17,9 @@ import json
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -73,7 +75,19 @@ from deep_agent.aegra.shutdown import register_atexit
 
 register_atexit()
 
-app = FastAPI(title="template-agent-custom")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    from deep_agent.aegra.startup import run_startup
+    from deep_agent.src.observability.otel_setup import setup_otel_metrics, setup_otel_traces
+
+    await run_startup()
+    setup_otel_metrics(settings, logger)
+    setup_otel_traces(_app, settings, logger)
+    yield
+
+
+app = FastAPI(title="template-agent-custom", lifespan=_lifespan)
 
 
 class TraceIDMiddleware(BaseHTTPMiddleware):
@@ -286,6 +300,33 @@ async def get_thread_feedback(
     repo = FeedbackRepository(settings.database_uri)
     items = await repo.list_feedback(thread_id, user_id)
     return {"feedback": items}
+
+
+@app.get("/threads/{thread_id}/token-usage")
+async def get_thread_token_usage_endpoint(thread_id: str) -> dict[str, Any]:
+    """Return cumulative token usage for a thread."""
+    from dataclasses import asdict
+
+    from deep_agent.src.token_budget.service import (
+        TokenUsageNotFoundError,
+        TokenUsageUnavailableError,
+        get_thread_token_usage,
+    )
+
+    try:
+        usage = await get_thread_token_usage(thread_id)
+    except TokenUsageNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No token usage for thread {thread_id}",
+        ) from None
+    except TokenUsageUnavailableError:
+        raise HTTPException(
+            status_code=503,
+            detail="Token usage storage unavailable",
+        ) from None
+
+    return asdict(usage)
 
 
 @app.get("/info")

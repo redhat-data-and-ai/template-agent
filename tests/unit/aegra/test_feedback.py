@@ -187,3 +187,55 @@ class TestFeedbackHandler:
         assert res.status_code == 200
         assert res.json() == {"feedback": [{"message_id": "m1", "feedback": "up"}]}
         mock_repo.list_feedback.assert_awaited_once_with("thread-1", "u1")
+
+
+class TestTokenUsageEndpoint:
+    def test_get_thread_token_usage_success(self) -> None:
+        from deep_agent.src.token_budget.service import ThreadTokenUsage
+
+        client = TestClient(app)
+
+        with patch(
+            "deep_agent.src.token_budget.service.get_thread_token_usage",
+            new=AsyncMock(
+                return_value=ThreadTokenUsage(
+                    thread_id="thread-1",
+                    used=150,
+                    input_tokens=100,
+                    output_tokens=50,
+                )
+            ),
+        ):
+            res = client.get("/threads/thread-1/token-usage")
+
+        assert res.status_code == 200
+        assert res.json() == {
+            "thread_id": "thread-1",
+            "used": 150,
+            "input_tokens": 100,
+            "output_tokens": 50,
+        }
+
+    def test_get_thread_token_usage_not_found(self) -> None:
+        from deep_agent.src.token_budget.service import TokenUsageNotFoundError
+
+        client = TestClient(app)
+        with patch(
+            "deep_agent.src.token_budget.service.get_thread_token_usage",
+            new=AsyncMock(side_effect=TokenUsageNotFoundError("thread-1")),
+        ):
+            res = client.get("/threads/thread-1/token-usage")
+
+        assert res.status_code == 404
+
+    def test_get_thread_token_usage_unavailable(self) -> None:
+        from deep_agent.src.token_budget.service import TokenUsageUnavailableError
+
+        client = TestClient(app)
+        with patch(
+            "deep_agent.src.token_budget.service.get_thread_token_usage",
+            new=AsyncMock(side_effect=TokenUsageUnavailableError("down")),
+        ):
+            res = client.get("/threads/thread-1/token-usage")
+
+        assert res.status_code == 503

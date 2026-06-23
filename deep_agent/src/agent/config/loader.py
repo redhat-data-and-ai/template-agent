@@ -23,6 +23,7 @@ import yaml
 
 from deep_agent.src.exceptions import AppException, ErrorCodes
 from deep_agent.src.settings import settings
+from deep_agent.src.token_budget.config import TokenBudgetConfig
 from deep_agent.utils.pylogger import get_python_logger
 
 from .cache import CacheFileConfig
@@ -65,6 +66,7 @@ class AgentConfig:
     _filesystem_config: FilesystemFileConfig
     _providers_config: ProvidersFileConfig
     _cache_config: CacheFileConfig
+    _token_budget_config: TokenBudgetConfig
     _name: str
 
     def __new__(cls, base_dir: Path | None = None) -> "AgentConfig":
@@ -157,6 +159,11 @@ class AgentConfig:
 
         # Extract cache section
         self._cache_config = CacheFileConfig.model_validate(raw.get("cache", {}))
+
+        # Extract token budget section
+        self._token_budget_config = TokenBudgetConfig.model_validate(
+            raw.get("token_budget", {})
+        )
 
         # Extract top-level identity
         self._name = raw.get("name", "Agent")
@@ -387,6 +394,11 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return self._cache_config
+
+    def get_token_budget_config(self) -> TokenBudgetConfig:
+        """Get the pre-loaded per-thread token budget configuration."""
+        self._ensure_loaded()
+        return self._token_budget_config
 
     def get_name(self) -> str:
         """Get the agent display name from config.

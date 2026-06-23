@@ -28,6 +28,7 @@ dependencies = [
     "aegra-cli",
     "psycopg[binary,pool]==3.3.3",
     "psycopg2-binary==2.9.11",
+    "motor==3.6.0",
     "structlog==25.5.0",
     "pyyaml==6.0.3",
     "PyJWT[crypto]>=2.8.0",
@@ -36,6 +37,10 @@ dependencies = [
     "redis>=5.0.0,<7",
     "cachetools>=5.5.0,<6",
     "apscheduler>=4.0.0a5",
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
 ]
 
 [project.optional-dependencies]

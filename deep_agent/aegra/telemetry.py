@@ -1,8 +1,9 @@
-"""Langfuse integration for aegra deployment.
+"""Langfuse and token budget observability for aegra deployment.
 
 Provides:
 - Langfuse callback handler factory for LangChain tracing (v4 SDK)
 - Langfuse client accessor via ``get_langfuse_client()``
+- Token budget LangChain callback registration and metadata provider
 
 Environment variables (Langfuse — auto-read by v4 SDK):
     LANGFUSE_PUBLIC_KEY: Langfuse public key
@@ -11,6 +12,7 @@ Environment variables (Langfuse — auto-read by v4 SDK):
     LANGFUSE_TRACING_ENVIRONMENT: Environment tag (e.g. development, production)
 """
 
+import contextvars
 import os
 from typing import Any
 
@@ -24,6 +26,7 @@ logger = get_python_logger()
 # ---------------------------------------------------------------------------
 
 _langfuse_tracing_initialized = False
+_token_budget_tracing_initialized = False
 
 
 def _get_trace_name() -> str:
@@ -68,8 +71,6 @@ def setup_langfuse_tracing() -> None:
         return
 
     try:
-        import contextvars
-
         from langchain_core.tracers.context import register_configure_hook
         from langfuse.langchain import CallbackHandler
 
@@ -138,6 +139,96 @@ class LangfuseObservabilityProvider:
     def is_enabled(self) -> bool:
         """Return True if Langfuse credentials are configured."""
         return _langfuse_configured()
+
+
+# ---------------------------------------------------------------------------
+# Token budget callback integration
+# ---------------------------------------------------------------------------
+
+
+class TokenBudgetObservabilityProvider:
+    """Inject thread_id into RunnableConfig metadata for the token budget callback."""
+
+    def get_callbacks(self) -> list[Any]:
+        """Return empty list — callbacks are handled by register_configure_hook."""
+        return []
+
+    def get_metadata(
+        self, run_id: str, thread_id: str, user_identity: str | None = None
+    ) -> dict[str, Any]:
+        from deep_agent.src.token_budget.callback import (
+            THREAD_ID_METADATA_KEY,
+            USER_ID_METADATA_KEY,
+        )
+
+        metadata: dict[str, Any] = {}
+        if thread_id:
+            metadata[THREAD_ID_METADATA_KEY] = thread_id
+        if user_identity:
+            metadata[USER_ID_METADATA_KEY] = user_identity
+        return metadata
+
+    def is_enabled(self) -> bool:
+        try:
+            from deep_agent.src.agent.config import agent_config
+
+            return agent_config.get_token_budget_config().is_active
+        except Exception:
+            return False
+
+
+def setup_token_budget_tracking() -> None:
+    """Register token budget LangChain callback and Aegra metadata provider."""
+    global _token_budget_tracing_initialized
+    if _token_budget_tracing_initialized:
+        return
+    _token_budget_tracing_initialized = True
+
+    try:
+        from deep_agent.src.agent.config import agent_config
+
+        if not agent_config.get_token_budget_config().is_active:
+            logger.info("Token budget disabled — callback registration skipped")
+            return
+    except Exception:
+        logger.debug("Token budget config unavailable — skipping callback registration")
+        return
+
+    try:
+        from langchain_core.tracers.context import register_configure_hook
+
+        from deep_agent.src.token_budget.callback import TokenBudgetCallbackHandler
+
+        _token_budget_ctx_var: contextvars.ContextVar = contextvars.ContextVar(
+            "token_budget_handler", default=None
+        )
+        os.environ.setdefault("TOKEN_BUDGET_TRACKING", "1")
+        register_configure_hook(
+            _token_budget_ctx_var,
+            True,
+            TokenBudgetCallbackHandler,
+            env_var="TOKEN_BUDGET_TRACKING",
+        )
+        logger.info("Token budget callback registered for all LangChain runs")
+    except ImportError:
+        logger.warning("langchain_core not available — token budget callback disabled")
+        return
+    except Exception:
+        logger.warning("Failed to register token budget callback", exc_info=True)
+        return
+
+    try:
+        from aegra_api.observability.base import get_observability_manager
+
+        manager = get_observability_manager()
+        manager.register_provider(TokenBudgetObservabilityProvider())
+        logger.info("Token budget observability provider registered with Aegra")
+    except ImportError:
+        logger.debug("aegra_api not available — skipping token budget provider")
+    except Exception:
+        logger.warning(
+            "Failed to register token budget observability provider", exc_info=True
+        )
 
 
 def get_langfuse_client() -> Any:

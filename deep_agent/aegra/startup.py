@@ -16,6 +16,7 @@ This module is idempotent — calling ``run_startup()`` multiple
 times is safe (each step guards against double-init).
 """
 
+import asyncio
 import time
 
 from deep_agent.utils.pylogger import get_python_logger
@@ -81,7 +82,7 @@ async def _validate_config() -> str:
 
 
 async def _ensure_database() -> str:
-    """Create personalization and feedback tables if they don't exist."""
+    """Create personalization, feedback, and token budget tables if they don't exist."""
     try:
         from deep_agent.src.feedback.repository import FeedbackRepository
         from deep_agent.src.personalization.repository import (
@@ -89,13 +90,29 @@ async def _ensure_database() -> str:
         )
         from deep_agent.src.settings import settings
 
-        if not settings.database_uri:
-            return "skipped: no database_uri"
+        setup_tasks = []
 
-        repo = PersonalizationRepository(settings.database_uri)
-        await repo.ensure_tables()
-        feedback_repo = FeedbackRepository(settings.database_uri)
-        await feedback_repo.ensure_table()
+        if settings.database_uri:
+            personalization_repo = PersonalizationRepository(settings.database_uri)
+            feedback_repo = FeedbackRepository(settings.database_uri)
+            setup_tasks.append(personalization_repo.ensure_tables())
+            setup_tasks.append(feedback_repo.ensure_table())
+
+        if settings.MONGODB_URI:
+            from deep_agent.src.token_budget.mongo_repository import (
+                TokenUsageMongoRepository,
+            )
+
+            mongo_repo = TokenUsageMongoRepository(
+                settings.MONGODB_URI,
+                db_name=settings.MONGODB_DB,
+            )
+            setup_tasks.append(mongo_repo.ensure_indexes())
+
+        if not setup_tasks:
+            return "skipped: no database configured"
+
+        await asyncio.gather(*setup_tasks)
         return "ok"
     except Exception as exc:
         logger.error("Database setup failed: %s", exc)
@@ -138,11 +155,15 @@ async def _start_scheduler() -> str:
 
 
 def _setup_telemetry() -> str:
-    """Register Langfuse tracing if credentials are configured."""
+    """Register Langfuse tracing and token budget tracking if configured."""
     try:
-        from deep_agent.aegra.telemetry import setup_langfuse_tracing
+        from deep_agent.aegra.telemetry import (
+            setup_langfuse_tracing,
+            setup_token_budget_tracking,
+        )
 
         setup_langfuse_tracing()
+        setup_token_budget_tracking()  # Callback-based tracking
         return "ok"
     except Exception as exc:
         logger.warning("Telemetry setup failed: %s", exc)

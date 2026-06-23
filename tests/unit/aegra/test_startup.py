@@ -63,6 +63,7 @@ class TestEnsureDatabase:
     async def test_no_db(self):
         mock_settings = MagicMock()
         mock_settings.database_uri = ""
+        mock_settings.MONGODB_URI = ""
         with patch("deep_agent.src.settings.settings", mock_settings):
             result = await startup._ensure_database()
         assert "skipped" in result
@@ -70,6 +71,7 @@ class TestEnsureDatabase:
     async def test_db_ok(self):
         mock_settings = MagicMock()
         mock_settings.database_uri = "postgresql://test"
+        mock_settings.MONGODB_URI = ""
         mock_personalization = AsyncMock()
         mock_feedback = AsyncMock()
         with (
@@ -87,6 +89,27 @@ class TestEnsureDatabase:
         assert result == "ok"
         mock_personalization.ensure_tables.assert_awaited_once()
         mock_feedback.ensure_table.assert_awaited_once()
+
+    async def test_mongo_indexes_when_configured(self):
+        import sys
+
+        mock_settings = MagicMock()
+        mock_settings.database_uri = ""
+        mock_settings.MONGODB_URI = "mongodb://test"
+        mock_settings.MONGODB_DB = "tokenusage"
+        mock_mongo = AsyncMock()
+        mock_module = MagicMock()
+        mock_module.TokenUsageMongoRepository.return_value = mock_mongo
+        with (
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch.dict(
+                sys.modules,
+                {"deep_agent.src.token_budget.mongo_repository": mock_module},
+            ),
+        ):
+            result = await startup._ensure_database()
+        assert result == "ok"
+        mock_mongo.ensure_indexes.assert_awaited_once()
 
 
 class TestWarmCaches:

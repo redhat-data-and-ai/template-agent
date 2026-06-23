@@ -366,6 +366,7 @@ def _build_default_subagent(
 
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
+    subagent_middleware = [*fallback_mw]
 
     subagent_params: dict[str, Any] = {
         "name": name,
@@ -378,8 +379,8 @@ def _build_default_subagent(
         subagent_params["tools"] = resolved_tools
     if skill_paths:
         subagent_params["skills"] = skill_paths
-    if fallback_mw:
-        subagent_params["middleware"] = fallback_mw
+    if subagent_middleware:
+        subagent_params["middleware"] = subagent_middleware
 
     return SubAgent(**subagent_params)
 
@@ -431,6 +432,7 @@ def _build_compiled_subagent(
 
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
+    compiled_middleware = [*fallback_mw]
 
     create_kwargs = {
         "name": name,
@@ -441,8 +443,8 @@ def _build_compiled_subagent(
         "backend": get_configured_backend(),
     }
 
-    if fallback_mw:
-        create_kwargs["middleware"] = fallback_mw
+    if compiled_middleware:
+        create_kwargs["middleware"] = compiled_middleware
 
     compiled_graph = create_deep_agent(**create_kwargs)
 

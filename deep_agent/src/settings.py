@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = Field(default="postgres")
     POSTGRES_PASSWORD: str = Field(default="postgres")
 
+    # ── MongoDB ───────────────────────────────────────────────────────
+    MONGODB_URI: Optional[str] = Field(default=None)
+    MONGODB_DB: str = Field(default="tokenusage")
+
     # ── Redis ─────────────────────────────────────────────────────────
     REDIS_URL: str = Field(default="redis://redis:6379/0")
     REDIS_BROKER_ENABLED: bool = Field(default=True)
@@ -84,6 +88,29 @@ class Settings(BaseSettings):
     LANGFUSE_SECRET_KEY: Optional[str] = Field(default=None)
     LANGFUSE_BASE_URL: Optional[str] = Field(default=None)
     LANGFUSE_TRACING_ENVIRONMENT: str = Field(default="development")
+
+    # ── OpenTelemetry ─────────────────────────────────────────────────
+    ENABLE_OTEL_METRICS: bool = Field(default=False)
+    ENABLE_OTEL_TRACES: bool = Field(default=False)
+    OTEL_SERVICE_NAME: str = Field(default="template-agent")
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = Field(
+        default="",
+        description="OTLP gRPC metrics endpoint (OpenShift: otel-gateway:4327)",
+    )
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: str = Field(
+        default="",
+        description="OTLP gRPC traces endpoint (local/dev-loop: Jaeger :4317)",
+    )
+    OTEL_AUTH_TOKEN: str = Field(default="", repr=False)
+    OTEL_METRIC_EXPORT_INTERVAL_MILLIS: int = Field(default=10000)
+
+    def resolved_otel_traces_endpoint(self) -> str:
+        return self.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+
+    def otel_traces_active(self) -> bool:
+        return bool(
+            self.ENABLE_OTEL_TRACES and self.resolved_otel_traces_endpoint()
+        )
 
     # ── Google Cloud ──────────────────────────────────────────────────
     GOOGLE_APPLICATION_CREDENTIALS_CONTENT: Optional[str] = Field(default=None)
