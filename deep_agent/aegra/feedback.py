@@ -75,6 +75,15 @@ register_atexit()
 
 app = FastAPI(title="template-agent-custom")
 
+# ── Register Policy Settings API ───────────────────────────────────────
+
+try:
+    from deep_agent.src.policy.api import router as policy_router
+    app.include_router(policy_router)
+    logger.info("Registered policy settings API routes")
+except Exception as exc:
+    logger.warning(f"Failed to register policy API routes: {exc}")
+
 
 class TraceIDMiddleware(BaseHTTPMiddleware):
     """Propagate X-Trace-ID from incoming requests into the logging context.

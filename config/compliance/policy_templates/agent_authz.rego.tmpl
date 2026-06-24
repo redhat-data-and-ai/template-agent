@@ -1,3 +1,50 @@
+{# SCHEMA
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "1.0.0",
+  "title": "Agent Authorization Policy Settings",
+  "description": "Controls agent trajectory length limits",
+  "type": "object",
+  "properties": {
+    "max_trajectory_length": {
+      "type": "integer",
+      "title": "Maximum Trajectory Length",
+      "description": "Maximum number of steps the agent can take before being blocked",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 1000,
+      "ui": {
+        "widget": "slider",
+        "section": "limits",
+        "order": 1,
+        "showValue": true,
+        "step": 10
+      }
+    },
+    "enable_trajectory_limits": {
+      "type": "boolean",
+      "title": "Enable Trajectory Limits",
+      "description": "Enforce maximum trajectory length checks",
+      "default": true,
+      "ui": {
+        "widget": "toggle",
+        "section": "limits",
+        "order": 2,
+        "controls": ["max_trajectory_length"]
+      }
+    }
+  },
+  "sections": {
+    "limits": {
+      "title": "Trajectory Limits",
+      "description": "Prevent runaway agent behavior by limiting trajectory length",
+      "icon": "gauge",
+      "order": 1
+    }
+  }
+}
+#}
+
 package agent.authz
 
 # Agent Authorization Policy with Per-User Settings Support
@@ -12,8 +59,8 @@ import rego.v1
 config := input.user_settings if {
     input.user_settings != null
 } else := {
-    "max_trajectory_length": 100,
-    "enable_trajectory_limits": true
+    "max_trajectory_length": {{ max_trajectory_length }},
+    "enable_trajectory_limits": {{ enable_trajectory_limits | lower }}
 }
 
 # Default policy - deny if limits are disabled

@@ -81,12 +81,13 @@ async def _validate_config() -> str:
 
 
 async def _ensure_database() -> str:
-    """Create personalization and feedback tables if they don't exist."""
+    """Create personalization, feedback, and policy settings tables if they don't exist."""
     try:
         from deep_agent.src.feedback.repository import FeedbackRepository
         from deep_agent.src.personalization.repository import (
             PersonalizationRepository,
         )
+        from deep_agent.src.policy.repository import PolicySettingsRepository
         from deep_agent.src.settings import settings
 
         if not settings.database_uri:
@@ -96,6 +97,8 @@ async def _ensure_database() -> str:
         await repo.ensure_tables()
         feedback_repo = FeedbackRepository(settings.database_uri)
         await feedback_repo.ensure_table()
+        policy_repo = PolicySettingsRepository(settings.database_uri)
+        await policy_repo.ensure_table()
         return "ok"
     except Exception as exc:
         logger.error("Database setup failed: %s", exc)
