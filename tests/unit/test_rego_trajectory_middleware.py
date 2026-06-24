@@ -3,12 +3,13 @@
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.types import Command
 
 from deep_agent.src.agent.config.middleware import RegoTrajectoryConfig, ResolvedMiddlewareConfig
 from deep_agent.src.infrastructure.middleware import build_middleware_list
 from deep_agent.src.infrastructure.rego_trajectory_middleware import (
+    POLICY_DENIAL_MESSAGE,
     RegoTrajectoryMiddleware,
 )
 
@@ -80,21 +81,37 @@ class TestEvaluatePolicy:
 
 
 class TestHooks:
-    def test_before_model_raises_on_policy_violation(self):
+    def test_before_model_returns_denial_message_on_policy_violation(self):
         middleware = RegoTrajectoryMiddleware()
         with patch.object(middleware, "_evaluate_policy", return_value=False):
-            with pytest.raises(PermissionError, match="LLM request"):
-                middleware.before_model({"messages": []}, runtime=None)
+            result = middleware.before_model({"messages": []}, runtime=None)
 
-    def test_wrap_tool_call_raises_on_policy_violation(self):
+        assert result == {
+            "jump_to": "end",
+            "messages": [AIMessage(content=POLICY_DENIAL_MESSAGE)],
+        }
+
+    def test_wrap_tool_call_returns_denial_command_on_policy_violation(self):
         middleware = RegoTrajectoryMiddleware()
         request = MagicMock()
         request.state = {"messages": []}
-        request.tool_call = {"name": "send_email", "args": {"to": "a@b.com"}}
+        request.tool_call = {"name": "send_email", "args": {"to": "a@b.com"}, "id": "tc-1"}
+        handler = MagicMock()
 
         with patch.object(middleware, "_evaluate_policy", return_value=False):
-            with pytest.raises(PermissionError, match="send_email"):
-                middleware.wrap_tool_call(request, handler=MagicMock())
+            result = middleware.wrap_tool_call(request, handler)
+
+        assert isinstance(result, Command)
+        assert result.goto == "end"
+        messages = result.update["messages"]
+        assert messages[0] == ToolMessage(
+            content=POLICY_DENIAL_MESSAGE,
+            tool_call_id="tc-1",
+            name="send_email",
+            status="error",
+        )
+        assert messages[1] == AIMessage(content=POLICY_DENIAL_MESSAGE)
+        handler.assert_not_called()
 
     def test_wrap_tool_call_delegates_when_allowed(self):
         middleware = RegoTrajectoryMiddleware()

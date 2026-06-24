@@ -1,7 +1,0 @@
-# OPA image with policies baked in.
-#
-# Use a multi-arch base tag (1.17.x) so Apple Silicon gets native arm64.
-# Older tags like 0.70.0 / 1.4.2 are amd64-only and SIGSEGV under QEMU.
-FROM openpolicyagent/opa:1.17.1
-
-COPY policies/ /policies/

@@ -11,7 +11,7 @@
 ## Services (always):
 ##   pgvector              - Postgres (agent checkpoints)
 ##   redis                 - Aegra broker (SSE streaming, job queue)
-##   opa                   - Open Policy Agent (port 8181)
+##   opa                   - Open Policy Agent (port 8181, polls *.rego every 2s)
 ##   template-agent        - Agent (port 5002)
 ##
 ## Services (demo profile):
@@ -59,20 +59,15 @@ services:
       - demo-network
 
   opa:
-    # Multi-arch tag (arm64 + amd64). Pinning 1.4.2/0.70.0 breaks on Apple Silicon
-    # because those tags are amd64-only and crash under QEMU emulation.
-    image: openpolicyagent/opa:1.17.1
+    # Custom OPA image with polling-based hot-reload for containers
+    build:
+      context: ./opa
+      dockerfile: Containerfile.opa
     container_name: demo-opa
-    command:
-      - run
-      - --server
-      - --addr=0.0.0.0:8181
-      - --ignore=.*
-      - /policies
     ports:
       - "8181:8181"
     volumes:
-      - ./config/compliance/policies:/policies:ro
+      - ./config/compliance/policies:/policies
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/opa", "eval", "true"]

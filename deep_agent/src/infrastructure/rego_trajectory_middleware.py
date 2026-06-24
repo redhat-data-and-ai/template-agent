@@ -11,10 +11,19 @@ from typing import Any
 
 import httpx
 from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware.types import hook_config
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.types import Command
 
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
+
+POLICY_DENIAL_MESSAGE = (
+    "I'm unable to complete this request because it isn't allowed by our "
+    "compliance policies. Please try a different approach or contact your "
+    "administrator if you need access."
+)
 
 
 class RegoTrajectoryMiddleware(AgentMiddleware):
@@ -84,14 +93,20 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
             logger.error("OPA policy check failed (fail-closed): %s", exc)
             return False
 
+    @hook_config(can_jump_to=["end"])
     def before_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         """Evaluate trajectory before the LLM is allowed to respond."""
         trajectory = self._parse_trajectory(state.get("messages", []))
         if not self._evaluate_policy(trajectory, {"action": "llm_request"}):
-            raise PermissionError(
-                "Policy Violation: Trajectory limits breached on LLM request."
-            )
+            return {
+                "jump_to": "end",
+                "messages": [AIMessage(content=POLICY_DENIAL_MESSAGE)],
+            }
         return None
+
+    async def abefore_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
+        """Async trajectory check before the LLM is allowed to respond."""
+        return self.before_model(state, runtime)
 
     def wrap_tool_call(self, request: Any, handler: Callable) -> Any:
         """Evaluate trajectory before executing a tool."""
@@ -99,6 +114,7 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
         tool_call = request.tool_call
         tool_name = tool_call.get("name") if isinstance(tool_call, dict) else tool_call.name
         tool_args = tool_call.get("args", {}) if isinstance(tool_call, dict) else tool_call.args
+        tool_call_id = tool_call.get("id") if isinstance(tool_call, dict) else tool_call.id
         current_intent = {
             "action": "tool_call",
             "name": tool_name,
@@ -106,18 +122,23 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
         }
 
         if not self._evaluate_policy(trajectory, current_intent):
-            raise PermissionError(
-                f"Policy Violation: Tool '{tool_name}' blocked by trajectory rules."
+            return Command[str](
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=POLICY_DENIAL_MESSAGE,
+                            tool_call_id=tool_call_id,
+                            name=tool_name,
+                            status="error",
+                        ),
+                        AIMessage(content=POLICY_DENIAL_MESSAGE),
+                    ],
+                },
+                goto="end",
             )
 
         return handler(request)
 
-
-def create_rego_trajectory_middleware() -> RegoTrajectoryMiddleware:
-    """Factory for dynamic middleware import paths."""
-    from deep_agent.src.settings import settings
-
-    return RegoTrajectoryMiddleware(
-        opa_url=settings.OPA_URL,
-        timeout=settings.OPA_TIMEOUT,
-    )
+    async def awrap_tool_call(self, request: Any, handler: Callable) -> Any:
+        """Async trajectory check before executing a tool."""
+        return self.wrap_tool_call(request, handler)
