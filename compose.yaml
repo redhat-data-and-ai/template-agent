@@ -73,7 +73,9 @@ services:
       - demo-network
 
   opa:
-    # OPA server with polling-based hot-reload for containers
+    # OPA server with polling-based hot-reload
+    # Loads local files AND git repository (if configured)
+    # See opa/README.md for git setup
     build:
       context: ./opa
       dockerfile: Containerfile.opa
@@ -82,6 +84,16 @@ services:
       - "8181:8181"
     volumes:
       - ./config/compliance/policies:/policies
+    environment:
+      # Git repository configuration (from .env)
+      # Git policies are loaded IN ADDITION to local /policies
+      - POLICY_GIT_REPO=${POLICY_GIT_REPO:-}
+      - POLICY_GIT_BRANCH=${POLICY_GIT_BRANCH:-main}
+      - POLICY_GIT_SUBDIR=${POLICY_GIT_SUBDIR:-}
+      - POLICY_GIT_AUTH_USER=${POLICY_GIT_AUTH_USER:-}
+      - POLICY_GIT_AUTH_TOKEN=${POLICY_GIT_AUTH_TOKEN:-}
+      - POLICY_GIT_SSL_VERIFY=${POLICY_GIT_SSL_VERIFY:-true}
+      - POLL_INTERVAL=${POLL_INTERVAL:-2}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/usr/local/bin/opa", "eval", "true"]

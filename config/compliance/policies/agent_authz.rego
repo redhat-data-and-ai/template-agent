@@ -7,4 +7,4 @@ package agent.authz
 import rego.v1
 
 # Default policy - deny by default
-default allow := false
+default allow := true

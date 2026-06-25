@@ -1,16 +1,34 @@
 #!/bin/sh
-# OPA Hot-Reload Watcher
+# OPA Hot-Reload Watcher with Git Repository Support
 #
-# Polls /policies for *.rego changes and restarts OPA when detected.
-# Uses MD5 checksums to detect modifications.
+# Loads policies from BOTH local files AND git repository (if configured).
+# Uses sparse checkout for efficiency when subdirectory is specified.
+#
+# Environment Variables:
+#   POLICY_GIT_REPO       - Git repository URL (optional)
+#   POLICY_GIT_BRANCH     - Git branch to checkout (default: main)
+#   POLICY_GIT_SUBDIR     - Subdirectory within repo (uses sparse checkout)
+#   POLICY_GIT_AUTH_USER  - Git username for private repos (optional)
+#   POLICY_GIT_AUTH_TOKEN - Git token/password for private repos (optional)
+#   POLICY_GIT_SSL_VERIFY - Verify SSL certificates (default: true, set to false for self-signed certs)
+#   POLL_INTERVAL         - Seconds between polls (default: 2)
 
 set -e
 
 POLICY_DIR="/policies"
+GIT_CLONE_DIR="/tmp/policy-repo"
 OPA_BIN="/usr/local/bin/opa"
 OPA_ADDR="0.0.0.0:8181"
-POLL_INTERVAL="${POLL_INTERVAL:-2}"  # seconds
+POLL_INTERVAL="${POLL_INTERVAL:-2}"
+POLICY_GIT_REPO="${POLICY_GIT_REPO:-}"
+POLICY_GIT_BRANCH="${POLICY_GIT_BRANCH:-main}"
+POLICY_GIT_SUBDIR="${POLICY_GIT_SUBDIR:-}"
+POLICY_GIT_AUTH_USER="${POLICY_GIT_AUTH_USER:-}"
+POLICY_GIT_AUTH_TOKEN="${POLICY_GIT_AUTH_TOKEN:-}"
+POLICY_GIT_SSL_VERIFY="${POLICY_GIT_SSL_VERIFY:-true}"
 OPA_PID=""
+USE_GIT=false
+GIT_POLICY_DIR=""
 
 # Color output for logs
 log_info() {
@@ -25,15 +43,155 @@ log_error() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*"
 }
 
-# Calculate MD5 checksum of all *.rego files
-get_policies_checksum() {
-    find "$POLICY_DIR" -name "*.rego" -type f 2>/dev/null | sort | xargs cat 2>/dev/null | md5sum | cut -d' ' -f1
+# Configure git SSL verification
+configure_git_ssl() {
+    if [ "$POLICY_GIT_SSL_VERIFY" = "false" ]; then
+        export GIT_SSL_NO_VERIFY=1
+        log_warn "SSL certificate verification disabled for git operations"
+    fi
 }
 
-# Start OPA server in background
+# Build git URL with authentication if provided
+build_git_url() {
+    if [ -n "$POLICY_GIT_AUTH_USER" ] && [ -n "$POLICY_GIT_AUTH_TOKEN" ]; then
+        # Extract protocol and rest of URL
+        PROTO=$(echo "$POLICY_GIT_REPO" | grep -o '^https\?://')
+        REST=$(echo "$POLICY_GIT_REPO" | sed 's|^https\?://||')
+        echo "${PROTO}${POLICY_GIT_AUTH_USER}:${POLICY_GIT_AUTH_TOKEN}@${REST}"
+    else
+        echo "$POLICY_GIT_REPO"
+    fi
+}
+
+# Clone or update git repository with sparse checkout support
+sync_git_repo() {
+    local git_url
+    git_url=$(build_git_url)
+
+    if [ ! -d "$GIT_CLONE_DIR/.git" ]; then
+        log_info "Cloning policy repository: $POLICY_GIT_REPO (branch: $POLICY_GIT_BRANCH)"
+
+        if [ -n "$POLICY_GIT_SUBDIR" ]; then
+            # Use sparse checkout for subdirectory
+            log_info "Using sparse checkout for subdirectory: $POLICY_GIT_SUBDIR"
+            mkdir -p "$GIT_CLONE_DIR"
+            cd "$GIT_CLONE_DIR" || return 1
+
+            if ! git init 2>&1 | grep -v "Username\|Password"; then
+                log_error "Failed to initialize git repository"
+                cd /
+                return 1
+            fi
+
+            if ! git remote add origin "$git_url" 2>&1 | grep -v "Username\|Password"; then
+                log_error "Failed to add git remote"
+                cd /
+                return 1
+            fi
+
+            git config core.sparseCheckout true
+            echo "$POLICY_GIT_SUBDIR/*" > .git/info/sparse-checkout
+
+            if ! git fetch --depth 1 origin "$POLICY_GIT_BRANCH" 2>&1 | grep -v "Username\|Password"; then
+                log_error "Failed to fetch from git repository"
+                cd /
+                return 1
+            fi
+
+            if ! git checkout "$POLICY_GIT_BRANCH" 2>&1 | grep -v "Username\|Password"; then
+                log_error "Failed to checkout branch $POLICY_GIT_BRANCH"
+                cd /
+                return 1
+            fi
+
+            cd /
+        else
+            # Regular clone
+            if ! git clone --depth 1 --branch "$POLICY_GIT_BRANCH" "$git_url" "$GIT_CLONE_DIR" 2>&1 | grep -v "Username\|Password"; then
+                log_error "Failed to clone git repository"
+                return 1
+            fi
+        fi
+
+        log_info "Repository cloned successfully"
+    else
+        log_info "Updating policy repository from remote"
+        cd "$GIT_CLONE_DIR" || return 1
+
+        if ! git fetch origin "$POLICY_GIT_BRANCH" --depth 1 2>&1 | grep -v "Username\|Password"; then
+            log_error "Failed to fetch updates from git repository"
+            cd /
+            return 1
+        fi
+
+        if ! git reset --hard "origin/$POLICY_GIT_BRANCH" 2>&1 | grep -v "Username\|Password"; then
+            log_error "Failed to reset to origin/$POLICY_GIT_BRANCH"
+            cd /
+            return 1
+        fi
+
+        cd /
+        log_info "Repository updated successfully"
+    fi
+
+    # Verify policy directory exists
+    if [ ! -d "$GIT_POLICY_DIR" ]; then
+        log_error "Git policy directory not found: $GIT_POLICY_DIR"
+        log_error "Expected directory: $GIT_POLICY_DIR"
+        if [ -d "$GIT_CLONE_DIR" ]; then
+            log_error "Git clone dir exists, listing contents:"
+            ls -la "$GIT_CLONE_DIR" || true
+        fi
+        return 1
+    fi
+
+    # Count git policies
+    local git_count
+    git_count=$(find "$GIT_POLICY_DIR" -name "*.rego" -type f 2>/dev/null | wc -l)
+    log_info "Found $git_count policy file(s) in git repository"
+
+    return 0
+}
+
+# Calculate MD5 checksum of all policies (local + git)
+get_policies_checksum() {
+    local local_hash git_hash combined
+
+    # Local policies checksum
+    local_hash=$(find "$POLICY_DIR" -name "*.rego" -type f 2>/dev/null | sort | xargs cat 2>/dev/null | md5sum | cut -d' ' -f1)
+
+    if [ "$USE_GIT" = true ] && [ -d "$GIT_POLICY_DIR" ]; then
+        # Git policies checksum + commit hash
+        git_hash=$(find "$GIT_POLICY_DIR" -name "*.rego" -type f 2>/dev/null | sort | xargs cat 2>/dev/null | md5sum | cut -d' ' -f1)
+
+        if [ -d "$GIT_CLONE_DIR/.git" ]; then
+            cd "$GIT_CLONE_DIR"
+            local commit_hash
+            commit_hash=$(git rev-parse HEAD 2>/dev/null || echo "none")
+            cd /
+            combined="${local_hash}-${git_hash}-${commit_hash}"
+        else
+            combined="${local_hash}-${git_hash}"
+        fi
+        echo "$combined"
+    else
+        echo "$local_hash"
+    fi
+}
+
+# Start OPA server with multiple policy directories
 start_opa() {
-    log_info "Starting OPA server on $OPA_ADDR"
-    $OPA_BIN run --server --addr="$OPA_ADDR" "$POLICY_DIR" &
+    local opa_dirs="$POLICY_DIR"
+
+    if [ "$USE_GIT" = true ] && [ -d "$GIT_POLICY_DIR" ]; then
+        opa_dirs="$opa_dirs $GIT_POLICY_DIR"
+        log_info "Starting OPA server on $OPA_ADDR with local and git policies"
+    else
+        log_info "Starting OPA server on $OPA_ADDR with local policies only"
+    fi
+
+    # shellcheck disable=SC2086
+    $OPA_BIN run --server --addr="$OPA_ADDR" $opa_dirs &
     OPA_PID=$!
     log_info "OPA started with PID $OPA_PID"
 }
@@ -66,18 +224,44 @@ cleanup() {
 # Trap signals for graceful shutdown
 trap cleanup TERM INT
 
-# Check if policy directory exists
+# Initialize local policy directory
 if [ ! -d "$POLICY_DIR" ]; then
-    log_error "Policy directory not found: $POLICY_DIR"
+    log_error "Local policy directory not found: $POLICY_DIR"
     exit 1
 fi
 
-# Count initial *.rego files
-POLICY_COUNT=$(find "$POLICY_DIR" -name "*.rego" -type f 2>/dev/null | wc -l)
-if [ "$POLICY_COUNT" -eq 0 ]; then
-    log_warn "No *.rego files found in $POLICY_DIR"
+# Check if git mode is enabled
+if [ -n "$POLICY_GIT_REPO" ]; then
+    USE_GIT=true
+    log_info "Git mode enabled: $POLICY_GIT_REPO"
+
+    # Configure SSL verification
+    configure_git_ssl
+
+    # Set git policy directory
+    if [ -n "$POLICY_GIT_SUBDIR" ]; then
+        GIT_POLICY_DIR="$GIT_CLONE_DIR/$POLICY_GIT_SUBDIR"
+    else
+        GIT_POLICY_DIR="$GIT_CLONE_DIR"
+    fi
+
+    # Initial git sync
+    if sync_git_repo; then
+        log_info "Initial git sync completed"
+    else
+        log_error "Failed to sync git repository"
+        exit 1
+    fi
 else
-    log_info "Found $POLICY_COUNT policy file(s) in $POLICY_DIR"
+    log_info "Local file mode (no git repository configured)"
+fi
+
+# Count initial local policies
+LOCAL_COUNT=$(find "$POLICY_DIR" -name "*.rego" -type f 2>/dev/null | wc -l)
+log_info "Found $LOCAL_COUNT local policy file(s)"
+
+if [ "$LOCAL_COUNT" -eq 0 ] && [ "$USE_GIT" != true ]; then
+    log_warn "No policies found in local directory and no git repository configured"
 fi
 
 # Initial checksum
@@ -91,7 +275,12 @@ start_opa
 sleep 2
 
 # Main watch loop
-log_info "Starting file watcher (polling every ${POLL_INTERVAL}s)"
+if [ "$USE_GIT" = true ]; then
+    log_info "Starting watch loop: local + git sync (polling every ${POLL_INTERVAL}s)"
+else
+    log_info "Starting watch loop: local files only (polling every ${POLL_INTERVAL}s)"
+fi
+
 while true; do
     sleep "$POLL_INTERVAL"
 
@@ -102,7 +291,15 @@ while true; do
         continue
     fi
 
-    # Check for policy changes
+    # Sync git repo if in git mode
+    if [ "$USE_GIT" = true ]; then
+        if ! sync_git_repo; then
+            log_warn "Git sync failed, will retry on next poll"
+            continue
+        fi
+    fi
+
+    # Check for policy changes (local + git)
     CURRENT_CHECKSUM=$(get_policies_checksum)
 
     if [ "$CURRENT_CHECKSUM" != "$LAST_CHECKSUM" ]; then
