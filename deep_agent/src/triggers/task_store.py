@@ -55,12 +55,24 @@ class TaskRecord:
 
 
 class TaskStore:
-    """Redis-backed store for task status tracking."""
+    """Redis-backed store for task status tracking with Postgres audit trail."""
 
     def __init__(self, redis_url: str | None = None) -> None:
         """Initialize the task store with an optional Redis URL."""
         self._redis_url = redis_url or settings.REDIS_URL
         self._client: Any = None
+        self._audit: Any = None
+
+    def _get_audit_repo(self) -> Any:
+        """Lazily create the Postgres audit repository."""
+        if self._audit is None:
+            try:
+                from deep_agent.src.triggers.task_repository import TaskRepository
+
+                self._audit = TaskRepository(settings.database_uri)
+            except Exception:
+                logger.debug("audit repository unavailable", exc_info=True)
+        return self._audit
 
     async def _ensure_client(self) -> Any:
         if self._client is None:
@@ -103,6 +115,15 @@ class TaskStore:
         logger.info(
             "task created", task_id=task_id, task_name=task_name, status="queued"
         )
+
+        audit = self._get_audit_repo()
+        if audit:
+            try:
+                await audit.ensure_table()
+                await audit.insert_task(task_id, task_name, payload, thread_id, user_id)
+            except Exception:
+                logger.debug("audit insert failed", task_id=task_id, exc_info=True)
+
         return record
 
     async def update_status(
@@ -131,6 +152,14 @@ class TaskStore:
         ttl = await client.ttl(key)
         await client.set(key, record.to_json(), ex=max(ttl, 3600))
         logger.info("task status updated", task_id=task_id, status=status)
+
+        audit = self._get_audit_repo()
+        if audit:
+            try:
+                result_str = str(result)[:2000] if result is not None else None
+                await audit.update_status(task_id, status, result_str, error)
+            except Exception:
+                logger.debug("audit update failed", task_id=task_id, exc_info=True)
 
     async def get_task(self, task_id: str) -> TaskRecord | None:
         """Retrieve a task record by ID, or None if not found."""
@@ -167,6 +196,13 @@ class TaskStore:
         record.updated_at = _now_iso()
         ttl = await client.ttl(key)
         await client.set(key, record.to_json(), ex=max(ttl, 3600))
+
+        audit = self._get_audit_repo()
+        if audit:
+            try:
+                await audit.mark_delivered(task_id)
+            except Exception:
+                logger.debug("audit mark_delivered failed", task_id=task_id, exc_info=True)
 
     async def close(self) -> None:
         """Close the Redis client connection."""

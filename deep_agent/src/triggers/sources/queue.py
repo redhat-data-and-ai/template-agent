@@ -222,6 +222,14 @@ class QueueTriggerSource:
                 consumer_name=consumer_name,
                 redis_url=self._redis_url,
             )
+        elif self._config.backend == "kafka":
+            from deep_agent.src.triggers.sources.kafka_consumer import KafkaQueueConsumer
+
+            self._consumer = KafkaQueueConsumer(
+                topic=self._config.topic,
+                bootstrap_servers=self._config.bootstrap_servers,
+                consumer_group=self._config.consumer_group,
+            )
         else:
             raise ValueError(f"unsupported queue backend: {self._config.backend}")
 

@@ -47,6 +47,8 @@ class QueueTriggerConfig(BaseModel):
     stream: str = "agent-tasks"
     consumer_group: str = "agent-workers"
     consumer_name: str = ""
+    bootstrap_servers: str = "localhost:9092"
+    topic: str = "agent-tasks"
 
     def get_consumer_name(self) -> str:
         """Return consumer_name, defaulting to HOSTNAME for multi-replica support."""
