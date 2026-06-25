@@ -170,7 +170,7 @@ def _mongo_repo():
     return _mongo_repo_instance
 
 
-_MAX_REASONABLE_TOKENS = 2_000_000
+_MAX_REASONABLE_TOKENS = 1_000_000
 
 
 async def check_and_record(
