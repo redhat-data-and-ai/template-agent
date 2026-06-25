@@ -11,7 +11,7 @@
 ## Services (always):
 ##   pgvector              - Postgres (agent checkpoints)
 ##   redis                 - Aegra broker (SSE streaming, job queue)
-##   opa                   - Open Policy Agent (port 8181, polls *.rego every 2s)
+##   opa                   - Open Policy Agent (port 8181)
 ##   template-agent        - Agent (port 5002)
 ##
 ## Services (demo profile):
@@ -73,7 +73,7 @@ services:
       - demo-network
 
   opa:
-    # Custom OPA image with polling-based hot-reload for containers
+    # OPA server for policy enforcement
     build:
       context: ./opa
       dockerfile: Containerfile.opa
@@ -84,7 +84,7 @@ services:
       - ./config/compliance/policies:/policies
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "/opa", "eval", "true"]
+      test: ["CMD", "/usr/local/bin/opa", "eval", "true"]
       interval: 10s
       timeout: 3s
       retries: 5

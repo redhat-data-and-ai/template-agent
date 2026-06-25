@@ -57,6 +57,12 @@ class TestEvaluatePolicy:
 
         assert allowed is True
         mock_post.assert_called_once()
+        # Verify payload does not include user_settings
+        call_args = mock_post.call_args
+        payload = call_args.kwargs["json"]
+        assert "user_settings" not in payload["input"]
+        assert "trajectory" in payload["input"]
+        assert "current_intent" in payload["input"]
 
     def test_returns_false_when_opa_denies(self):
         middleware = RegoTrajectoryMiddleware()

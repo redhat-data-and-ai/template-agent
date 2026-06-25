@@ -1,40 +1,34 @@
 package agent.authz
 
-# Agent Authorization Policy with Per-User Settings Support
+# Agent Authorization Policy
 #
-# This policy evaluates agent trajectory and tool usage against configurable limits.
-# Settings can be customized per-user by passing them in input.user_settings,
-# or falls back to the defaults below.
+# This policy evaluates agent trajectory and tool usage against fixed limits.
 
 import rego.v1
 
-# Use user settings from input, or fall back to defaults
-config := input.user_settings if {
-    input.user_settings != null
-} else := {
-    "max_trajectory_length": 100,
-    "enable_trajectory_limits": true
-}
+# Configuration - hardcoded defaults
+max_trajectory_length := 100
+enable_trajectory_limits := true
 
-# Default policy - deny if limits are disabled
+# Default policy - deny by default
 default allow := false
 
 # Allow if trajectory limits are disabled
 allow if {
-    not config.enable_trajectory_limits
+    not enable_trajectory_limits
 }
 
 # Allow if trajectory limits are enabled and not exceeded
 allow if {
-    config.enable_trajectory_limits
+    enable_trajectory_limits
     not is_trajectory_too_long
 }
 
 # ── Trajectory Length Check ────────────────────────────────────────────
 
 is_trajectory_too_long if {
-    config.enable_trajectory_limits
-    count(input.trajectory) > config.max_trajectory_length
+    enable_trajectory_limits
+    count(input.trajectory) > max_trajectory_length
 }
 
 # ── Denial Reasons (for debugging) ─────────────────────────────────────
@@ -43,10 +37,6 @@ denial_reasons contains reason if {
     is_trajectory_too_long
     reason := sprintf("trajectory length %d exceeds limit %d", [
         count(input.trajectory),
-        config.max_trajectory_length
+        max_trajectory_length
     ])
 }
-
-# ── Effective Config (for debugging) ───────────────────────────────────
-
-effective_config := config
