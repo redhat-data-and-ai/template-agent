@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from langchain_core.callbacks import AsyncCallbackHandler
@@ -19,6 +20,35 @@ logger = get_python_logger()
 
 THREAD_ID_METADATA_KEY = "token_budget_thread_id"
 USER_ID_METADATA_KEY = "token_budget_user_id"
+
+# Emit an ERROR-level alert after this many consecutive failures so ops
+# teams can detect a persistently degraded token-tracking feature.
+_CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
+
+_counter_lock = threading.Lock()
+_consecutive_failures = 0
+_total_failures = 0
+
+
+def _on_tracking_success() -> None:
+    global _consecutive_failures
+    with _counter_lock:
+        _consecutive_failures = 0
+
+
+def _on_tracking_failure() -> None:
+    global _consecutive_failures, _total_failures
+    with _counter_lock:
+        _consecutive_failures += 1
+        _total_failures += 1
+        consecutive = _consecutive_failures
+        total = _total_failures
+    if consecutive >= _CONSECUTIVE_FAILURE_ALERT_THRESHOLD:
+        logger.error(
+            "token_budget_tracking_degraded",
+            consecutive_failures=consecutive,
+            total_failures=total,
+        )
 
 
 def _extract_from_metadata(
@@ -79,12 +109,13 @@ class TokenBudgetCallbackHandler(AsyncCallbackHandler):
                 output_tokens,
                 user_id=user_id,
             )
+            _on_tracking_success()
         except Exception:
             logger.warning(
                 "token_budget_callback_failed",
-                thread_id=thread_id,
                 exc_info=True,
             )
+            _on_tracking_failure()
 
     async def on_llm_end(
         self,

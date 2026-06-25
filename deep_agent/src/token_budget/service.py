@@ -170,6 +170,9 @@ def _mongo_repo():
     return _mongo_repo_instance
 
 
+_MAX_REASONABLE_TOKENS = 2_000_000
+
+
 async def check_and_record(
     thread_id: str,
     input_tokens: int,
@@ -184,9 +187,16 @@ async def check_and_record(
     if not thread_id or thread_id == "unknown":
         return
     if not settings.MONGODB_URI:
-        logger.debug("token_budget_skipped_no_mongodb_uri", thread_id=thread_id)
+        logger.debug("token_budget_skipped_no_mongodb_uri")
         return
     if input_tokens <= 0 and output_tokens <= 0:
+        return
+    if input_tokens > _MAX_REASONABLE_TOKENS or output_tokens > _MAX_REASONABLE_TOKENS:
+        logger.warning(
+            "token_budget_suspicious_count",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
         return
 
     try:
@@ -205,7 +215,6 @@ async def check_and_record(
     except Exception:
         logger.warning(
             "token_budget_mongo_write_failed",
-            thread_id=thread_id,
             exc_info=True,
         )
         return
@@ -244,7 +253,6 @@ async def get_thread_token_usage(thread_id: str) -> ThreadTokenUsage:
     except Exception as exc:
         logger.warning(
             "token_budget_mongo_read_failed",
-            thread_id=thread_id,
             exc_info=True,
         )
         raise TokenUsageUnavailableError("token usage storage unavailable") from exc

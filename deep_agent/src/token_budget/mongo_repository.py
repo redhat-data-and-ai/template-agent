@@ -1,9 +1,31 @@
-"""MongoDB store for per-thread and per-user daily token usage."""
+"""MongoDB store for per-thread and per-user daily token usage.
+
+Security:
+    MONGODB_URI may contain credentials. It MUST NOT be logged, included in
+    error messages, or exposed via API responses. In production the URI should
+    authenticate as a user with read/write access to the tokenusage DB only
+    (principle of least privilege — no admin or cluster-wide access).
+"""
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _validated_date(date: str | None) -> str:
+    """Return *date* unchanged if it matches YYYY-MM-DD, else raise ValueError.
+
+    When *date* is None the current UTC date is returned.
+    """
+    if date is None:
+        return datetime.now(UTC).strftime("%Y-%m-%d")
+    if not _DATE_RE.match(date):
+        raise ValueError(f"Invalid date format {date!r}, expected YYYY-MM-DD")
+    return date
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
@@ -24,6 +46,9 @@ class TokenUsageMongoRepository:
         self._db_name = db_name
         self._client: AsyncIOMotorClient | None = None
 
+    def __repr__(self) -> str:
+        return f"TokenUsageMongoRepository(db={self._db_name!r})"
+
     def _get_client(self) -> AsyncIOMotorClient:
         if self._client is None:
             self._client = AsyncIOMotorClient(self._uri)
@@ -43,7 +68,17 @@ class TokenUsageMongoRepository:
 
     @mongo_retry
     async def ensure_indexes(self) -> None:
-        """Create indexes once per process (also invoked from startup)."""
+        """Create indexes idempotently once per process.
+
+        MongoDB create_index is a no-op if the index already exists, so
+        concurrent calls from multiple replicas are safe (no data corruption).
+        The _INDEXES_ENSURED flag avoids redundant network calls within a
+        single process.
+
+        For large-scale deployments with many replicas starting simultaneously,
+        consider running index creation via a one-off migration job instead of
+        at application startup to avoid thundering-herd load on the DB.
+        """
         global _INDEXES_ENSURED  # noqa: PLW0603
         if _INDEXES_ENSURED:
             return
@@ -91,7 +126,7 @@ class TokenUsageMongoRepository:
             return_document=ReturnDocument.AFTER,
         )
         if result is None:
-            raise RuntimeError(f"Failed to increment Mongo token usage for {thread_id}")
+            raise RuntimeError("Failed to increment Mongo token usage")
         return result
 
     @mongo_retry
@@ -104,7 +139,7 @@ class TokenUsageMongoRepository:
     ) -> dict[str, Any]:
         """Increment a user's total token usage for a UTC calendar day."""
         tokens = max(tokens, 0)
-        day = date or datetime.now(UTC).strftime("%Y-%m-%d")
+        day = _validated_date(date)
         now = datetime.now(UTC)
 
         result = await self._daily_collection.find_one_and_update(
@@ -118,7 +153,7 @@ class TokenUsageMongoRepository:
             return_document=ReturnDocument.AFTER,
         )
         if result is None:
-            raise RuntimeError(f"Failed to increment daily usage for {user_id} on {day}")
+            raise RuntimeError("Failed to increment daily token usage")
         return result
 
     @mongo_retry
@@ -132,7 +167,7 @@ class TokenUsageMongoRepository:
         *,
         date: str | None = None,
     ) -> dict[str, Any] | None:
-        day = date or datetime.now(UTC).strftime("%Y-%m-%d")
+        day = _validated_date(date)
         return await self._daily_collection.find_one({"user_id": user_id, "date": day})
 
     async def close(self) -> None:

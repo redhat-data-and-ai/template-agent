@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from contextlib import asynccontextmanager
 
@@ -290,11 +290,22 @@ async def feedback_handler(request: Request) -> JSONResponse:
     )
 
 
+def _validate_thread_id(thread_id: str) -> str:
+    """Validate that thread_id is a well-formed UUID."""
+    try:
+        return str(UUID(thread_id))
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Invalid thread_id format (expected UUID)"
+        ) from None
+
+
 @app.get("/feedback/{thread_id}")
 async def get_thread_feedback(
     thread_id: str, user_id: str = "anonymous"
 ) -> dict[str, Any]:
     """Return all feedback for a thread."""
+    thread_id = _validate_thread_id(thread_id)
     if not settings.database_uri:
         return {"feedback": []}
     repo = FeedbackRepository(settings.database_uri)
@@ -305,6 +316,7 @@ async def get_thread_feedback(
 @app.get("/threads/{thread_id}/token-usage")
 async def get_thread_token_usage_endpoint(thread_id: str) -> dict[str, Any]:
     """Return cumulative token usage for a thread."""
+    thread_id = _validate_thread_id(thread_id)
     from dataclasses import asdict
 
     from deep_agent.src.token_budget.service import (

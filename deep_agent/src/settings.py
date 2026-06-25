@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = Field(default="postgres")
 
     # ── MongoDB ───────────────────────────────────────────────────────
-    MONGODB_URI: Optional[str] = Field(default=None)
+    MONGODB_URI: Optional[str] = Field(default=None, repr=False)
     MONGODB_DB: str = Field(default="tokenusage")
 
     # ── Redis ─────────────────────────────────────────────────────────

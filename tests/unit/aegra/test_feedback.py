@@ -171,6 +171,7 @@ class TestFeedbackHandler:
 
     def test_get_thread_feedback(self):
         client = TestClient(app)
+        thread_uuid = "00000000-0000-0000-0000-000000000001"
 
         mock_repo = MagicMock()
         mock_repo.list_feedback = AsyncMock(
@@ -181,12 +182,12 @@ class TestFeedbackHandler:
             return_value=mock_repo,
         ):
             res = client.get(
-                "/feedback/thread-1",
+                f"/feedback/{thread_uuid}",
                 params={"user_id": "u1"},
             )
         assert res.status_code == 200
         assert res.json() == {"feedback": [{"message_id": "m1", "feedback": "up"}]}
-        mock_repo.list_feedback.assert_awaited_once_with("thread-1", "u1")
+        mock_repo.list_feedback.assert_awaited_once_with(thread_uuid, "u1")
 
 
 class TestTokenUsageEndpoint:
@@ -194,23 +195,24 @@ class TestTokenUsageEndpoint:
         from deep_agent.src.token_budget.service import ThreadTokenUsage
 
         client = TestClient(app)
+        thread_uuid = "00000000-0000-0000-0000-000000000001"
 
         with patch(
             "deep_agent.src.token_budget.service.get_thread_token_usage",
             new=AsyncMock(
                 return_value=ThreadTokenUsage(
-                    thread_id="thread-1",
+                    thread_id=thread_uuid,
                     used=150,
                     input_tokens=100,
                     output_tokens=50,
                 )
             ),
         ):
-            res = client.get("/threads/thread-1/token-usage")
+            res = client.get(f"/threads/{thread_uuid}/token-usage")
 
         assert res.status_code == 200
         assert res.json() == {
-            "thread_id": "thread-1",
+            "thread_id": thread_uuid,
             "used": 150,
             "input_tokens": 100,
             "output_tokens": 50,
@@ -220,11 +222,12 @@ class TestTokenUsageEndpoint:
         from deep_agent.src.token_budget.service import TokenUsageNotFoundError
 
         client = TestClient(app)
+        thread_uuid = "00000000-0000-0000-0000-000000000001"
         with patch(
             "deep_agent.src.token_budget.service.get_thread_token_usage",
-            new=AsyncMock(side_effect=TokenUsageNotFoundError("thread-1")),
+            new=AsyncMock(side_effect=TokenUsageNotFoundError(thread_uuid)),
         ):
-            res = client.get("/threads/thread-1/token-usage")
+            res = client.get(f"/threads/{thread_uuid}/token-usage")
 
         assert res.status_code == 404
 
@@ -232,10 +235,11 @@ class TestTokenUsageEndpoint:
         from deep_agent.src.token_budget.service import TokenUsageUnavailableError
 
         client = TestClient(app)
+        thread_uuid = "00000000-0000-0000-0000-000000000001"
         with patch(
             "deep_agent.src.token_budget.service.get_thread_token_usage",
             new=AsyncMock(side_effect=TokenUsageUnavailableError("down")),
         ):
-            res = client.get("/threads/thread-1/token-usage")
+            res = client.get(f"/threads/{thread_uuid}/token-usage")
 
         assert res.status_code == 503
