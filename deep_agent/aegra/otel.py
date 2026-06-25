@@ -10,6 +10,14 @@ Config resolution order (highest wins):
     1. Environment variables (ENABLE_OTEL, OTEL_EXPORTER_OTLP_ENDPOINT, ...)
     2. observability.yaml otel: section
     3. Pydantic model defaults
+
+INSTRUMENTATION STATUS:
+- record_conversation_started/completed: Ready for wiring to conversation lifecycle
+- record_message_sent: Ready for wiring to message ingress/egress
+- record_stream_started/first_token/completed/error: Ready for wiring to streaming handlers
+- record_thread_created/deleted/deleted_bulk: Ready for wiring to thread management endpoints
+- record_thread_messages: Ready for wiring to thread finalization
+Currently, these helpers are defined but not yet called from runtime modules.
 """
 
 import os
@@ -600,13 +608,16 @@ def record_thread_deleted(
     attributes: Optional[dict[str, Any]] = None,
 ) -> None:
     """Record thread deletion. Decrements active only if previously tracked."""
+    if count != 1:
+        raise ValueError(
+            f"record_thread_deleted requires count=1, got {count}. "
+            "Use record_threads_deleted_bulk for batch deletion."
+        )
     m = get_metrics()
     if not m:
         return
     merged = _attrs(attributes)
     m.threads_deleted_total.add(count, merged)
-    if count != 1:
-        return
     tid = merged.get("thread_id")
     if not tid:
         return

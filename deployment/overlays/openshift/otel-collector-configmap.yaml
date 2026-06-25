@@ -31,6 +31,8 @@ data:
           source: "otel-collector"
       debug:
         verbosity: normal
+      # Add trace exporter here if needed (e.g., otlp/jaeger, otlp/tempo)
+      # For production, consider using a managed tracing backend
 
     service:
       extensions: [health_check]
@@ -45,4 +47,5 @@ data:
         traces:
           receivers: [otlp]
           processors: [batch]
+          # Only debug exporter for now - add proper trace backend when needed
           exporters: [debug]
