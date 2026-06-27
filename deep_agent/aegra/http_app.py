@@ -98,7 +98,6 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         extra={"path": request.url.path, "method": request.method},
     )
 
-    # Create scrubbed error response
     error_response = scrub_error_response(
         detail="An unexpected error occurred. Please try again later.",
         exc=exc,
@@ -110,17 +109,28 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
-class TraceIDMiddleware(BaseHTTPMiddleware):
-    """Propagate X-Trace-ID from incoming requests into the logging context.
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Extract correlation headers and bind them to the structured log context.
 
-    Every log line emitted during a request will include the trace_id,
-    enabling end-to-end correlation across UI → BFF → Agent.
+    Headers consumed:
+    - ``X-Trace-ID``: UI-originated trace identifier
+    - ``X-Request-ID``: gateway-originated request correlation ID
+    - ``X-Org-ID``: organisation owning the agent
+    - ``X-Agent-ID``: ``org/name`` agent identifier
     """
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:
-        """Bind trace ID to logging context and echo it on the response."""
+        """Extract correlation headers and bind to structured log context."""
         trace_id = request.headers.get("x-trace-id") or uuid4().hex
-        bind_request_context(trace_id=trace_id)
+        request_id = request.headers.get("x-request-id") or uuid4().hex
+        org_id = request.headers.get("x-org-id")
+        agent_id = request.headers.get("x-agent-id")
+        bind_request_context(
+            trace_id=trace_id,
+            request_id=request_id,
+            org_id=org_id,
+            agent_id=agent_id,
+        )
         try:
             from opentelemetry import trace as otel_trace
 
@@ -129,13 +139,16 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
                 span.set_attribute("app.trace_id", trace_id)
         except ImportError:
             pass
-        response = await call_next(request)
-        response.headers["X-Trace-ID"] = trace_id
-        clear_request_context()
-        return response
+        try:
+            response = await call_next(request)
+            response.headers["X-Trace-ID"] = trace_id
+            response.headers["X-Request-ID"] = request_id
+            return response
+        finally:
+            clear_request_context()
 
 
-app.add_middleware(TraceIDMiddleware)
+app.add_middleware(RequestContextMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     RequestSizeLimitMiddleware, max_size_bytes=settings.REQUEST_BODY_MAX_SIZE
