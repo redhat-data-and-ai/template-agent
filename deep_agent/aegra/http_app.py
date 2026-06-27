@@ -101,3 +101,11 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
 app.add_middleware(TraceIDMiddleware)
 app.include_router(mcp_router)
 app.include_router(feedback_router)
+
+
+@app.get("/version")
+def version() -> dict[str, str]:
+    """Return service name and version."""
+    from deep_agent.aegra import __version__
+
+    return {"service": "template-agent", "version": __version__}

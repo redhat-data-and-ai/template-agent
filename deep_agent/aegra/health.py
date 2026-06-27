@@ -8,7 +8,7 @@ Response format::
 
     {
       "status": "healthy" | "degraded" | "unhealthy",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "uptime_seconds": 1234.5,
       "checks": {
         "database": {"status": "ok", "latency_ms": 5.2},
@@ -25,6 +25,7 @@ import asyncio
 import time
 from typing import Any
 
+from deep_agent.aegra import __version__
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -122,7 +123,7 @@ async def get_health_status() -> dict[str, Any]:
 
     return {
         "status": overall,
-        "version": "0.1.0",
+        "version": __version__,
         "uptime_seconds": round(time.monotonic() - _start_time, 1),
         "checks": checks,
     }
@@ -135,7 +136,7 @@ async def health_response() -> tuple[int, dict[str, Any]]:
     if is_shutting_down():
         return 503, {
             "status": "shutting_down",
-            "version": "0.1.0",
+            "version": __version__,
             "uptime_seconds": round(time.monotonic() - _start_time, 1),
         }
 
