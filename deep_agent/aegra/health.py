@@ -13,9 +13,15 @@ Response format::
       "checks": {
         "database": {"status": "ok", "latency_ms": 5.2},
         "redis": {"status": "ok"},
-        "config": {"status": "ok"}
+        "config": {"status": "ok"},
+        "mcp_servers": {"status": "ok", "servers": {...}},
+        "llm_provider": {"status": "ok", "provider": "vllm"}
       }
     }
+
+Core infrastructure checks (database) failing → **unhealthy** (503).
+Non-critical dependency checks (MCP servers, LLM provider) failing
+→ **degraded** (200) so the pod stays in rotation.
 
 The health module can be used standalone (imported and called)
 or wired as ASGI middleware for ``aegra serve``.
@@ -118,7 +124,6 @@ def check_otel() -> dict[str, Any]:
 
         _, endpoint, _, _, _ = _resolve_config()
 
-        # Try to get OTEL SDK version
         sdk_version = None
         try:
             import opentelemetry
@@ -139,21 +144,42 @@ def check_otel() -> dict[str, Any]:
         return {"status": "error", "error": str(exc)[:200]}
 
 
+_CRITICAL_CHECKS = frozenset({"database"})
+
+
 async def get_health_status() -> dict[str, Any]:
-    """Run all health checks and return a combined status."""
+    """Run all health checks and return a combined status.
+
+    Only *critical* check failures (database) produce ``"unhealthy"``.
+    Non-critical dependency failures (MCP servers, LLM provider, redis,
+    cache, config) produce ``"degraded"`` so the pod stays in rotation.
+    """
+    from deep_agent.aegra.mcp_health import check_llm_provider, check_mcp_servers
+
     checks: dict[str, Any] = {}
 
     checks["config"] = check_config()
-    checks["database"] = await check_database()
-    checks["redis"] = await check_redis()
+    db_result, redis_result, mcp_result, llm_result = await asyncio.gather(
+        check_database(),
+        check_redis(),
+        check_mcp_servers(),
+        check_llm_provider(),
+    )
+    checks["database"] = db_result
+    checks["redis"] = redis_result
+    checks["mcp_servers"] = mcp_result
+    checks["llm_provider"] = llm_result
     checks["cache"] = check_cache()
     checks["otel"] = check_otel()
 
+    critical_statuses = [
+        checks[k].get("status", "unknown") for k in _CRITICAL_CHECKS if k in checks
+    ]
     all_statuses = [c.get("status", "unknown") for c in checks.values()]
 
-    if any(s == "error" for s in all_statuses):
+    if any(s == "error" for s in critical_statuses):
         overall = "unhealthy"
-    elif any(s == "warning" for s in all_statuses):
+    elif any(s in ("error", "warning") for s in all_statuses):
         overall = "degraded"
     else:
         overall = "healthy"
