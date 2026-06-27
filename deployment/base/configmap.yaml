@@ -4,7 +4,7 @@ metadata:
   name: agent-config
 data:
   # Config Path (required for base image pattern)
-  # Default: /app/config/agent (matches Containerfile.base ENV)
+  # Default: /app/config/agent (matches Containerfile CONFIG_PATH)
   CONFIG_PATH: "/app/config/agent"
 
   # Note: PostgreSQL and Redis environment variables are added by
