@@ -17,4 +17,6 @@ Modules:
     shutdown: Graceful SIGTERM shutdown orchestrator
 """
 
-__version__ = "0.2.0"
+import os as _os
+
+__version__ = _os.environ.get("APPLICATION_VERSION", "").strip() or "0.2.0"
