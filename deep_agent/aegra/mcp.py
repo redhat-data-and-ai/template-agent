@@ -1,7 +1,7 @@
 """MCP (Model Context Protocol) client for external tool integration.
 
 This module manages connections to MCP servers that provide tools for agents.
-It reads server configurations from config/mcp.json, establishes parallel
+It reads server configurations from config/agent/mcp.json, establishes parallel
 connections with fault isolation, and retrieves all available tools.
 
 Why this exists:
@@ -460,7 +460,7 @@ async def get_mcp_tools(
     Subsequent calls within the TTL window return the cached tool list
     without reconnecting, eliminating ~3-4s of overhead per request.
 
-    Loads server definitions from ``config/mcp.json``, connects to
+    Loads server definitions from ``config/agent/mcp.json``, connects to
     each enabled server in parallel, and returns a deduplicated flat list.
 
     When ``server_names`` is provided, only the servers whose names match

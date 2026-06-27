@@ -2,6 +2,7 @@
     "mcpServers": {
         "template-mcp-server": {
             "url": "http://localhost:5001/mcp",
+            // "url": "http://host.containers.internal:5001/mcp",
             "transport": "streamable_http",
             "enabled": true,
             "auth": true,
@@ -11,6 +12,7 @@
         },
         "template-mcp-server-dcr": {
             "url": "http://localhost:5001/mcp",
+            // "url": "http://host.containers.internal:5001/mcp",
             "transport": "streamable_http",
             "enabled": false,
             "auth": true,
@@ -19,8 +21,11 @@
             "timeout": 30,
             "oauth": {
                 "authorization_endpoint": "http://localhost:5001/auth/authorize",
+                // "authorization_endpoint": "http://host.containers.internal:5001/auth/authorize",
                 "token_endpoint": "http://localhost:5001/auth/token",
+                // "token_endpoint": "http://host.containers.internal:5001/auth/token",
                 "registration_endpoint": "http://localhost:5001/auth/register",
+                // "registration_endpoint": "http://host.containers.internal:5001/auth/register",
                 "scopes": ["email", "openid", "profile", "session:role-any"]
             }
         }
