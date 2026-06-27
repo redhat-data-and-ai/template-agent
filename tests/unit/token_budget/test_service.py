@@ -97,7 +97,9 @@ async def test_check_and_record_increments_mongo_and_daily_usage() -> None:
             return_value=mock_repo,
         ),
         patch("deep_agent.src.token_budget.otel_emit.emit_token_usage") as emit_usage,
-        patch("deep_agent.src.token_budget.otel_emit.emit_daily_token_usage") as emit_daily,
+        patch(
+            "deep_agent.src.token_budget.otel_emit.emit_daily_token_usage"
+        ) as emit_daily,
     ):
         await check_and_record("thread-1", 100, 50, user_id="user-1")
 
@@ -117,6 +119,7 @@ async def test_check_and_record_increments_mongo_and_daily_usage() -> None:
         cumulative_input=100,
         cumulative_output=50,
         timestamp=ANY,
+        trace_id=None,
     )
     emit_daily.assert_called_once_with(
         user_id="user-1",

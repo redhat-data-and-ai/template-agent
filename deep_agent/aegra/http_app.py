@@ -92,6 +92,14 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
         """Bind trace ID to logging context and echo it on the response."""
         trace_id = request.headers.get("x-trace-id") or uuid4().hex
         bind_request_context(trace_id=trace_id)
+        try:
+            from opentelemetry import trace as otel_trace
+
+            span = otel_trace.get_current_span()
+            if span is not None and span.is_recording():
+                span.set_attribute("app.trace_id", trace_id)
+        except ImportError:
+            pass
         response = await call_next(request)
         response.headers["X-Trace-ID"] = trace_id
         clear_request_context()
