@@ -42,11 +42,27 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
         self.timeout = timeout
 
     def _parse_trajectory(self, messages: list[Any]) -> list[dict[str, Any]]:
-        """Convert message history into a structural array for Rego."""
+        """Convert message history into a structural array for Rego.
+
+        Includes message content for policy evaluation of conversation text.
+        """
         trajectory: list[dict[str, Any]] = []
         for msg in messages:
             msg_type = getattr(msg, "type", None)
-            if msg_type == "ai" and getattr(msg, "tool_calls", None):
+
+            # Human/user messages
+            if msg_type == "human":
+                content = getattr(msg, "content", "")
+                if content:
+                    trajectory.append(
+                        {
+                            "type": "user_message",
+                            "content": str(content),
+                        }
+                    )
+
+            # AI messages with tool calls
+            elif msg_type == "ai" and getattr(msg, "tool_calls", None):
                 trajectory.append(
                     {
                         "type": "agent_action",
@@ -56,6 +72,19 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
                         ],
                     }
                 )
+
+            # AI messages without tool calls (text responses)
+            elif msg_type == "ai":
+                content = getattr(msg, "content", "")
+                if content:
+                    trajectory.append(
+                        {
+                            "type": "agent_response",
+                            "content": str(content),
+                        }
+                    )
+
+            # Tool responses
             elif msg_type == "tool":
                 trajectory.append(
                     {
@@ -64,6 +93,7 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
                         "status": "completed",
                     }
                 )
+
         return trajectory
 
     def _evaluate_policy(
@@ -121,10 +151,23 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
     @hook_config(can_jump_to=["end"])
     async def abefore_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         """Evaluate trajectory before the LLM is allowed to respond."""
-        trajectory = self._parse_trajectory(state.get("messages", []))
+        messages = state.get("messages", [])
+        trajectory = self._parse_trajectory(messages)
+
+        # Get the last user message for content-based policy checks
+        last_user_content = ""
+        for msg in reversed(messages):
+            if getattr(msg, "type", None) == "human":
+                last_user_content = str(getattr(msg, "content", ""))
+                break
+
+        current_intent = {
+            "action": "llm_request",
+            "user_message": last_user_content,
+        }
 
         # Evaluate policy
-        if not self._evaluate_policy(trajectory, {"action": "llm_request"}):
+        if not self._evaluate_policy(trajectory, current_intent):
             logger.warning("Policy denied LLM request")
             return {
                 "jump_to": "end",
@@ -151,7 +194,7 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
         # Evaluate policy
         if not self._evaluate_policy(trajectory, current_intent):
             logger.warning(f"Policy denied tool call {tool_name}")
-            return Command[str](
+            return Command(
                 update={
                     "messages": [
                         ToolMessage(

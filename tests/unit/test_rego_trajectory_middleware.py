@@ -1,9 +1,10 @@
 """Unit tests for RegoTrajectoryMiddleware."""
 
+import pytest
 from unittest.mock import MagicMock, patch
 
 import httpx
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
 from deep_agent.src.agent.config.middleware import RegoTrajectoryConfig, ResolvedMiddlewareConfig
@@ -37,7 +38,21 @@ class TestParseTrajectory:
             {"type": "tool_response", "name": "search_web", "status": "completed"},
         ]
 
-    def test_ignores_non_tool_messages(self):
+    def test_parses_user_and_agent_messages(self):
+        middleware = RegoTrajectoryMiddleware()
+        messages = [
+            HumanMessage(content="What is bmi?"),
+            AIMessage(content="BMI stands for Body Mass Index"),
+        ]
+
+        trajectory = middleware._parse_trajectory(messages)
+
+        assert trajectory == [
+            {"type": "user_message", "content": "What is bmi?"},
+            {"type": "agent_response", "content": "BMI stands for Body Mass Index"},
+        ]
+
+    def test_ignores_empty_messages(self):
         middleware = RegoTrajectoryMiddleware()
         assert middleware._parse_trajectory([]) == []
 
@@ -87,17 +102,22 @@ class TestEvaluatePolicy:
 
 
 class TestHooks:
-    def test_before_model_returns_denial_message_on_policy_violation(self):
+    @pytest.mark.asyncio
+    async def test_before_model_returns_denial_message_on_policy_violation(self):
         middleware = RegoTrajectoryMiddleware()
+        state = {
+            "messages": [HumanMessage(content="What is bmi?")]
+        }
         with patch.object(middleware, "_evaluate_policy", return_value=False):
-            result = middleware.before_model({"messages": []}, runtime=None)
+            result = await middleware.abefore_model(state, runtime=None)
 
         assert result == {
             "jump_to": "end",
             "messages": [AIMessage(content=POLICY_DENIAL_MESSAGE)],
         }
 
-    def test_wrap_tool_call_returns_denial_command_on_policy_violation(self):
+    @pytest.mark.asyncio
+    async def test_wrap_tool_call_returns_denial_command_on_policy_violation(self):
         middleware = RegoTrajectoryMiddleware()
         request = MagicMock()
         request.state = {"messages": []}
@@ -105,7 +125,7 @@ class TestHooks:
         handler = MagicMock()
 
         with patch.object(middleware, "_evaluate_policy", return_value=False):
-            result = middleware.wrap_tool_call(request, handler)
+            result = await middleware.awrap_tool_call(request, handler)
 
         assert isinstance(result, Command)
         assert result.goto == "end"
@@ -119,18 +139,20 @@ class TestHooks:
         assert messages[1] == AIMessage(content=POLICY_DENIAL_MESSAGE)
         handler.assert_not_called()
 
-    def test_wrap_tool_call_delegates_when_allowed(self):
+    @pytest.mark.asyncio
+    async def test_wrap_tool_call_delegates_when_allowed(self):
         middleware = RegoTrajectoryMiddleware()
         request = MagicMock()
         request.state = {"messages": []}
         request.tool_call = {"name": "send_email", "args": {}}
-        handler = MagicMock(return_value="tool-result")
+
+        async def async_handler(req):
+            return "tool-result"
 
         with patch.object(middleware, "_evaluate_policy", return_value=True):
-            result = middleware.wrap_tool_call(request, handler)
+            result = await middleware.awrap_tool_call(request, async_handler)
 
         assert result == "tool-result"
-        handler.assert_called_once_with(request)
 
 
 class TestMiddlewareBuilder:
