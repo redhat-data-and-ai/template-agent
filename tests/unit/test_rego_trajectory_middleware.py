@@ -111,126 +111,53 @@ class TestEvaluatePolicy:
             assert "technical error" in reasons[0].lower()
 
 
-class TestModelCallWrapping:
-    @pytest.mark.asyncio
-    async def test_wrap_model_call_denies_banned_content(self):
-        """Test that awrap_model_call intercepts and replaces denied LLM responses."""
-        from langchain.agents.middleware.types import ModelResponse, ModelRequest
-        from langchain_core.messages import AIMessage as LCCoreAIMessage
-
-        middleware = RegoTrajectoryMiddleware()
-
-        # Create a mock request
-        request = MagicMock(spec=ModelRequest)
-        request.state = {"messages": [HumanMessage(content="What is BMI?")]}
-
-        # Create a mock handler that returns a response with banned content
-        async def mock_handler(_req):
-            return ModelResponse(
-                result=[LCCoreAIMessage(content="BMI is Body Mass Index")],
-                structured_response=None,
-            )
-
-        denial_reasons = ["Banned word 'BMI' found in agent response"]
-        with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)):
-            result = await middleware.awrap_model_call(request, mock_handler)
-
-        # Check that the response was replaced with a denial
-        assert isinstance(result, ModelResponse)
-        assert len(result.result) == 1
-        denied_msg = result.result[0]
-        assert POLICY_DENIAL_MESSAGE in denied_msg.content
-        assert "Banned word 'BMI' found in agent response" in denied_msg.content
-
-    @pytest.mark.asyncio
-    async def test_wrap_model_call_allows_compliant_content(self):
-        """Test that awrap_model_call passes through allowed LLM responses."""
-        from langchain.agents.middleware.types import ModelResponse, ModelRequest
-        from langchain_core.messages import AIMessage as LCCoreAIMessage
-
-        middleware = RegoTrajectoryMiddleware()
-
-        request = MagicMock(spec=ModelRequest)
-        request.state = {"messages": [HumanMessage(content="Hello")]}
-
-        expected_response = ModelResponse(
-            result=[LCCoreAIMessage(content="Hello! How can I help you?")],
-            structured_response=None,
-        )
-
-        async def mock_handler(_req):
-            return expected_response
-
-        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
-            result = await middleware.awrap_model_call(request, mock_handler)
-
-        # Check that the original response was returned unchanged
-        assert result == expected_response
-
-
 class TestHooks:
     @pytest.mark.asyncio
-    async def test_before_model_returns_denial_message_on_policy_violation(self):
+    async def test_before_model_validates_entire_trajectory(self):
+        """Test that abefore_model evaluates the complete trajectory."""
         middleware = RegoTrajectoryMiddleware()
         state = {
-            "messages": [HumanMessage(content="What is bmi?")]
+            "messages": [
+                HumanMessage(content="Hello"),
+                AIMessage(content="Hi there!"),
+                HumanMessage(content="Tell me about BMI"),
+            ]
         }
-        denial_reasons = ["Banned word 'bmi' found in user message"]
-        with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)):
+        denial_reasons = ["Trajectory contains banned content"]
+        with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)) as mock_eval:
             result = await middleware.abefore_model(state, runtime=None)
 
+        # Verify the policy was called with trajectory validation intent
+        call_args = mock_eval.call_args
+        assert call_args[0][1]["action"] == "trajectory_validation"
+        assert call_args[0][1]["trajectory_length"] == 3
+
+        # Verify denial response
         assert result["jump_to"] == "end"
         assert len(result["messages"]) == 1
         message_content = result["messages"][0].content
         assert POLICY_DENIAL_MESSAGE in message_content
-        assert "Banned word 'bmi' found in user message" in message_content
+        assert "Trajectory contains banned content" in message_content
 
     @pytest.mark.asyncio
-    async def test_wrap_tool_call_returns_denial_command_on_policy_violation(self):
+    async def test_before_model_allows_compliant_trajectory(self):
+        """Test that abefore_model allows compliant trajectories."""
         middleware = RegoTrajectoryMiddleware()
-        request = MagicMock()
-        request.state = {"messages": []}
-        request.tool_call = {"name": "send_email", "args": {"to": "a@b.com"}, "id": "tc-1"}
-        handler = MagicMock()
+        state = {
+            "messages": [
+                HumanMessage(content="Hello"),
+                AIMessage(content="Hi! How can I help?"),
+            ]
+        }
+        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])) as mock_eval:
+            result = await middleware.abefore_model(state, runtime=None)
 
-        denial_reasons = ["Email tool is not allowed"]
-        with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)):
-            result = await middleware.awrap_tool_call(request, handler)
+        # Verify the policy was called
+        call_args = mock_eval.call_args
+        assert call_args[0][1]["action"] == "trajectory_validation"
 
-        assert isinstance(result, Command)
-        assert result.goto == "end"
-        messages = result.update["messages"]
-
-        # Check tool message has denial reasons
-        tool_msg = messages[0]
-        assert tool_msg.tool_call_id == "tc-1"
-        assert tool_msg.name == "send_email"
-        assert tool_msg.status == "error"
-        assert POLICY_DENIAL_MESSAGE in tool_msg.content
-        assert "Email tool is not allowed" in tool_msg.content
-
-        # Check AI message has denial reasons
-        ai_msg = messages[1]
-        assert isinstance(ai_msg, AIMessage)
-        assert POLICY_DENIAL_MESSAGE in ai_msg.content
-        assert "Email tool is not allowed" in ai_msg.content
-
-        handler.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_wrap_tool_call_delegates_when_allowed(self):
-        middleware = RegoTrajectoryMiddleware()
-        request = MagicMock()
-        request.state = {"messages": []}
-        request.tool_call = {"name": "send_email", "args": {}}
-
-        async def async_handler(_req):
-            return "tool-result"
-
-        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
-            result = await middleware.awrap_tool_call(request, async_handler)
-
-        assert result == "tool-result"
+        # Verify no blocking occurred
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_after_model_returns_denial_message_on_policy_violation(self):

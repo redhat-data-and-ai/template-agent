@@ -1,17 +1,15 @@
 """OPA-backed trajectory policy middleware for deep agents.
 
-This middleware enforces compliance policies at four checkpoints:
-1. Before LLM (abefore_model): Validates user messages
-2. Before Tool (awrap_tool_call): Validates tool calls
-3. After LLM (aafter_model): Validates agent responses
-4. After Tool (aafter_tool_call): Validates tool results
+This middleware enforces compliance policies at three checkpoints:
+1. Before LLM (abefore_model): Validates entire conversation trajectory
+2. After LLM (aafter_model): Validates agent responses
+3. After Tool (aafter_tool_call): Validates tool results
 
 Policies are evaluated by an external OPA server using Rego rules.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -106,13 +104,6 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
             return f"{POLICY_DENIAL_MESSAGE}\n\nReason(s):\n{reasons_text}"
         return POLICY_DENIAL_MESSAGE
 
-    def _get_last_message_content(self, messages: list[Any], msg_type: str) -> str:
-        """Extract content from last message of given type."""
-        for msg in reversed(messages):
-            if getattr(msg, "type", None) == msg_type:
-                return str(getattr(msg, "content", ""))
-        return ""
-
     def _extract_tool_attrs(self, tool_call: Any) -> tuple[str, dict, str]:
         """Extract name, args, and id from tool call."""
         is_dict = isinstance(tool_call, dict)
@@ -124,91 +115,33 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
 
     @hook_config(can_jump_to=["end"])
     async def abefore_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
-        """Evaluate trajectory before LLM responds."""
+        """Evaluate entire trajectory before LLM responds.
+
+        This hook validates the complete conversation history to ensure
+        the trajectory as a whole complies with policy rules before
+        allowing the LLM to generate a response.
+        """
         messages = state.get("messages", [])
         trajectory = self._parse_trajectory(messages)
+
+        logger.warning(f"abefore_model: evaluating trajectory with {len(trajectory)} steps")
+
+        # Evaluate the entire trajectory
         intent = {
-            "action": "llm_request",
-            "user_message": self._get_last_message_content(messages, "human"),
+            "action": "trajectory_validation",
+            "trajectory_length": len(trajectory),
         }
 
         allowed, reasons = self._evaluate_policy(trajectory, intent)
         if not allowed:
+            logger.warning(f"abefore_model BLOCKING trajectory, reasons={reasons}")
             return {
                 "jump_to": "end",
                 "messages": [AIMessage(content=self._format_denial(reasons))],
             }
+
+        logger.warning("abefore_model ALLOWING trajectory to proceed")
         return None
-
-    async def awrap_tool_call(self, request: Any, handler: Callable) -> Any:
-        """Evaluate trajectory before executing tool."""
-        trajectory = self._parse_trajectory(request.state.get("messages", []))
-        tool_name, tool_args, tool_id = self._extract_tool_attrs(request.tool_call)
-        intent = {"action": "tool_call", "name": tool_name, "args": tool_args}
-
-        allowed, reasons = self._evaluate_policy(trajectory, intent)
-        if not allowed:
-            denial_msg = self._format_denial(reasons)
-            return Command(
-                update={
-                    "messages": [
-                        ToolMessage(
-                            content=denial_msg,
-                            tool_call_id=tool_id,
-                            name=tool_name,
-                            status="error",
-                        ),
-                        AIMessage(content=denial_msg),
-                    ],
-                },
-                goto="end",
-            )
-        return await handler(request)
-
-    async def awrap_model_call(self, request: Any, handler: Any) -> Any:
-        """Intercept model execution to validate response before streaming.
-
-        This runs DURING model execution and buffers the complete response
-        before it can be streamed to the UI, allowing us to validate and
-        replace denied content.
-        """
-        from langchain_core.messages import AIMessage as LCCoreAIMessage
-        from langchain.agents.middleware.types import ModelResponse
-
-        logger.warning("awrap_model_call invoked - intercepting model execution")
-
-        # Execute the model and get the complete response
-        response = await handler(request)
-
-        # Extract the AI message content from the response
-        ai_content = ""
-        if response.result:
-            for msg in response.result:
-                if getattr(msg, "type", None) == "ai":
-                    ai_content = str(getattr(msg, "content", ""))
-                    break
-
-        # Build trajectory from current state
-        messages = request.state.get("messages", [])
-        trajectory = self._parse_trajectory(messages)
-
-        intent = {
-            "action": "llm_response",
-            "agent_message": ai_content,
-        }
-
-        allowed, reasons = self._evaluate_policy(trajectory, intent)
-        if not allowed:
-            logger.warning(f"awrap_model_call BLOCKING response, reasons={reasons}")
-            # Replace the response with a denial message
-            denial_content = self._format_denial(reasons)
-            return ModelResponse(
-                result=[LCCoreAIMessage(content=denial_content)],
-                structured_response=response.structured_response,
-            )
-
-        logger.warning("awrap_model_call ALLOWING response")
-        return response
 
     @hook_config(can_jump_to=["end"])
     async def aafter_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
