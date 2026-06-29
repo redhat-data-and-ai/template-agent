@@ -1,10 +1,10 @@
 package agent.authz
 
-# Agent Authorization Policy
+# Agent Authorization Policy - Local Development Placeholder
 #
-# This policy evaluates agent trajectory and tool usage against fixed limits.
+# This file is intentionally minimal. Production policies are loaded from
+# the git repository and will completely control authorization behavior.
+#
+# Do not add allow/deny rules here to avoid conflicts with git policies.
 
 import rego.v1
-
-# Default policy - deny by default
-default allow := true
