@@ -182,11 +182,11 @@ class TestQueueTriggerSource:
     async def test_unsupported_backend_raises_value_error(self):
         config = QueueTriggerConfig(
             enabled=True,
-            backend="kafka",
+            backend="rabbitmq",
         )
         source = QueueTriggerSource(config)
 
-        with pytest.raises(ValueError, match="(?i)unsupported queue backend: kafka"):
+        with pytest.raises(ValueError, match="(?i)unsupported queue backend: rabbitmq"):
             await source.start()
 
     async def test_wraps_messages_as_trigger_events(self):

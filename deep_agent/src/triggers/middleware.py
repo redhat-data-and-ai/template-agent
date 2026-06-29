@@ -136,15 +136,26 @@ class EventTriggerMiddleware:
                 logger.exception("Source consumer error: %s", exc)
 
     async def _process_event(self, event: TriggerEvent) -> None:
+        from deep_agent.src.triggers.task_store import TaskStore
+
+        store = TaskStore()
         task_id = event.payload.get("task_id") or event.metadata.get("task_id")
 
-        if task_id:
-            from deep_agent.src.triggers.task_store import TaskStore
+        if not task_id:
+            record = await store.create_task(
+                task_name=event.name,
+                payload=event.payload,
+                user_id=event.payload.get("user_id"),
+            )
+            task_id = record.task_id
+            logger.info(
+                "Auto-created task record for %s event",
+                event.source,
+                task_id=task_id,
+                event_name=event.name,
+            )
 
-            store = TaskStore()
-            await store.update_status(task_id, "processing")
-        else:
-            store = None
+        await store.update_status(task_id, "processing")
 
         t0 = time.monotonic()
         try:
@@ -158,10 +169,9 @@ class EventTriggerMiddleware:
                 duration_ms=duration_ms,
                 success=True,
             )
-            if store and task_id:
-                await store.update_status(
-                    task_id, "completed", result=_extract_result(output)
-                )
+            await store.update_status(
+                task_id, "completed", result=_extract_result(output)
+            )
         except Exception as exc:
             duration_ms = (time.monotonic() - t0) * 1000
             result = TriggerResult(
@@ -171,8 +181,7 @@ class EventTriggerMiddleware:
                 success=False,
                 error=str(exc),
             )
-            if store and task_id:
-                await store.update_status(task_id, "failed", error=str(exc))
+            await store.update_status(task_id, "failed", error=str(exc))
             logger.exception("Graph invocation failed for event: %s", event.name)
 
         await self._emit_result(result)
