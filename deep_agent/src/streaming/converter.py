@@ -46,6 +46,33 @@ def convert_message_to_api_format(chat_message, ctx: StreamContext) -> dict[str,
     content["session_id"] = ctx.session_id
     content["user_id"] = ctx.user_id
 
+    # Detect policy violation from message content and add to custom_data
+    # This enables UI to show retry button
+    message_text = str(chat_message.content)
+    if chat_message.type == "ai" and "Would you like me to retry" in message_text:
+        # Extract denial reasons from the formatted retry prompt
+        denial_reasons = []
+        if "Reason(s):" in message_text:
+            # Parse reasons from the formatted denial message
+            try:
+                reasons_section = message_text.split("Reason(s):")[1].split("Would you like")[0]
+                denial_reasons = [
+                    line.strip().lstrip('-').strip()
+                    for line in reasons_section.split('\n')
+                    if line.strip().startswith('-')
+                ]
+            except (IndexError, AttributeError):
+                # Fallback if parsing fails
+                denial_reasons = ["Policy violation detected"]
+
+        content["custom_data"] = {
+            "policy_violation_context": {
+                "retry_available": True,
+                "denial_reasons": denial_reasons,
+                "checkpoint": "aafter_model",
+            }
+        }
+
     return content
 
 

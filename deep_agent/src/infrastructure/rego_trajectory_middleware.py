@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import hook_config
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
 from deep_agent.utils.pylogger import get_python_logger
@@ -39,10 +39,14 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
         opa_url: str = "http://localhost:8181/v1/data/agent/authz",
         *,
         timeout: float = 2.0,
+        enable_retry: bool = True,
+        retry_keywords: list[str] | None = None,
     ) -> None:
         super().__init__()
         self.opa_url = opa_url
         self.timeout = timeout
+        self.enable_retry = enable_retry
+        self.retry_keywords = retry_keywords or ["yes", "retry", "/retry"]
 
     def _parse_trajectory(self, messages: list[Any]) -> list[dict[str, Any]]:
         """Convert message history into structural array for Rego."""
@@ -104,6 +108,26 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
             return f"{POLICY_DENIAL_MESSAGE}\n\nReason(s):\n{reasons_text}"
         return POLICY_DENIAL_MESSAGE
 
+    def _format_retry_prompt(self, denial_reasons: list[str]) -> str:
+        """Format interrupt message prompting user to retry with policy awareness."""
+        reasons_text = "\n".join(f"- {reason}" for reason in denial_reasons)
+        return f"""{POLICY_DENIAL_MESSAGE}
+                    Reason(s):
+                    {reasons_text}
+                """
+
+    def _build_policy_context_prompt(self, violation_context: dict) -> str:
+        """Build system prompt addition with policy violation context."""
+        reasons = violation_context.get("denial_reasons", [])
+        reasons_text = "\n".join(f"- {reason}" for reason in reasons)
+        return f"""
+IMPORTANT POLICY CONTEXT FOR THIS RESPONSE:
+Your previous response violated compliance policies for the following reasons:
+{reasons_text}
+
+Please regenerate your response while strictly avoiding these policy violations.
+Focus on providing helpful information within policy boundaries."""
+
     def _extract_tool_attrs(self, tool_call: Any) -> tuple[str, dict, str]:
         """Extract name, args, and id from tool call."""
         is_dict = isinstance(tool_call, dict)
@@ -120,11 +144,42 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
         This hook validates the complete conversation history to ensure
         the trajectory as a whole complies with policy rules before
         allowing the LLM to generate a response.
+
+        Additionally, this hook detects retry confirmations and injects
+        policy violation context into the system prompt for retry attempts.
         """
         messages = state.get("messages", [])
         trajectory = self._parse_trajectory(messages)
 
         logger.warning(f"abefore_model: evaluating trajectory with {len(trajectory)} steps")
+
+        # Check if this is a retry attempt
+        violation_context = state.get("policy_violation_context", {})
+        if violation_context.get("retry_available") and messages:
+            # Check if the last user message is a retry confirmation
+            last_user_message = None
+            for msg in reversed(messages):
+                if getattr(msg, "type", None) == "human":
+                    last_user_message = str(getattr(msg, "content", "")).strip().lower()
+                    break
+
+            # Any user message after violation triggers retry (no keywords needed)
+            if last_user_message:
+                logger.info(f"Detected user message after policy violation - triggering retry")
+                # Inject policy context as a system message and mark retry as used
+                policy_prompt = self._build_policy_context_prompt(violation_context)
+
+                # Insert policy context as a SystemMessage before LLM processes
+                # This provides the context without modifying base system prompt
+                policy_message = SystemMessage(content=policy_prompt)
+
+                return {
+                    "messages": [policy_message],
+                    "policy_violation_context": {
+                        **violation_context,
+                        "retry_available": False,
+                    },
+                }
 
         # Evaluate the entire trajectory
         intent = {
@@ -178,62 +233,158 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
         allowed, reasons = self._evaluate_policy(trajectory, intent)
         if not allowed:
             logger.warning(f"aafter_model BLOCKING response, reasons={reasons}")
-            # Replace the agent's response with denial message
             # Remove all messages after and including the denied AI message
             filtered_messages = messages[:last_ai_index] if last_ai_index > 0 else []
-            return {
-                "jump_to": "end",
-                "messages": filtered_messages + [AIMessage(content=self._format_denial(reasons))],
-            }
+
+            # Check if retry is enabled and this is the first violation (not a retry)
+            violation_context = state.get("policy_violation_context", {})
+            retry_available = violation_context.get("retry_available", True)
+
+            if self.enable_retry and retry_available:
+                # Offer retry with HITL confirmation
+                logger.info("Offering HITL retry for policy violation")
+                return {
+                    "jump_to": "end",
+                    "messages": filtered_messages + [AIMessage(content=self._format_retry_prompt(reasons))],
+                    "policy_violation_context": {
+                        "checkpoint": "aafter_model",
+                        "denial_reasons": reasons,
+                        "retry_available": True,
+                        "violated_at": last_ai_index,
+                    },
+                }
+            else:
+                # No retry available - final denial
+                logger.warning("No retry available - returning final denial")
+                return {
+                    "jump_to": "end",
+                    "messages": filtered_messages + [AIMessage(content=self._format_denial(reasons))],
+                    "policy_violation_context": {
+                        "checkpoint": "aafter_model",
+                        "denial_reasons": reasons,
+                        "retry_available": False,
+                        "violated_at": last_ai_index,
+                    },
+                }
 
         logger.debug("aafter_model: Response allowed by policy")
         return None
 
-    async def aafter_tool_call(self, result: Any, request: Any) -> Any:
-        """Evaluate trajectory after tool executes.
+    async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
+        """Wrap tool execution to evaluate results against policy.
 
-        This hook runs after subagent/tool execution completes. Like aafter_model,
-        it cannot prevent streaming of tool output, but ensures denied content
-        is not persisted in the conversation state.
+        This wraps the tool call handler to intercept and validate tool results.
+        Like aafter_model, it cannot prevent streaming of tool output, but ensures
+        denied content is not persisted in the conversation state.
+
+        Args:
+            request: The tool call request containing state and tool_call info.
+            handler: The actual tool execution handler to call.
+
+        Returns:
+            Tool result or Command with denial/retry prompt.
         """
+        # Call the actual tool handler first
+        result = await handler(request)
+
+        # Now validate the result
         trajectory = self._parse_trajectory(request.state.get("messages", []))
         tool_name, _, tool_id = self._extract_tool_attrs(request.tool_call)
 
+        # Extract tool content from various result types
         tool_content = ""
-        if isinstance(result, dict) and "messages" in result:
+
+        # Handle Command objects (what subagents return)
+        if isinstance(result, Command):
+            if hasattr(result, "update") and isinstance(result.update, dict):
+                messages = result.update.get("messages", [])
+                for msg in messages:
+                    # Get all AI message content from subagent results
+                    if getattr(msg, "type", None) == "ai":
+                        content = getattr(msg, "content", "")
+                        if content:
+                            tool_content += str(content) + "\n"
+                    elif getattr(msg, "type", None) == "tool":
+                        content = getattr(msg, "content", "")
+                        if content:
+                            tool_content += str(content) + "\n"
+                tool_content = tool_content.strip()
+        # Handle dict results
+        elif isinstance(result, dict) and "messages" in result:
             for msg in result["messages"]:
-                if getattr(msg, "type", None) == "tool":
-                    tool_content = str(getattr(msg, "content", ""))
-                    break
+                if getattr(msg, "type", None) in ("tool", "ai"):
+                    content = getattr(msg, "content", "")
+                    if content:
+                        tool_content += str(content) + "\n"
+            tool_content = tool_content.strip()
+        # Handle ToolMessage results
         elif hasattr(result, "content"):
             tool_content = str(result.content)
 
-        logger.warning(f"aafter_tool_call: tool={tool_name}, content_length={len(tool_content)}, result_type={type(result)}")
+        logger.warning(f"awrap_tool_call: tool={tool_name}, content_length={len(tool_content)}, result_type={type(result)}")
 
         if not tool_content:
-            logger.debug("aafter_tool_call: No tool content found")
+            logger.debug("awrap_tool_call: No tool content found")
             return result
 
         intent = {"action": "tool_response", "name": tool_name, "result": tool_content}
 
         allowed, reasons = self._evaluate_policy(trajectory, intent)
         if not allowed:
-            logger.warning(f"aafter_tool_call BLOCKING tool result from {tool_name}, reasons={reasons}")
-            denial_msg = self._format_denial(reasons)
-            return Command(
-                update={
-                    "messages": [
-                        ToolMessage(
-                            content=denial_msg,
-                            tool_call_id=tool_id,
-                            name=tool_name,
-                            status="error",
-                        ),
-                        AIMessage(content=denial_msg),
-                    ],
-                },
-                goto="end",
-            )
+            logger.warning(f"awrap_tool_call BLOCKING tool result from {tool_name}, reasons={reasons}")
 
-        logger.debug(f"aafter_tool_call: Tool result from {tool_name} allowed by policy")
+            # Check if retry is enabled and this is the first violation (not a retry)
+            violation_context = request.state.get("policy_violation_context", {})
+            retry_available = violation_context.get("retry_available", True)
+
+            if self.enable_retry and retry_available:
+                # Offer retry with HITL confirmation
+                logger.info(f"Offering HITL retry for tool policy violation: {tool_name}")
+                retry_prompt = self._format_retry_prompt(reasons)
+                return Command(
+                    update={
+                        "messages": [
+                            ToolMessage(
+                                content=retry_prompt,
+                                tool_call_id=tool_id,
+                                name=tool_name,
+                                status="error",
+                            ),
+                            AIMessage(content=retry_prompt),
+                        ],
+                        "policy_violation_context": {
+                            "checkpoint": "awrap_tool_call",
+                            "denial_reasons": reasons,
+                            "retry_available": True,
+                            "tool_name": tool_name,
+                        },
+                    },
+                    goto="end",
+                )
+            else:
+                # No retry available - final denial
+                logger.warning(f"No retry available for tool {tool_name} - returning final denial")
+                denial_msg = self._format_denial(reasons)
+                return Command(
+                    update={
+                        "messages": [
+                            ToolMessage(
+                                content=denial_msg,
+                                tool_call_id=tool_id,
+                                name=tool_name,
+                                status="error",
+                            ),
+                            AIMessage(content=denial_msg),
+                        ],
+                        "policy_violation_context": {
+                            "checkpoint": "awrap_tool_call",
+                            "denial_reasons": reasons,
+                            "retry_available": False,
+                            "tool_name": tool_name,
+                        },
+                    },
+                    goto="end",
+                )
+
+        logger.debug(f"awrap_tool_call: Tool result from {tool_name} allowed by policy")
         return result

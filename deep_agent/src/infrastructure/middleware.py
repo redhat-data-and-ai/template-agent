@@ -215,7 +215,12 @@ def _build_rego_trajectory(config: Any) -> Any | None:
         )
 
         opa_url = config.opa_url or settings.OPA_URL
-        return RegoTrajectoryMiddleware(opa_url=opa_url, timeout=config.timeout)
+        return RegoTrajectoryMiddleware(
+            opa_url=opa_url,
+            timeout=config.timeout,
+            enable_retry=config.enable_retry,
+            retry_keywords=config.retry_keywords,
+        )
     except ImportError:
         logger.debug("RegoTrajectoryMiddleware not available")
         return None

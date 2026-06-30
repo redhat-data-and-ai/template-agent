@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 import httpx
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
 from deep_agent.src.agent.config.middleware import RegoTrajectoryConfig, ResolvedMiddlewareConfig
@@ -195,8 +195,9 @@ class TestHooks:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_after_tool_call_returns_denial_on_policy_violation(self):
-        middleware = RegoTrajectoryMiddleware()
+    async def test_after_tool_call_offers_retry_on_first_violation(self):
+        """First tool violation should offer retry prompt."""
+        middleware = RegoTrajectoryMiddleware(enable_retry=True)
         request = MagicMock()
         request.state = {"messages": []}
         request.tool_call = {"name": "search", "args": {}, "id": "tc-1"}
@@ -207,15 +208,60 @@ class TestHooks:
             name="search"
         )
 
+        # Mock handler that returns the tool result
+        async def mock_handler(req):
+            return tool_result
+
         denial_reasons = ["Banned word 'BMI' found in tool result"]
         with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)):
-            result = await middleware.aafter_tool_call(tool_result, request)
+            result = await middleware.awrap_tool_call(request, mock_handler)
 
         assert isinstance(result, Command)
         assert result.goto == "end"
         messages = result.update["messages"]
+        # Should contain retry prompt
+        assert "Would you like me to retry" in messages[0].content
+        assert "Would you like me to retry" in messages[1].content
+        # Should store violation context
+        assert result.update["policy_violation_context"]["retry_available"] is True
+        assert result.update["policy_violation_context"]["checkpoint"] == "awrap_tool_call"
+
+    @pytest.mark.asyncio
+    async def test_after_tool_call_no_retry_on_second_violation(self):
+        """Second tool violation should show final denial."""
+        middleware = RegoTrajectoryMiddleware(enable_retry=True)
+        request = MagicMock()
+        request.state = {
+            "messages": [],
+            "policy_violation_context": {
+                "retry_available": False,
+                "checkpoint": "awrap_tool_call",
+                "denial_reasons": ["Previous violation"]
+            }
+        }
+        request.tool_call = {"name": "search", "args": {}, "id": "tc-1"}
+
+        tool_result = ToolMessage(
+            content="Results contain BMI information again",
+            tool_call_id="tc-1",
+            name="search"
+        )
+
+        # Mock handler that returns the tool result
+        async def mock_handler(req):
+            return tool_result
+
+        denial_reasons = ["Banned word 'BMI' found in tool result"]
+        with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)):
+            result = await middleware.awrap_tool_call(request, mock_handler)
+
+        assert isinstance(result, Command)
+        assert result.goto == "end"
+        messages = result.update["messages"]
+        # Should contain final denial, not retry prompt
         assert POLICY_DENIAL_MESSAGE in messages[0].content
-        assert "Banned word 'BMI' found in tool result" in messages[0].content
+        assert "Would you like me to retry" not in messages[0].content
+        assert result.update["policy_violation_context"]["retry_available"] is False
 
     @pytest.mark.asyncio
     async def test_after_tool_call_allows_compliant_result(self):
@@ -230,8 +276,12 @@ class TestHooks:
             name="search"
         )
 
+        # Mock handler that returns the tool result
+        async def mock_handler(req):
+            return tool_result
+
         with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
-            result = await middleware.aafter_tool_call(tool_result, request)
+            result = await middleware.awrap_tool_call(request, mock_handler)
 
         assert result == tool_result
 
@@ -264,3 +314,205 @@ class TestMiddlewareBuilder:
             result = build_middleware_list(resolved)
 
         assert not any(isinstance(mw, RegoTrajectoryMiddleware) for mw in result)
+
+
+class TestRetryMechanism:
+    """Tests for HITL retry mechanism when LLM responses violate policies."""
+
+    @pytest.mark.asyncio
+    async def test_aafter_model_offers_retry_on_first_violation(self):
+        """First LLM violation should offer retry prompt."""
+        middleware = RegoTrajectoryMiddleware(enable_retry=True)
+        state = {
+            "messages": [
+                HumanMessage(content="Tell me about BMI"),
+                AIMessage(content="BMI stands for Body Mass Index")
+            ]
+        }
+        denial_reasons = ["Banned word 'BMI' found in agent response"]
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)):
+            result = await middleware.aafter_model(state, runtime=None)
+
+        assert result["jump_to"] == "end"
+        assert len(result["messages"]) == 2
+        # Should contain retry prompt
+        retry_content = result["messages"][1].content
+        assert "Would you like me to retry" in retry_content
+        assert "yes" in retry_content
+        assert "retry" in retry_content
+        # Should store violation context
+        assert result["policy_violation_context"]["retry_available"] is True
+        assert result["policy_violation_context"]["checkpoint"] == "aafter_model"
+        assert result["policy_violation_context"]["denial_reasons"] == denial_reasons
+
+    @pytest.mark.asyncio
+    async def test_aafter_model_no_retry_when_disabled(self):
+        """When retry is disabled, should show final denial immediately."""
+        middleware = RegoTrajectoryMiddleware(enable_retry=False)
+        state = {
+            "messages": [
+                HumanMessage(content="Tell me about BMI"),
+                AIMessage(content="BMI stands for Body Mass Index")
+            ]
+        }
+        denial_reasons = ["Banned word 'BMI' found in agent response"]
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)):
+            result = await middleware.aafter_model(state, runtime=None)
+
+        assert result["jump_to"] == "end"
+        # Should contain final denial, not retry prompt
+        denial_content = result["messages"][1].content
+        assert POLICY_DENIAL_MESSAGE in denial_content
+        assert "Would you like me to retry" not in denial_content
+        assert result["policy_violation_context"]["retry_available"] is False
+
+    @pytest.mark.asyncio
+    async def test_aafter_model_no_retry_on_second_violation(self):
+        """Second violation (after retry) should show final denial."""
+        middleware = RegoTrajectoryMiddleware(enable_retry=True)
+        state = {
+            "messages": [
+                HumanMessage(content="Tell me about BMI"),
+                AIMessage(content="BMI stands for Body Mass Index again")
+            ],
+            "policy_violation_context": {
+                "retry_available": False,  # Retry already used
+                "checkpoint": "aafter_model",
+                "denial_reasons": ["First violation"]
+            }
+        }
+        denial_reasons = ["Banned word 'BMI' found in agent response"]
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)):
+            result = await middleware.aafter_model(state, runtime=None)
+
+        assert result["jump_to"] == "end"
+        # Should contain final denial, not retry prompt
+        denial_content = result["messages"][1].content
+        assert POLICY_DENIAL_MESSAGE in denial_content
+        assert "Would you like me to retry" not in denial_content
+        assert result["policy_violation_context"]["retry_available"] is False
+
+    @pytest.mark.asyncio
+    async def test_abefore_model_detects_retry_keyword_yes(self):
+        """Detect 'yes' as retry confirmation."""
+        middleware = RegoTrajectoryMiddleware(enable_retry=True, retry_keywords=["yes", "retry"])
+        state = {
+            "messages": [
+                HumanMessage(content="Tell me about health"),
+                HumanMessage(content="yes")
+            ],
+            "policy_violation_context": {
+                "retry_available": True,
+                "checkpoint": "aafter_model",
+                "denial_reasons": ["Previous violation"]
+            }
+        }
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
+            result = await middleware.abefore_model(state, runtime=None)
+
+        # Should inject SystemMessage with policy context
+        assert "messages" in result
+        assert len(result["messages"]) == 1
+        assert isinstance(result["messages"][0], SystemMessage)
+        assert "IMPORTANT POLICY CONTEXT" in result["messages"][0].content
+        assert "Previous violation" in result["messages"][0].content
+        # Should mark retry as used
+        assert result["policy_violation_context"]["retry_available"] is False
+
+    @pytest.mark.asyncio
+    async def test_abefore_model_detects_retry_keyword_retry(self):
+        """Detect 'retry' as retry confirmation."""
+        middleware = RegoTrajectoryMiddleware(enable_retry=True, retry_keywords=["yes", "retry"])
+        state = {
+            "messages": [
+                HumanMessage(content="Tell me about health"),
+                HumanMessage(content="Please retry")
+            ],
+            "policy_violation_context": {
+                "retry_available": True,
+                "checkpoint": "aafter_model",
+                "denial_reasons": ["Sensitive topic detected"]
+            }
+        }
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
+            result = await middleware.abefore_model(state, runtime=None)
+
+        assert "messages" in result
+        assert isinstance(result["messages"][0], SystemMessage)
+        assert "Sensitive topic detected" in result["messages"][0].content
+
+    @pytest.mark.asyncio
+    async def test_abefore_model_triggers_on_any_user_message(self):
+        """Any user message after violation should trigger retry (no keywords needed)."""
+        middleware = RegoTrajectoryMiddleware(enable_retry=True)
+        state = {
+            "messages": [
+                HumanMessage(content="Tell me about health"),
+                HumanMessage(content="What about nutrition?")
+            ],
+            "policy_violation_context": {
+                "retry_available": True,
+                "checkpoint": "aafter_model",
+                "denial_reasons": ["Previous violation"]
+            }
+        }
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
+            result = await middleware.abefore_model(state, runtime=None)
+
+        # Should inject policy context for ANY user message after violation
+        assert "messages" in result
+        assert isinstance(result["messages"][0], SystemMessage)
+        assert "Previous violation" in result["messages"][0].content
+
+    @pytest.mark.asyncio
+    async def test_abefore_model_no_retry_when_not_available(self):
+        """Should not inject policy context when retry_available is False."""
+        middleware = RegoTrajectoryMiddleware(enable_retry=True)
+        state = {
+            "messages": [
+                HumanMessage(content="Tell me about health"),
+                HumanMessage(content="yes")
+            ],
+            "policy_violation_context": {
+                "retry_available": False,  # Retry already used
+                "checkpoint": "aafter_model",
+                "denial_reasons": ["Previous violation"]
+            }
+        }
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
+            result = await middleware.abefore_model(state, runtime=None)
+
+        # Should not inject policy context
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_custom_retry_keywords(self):
+        """Support custom retry keywords from config."""
+        middleware = RegoTrajectoryMiddleware(
+            enable_retry=True,
+            retry_keywords=["/retry", "try again"]
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="Tell me something"),
+                HumanMessage(content="try again please")
+            ],
+            "policy_violation_context": {
+                "retry_available": True,
+                "checkpoint": "aafter_model",
+                "denial_reasons": ["Violation"]
+            }
+        }
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
+            result = await middleware.abefore_model(state, runtime=None)
+
+        assert "messages" in result
+        assert isinstance(result["messages"][0], SystemMessage)
