@@ -191,9 +191,9 @@ class RedisStreamsConsumer:
 class QueueTriggerSource:
     """Adapts a ``QueueConsumer`` into the ``TriggerSource`` protocol.
 
-    Messages consumed from the queue are acknowledged immediately after
-    being placed on the internal event queue, then exposed through the
-    async-iterator interface.
+    Messages consumed from the queue are placed on an internal event
+    queue with the original message and consumer reference in metadata,
+    allowing downstream middleware to acknowledge after processing.
     """
 
     def __init__(
@@ -223,7 +223,9 @@ class QueueTriggerSource:
                 redis_url=self._redis_url,
             )
         elif self._config.backend == "kafka":
-            from deep_agent.src.triggers.sources.kafka_consumer import KafkaQueueConsumer
+            from deep_agent.src.triggers.sources.kafka_consumer import (
+                KafkaQueueConsumer,
+            )
 
             self._consumer = KafkaQueueConsumer(
                 topic=self._config.topic,
@@ -286,12 +288,14 @@ class QueueTriggerSource:
                     metadata={
                         "message_id": message.id,
                         "stream": self._config.stream,
+                        "_queue_message": message,
+                        "_consumer": self._consumer,
                     },
                 )
                 await self._queue.put(event)
-                await self._consumer.ack(message)
+                # Do NOT ack here — middleware will ack after processing.
                 logger.debug(
-                    "queue event consumed",
+                    "queue event enqueued",
                     event_name=event.name,
                     message_id=message.id,
                 )

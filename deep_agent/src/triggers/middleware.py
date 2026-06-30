@@ -37,6 +37,12 @@ class EventTriggerMiddleware:
         self._stop_event = asyncio.Event()
         self._loop_task: asyncio.Task[None] | None = None
 
+        from deep_agent.src.triggers.task_store import TaskStore
+
+        self._task_store: TaskStore | None = (
+            TaskStore(redis_url=self._redis_url) if self._redis_url else None
+        )
+
     def _build_sources(self) -> list[TriggerSource]:
         """Build trigger sources from configuration."""
         sources: list[TriggerSource] = []
@@ -136,12 +142,10 @@ class EventTriggerMiddleware:
                 logger.exception("Source consumer error: %s", exc)
 
     async def _process_event(self, event: TriggerEvent) -> None:
-        from deep_agent.src.triggers.task_store import TaskStore
-
-        store = TaskStore()
+        store = self._task_store
         task_id = event.payload.get("task_id") or event.metadata.get("task_id")
 
-        if not task_id:
+        if store and not task_id:
             record = await store.create_task(
                 task_name=event.name,
                 payload=event.payload,
@@ -155,23 +159,47 @@ class EventTriggerMiddleware:
                 event_name=event.name,
             )
 
-        await store.update_status(task_id, "processing")
+        if store and task_id:
+            await store.update_status(task_id, "processing")
 
+        graph_timeout = self._config.drain_timeout * 4
         t0 = time.monotonic()
         try:
-            output = await self._graph.ainvoke(
-                {"messages": [{"role": "user", "content": json.dumps(event.payload)}]}
-            )
+            try:
+                output = await asyncio.wait_for(
+                    self._graph.ainvoke(
+                        {
+                            "messages": [
+                                {"role": "user", "content": json.dumps(event.payload)}
+                            ]
+                        }
+                    ),
+                    timeout=graph_timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "graph_invocation_timeout",
+                    task_id=task_id,
+                    timeout_seconds=graph_timeout,
+                )
+                output = None
+
             duration_ms = (time.monotonic() - t0) * 1000
             result = TriggerResult(
                 event=event,
                 output=output,
                 duration_ms=duration_ms,
-                success=True,
+                success=output is not None,
             )
-            await store.update_status(
-                task_id, "completed", result=_extract_result(output)
-            )
+            if store and task_id:
+                if output is not None:
+                    await store.update_status(
+                        task_id, "completed", result=_extract_result(output)
+                    )
+                else:
+                    await store.update_status(
+                        task_id, "failed", error="graph invocation timed out"
+                    )
         except Exception as exc:
             duration_ms = (time.monotonic() - t0) * 1000
             result = TriggerResult(
@@ -181,8 +209,18 @@ class EventTriggerMiddleware:
                 success=False,
                 error=str(exc),
             )
-            await store.update_status(task_id, "failed", error=str(exc))
+            if store and task_id:
+                await store.update_status(task_id, "failed", error=str(exc))
             logger.exception("Graph invocation failed for event: %s", event.name)
+
+        # Ack queue message after processing (B3 fix: ack-after-processing).
+        queue_msg = event.metadata.get("_queue_message")
+        queue_consumer = event.metadata.get("_consumer")
+        if queue_msg and queue_consumer:
+            try:
+                await queue_consumer.ack(queue_msg)
+            except Exception:
+                logger.warning("failed_to_ack_message", task_id=task_id)
 
         await self._emit_result(result)
         logger.info(
@@ -232,6 +270,13 @@ class EventTriggerMiddleware:
                 await sink.close()
             except Exception:
                 logger.exception("Error closing sink %s", type(sink).__name__)
+
+        if self._task_store:
+            try:
+                await self._task_store.close()
+            except Exception:
+                logger.exception("Error closing task store")
+            self._task_store = None
 
         logger.info("EventTriggerMiddleware stopped")
 

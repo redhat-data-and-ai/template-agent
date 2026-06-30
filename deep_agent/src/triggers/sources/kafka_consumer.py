@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, AsyncIterator
 
-from deep_agent.src.triggers.sources.queue import QueueConsumer, QueueMessage
+from deep_agent.src.triggers.sources.queue import QueueMessage
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -41,7 +41,7 @@ class KafkaQueueConsumer:
             group_id=self._group,
             value_deserializer=lambda v: json.loads(v.decode("utf-8")),
             auto_offset_reset="earliest",
-            enable_auto_commit=True,
+            enable_auto_commit=False,
         )
         await self._consumer.start()
         logger.info(
@@ -55,7 +55,11 @@ class KafkaQueueConsumer:
             async for msg in self._consumer:
                 if not self._running:
                     return
-                data = msg.value if isinstance(msg.value, dict) else {"payload": str(msg.value)}
+                data = (
+                    msg.value
+                    if isinstance(msg.value, dict)
+                    else {"payload": str(msg.value)}
+                )
                 yield QueueMessage(
                     id=f"{msg.partition}-{msg.offset}",
                     data=data,
@@ -65,7 +69,9 @@ class KafkaQueueConsumer:
                 logger.error("kafka consumer error", exc_info=True)
 
     async def ack(self, message: QueueMessage) -> None:
-        """No-op — Kafka auto-commits offsets."""
+        """Manually commit offsets after successful processing."""
+        if self._consumer is not None:
+            await self._consumer.commit()
 
     async def close(self) -> None:
         """Stop the Kafka consumer."""

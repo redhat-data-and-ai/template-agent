@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
@@ -43,13 +44,18 @@ class FileSink(OutputSink):
     async def emit(self, result: TriggerResult) -> None:
         """Append the trigger result as a JSON line to the file."""
         try:
-            handle = self._ensure_handle()
             data = asdict(result)
             line = json.dumps(data, default=_default_serializer)
-            handle.write(line + "\n")
-            handle.flush()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._write_sync, line)
         except Exception:
             logger.exception("Failed to write to file sink: %s", self._path)
+
+    def _write_sync(self, line: str) -> None:
+        """Synchronous write executed in a thread pool to avoid blocking the event loop."""
+        handle = self._ensure_handle()
+        handle.write(line + "\n")
+        handle.flush()
 
     async def close(self) -> None:
         """Close the file handle."""
