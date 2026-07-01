@@ -10,6 +10,7 @@ Policies are evaluated by an external OPA server using Rego rules.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -23,9 +24,7 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 POLICY_DENIAL_MESSAGE = (
-    "I'm unable to complete this request because it isn't allowed by our "
-    "compliance policies. Please try a different approach or contact your "
-    "administrator if you need access."
+    "This output is blocked by our compliance policies."
 )
 
 
@@ -108,13 +107,21 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
             return f"{POLICY_DENIAL_MESSAGE}\n\nReason(s):\n{reasons_text}"
         return POLICY_DENIAL_MESSAGE
 
-    def _format_retry_prompt(self, denial_reasons: list[str]) -> str:
-        """Format interrupt message prompting user to retry with policy awareness."""
+    def _format_retry_prompt(
+        self,
+        denial_reasons: list[str],
+        *,
+        call_input: str | dict[str, Any] | None = None,
+    ) -> str:
+        """Format interrupt message with the blocked call input and denial reasons."""
         reasons_text = "\n".join(f"- {reason}" for reason in denial_reasons)
-        return f"""{POLICY_DENIAL_MESSAGE}
-                    Reason(s):
-                    {reasons_text}
-                """
+        if call_input is None:
+            input_section = ""
+        elif isinstance(call_input, dict):
+            input_section = f"\n\Retry :\n{json.dumps(call_input, indent=2)}"
+        else:
+            input_section = f"\n\nRetry the prompt :\n{call_input}"
+        return f"{POLICY_DENIAL_MESSAGE}\n\nReason(s):\n{reasons_text}\n{input_section}"
 
     def _build_policy_context_prompt(self, violation_context: dict) -> str:
         """Build system prompt addition with policy violation context."""
@@ -238,19 +245,28 @@ Focus on providing helpful information within policy boundaries."""
 
             # Check if retry is enabled and this is the first violation (not a retry)
             violation_context = state.get("policy_violation_context", {})
+            logger.warning(f"aafter_model violation_context: {violation_context}")
             retry_available = violation_context.get("retry_available", True)
+            logger.warning(f"aafter_model retry_available: {retry_available}")
 
             if self.enable_retry and retry_available:
                 # Offer retry with HITL confirmation
                 logger.info("Offering HITL retry for policy violation")
                 return {
                     "jump_to": "end",
-                    "messages": filtered_messages + [AIMessage(content=self._format_retry_prompt(reasons))],
+                    "messages": filtered_messages + [
+                        AIMessage(
+                            content=self._format_retry_prompt(
+                                reasons, call_input=last_ai_content
+                            )
+                        )
+                    ],
                     "policy_violation_context": {
                         "checkpoint": "aafter_model",
                         "denial_reasons": reasons,
                         "retry_available": True,
                         "violated_at": last_ai_index,
+                        "blocked_input": last_ai_content,
                     },
                 }
             else:
@@ -289,7 +305,7 @@ Focus on providing helpful information within policy boundaries."""
 
         # Now validate the result
         trajectory = self._parse_trajectory(request.state.get("messages", []))
-        tool_name, _, tool_id = self._extract_tool_attrs(request.tool_call)
+        tool_name, tool_args, tool_id = self._extract_tool_attrs(request.tool_call)
 
         # Extract tool content from various result types
         tool_content = ""
@@ -335,12 +351,19 @@ Focus on providing helpful information within policy boundaries."""
 
             # Check if retry is enabled and this is the first violation (not a retry)
             violation_context = request.state.get("policy_violation_context", {})
+            logger.warning(f"awrap_tool_call violation_context: {violation_context}")
             retry_available = violation_context.get("retry_available", True)
+            logger.warning(f"awrap_tool_call retry_available: {retry_available}")
+            logger.warning(f"awrap_tool_call enable_retry: {self.enable_retry}")
 
             if self.enable_retry and retry_available:
                 # Offer retry with HITL confirmation
-                logger.info(f"Offering HITL retry for tool policy violation: {tool_name}")
-                retry_prompt = self._format_retry_prompt(reasons)
+                logger.warning(f"Offering HITL retry for tool policy violation: {tool_name}")
+                retry_prompt = self._format_retry_prompt(
+                    reasons,
+                    call_input=f"Call {tool_name} tool with arguments: {tool_args}",
+                )
+                logger.warning(f"awrap_tool_call retry_prompt: {retry_prompt}")
                 return Command(
                     update={
                         "messages": [
@@ -357,6 +380,7 @@ Focus on providing helpful information within policy boundaries."""
                             "denial_reasons": reasons,
                             "retry_available": True,
                             "tool_name": tool_name,
+                            "blocked_input": {"name": tool_name, "args": tool_args},
                         },
                     },
                     goto="end",

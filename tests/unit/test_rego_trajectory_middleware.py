@@ -219,9 +219,10 @@ class TestHooks:
         assert isinstance(result, Command)
         assert result.goto == "end"
         messages = result.update["messages"]
-        # Should contain retry prompt
-        assert "Would you like me to retry" in messages[0].content
-        assert "Would you like me to retry" in messages[1].content
+        assert "Blocked input:" in messages[0].content
+        assert "search" in messages[0].content
+        assert "Banned word 'BMI' found in tool result" in messages[0].content
+        assert messages[0].content == messages[1].content
         # Should store violation context
         assert result.update["policy_violation_context"]["retry_available"] is True
         assert result.update["policy_violation_context"]["checkpoint"] == "awrap_tool_call"
@@ -258,9 +259,9 @@ class TestHooks:
         assert isinstance(result, Command)
         assert result.goto == "end"
         messages = result.update["messages"]
-        # Should contain final denial, not retry prompt
+        # Should contain final denial, not retry prompt with blocked input
         assert POLICY_DENIAL_MESSAGE in messages[0].content
-        assert "Would you like me to retry" not in messages[0].content
+        assert "Blocked input:" not in messages[0].content
         assert result.update["policy_violation_context"]["retry_available"] is False
 
     @pytest.mark.asyncio
@@ -336,11 +337,10 @@ class TestRetryMechanism:
 
         assert result["jump_to"] == "end"
         assert len(result["messages"]) == 2
-        # Should contain retry prompt
         retry_content = result["messages"][1].content
-        assert "Would you like me to retry" in retry_content
-        assert "yes" in retry_content
-        assert "retry" in retry_content
+        assert "Blocked input:" in retry_content
+        assert "BMI stands for Body Mass Index" in retry_content
+        assert "Banned word 'BMI' found in agent response" in retry_content
         # Should store violation context
         assert result["policy_violation_context"]["retry_available"] is True
         assert result["policy_violation_context"]["checkpoint"] == "aafter_model"
@@ -362,10 +362,10 @@ class TestRetryMechanism:
             result = await middleware.aafter_model(state, runtime=None)
 
         assert result["jump_to"] == "end"
-        # Should contain final denial, not retry prompt
+        # Should contain final denial, not retry prompt with blocked input
         denial_content = result["messages"][1].content
         assert POLICY_DENIAL_MESSAGE in denial_content
-        assert "Would you like me to retry" not in denial_content
+        assert "Blocked input:" not in denial_content
         assert result["policy_violation_context"]["retry_available"] is False
 
     @pytest.mark.asyncio
@@ -389,10 +389,10 @@ class TestRetryMechanism:
             result = await middleware.aafter_model(state, runtime=None)
 
         assert result["jump_to"] == "end"
-        # Should contain final denial, not retry prompt
+        # Should contain final denial, not retry prompt with blocked input
         denial_content = result["messages"][1].content
         assert POLICY_DENIAL_MESSAGE in denial_content
-        assert "Would you like me to retry" not in denial_content
+        assert "Blocked input:" not in denial_content
         assert result["policy_violation_context"]["retry_available"] is False
 
     @pytest.mark.asyncio

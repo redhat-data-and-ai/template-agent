@@ -83,7 +83,7 @@ services:
     ports:
       - "8181:8181"
     volumes:
-      - ./config/compliance/policies:/policies
+      - ./config/agent/compliance/policies:/policies
     environment:
       # Git repository configuration (from .env)
       # Git policies are loaded IN ADDITION to local /policies

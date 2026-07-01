@@ -64,8 +64,8 @@ echo ""
 echo "2. Checking Modified Files..."
 echo "─────────────────────────────────────────────────────────────────────"
 
-check_file "config/compliance/policies/agent_authz.rego" "OPA policy file"
-check_content "config/compliance/policies/agent_authz.rego" "input.user_settings" \
+check_file "config/agent/compliance/policies/agent_authz.rego" "OPA policy file"
+check_content "config/agent/compliance/policies/agent_authz.rego" "input.user_settings" \
     "Policy uses input.user_settings"
 check_content "deep_agent/src/infrastructure/rego_trajectory_middleware.py" "_get_user_settings" \
     "Middleware fetches user settings"
@@ -100,13 +100,13 @@ echo ""
 echo "5. Checking Rego Policy..."
 echo "─────────────────────────────────────────────────────────────────────"
 
-check_content "config/compliance/policies/agent_authz.rego" "config := input.user_settings if" \
+check_content "config/agent/compliance/policies/agent_authz.rego" "config := input.user_settings if" \
     "User settings conditional"
-check_content "config/compliance/policies/agent_authz.rego" "max_trajectory_length" \
+check_content "config/agent/compliance/policies/agent_authz.rego" "max_trajectory_length" \
     "Trajectory length setting"
-check_content "config/compliance/policies/agent_authz.rego" "blocked_tools" \
+check_content "config/agent/compliance/policies/agent_authz.rego" "blocked_tools" \
     "Blocked tools setting"
-check_content "config/compliance/policies/agent_authz.rego" "denial_reasons" \
+check_content "config/agent/compliance/policies/agent_authz.rego" "denial_reasons" \
     "Denial reasons for debugging"
 
 echo ""
