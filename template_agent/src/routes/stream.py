@@ -44,7 +44,12 @@ async def message_generator(
         - Initialization errors are handled before streaming starts
     """
     try:
-        app_logger.info(f"Starting stream for message: {user_input.message[:100]}...")
+        app_logger.info(
+            "Starting stream",
+            message_length=len(user_input.message),
+            thread_id=user_input.thread_id,
+            user_id_provided=bool(user_input.user_id),
+        )
 
         # Stream events using the simplified AgentManager
         async for event in agent_manager.stream_response(user_input):

@@ -197,7 +197,11 @@ class AgentManager:
         }
 
         app_logger.info(
-            f"AgentManager configured with run_id: {run_id}, thread_id: {thread_id}, session_id: {effective_session_id}"
+            "AgentManager configured",
+            run_id=str(run_id),
+            thread_id=thread_id,
+            session_id=effective_session_id,
+            user_id_provided=bool(request.user_id),
         )
         return kwargs, str(run_id), thread_id
 

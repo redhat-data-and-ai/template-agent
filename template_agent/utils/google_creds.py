@@ -99,4 +99,4 @@ def initialize_google_genai():
     # Set environment variable for langchain-google-genai to use
     if credentials_file:
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_file
-        logger.debug(f"Set GOOGLE_APPLICATION_CREDENTIALS to: {credentials_file}")
+        logger.debug("Initialized Google Generative AI credentials")

@@ -30,6 +30,9 @@ class TestSettings:
         assert settings.OPENAI_COMPAT_BASE_URL is None
         assert settings.OPENAI_COMPAT_API_KEY == "not-needed"
         assert settings.OPENAI_COMPAT_MODEL == "local"
+        assert settings.LOG_SANITIZATION_ENABLED
+        assert settings.LOG_SANITIZE_PII
+        assert settings.LOG_SANITIZE_TOKENS
 
     @patch.dict("os.environ", {}, clear=True)
     def test_database_uri_property(self):

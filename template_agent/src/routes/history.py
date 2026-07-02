@@ -14,6 +14,7 @@ from template_agent.src.core.agent_utils import langchain_to_chat_message
 from template_agent.src.core.storage import get_shared_checkpointer
 from template_agent.src.schema import ChatHistoryResponse, ChatMessage, ToolCall
 from template_agent.src.settings import settings
+from template_agent.utils.log_sanitizer import message_log_metadata
 from template_agent.utils.pylogger import get_python_logger
 
 router = APIRouter()
@@ -52,8 +53,8 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
         - In-memory storage mode returns empty history as conversations are not persisted
     """
     access_token = request.headers.get("X-Token")
-    logger.info(f"Retrieving history for thread_id: {thread_id}")
-    logger.info(f"Access token present: {access_token is not None}")
+    logger.info("Retrieving history", thread_id=thread_id)
+    logger.debug("Access token present", token_present=access_token is not None)
 
     chat_messages: List[ChatMessage] = []
 
@@ -113,8 +114,12 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                                     if hasattr(msg, "content")
                                     else str(msg)[:100]
                                 )
-                                logger.info(
-                                    f"  Message {j}: {msg_type} - {msg_content}"
+                                logger.debug(
+                                    "Checkpoint message metadata",
+                                    checkpoint_index=i,
+                                    message_index=j,
+                                    message_type=msg_type,
+                                    **message_log_metadata(msg_content),
                                 )
                         else:
                             logger.info(
@@ -143,8 +148,10 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                             try:
                                 chat_message = langchain_to_chat_message(message)
                                 chat_messages.append(chat_message)
-                                logger.info(
-                                    f"Added message: {chat_message.type} - {chat_message.content[:50]}..."
+                                logger.debug(
+                                    "Added message",
+                                    message_type=chat_message.type,
+                                    **message_log_metadata(chat_message.content),
                                 )
                             except Exception as e:
                                 logger.warning(
@@ -186,12 +193,20 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
 
                                         if not is_duplicate:
                                             chat_messages.append(chat_message)
-                                            logger.info(
-                                                f"Added unique message: {chat_message.type} - {chat_message.content[:50]}..."
+                                            logger.debug(
+                                                "Added unique message",
+                                                message_type=chat_message.type,
+                                                **message_log_metadata(
+                                                    chat_message.content
+                                                ),
                                             )
                                         else:
-                                            logger.info(
-                                                f"Skipped duplicate message: {chat_message.type} - {chat_message.content[:50]}..."
+                                            logger.debug(
+                                                "Skipped duplicate message",
+                                                message_type=chat_message.type,
+                                                **message_log_metadata(
+                                                    chat_message.content
+                                                ),
                                             )
                                     except Exception as e:
                                         logger.warning(
@@ -259,8 +274,11 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                                 if hasattr(msg, "content")
                                 else str(msg)[:100]
                             )
-                            logger.info(
-                                f"  PostgreSQL Message {i}: {msg_type} - {msg_content}"
+                            logger.debug(
+                                "PostgreSQL message metadata",
+                                message_index=i,
+                                message_type=msg_type,
+                                **message_log_metadata(msg_content),
                             )
 
                         # Extract metadata for tracking
@@ -358,15 +376,22 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                 # Convert each message to ChatMessage format
                 for message_data in messages:
                     try:
-                        logger.info(f"Processing message_data: {message_data}")
+                        logger.debug(
+                            "Processing message_data",
+                            message_type=message_data.get("type")
+                            if isinstance(message_data, dict)
+                            else None,
+                        )
 
                         # Validate message format - should be a dict with kwargs
                         if (
                             not isinstance(message_data, dict)
                             or "kwargs" not in message_data
                         ):
-                            logger.info(
-                                f"Skipping invalid message format: {message_data}"
+                            logger.debug(
+                                "Skipping invalid message format",
+                                has_kwargs=isinstance(message_data, dict)
+                                and "kwargs" in message_data,
                             )
                             continue
 
@@ -383,7 +408,11 @@ async def history(thread_id: str, request: Request) -> ChatHistoryResponse:
                                 "tool_calls", []
                             )
 
-                        logger.info(f"Message type: {message_type}, content: {content}")
+                        logger.debug(
+                            "Processed message",
+                            message_type=message_type,
+                            **message_log_metadata(content),
+                        )
 
                         # Import here to avoid circular imports
                         from langchain_core.messages import (
