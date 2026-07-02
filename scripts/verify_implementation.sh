@@ -67,7 +67,7 @@ echo "────────────────────────�
 check_file "config/agent/compliance/policies/agent_authz.rego" "OPA policy file"
 check_content "config/agent/compliance/policies/agent_authz.rego" "input.user_settings" \
     "Policy uses input.user_settings"
-check_content "deep_agent/src/infrastructure/rego_trajectory_middleware.py" "_get_user_settings" \
+check_content "deep_agent/src/infrastructure/compliance.py" "_get_user_settings" \
     "Middleware fetches user settings"
 check_content "deep_agent/aegra/startup.py" "PolicySettingsRepository" \
     "Startup initializes policy table"
@@ -113,11 +113,11 @@ echo ""
 echo "6. Checking Middleware..."
 echo "─────────────────────────────────────────────────────────────────────"
 
-check_content "deep_agent/src/infrastructure/rego_trajectory_middleware.py" "_settings_cache" \
+check_content "deep_agent/src/infrastructure/compliance.py" "_settings_cache" \
     "Settings cache exists"
-check_content "deep_agent/src/infrastructure/rego_trajectory_middleware.py" "invalidate_cache" \
+check_content "deep_agent/src/infrastructure/compliance.py" "invalidate_cache" \
     "Cache invalidation method"
-check_content "deep_agent/src/infrastructure/rego_trajectory_middleware.py" "_get_user_id" \
+check_content "deep_agent/src/infrastructure/compliance.py" "_get_user_id" \
     "User ID extraction"
 
 echo ""

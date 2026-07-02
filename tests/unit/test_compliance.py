@@ -1,4 +1,4 @@
-"""Unit tests for RegoTrajectoryMiddleware."""
+"""Unit tests for compliance middleware."""
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -9,7 +9,7 @@ from langgraph.types import Command
 
 from deep_agent.src.agent.config.middleware import RegoTrajectoryConfig, ResolvedMiddlewareConfig
 from deep_agent.src.infrastructure.middleware import build_middleware_list
-from deep_agent.src.infrastructure.rego_trajectory_middleware import (
+from deep_agent.src.infrastructure.compliance import (
     POLICY_DENIAL_MESSAGE,
     RegoTrajectoryMiddleware,
 )
@@ -65,7 +65,7 @@ class TestEvaluatePolicy:
         mock_response.raise_for_status = MagicMock()
 
         with patch(
-            "deep_agent.src.infrastructure.rego_trajectory_middleware.httpx.post",
+            "deep_agent.src.infrastructure.compliance.httpx.post",
             return_value=mock_response,
         ) as mock_post:
             allowed, reasons = middleware._evaluate_policy([], {"action": "llm_request"})
@@ -92,7 +92,7 @@ class TestEvaluatePolicy:
         mock_response.raise_for_status = MagicMock()
 
         with patch(
-            "deep_agent.src.infrastructure.rego_trajectory_middleware.httpx.post",
+            "deep_agent.src.infrastructure.compliance.httpx.post",
             return_value=mock_response,
         ):
             allowed, reasons = middleware._evaluate_policy([], {"action": "llm_request"})
@@ -103,7 +103,7 @@ class TestEvaluatePolicy:
         middleware = RegoTrajectoryMiddleware()
 
         with patch(
-            "deep_agent.src.infrastructure.rego_trajectory_middleware.httpx.post",
+            "deep_agent.src.infrastructure.compliance.httpx.post",
             side_effect=httpx.ConnectError("connection refused"),
         ):
             allowed, reasons = middleware._evaluate_policy([], {"action": "llm_request"})
@@ -219,7 +219,7 @@ class TestHooks:
         assert isinstance(result, Command)
         assert result.goto == "end"
         messages = result.update["messages"]
-        assert "Blocked input:" in messages[0].content
+        assert "Retry the prompt :" in messages[0].content
         assert "search" in messages[0].content
         assert "Banned word 'BMI' found in tool result" in messages[0].content
         assert messages[0].content == messages[1].content
@@ -261,7 +261,7 @@ class TestHooks:
         messages = result.update["messages"]
         # Should contain final denial, not retry prompt with blocked input
         assert POLICY_DENIAL_MESSAGE in messages[0].content
-        assert "Blocked input:" not in messages[0].content
+        assert "Retry the prompt :" not in messages[0].content
         assert result.update["policy_violation_context"]["retry_available"] is False
 
     @pytest.mark.asyncio
@@ -338,7 +338,7 @@ class TestRetryMechanism:
         assert result["jump_to"] == "end"
         assert len(result["messages"]) == 2
         retry_content = result["messages"][1].content
-        assert "Blocked input:" in retry_content
+        assert "Retry the prompt :" in retry_content
         assert "BMI stands for Body Mass Index" in retry_content
         assert "Banned word 'BMI' found in agent response" in retry_content
         # Should store violation context
@@ -365,7 +365,7 @@ class TestRetryMechanism:
         # Should contain final denial, not retry prompt with blocked input
         denial_content = result["messages"][1].content
         assert POLICY_DENIAL_MESSAGE in denial_content
-        assert "Blocked input:" not in denial_content
+        assert "Retry the prompt :" not in denial_content
         assert result["policy_violation_context"]["retry_available"] is False
 
     @pytest.mark.asyncio
@@ -392,13 +392,13 @@ class TestRetryMechanism:
         # Should contain final denial, not retry prompt with blocked input
         denial_content = result["messages"][1].content
         assert POLICY_DENIAL_MESSAGE in denial_content
-        assert "Blocked input:" not in denial_content
+        assert "Retry the prompt :" not in denial_content
         assert result["policy_violation_context"]["retry_available"] is False
 
     @pytest.mark.asyncio
     async def test_abefore_model_detects_retry_keyword_yes(self):
         """Detect 'yes' as retry confirmation."""
-        middleware = RegoTrajectoryMiddleware(enable_retry=True, retry_keywords=["yes", "retry"])
+        middleware = RegoTrajectoryMiddleware(enable_retry=True)
         state = {
             "messages": [
                 HumanMessage(content="Tell me about health"),
@@ -426,7 +426,7 @@ class TestRetryMechanism:
     @pytest.mark.asyncio
     async def test_abefore_model_detects_retry_keyword_retry(self):
         """Detect 'retry' as retry confirmation."""
-        middleware = RegoTrajectoryMiddleware(enable_retry=True, retry_keywords=["yes", "retry"])
+        middleware = RegoTrajectoryMiddleware(enable_retry=True)
         state = {
             "messages": [
                 HumanMessage(content="Tell me about health"),
@@ -491,28 +491,3 @@ class TestRetryMechanism:
 
         # Should not inject policy context
         assert result is None
-
-    @pytest.mark.asyncio
-    async def test_custom_retry_keywords(self):
-        """Support custom retry keywords from config."""
-        middleware = RegoTrajectoryMiddleware(
-            enable_retry=True,
-            retry_keywords=["/retry", "try again"]
-        )
-        state = {
-            "messages": [
-                HumanMessage(content="Tell me something"),
-                HumanMessage(content="try again please")
-            ],
-            "policy_violation_context": {
-                "retry_available": True,
-                "checkpoint": "aafter_model",
-                "denial_reasons": ["Violation"]
-            }
-        }
-
-        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
-            result = await middleware.abefore_model(state, runtime=None)
-
-        assert "messages" in result
-        assert isinstance(result["messages"][0], SystemMessage)

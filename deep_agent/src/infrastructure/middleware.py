@@ -210,7 +210,7 @@ def _build_tool_retry(config: Any) -> Any | None:
 def _build_rego_trajectory(config: Any) -> Any | None:
     """Build RegoTrajectoryMiddleware for OPA trajectory policy checks."""
     try:
-        from deep_agent.src.infrastructure.rego_trajectory_middleware import (
+        from deep_agent.src.infrastructure.compliance import (
             RegoTrajectoryMiddleware,
         )
 
@@ -219,7 +219,6 @@ def _build_rego_trajectory(config: Any) -> Any | None:
             opa_url=opa_url,
             timeout=config.timeout,
             enable_retry=config.enable_retry,
-            retry_keywords=config.retry_keywords,
         )
     except ImportError:
         logger.debug("RegoTrajectoryMiddleware not available")

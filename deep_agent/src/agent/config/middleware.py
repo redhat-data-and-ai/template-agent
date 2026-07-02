@@ -107,7 +107,6 @@ class RegoTrajectoryConfig(BaseModel):
     opa_url: str = ""
     timeout: float = 2.0
     enable_retry: bool = True
-    retry_keywords: list[str] = Field(default_factory=lambda: ["yes", "retry", "/retry"])
 
 
 class MiddlewareDefaults(BaseModel):

@@ -150,7 +150,6 @@ middleware:
     # opa_url: ""  # empty = OPA_URL env var (http://opa:8181/... in compose)
     timeout: 2.0
     enable_retry: true
-    retry_keywords: ["yes", "retry", "/retry"]
   extra: []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
