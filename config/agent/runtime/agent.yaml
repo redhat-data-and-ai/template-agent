@@ -108,7 +108,9 @@ middleware:
   human_approval:
     enabled: true    # set to false to disable human-in-the-loop tool approval
     mode: all        # 'all' = every tool; 'none' = disabled
-    exclude: []      # tool names to never interrupt (e.g. ls, read_file, glob, grep)
+    exclude:
+      - write_todos         # internal task tracking — no user approval needed
+      - compact_conversation  # internal memory management — no user approval needed
   summarization_tool:
     enabled: true
   memory:
