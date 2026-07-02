@@ -156,6 +156,7 @@ class TokenBudgetObservabilityProvider:
     def get_metadata(
         self, run_id: str, thread_id: str, user_identity: str | None = None
     ) -> dict[str, Any]:
+        """Return RunnableConfig metadata keys for token budget tracking."""
         from deep_agent.src.token_budget.callback import (
             THREAD_ID_METADATA_KEY,
             USER_ID_METADATA_KEY,
@@ -169,6 +170,7 @@ class TokenBudgetObservabilityProvider:
         return metadata
 
     def is_enabled(self) -> bool:
+        """Return True when per-thread token budget tracking is configured."""
         try:
             from deep_agent.src.agent.config import agent_config
 

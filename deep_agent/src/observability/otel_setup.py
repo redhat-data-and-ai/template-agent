@@ -75,9 +75,7 @@ def setup_otel_metrics(settings: Any, log: Any) -> None:
 
         resource = _service_resource_for(settings)
         exporter = OTLPMetricExporter(
-            **_otlp_grpc_exporter_kwargs(
-                settings.OTEL_EXPORTER_OTLP_ENDPOINT, settings
-            )
+            **_otlp_grpc_exporter_kwargs(settings.OTEL_EXPORTER_OTLP_ENDPOINT, settings)
         )
         reader = PeriodicExportingMetricReader(
             exporter,

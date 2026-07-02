@@ -130,12 +130,20 @@ local-down:
 	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml stop pgvector redis
 
 container:
+	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
+	@echo "Starting stack: pgvector, redis, template-agent, jaeger"
+	@echo "Agent:  http://localhost:5002"
+	@echo "Jaeger: http://localhost:16686"
 	@export PODMAN_COMPOSE_SILENT=true; \
-	trap 'export PODMAN_COMPOSE_SILENT=true; podman-compose -f compose.yaml --profile container down --timeout 10 2>/dev/null || true; exit 130' INT TERM; \
-	podman-compose -f compose.yaml --profile container --no-ansi up --build --force-recreate --remove-orphans --timeout=60
+	trap 'export PODMAN_COMPOSE_SILENT=true; podman-compose -f compose.yaml --profile observability down --timeout 10 2>/dev/null || true; exit 130' INT TERM; \
+	ENABLE_OTEL=true \
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317 \
+	ENABLE_OTEL_TRACES=true \
+	OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://jaeger:4317 \
+	podman-compose --profile observability --no-ansi up --build --force-recreate --remove-orphans --timeout=60
 
 container-down:
-	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container down
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile observability down
 
 # ---------------------------------------------------------------------------
 # Development environment targets

@@ -44,6 +44,7 @@ async def run_startup() -> dict[str, str]:
     results["database"] = await _ensure_database()
     results["cache"] = await _warm_caches()
     results["scheduler"] = await _start_scheduler()
+    results["otel"] = _setup_otel()
     results["telemetry"] = _setup_telemetry()
 
     _upgrade_signal_handlers()
@@ -156,6 +157,18 @@ async def _start_scheduler() -> str:
         return "ok" if started else "skipped: already running"
     except Exception as exc:
         logger.warning("Scheduler start failed: %s", exc)
+        return f"warning: {exc}"
+
+
+def _setup_otel() -> str:
+    """Initialize OpenTelemetry metrics and tracing."""
+    try:
+        from deep_agent.aegra.otel import initialize_telemetry
+
+        initialize_telemetry()
+        return "ok"
+    except Exception as exc:
+        logger.warning("OTEL setup failed: %s", exc)
         return f"warning: {exc}"
 
 

@@ -59,7 +59,10 @@ def test_emit_token_usage_logs_expected_payload() -> None:
 
     with (
         patch("deep_agent.src.token_budget.otel_emit.settings", mock_settings),
-        patch("deep_agent.src.token_budget.otel_emit._agent_name", return_value="health-assistant"),
+        patch(
+            "deep_agent.src.token_budget.otel_emit._agent_name",
+            return_value="health-assistant",
+        ),
         patch.object(otel_emit, "_ensure_counters"),
         patch.object(otel_emit.logger, "info") as log_info,
     ):
@@ -100,7 +103,10 @@ def test_emit_token_usage_records_metrics() -> None:
 
     with (
         patch("deep_agent.src.token_budget.otel_emit.settings", mock_settings),
-        patch("deep_agent.src.token_budget.otel_emit._agent_name", return_value="health-assistant"),
+        patch(
+            "deep_agent.src.token_budget.otel_emit._agent_name",
+            return_value="health-assistant",
+        ),
         patch.object(otel_emit, "_token_counter", mock_token_counter),
         patch.object(otel_emit, "_thread_total_counter", mock_thread_counter),
         patch.object(otel_emit, "_counters_initialized", True),
@@ -142,7 +148,10 @@ def test_emit_token_usage_adds_span_event_when_traces_enabled() -> None:
 
     with (
         patch("deep_agent.src.token_budget.otel_emit.settings", mock_settings),
-        patch("deep_agent.src.token_budget.otel_emit._agent_name", return_value="health-assistant"),
+        patch(
+            "deep_agent.src.token_budget.otel_emit._agent_name",
+            return_value="health-assistant",
+        ),
         patch.object(otel_emit, "_ensure_counters"),
         patch.object(otel_emit.logger, "info"),
         patch("opentelemetry.trace.get_current_span", return_value=mock_span),
@@ -175,7 +184,10 @@ def test_emit_daily_token_usage_logs_expected_payload() -> None:
 
     with (
         patch("deep_agent.src.token_budget.otel_emit.settings", mock_settings),
-        patch("deep_agent.src.token_budget.otel_emit._agent_name", return_value="health-assistant"),
+        patch(
+            "deep_agent.src.token_budget.otel_emit._agent_name",
+            return_value="health-assistant",
+        ),
         patch.object(otel_emit, "_daily_total_counter", mock_daily_counter),
         patch.object(otel_emit, "_counters_initialized", True),
         patch.object(otel_emit.logger, "info") as log_info,

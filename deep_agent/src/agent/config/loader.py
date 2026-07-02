@@ -34,6 +34,7 @@ from .middleware import (
     ResolvedMiddlewareConfig,
     resolve_middleware,
 )
+from .otel import OtelFileConfig
 from .parser import inject_runtime_values, parse_frontmatter
 from .providers import ProvidersFileConfig
 from .resolver import resolve_skill_paths, resolve_tools
@@ -112,6 +113,7 @@ class AgentConfig:
     _filesystem_config: FilesystemFileConfig
     _providers_config: ProvidersFileConfig
     _cache_config: CacheFileConfig
+    _otel_config: OtelFileConfig
     _token_budget_config: TokenBudgetConfig
     _name: str
 
@@ -162,6 +164,26 @@ class AgentConfig:
             logger.warning("Failed to parse runtime/agent.yaml, using defaults: %s", e)
             return {}
 
+    def _load_otel_config(self) -> OtelFileConfig:
+        """Load OpenTelemetry configuration from observability.yaml.
+
+        Returns:
+            OtelFileConfig with OTEL settings, or defaults if missing.
+        """
+        otel_yaml = self._base_dir / "runtime" / "observability.yaml"
+        if not otel_yaml.is_file():
+            logger.info("No observability.yaml found — OTEL disabled by default")
+            return OtelFileConfig()
+
+        try:
+            raw = yaml.safe_load(otel_yaml.read_text()) or {}
+            config: OtelFileConfig = OtelFileConfig.model_validate(raw.get("otel", {}))
+            logger.info("Loaded OTEL config from observability.yaml")
+            return config
+        except Exception as e:
+            logger.warning("Failed to parse observability.yaml, using defaults: %s", e)
+            return OtelFileConfig()
+
     def _ensure_loaded(self) -> None:
         """Lazy load configurations on first access.
 
@@ -205,6 +227,9 @@ class AgentConfig:
 
         # Extract cache section
         self._cache_config = CacheFileConfig.model_validate(raw.get("cache", {}))
+
+        # Load OTEL config from observability.yaml
+        self._otel_config = self._load_otel_config()
 
         # Extract token budget section
         self._token_budget_config = TokenBudgetConfig.model_validate(
@@ -547,6 +572,15 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return resolve_middleware(self._middleware_config, model_name, agent_overrides)
+
+    def get_otel_config(self) -> OtelFileConfig:
+        """Get the pre-loaded OTEL configuration.
+
+        Returns:
+            The parsed OTEL config from observability.yaml.
+        """
+        self._ensure_loaded()
+        return self._otel_config
 
     def get_pyproject_path(self) -> Path:
         """Get the skill sandbox pyproject.toml path.
