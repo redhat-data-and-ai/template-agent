@@ -105,6 +105,8 @@ local:
 	@echo "Setting up local environment..."
 	@test -f .env 2>/dev/null || (echo "Creating .env from .env.example..." && cp .env.example .env 2>/dev/null) || true
 	@lsof -ti :5002 | xargs kill -9 2>/dev/null || true
+	@echo "Cleaning up stale containers from previous naming scheme..."
+	@podman rm -f demo-pgvector demo-redis 2>/dev/null || true
 	@echo "Starting infrastructure (Postgres + Redis)..."
 	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml up -d pgvector redis
 	@echo "Waiting for Postgres to be ready..."

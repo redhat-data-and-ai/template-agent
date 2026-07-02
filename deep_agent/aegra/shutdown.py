@@ -179,9 +179,9 @@ async def _shutdown_and_exit() -> None:
     """Run graceful shutdown then terminate the process."""
     await run_shutdown()
     logger.info("Shutdown complete — exiting")
-    import os
+    import sys
 
-    os._exit(0)
+    sys.exit(0)
 
 
 _async_shutdown_started = False
