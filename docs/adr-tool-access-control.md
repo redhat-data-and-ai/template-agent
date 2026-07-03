@@ -59,26 +59,10 @@ skills:
 
 #### Before: Tool Resolution Flow
 
-```
-                    +------------------+
-                    | subagent config  |
-                    | tools: [a, b, c] |
-                    +--------+---------+
-                             |
-                             v
-                    +------------------+
-                    | resolve_tools()  |
-                    | match by name    |
-                    +--------+---------+
-                             |
-                             v
-                    +------------------+
-                    | subagent gets    |
-                    | tools [a, b, c]  |
-                    +------------------+
-                         (no deny,
-                       no approval,
-                      no enforcement)
+```mermaid
+flowchart TD
+    A["Subagent Config\ntools: [a, b, c]"] --> B["resolve_tools()\nmatch by name"]
+    B --> C["Subagent gets tools [a, b, c]\n❌ no deny\n❌ no approval\n❌ no enforcement"]
 ```
 
 ## Proposed Design
@@ -87,144 +71,94 @@ skills:
 
 #### Component Diagram
 
-```
-+-----------------------------------------------------------------------+
-|  deep_agent/src/                                                      |
-|                                                                       |
-|  agent/config/                                                        |
-|  +---------------------+   +-------------------+   +---------------+  |
-|  | loader.py           |   | resolver.py       |   | parser.py     |  |
-|  |                     |   |                   |   |               |  |
-|  | _load_all_subagents |   | resolve_tools()   |   | parse_        |  |
-|  |   calls migrate_    |   |   name -> object  |   | frontmatter() |  |
-|  |   tools_field()     |   |   resolution      |   | YAML + body   |  |
-|  +----------+----------+   +---------+---------+   +-------+-------+  |
-|             |                        |                      |         |
-|             v                        v                      |         |
-|  infrastructure/                                            |         |
-|  +------------------------------------------------------+   |         |
-|  | tool_access.py                                       |   |         |
-|  |                                                      |   |         |
-|  | migrate_tools_field()   -- backward compat           |<--+         |
-|  | filter_denied_tools()   -- deny enforcement          |             |
-|  | apply_tool_approval()   -- approval wrapping         |             |
-|  +------------------------------------------------------+             |
-|                                                                       |
-|  infrastructure/                                                      |
-|  +------------------------------------------------------+             |
-|  | subagents.py                                         |             |
-|  |                                                      |             |
-|  | load_subagents()                                     |             |
-|  |   _build_default_subagent()   -- deny only           |             |
-|  |   _build_compiled_subagent()  -- deny + approval     |             |
-|  |   _build_async_subagent()     -- no tool resolution  |             |
-|  +------------------------------------------------------+             |
-|                                                                       |
-|  aegra/                                                               |
-|  +------------------------------------------------------+             |
-|  | graph.py                                             |             |
-|  |                                                      |             |
-|  | agent()  -- per-request graph factory                |             |
-|  |   reads allowed_tools from orchestrator config       |             |
-|  |   calls load_subagents(tools=mcp_tools)              |             |
-|  |   calls create_deep_agent() with interrupt_on        |             |
-|  +------------------------------------------------------+             |
-+-----------------------------------------------------------------------+
+```mermaid
+graph TB
+    subgraph "agent/config/"
+        parser["parser.py\nparse_frontmatter()\nYAML + body"]
+        loader["loader.py\n_load_all_subagents()\ncalls migrate_tools_field()"]
+        resolver["resolver.py\nresolve_tools()\nname → object resolution"]
+        hitl["hitl.py\nbuild_interrupt_on()\norchestrator-level HITL"]
+    end
+
+    subgraph "infrastructure/"
+        tool_access["tool_access.py\n✦ migrate_tools_field() — backward compat\n✦ filter_denied_tools() — deny enforcement\n✦ apply_tool_approval() — approval wrapping"]
+        subagents["subagents.py\nload_subagents()\n├ _build_default — deny only\n├ _build_compiled — deny + approval\n└ _build_async — no tool resolution"]
+    end
+
+    subgraph "aegra/"
+        graph["graph.py\nagent() — per-request graph factory\nreads allowed_tools, calls load_subagents(),\ncalls create_deep_agent() with interrupt_on"]
+    end
+
+    parser --> loader
+    loader --> tool_access
+    resolver --> subagents
+    tool_access --> subagents
+    subagents --> graph
+    hitl --> graph
 ```
 
 #### Enforcement Pipeline
 
-```
-Step 1: MIGRATION (loader.py -> tool_access.migrate_tools_field)
-+------------------------------------------------------------------+
-| Input: raw frontmatter dict from parser.py                       |
-|                                                                  |
-|   Has "tools" only?                                              |
-|     YES -> move to "allowed_tools", log deprecation warning      |
-|   Has both "tools" and "allowed_tools"?                          |
-|     YES -> raise AppException (ambiguous config)                 |
-|   Has "allowed_tools" only or neither?                           |
-|     NO-OP                                                        |
-+------------------------------------------------------------------+
-                              |
-                              v
-Step 2: RESOLUTION (subagents.py -> resolver.resolve_tools)
-+------------------------------------------------------------------+
-| Input: allowed_tools list + available MCP tools                  |
-|                                                                  |
-|   allowed_tools present?                                         |
-|     YES -> resolve names to tool objects                         |
-|   allowed_tools absent but mcps configured?                      |
-|     YES -> inherit ALL tools from configured MCP servers         |
-|   Neither?                                                       |
-|     -> empty tool list                                           |
-+------------------------------------------------------------------+
-                              |
-                              v
-Step 3: DENY FILTER (subagents.py -> tool_access.filter_denied_tools)
-+------------------------------------------------------------------+
-| Input: resolved tools list + denied_tools names                  |
-|                                                                  |
-|   For each tool in resolved list:                                |
-|     tool.name in denied_tools?                                   |
-|       YES -> remove from list (deny wins over allow)             |
-|       NO  -> keep                                                |
-|                                                                  |
-|   Result: filtered tool list with denied tools removed           |
-+------------------------------------------------------------------+
-                              |
-                              v
-Step 4: APPROVAL (subagents.py, compiled subagents only)
-+------------------------------------------------------------------+
-| Input: tool_approval names from frontmatter                      |
-|                                                                  |
-|   Subagent type == compiled?                                     |
-|     YES -> build interrupt_on = {name: True for name             |
-|            in tool_approval}                                     |
-|            pass to create_deep_agent(interrupt_on=...)            |
-|   Subagent type == default?                                      |
-|     -> raise ValueError (no own graph to interrupt)              |
-|   Subagent type == async?                                        |
-|     -> raise ValueError (remote, cannot trigger local interrupt) |
-+------------------------------------------------------------------+
+```mermaid
+flowchart TD
+    A["Raw frontmatter dict\nfrom parser.py"] --> B{"Step 1: MIGRATION\nmigrate_tools_field()"}
+    B -->|"has 'tools' only"| B1["Rename to 'allowed_tools'\n+ deprecation warning"]
+    B -->|"has both"| B2["❌ Raise AppException\n(ambiguous config)"]
+    B -->|"has 'allowed_tools'\nor neither"| B3["No-op"]
+    B1 --> C
+    B3 --> C
+
+    C{"Step 2: RESOLUTION\nresolve_tools()"}
+    C -->|"allowed_tools present"| C1["Resolve names → tool objects"]
+    C -->|"absent + mcps configured"| C2["Inherit ALL MCP tools"]
+    C -->|"neither"| C3["Empty tool list"]
+    C1 --> D
+    C2 --> D
+    C3 --> D
+
+    D["Step 3: DENY FILTER\nfilter_denied_tools()"]
+    D --> D1{"For each tool:\ntool.name in denied_tools?"}
+    D1 -->|"Yes"| D2["🚫 Remove\n(deny wins over allow)"]
+    D1 -->|"No"| D3["✅ Keep"]
+    D2 --> E
+    D3 --> E
+
+    E{"Step 4: APPROVAL\n(by subagent type)"}
+    E -->|"compiled"| E1["Build interrupt_on dict\npass to create_deep_agent()"]
+    E -->|"default"| E2["❌ Raise ValueError\n(no own graph)"]
+    E -->|"async"| E3["❌ Raise ValueError\n(remote, no local interrupt)"]
+
+    style B2 fill:#f44,color:#fff
+    style E2 fill:#f44,color:#fff
+    style E3 fill:#f44,color:#fff
+    style D2 fill:#f90,color:#fff
+    style E1 fill:#4a4,color:#fff
 ```
 
 #### Request Flow Diagram
 
-```
-User                Orchestrator           Subagent (compiled)       Tool Server
- |                  (graph.py)             (own compiled graph)      (MCP)
- |                       |                        |                     |
- | "Generate and         |                        |                     |
- |  email the report"    |                        |                     |
- |---------------------->|                        |                     |
- |                       |                        |                     |
- |                       | delegate to publisher  |                     |
- |                       |----------------------->|                     |
- |                       |                        |                     |
- |                       |                        | call send_email()   |
- |                       |                        |-------------------->|
- |                       |                        |                     |
- |                       |    INTERRUPT (tool_approval includes         |
- |                       |    send_email -- graph pauses at             |
- |                       |    interrupt_on checkpoint)                  |
- |                       |                        |                     |
- |<----------------------------------------------|                     |
- | "Publisher wants to send_email to X.           |                     |
- |  Approve? [approve / reject]"                  |                     |
- |                       |                        |                     |
- | approve               |                        |                     |
- |---------------------->|                        |                     |
- |                       |  resume with decision  |                     |
- |                       |----------------------->|                     |
- |                       |                        |                     |
- |                       |                        | execute send_email  |
- |                       |                        |-------------------->|
- |                       |                        |<--------------------|
- |                       |                        |   result            |
- |                       |<-----------------------|                     |
- |<----------------------|                        |                     |
- | "Report emailed."     |                        |                     |
+```mermaid
+sequenceDiagram
+    participant User
+    participant Orchestrator as Orchestrator<br/>(graph.py)
+    participant Subagent as Subagent<br/>(compiled graph)
+    participant MCP as Tool Server<br/>(MCP)
+
+    User->>Orchestrator: "Generate and email the report"
+    Orchestrator->>Subagent: delegate to publisher
+    Subagent->>MCP: call send_email()
+
+    Note over Subagent: ⚠️ INTERRUPT<br/>tool_approval includes send_email<br/>graph pauses at interrupt_on checkpoint
+
+    Subagent-->>User: "Publisher wants to call send_email.<br/>Approve? [approve / reject]"
+
+    User->>Orchestrator: approve
+    Orchestrator->>Subagent: resume with decision
+
+    Subagent->>MCP: execute send_email
+    MCP-->>Subagent: result
+    Subagent-->>Orchestrator: task complete
+    Orchestrator-->>User: "Report emailed."
 ```
 
 ### Cross-Agent Tool Access Matrix
@@ -300,41 +234,20 @@ skills:
 
 ### After: Tool Resolution Flow
 
-```
-                    +---------------------------+
-                    | subagent config            |
-                    | allowed_tools: [a, b, c]   |
-                    | denied_tools: [c]           |
-                    | tool_approval: [b]          |
-                    +-------------+-------------+
-                                  |
-                    +-------------v-------------+
-                    | Step 1: migrate_tools_    |
-                    | field() -- backward compat |
-                    | "tools" -> "allowed_tools" |
-                    +-------------+-------------+
-                                  |
-                    +-------------v-------------+
-                    | Step 2: resolve_tools()   |
-                    | match allowed_tools names |
-                    | -> resolved: [a, b, c]    |
-                    +-------------+-------------+
-                                  |
-                    +-------------v-------------+
-                    | Step 3: filter_denied_    |
-                    | tools() -- remove denied  |
-                    | denied: [c]               |
-                    | -> filtered: [a, b]       |
-                    +-------------+-------------+
-                                  |
-                    +-------------v--------------+
-                    | Step 4: build interrupt_on |
-                    | (compiled subagents only)  |
-                    | tool_approval: [b]         |
-                    | -> interrupt_on: {b: True} |
-                    | passed to create_deep_     |
-                    | agent()                    |
-                    +----------------------------+
+```mermaid
+flowchart TD
+    A["Subagent Config\nallowed_tools: [a, b, c]\ndenied_tools: [c]\ntool_approval: [b]"] --> B
+
+    B["Step 1: migrate_tools_field()\nbackward compat\n'tools' → 'allowed_tools'"] --> C
+
+    C["Step 2: resolve_tools()\nmatch allowed_tools names\n→ resolved: [a, b, c]"] --> D
+
+    D["Step 3: filter_denied_tools()\ndenied: [c]\n→ filtered: [a, b]"] --> E
+
+    E["Step 4: build interrupt_on\n(compiled subagents only)\ntool_approval: [b]\n→ interrupt_on: {b: True}\npassed to create_deep_agent()"]
+
+    style D fill:#f90,color:#fff
+    style E fill:#4a4,color:#fff
 ```
 
 ### Module Layout
