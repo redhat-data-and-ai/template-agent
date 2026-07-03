@@ -13,7 +13,7 @@ declarative config into the parameters needed by the middleware builder.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -27,6 +27,19 @@ class SummarizationToolConfig(BaseModel):
     """Config for SummarizationToolMiddleware."""
 
     enabled: bool = True
+
+
+class HumanApprovalConfig(BaseModel):
+    """Config for human-in-the-loop tool approval.
+
+    When enabled, the agent pauses before executing any tool call and
+    waits for the user to approve, reject, or always-allow it.
+    Backed by deepagents HumanInTheLoopMiddleware via interrupt_on.
+    """
+
+    enabled: bool = False
+    mode: Literal["all", "none"] = "all"
+    exclude: list[str] = Field(default_factory=list)
 
 
 class MemoryConfig(BaseModel):
@@ -106,6 +119,7 @@ class MiddlewareDefaults(BaseModel):
     summarization_tool: SummarizationToolConfig = Field(
         default_factory=SummarizationToolConfig
     )
+    human_approval: HumanApprovalConfig = Field(default_factory=HumanApprovalConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     patch_tool_calls: PatchToolCallsConfig = Field(default_factory=PatchToolCallsConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
@@ -138,6 +152,7 @@ class ResolvedMiddlewareConfig(BaseModel):
     """Final resolved config for a single agent after merge."""
 
     summarization_tool_enabled: bool = True
+    human_approval: HumanApprovalConfig = Field(default_factory=HumanApprovalConfig)
     memory_enabled: bool = True
     memory_namespaces: list[str] = Field(default_factory=lambda: ["memories"])
     patch_tool_calls_enabled: bool = True
@@ -224,8 +239,15 @@ def resolve_middleware(
     if "patch_tool_calls" in profile.excluded_middleware:
         patch_enabled = False
 
+    human_approval = defaults.human_approval
+    if isinstance(overrides.get("human_approval"), dict):
+        human_approval = HumanApprovalConfig.model_validate(overrides["human_approval"])
+    elif isinstance(overrides.get("human_approval"), bool):
+        human_approval = HumanApprovalConfig(enabled=overrides["human_approval"])
+
     return ResolvedMiddlewareConfig(
         summarization_tool_enabled=summarization_enabled,
+        human_approval=human_approval,
         memory_enabled=memory_enabled,
         memory_namespaces=memory_namespaces,
         patch_tool_calls_enabled=patch_enabled,

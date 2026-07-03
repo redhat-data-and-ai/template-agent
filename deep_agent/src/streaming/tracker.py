@@ -29,7 +29,8 @@ def extract_tool_call_id(msg: AIMessageChunk) -> str | None:
     """
     try:
         if msg.tool_calls:
-            return msg.tool_calls[0].get("id")
+            tool_call_id = msg.tool_calls[0].get("id")
+            return tool_call_id if isinstance(tool_call_id, str) else None
         return None
     except (IndexError, KeyError) as e:
         logger.debug(f"Could not extract tool call ID: {e}")
@@ -44,11 +45,11 @@ class ToolCallTracker:
     current tool call ID for proper attribution in the UI.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the tracker."""
         self._current_tool_call_id: str | None = None
 
-    def reset(self):
+    def reset(self) -> None:
         """Clear the current tool call ID."""
         self._current_tool_call_id = None
 

@@ -1,12 +1,18 @@
-## Unified Compose Stack
+## Agent compose stack — agent + dependencies only (no MCP, no UI)
 ##
-## Default (dev):  Agent + infra only (pgvector, redis)
-##   make dev           - Start dev stack
-##   make dev-down      - Stop dev stack
+##   make local      - pgvector + redis in compose; agent process on host
+##   make container  - pgvector + redis + agent in compose
+##   make dev        - same as container, detached + log tail
+##
+## MCP and UI run from their own repos (template-mcp-server, template-ui).
 ##
 ## Demo profile:   Adds UI + MCP Server with SSO authentication
 ##   make demo          - Clone repos, configure, start full stack
 ##   make clean         - Stop stack, remove data + cloned repos
+##
+## Observability profile:  Adds Jaeger (also enabled by `make container`)
+##   docker compose --profile observability up
+##   Set ENABLE_OTEL=true in .env to enable metrics/tracing export
 ##
 ## Services (always):
 ##   pgvector              - Postgres (agent checkpoints)
@@ -16,11 +22,14 @@
 ## Services (demo profile):
 ##   template-mcp-server   - MCP server with SSO auth (port 5001)
 ##   template-ui           - React/Fastify frontend with SSO auth (port 8080)
+##
+## Services (observability profile):
+##   jaeger                - Jaeger UI for trace visualization (UI :16686)
 
 services:
   pgvector:
     image: ankane/pgvector
-    container_name: demo-pgvector
+    container_name: template-agent-pgvector
     environment:
       POSTGRES_DB: template_agent
       POSTGRES_USER: postgres
@@ -28,8 +37,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - demo_pgvector_data:/var/lib/postgresql/data
-      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/10-create-databases.sql:ro
+      - agent_pgvector_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d template_agent"]
@@ -38,16 +46,16 @@ services:
       retries: 5
       start_period: 30s
     networks:
-      - demo-network
+      - agent-network
 
   redis:
     image: redis:7-alpine
-    container_name: demo-redis
+    container_name: template-agent-redis
     command: redis-server --appendonly yes
     ports:
       - "6379:6379"
     volumes:
-      - demo_redis_data:/data
+      - agent_redis_data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -55,52 +63,21 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - demo-network
-
-  template-mcp-server:
-    profiles: [demo]
-    build:
-      context: .demo/template-mcp-server
-      dockerfile: Containerfile
-    container_name: demo-mcp-server
-    ports:
-      - "5001:5001"
-    env_file:
-      - .demo/mcp-server.env
-    environment:
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=5001
-      - ENABLE_AUTH=True
-      - POSTGRES_HOST=pgvector
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=mcp_server
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-    depends_on:
-      pgvector:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "-k", "http://0.0.0.0:5001/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    networks:
-      - demo-network
+      - agent-network
 
   template-agent:
+    profiles: [container]
     build:
       context: .
       dockerfile: Containerfile
-    container_name: demo-agent
+    container_name: template-agent
+    extra_hosts:
+      - "host.containers.internal:host-gateway"
     ports:
       - "5002:5002"
     env_file:
       - .env
     environment:
-      # Framework-required: Aegra/LangGraph read these directly from env,
-      # not from settings.py. Container hostnames differ from local dev.
       - ENABLE_AUTH=true
       - POSTGRES_HOST=pgvector
       - POSTGRES_PORT=5432
@@ -109,6 +86,11 @@ services:
       - POSTGRES_PASSWORD=postgres
       - REDIS_URL=redis://redis:6379/0
       - REDIS_BROKER_ENABLED=true
+      # OTEL (enable via env — make container sets these when Jaeger profile is active)
+      - ENABLE_OTEL=${ENABLE_OTEL:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - ENABLE_OTEL_TRACES=${ENABLE_OTEL_TRACES:-false}
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4317}
     depends_on:
       pgvector:
         condition: service_healthy
@@ -125,45 +107,29 @@ services:
       - ./deep_agent:/app/deep_agent:ro
       - ./config:/app/config:ro
     networks:
-      - demo-network
+      - agent-network
 
-  template-ui:
-    profiles: [demo]
-    build:
-      context: .demo/template-ui
-      dockerfile: Containerfile
-    container_name: demo-ui
+  # ── Observability Stack ──────────────────────────────────────────────
+
+  jaeger:
+    profiles: [observability]
+    image: jaegertracing/all-in-one:1.55
+    container_name: demo-jaeger
     ports:
-      - "8080:8080"
-    env_file:
-      - .demo/ui.env
+      - "16686:16686"  # Jaeger UI
+      - "4317"         # OTLP gRPC receiver (internal only)
     environment:
-      - PORT=8080
-      - AGENT_HOST=http://template-agent:5002
-      - AUTH_ENABLED=true
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    depends_on:
-      template-agent:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://0.0.0.0:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 45s
     networks:
       - demo-network
 
 volumes:
-  demo_pgvector_data:
+  agent_pgvector_data:
     driver: local
-  demo_redis_data:
+  agent_redis_data:
     driver: local
 
 networks:
-  demo-network:
+  agent-network:
     driver: bridge

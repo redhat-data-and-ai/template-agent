@@ -73,9 +73,7 @@ class TestParseModelConfig:
         assert spec3.provider == Provider.MAAS  # Inferred
 
     def test_parses_object_form(self):
-        spec = parse_model_config(
-            {"provider": "vertex", "name": "gemini-2.5-pro"}
-        )
+        spec = parse_model_config({"provider": "vertex", "name": "gemini-2.5-pro"})
         assert spec.provider == Provider.VERTEX
         assert spec.name == "gemini-2.5-pro"
 
@@ -256,7 +254,10 @@ class TestCreateByProvider:
             return_value=mock_model,
         ) as mock_vertex:
             result = _create_by_provider(
-                Provider.VERTEX, "gemini-2.5-pro", temperature=0.0, max_output_tokens=8192
+                Provider.VERTEX,
+                "gemini-2.5-pro",
+                temperature=0.0,
+                max_output_tokens=8192,
             )
         assert result is mock_model
         mock_vertex.assert_called_once_with("gemini-2.5-pro", 0.0, 8192)

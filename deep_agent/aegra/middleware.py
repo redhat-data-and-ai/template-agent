@@ -51,7 +51,9 @@ def validate_jwt_token(token: str) -> dict[str, Any]:
     try:
         import jwt
 
-        claims = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        claims: dict[str, Any] = jwt.decode(
+            token, JWT_SECRET, algorithms=[JWT_ALGORITHM]
+        )
         if claims.get("exp") and claims["exp"] < time.time():
             raise AuthError("Token expired")
         return claims

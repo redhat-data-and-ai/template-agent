@@ -17,7 +17,7 @@ Feature flag: ``CACHE_MODEL_ENABLED`` (+ master ``CACHE_ENABLED``).
 
 import threading
 
-from cachetools import TTLCache  # type: ignore[import-untyped]
+from cachetools import TTLCache
 
 from deep_agent.src.agent.config.model import ModelSpec, model_spec_cache_key
 from deep_agent.src.cache import metrics

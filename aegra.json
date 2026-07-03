@@ -10,7 +10,7 @@
   "env": ".env",
   "python_version": "3.12",
   "http": {
-    "app": "./deep_agent/aegra/feedback.py:app",
+    "app": "./deep_agent/aegra/http_app.py:app",
     "cors": {
       "allow_origins": ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8080", "http://127.0.0.1:8080"],
       "allow_methods": ["*"],

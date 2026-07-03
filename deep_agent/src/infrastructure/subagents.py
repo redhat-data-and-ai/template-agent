@@ -14,7 +14,7 @@ Functions:
     load_subagents: Build all subagents from config/subagents/*.md
 """
 
-from typing import Any
+from typing import Any, cast
 
 from deepagents import SubAgent
 from deepagents.middleware.subagents import CompiledSubAgent
@@ -25,7 +25,11 @@ except ImportError:
     AsyncSubAgent = None
 
 from deep_agent.src.agent.config import agent_config
-from deep_agent.src.agent.config.model import ModelSpec, infer_provider, parse_model_config
+from deep_agent.src.agent.config.model import (
+    ModelSpec,
+    infer_provider,
+    parse_model_config,
+)
 from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
 from deep_agent.src.exceptions import LLMError, SubAgentError
 from deep_agent.src.infrastructure.middleware import (
@@ -150,7 +154,7 @@ def _inherit_from_orchestrator(
 
 
 def _normalize_model_to_dict(
-    raw_model: str | dict[str, Any],
+    raw_model: Any,
     strip_fallback: bool = False,
 ) -> dict[str, Any] | Any:
     """Normalize model config (string or dict) to dict format.
@@ -172,13 +176,11 @@ def _normalize_model_to_dict(
         if strip_fallback and "fallback" in result:
             del result["fallback"]
         return result
-    else:
-        # Invalid type - return as-is and let parse_model_config fail later
-        logger.warning(
-            "Invalid model config type: %s, letting parse_model_config handle error",
-            type(raw_model).__name__,
-        )
-        return raw_model
+    logger.warning(
+        "Invalid model config type: %s, letting parse_model_config handle error",
+        type(raw_model).__name__,
+    )
+    return raw_model
 
 
 def _inject_fallback_if_missing(
@@ -200,7 +202,7 @@ def _inject_fallback_if_missing(
     # Normalize subagent model to dict
     model_dict = _normalize_model_to_dict(subagent_model)
     if not isinstance(model_dict, dict):
-        return model_dict  # Invalid type, will fail later in parse_model_config
+        return cast("str | dict[str, Any]", model_dict)
 
     # Case 3: Subagent already has fallback → keep as-is
     if "fallback" in model_dict:
@@ -235,7 +237,6 @@ def _create_primary_model(spec: ModelSpec) -> object:
     Returns:
         A BaseChatModel instance for the primary model only.
     """
-
     # Create a spec without fallback for the primary model
     primary_spec = ModelSpec(provider=spec.provider, name=spec.name, fallback=None)
 
@@ -283,7 +284,9 @@ def _build_fallback_middleware(spec: ModelSpec) -> list[Any]:
     try:
         from langchain.agents.middleware import ModelFallbackMiddleware
     except ImportError:
-        logger.warning("ModelFallbackMiddleware not available, skipping fallback configuration")
+        logger.warning(
+            "ModelFallbackMiddleware not available, skipping fallback configuration"
+        )
         return []
 
     # Create fallback model using the model cache
@@ -362,7 +365,9 @@ def _build_default_subagent(
         )
 
     spec = parse_model_config(agent_cfg["model"])
-    logger.info("Subagent '%s' [default] using model: %s", name, _format_model_log(spec))
+    logger.info(
+        "Subagent '%s' [default] using model: %s", name, _format_model_log(spec)
+    )
 
     tool_names: list[str] = agent_cfg.get("tools", [])
     mcp_names: list[str] = agent_cfg.get("mcps", [])
@@ -387,6 +392,7 @@ def _build_default_subagent(
 
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
+    subagent_middleware = [*fallback_mw]
 
     subagent_params: dict[str, Any] = {
         "name": name,
@@ -453,6 +459,7 @@ def _build_compiled_subagent(
 
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
+    compiled_middleware = [*fallback_mw]
 
     create_kwargs = {
         "name": name,

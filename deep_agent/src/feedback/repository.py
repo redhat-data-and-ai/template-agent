@@ -33,6 +33,7 @@ class FeedbackRepository:
     """Thin async wrapper around the message_feedback table."""
 
     def __init__(self, database_uri: str) -> None:
+        """Initialize with a Postgres connection URI."""
         self._uri = database_uri
 
     async def ensure_table(self) -> None:

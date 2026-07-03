@@ -82,9 +82,7 @@ def parse_model_config(raw: str | dict[str, Any]) -> ModelSpec:
         return ModelSpec(provider=infer_provider(name), name=name)
 
     if not isinstance(raw, dict):
-        raise TypeError(
-            f"model config must be str or dict, got {type(raw).__name__}"
-        )
+        raise TypeError(f"model config must be str or dict, got {type(raw).__name__}")
 
     allowed_keys = {"provider", "name", "fallback"}
     unknown = set(raw.keys()) - allowed_keys
@@ -94,14 +92,15 @@ def parse_model_config(raw: str | dict[str, Any]) -> ModelSpec:
             f"allowed: {sorted(allowed_keys)}"
         )
 
-    name = raw.get("name")
-    if not name or not str(name).strip():
+    name_raw = raw.get("name")
+    if not isinstance(name_raw, str) or not name_raw.strip():
         raise ValueError("model config object requires non-empty 'name'")
+    name = name_raw.strip()
 
     # Provider is optional - infer from name if not provided
     provider_raw = raw.get("provider")
     if provider_raw is None:
-        provider = infer_provider(str(name).strip())
+        provider = infer_provider(name)
     else:
         try:
             provider = Provider(provider_raw)

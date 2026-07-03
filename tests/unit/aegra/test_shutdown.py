@@ -129,9 +129,7 @@ class TestRunShutdown:
                 return_value="ok",
             ) as mock_sched,
             patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
-            patch.object(
-                shutdown_mod, "_close_redis", return_value="ok"
-            ) as mock_redis,
+            patch.object(shutdown_mod, "_close_redis", return_value="ok") as mock_redis,
         ):
             result = await run_shutdown()
 
@@ -177,9 +175,7 @@ class TestShutdownLangfuse:
         mock_client.flush.assert_called_once()
 
     async def test_skips_when_not_configured(self):
-        with patch(
-            "deep_agent.aegra.telemetry.get_langfuse_client", return_value=None
-        ):
+        with patch("deep_agent.aegra.telemetry.get_langfuse_client", return_value=None):
             result = await _shutdown_langfuse()
         assert "skipped" in result
 

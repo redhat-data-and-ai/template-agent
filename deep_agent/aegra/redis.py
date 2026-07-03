@@ -11,8 +11,13 @@ Environment variables:
     REDIS_RETRY_ON_TIMEOUT: Enable retry (default: true)
 """
 
+import asyncio
 import os
-from typing import Any
+import secrets
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any, Literal
 
 from deep_agent.utils.pylogger import get_python_logger
 
@@ -114,6 +119,19 @@ def cache_set(key: str, value: str, ttl_seconds: int = 300) -> bool:
         return False
 
 
+def cache_set_persistent(key: str, value: str) -> bool:
+    """Write a value to Redis without expiry. Returns False on error."""
+    client = get_redis_client()
+    if client is None:
+        return False
+    try:
+        client.set(f"{REDIS_KEY_PREFIX}{key}", value)
+        return True
+    except Exception:
+        logger.debug("Persistent cache write failed for key '%s'", key, exc_info=True)
+        return False
+
+
 def cache_delete(key: str) -> bool:
     """Delete a key from Redis cache. Returns False on error."""
     client = get_redis_client()
@@ -124,3 +142,88 @@ def cache_delete(key: str) -> bool:
         return True
     except Exception:
         return False
+
+
+_RELEASE_LOCK_LUA = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
+
+def _lock_key(name: str) -> str:
+    return f"{REDIS_KEY_PREFIX}lock:{name}"
+
+
+def acquire_distributed_lock(
+    name: str,
+    *,
+    ttl_seconds: int = 30,
+    wait_seconds: float = 10.0,
+    poll_interval: float = 0.05,
+) -> str | None:
+    """Acquire a Redis lock. Returns a token, or None if unavailable or timed out."""
+    client = get_redis_client()
+    if client is None:
+        return None
+
+    token = secrets.token_urlsafe(16)
+    key = _lock_key(name)
+    deadline = time.monotonic() + wait_seconds
+
+    while True:
+        try:
+            if client.set(key, token, nx=True, ex=ttl_seconds):
+                return token
+        except Exception:
+            logger.debug("Lock acquire failed for '%s'", name, exc_info=True)
+            return None
+
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(poll_interval)
+
+
+def release_distributed_lock(name: str, token: str) -> bool:
+    """Release a Redis lock when the token still matches."""
+    client = get_redis_client()
+    if client is None:
+        return False
+    try:
+        return bool(client.eval(_RELEASE_LOCK_LUA, 1, _lock_key(name), token))
+    except Exception:
+        logger.debug("Lock release failed for '%s'", name, exc_info=True)
+        return False
+
+
+LockState = Literal["held", "no_redis", "timeout"]
+
+
+@asynccontextmanager
+async def distributed_lock(
+    name: str,
+    *,
+    ttl_seconds: int = 30,
+    wait_seconds: float = 10.0,
+) -> AsyncIterator[LockState]:
+    """Yield lock state for a Redis-backed distributed lock."""
+    if get_redis_client() is None:
+        yield "no_redis"
+        return
+
+    token = await asyncio.to_thread(
+        acquire_distributed_lock,
+        name,
+        ttl_seconds=ttl_seconds,
+        wait_seconds=wait_seconds,
+    )
+    if token is None:
+        yield "timeout"
+        return
+
+    try:
+        yield "held"
+    finally:
+        await asyncio.to_thread(release_distributed_lock, name, token)
