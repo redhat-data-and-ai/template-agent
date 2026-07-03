@@ -145,7 +145,7 @@ async def agent(runtime: ServerRuntime) -> Any:
     orch_model_raw = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
     system_prompt = orchestrator_cfg.get("body", "")
     skill_paths = orchestrator_cfg.get("skill_paths", [])
-    tool_names = orchestrator_cfg.get("tools", [])
+    tool_names = orchestrator_cfg.get("allowed_tools", [])
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
     if user_identity:

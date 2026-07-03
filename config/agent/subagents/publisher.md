@@ -1,12 +1,17 @@
 ---
 name: publisher
-type: default
+type: compiled
 description: >
   Publishes fitness reports to users via email. Formats reports into
   Gmail-compatible HTML and sends them to a recipient. Expects complete
   report content and a recipient email address as input.
 model: gemini-2.5-pro
-tools:
+allowed_tools:
+  - send_email
+denied_tools:
+  - calculate_bmi
+  - search_web
+tool_approval:
   - send_email
 skills:
   - email-formatter

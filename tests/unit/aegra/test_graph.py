@@ -34,7 +34,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
@@ -101,7 +101,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
@@ -181,7 +181,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
             "mcps": ["dataverse-mcp-prod1"],
         }
         mock_config.resolve_tools.return_value = []
@@ -262,7 +262,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
 
@@ -327,9 +327,13 @@ class TestAgentFactory:
 
         assert result is mock_compiled
         call_kwargs = mock_create.call_args.kwargs
-        assert "interrupt_on" in call_kwargs, "interrupt_on was not passed to create_deep_agent"
+        assert "interrupt_on" in call_kwargs, (
+            "interrupt_on was not passed to create_deep_agent"
+        )
         assert isinstance(call_kwargs["interrupt_on"], dict)
-        assert len(call_kwargs["interrupt_on"]) > 0, "interrupt_on dict must not be empty"
+        assert len(call_kwargs["interrupt_on"]) > 0, (
+            "interrupt_on dict must not be empty"
+        )
         assert all(v is True for v in call_kwargs["interrupt_on"].values())
 
     @pytest.mark.asyncio
@@ -344,7 +348,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
 
