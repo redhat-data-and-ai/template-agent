@@ -37,6 +37,9 @@ from deep_agent.src.infrastructure.middleware import (
     _mcp_tool_names_from_tools,
     build_audit_middleware,
 )
+from deep_agent.src.infrastructure.tool_access import (
+    filter_denied_tools,
+)
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
@@ -370,24 +373,32 @@ def _build_default_subagent(
         "Subagent '%s' [default] using model: %s", name, _format_model_log(spec)
     )
 
-    tool_names: list[str] = agent_cfg.get("tools", [])
+    # Step 1: Resolve allowed tools (renamed from "tools")
+    allowed_names: list[str] = agent_cfg.get("allowed_tools", [])
     mcp_names: list[str] = agent_cfg.get("mcps", [])
 
-    if tool_names:
+    if allowed_names:
         resolved_tools: list[Any] = agent_config.resolve_tools(
-            tool_names, tools, agent_name=name
+            allowed_names, tools, agent_name=name
         )
     elif mcp_names and tools:
-        logger.info(
-            "Subagent '%s' declared MCP servers %s but no explicit tools; "
-            "exposing all %d available MCP tool(s)",
-            name,
-            mcp_names,
-            len(tools),
-        )
         resolved_tools = list(tools)
     else:
         resolved_tools = []
+
+    # Step 2: Filter denied tools
+    denied_names: list[str] = agent_cfg.get("denied_tools", [])
+    if denied_names:
+        resolved_tools = filter_denied_tools(
+            resolved_tools, denied_names, agent_name=name
+        )
+
+    if agent_cfg.get("tool_approval"):
+        raise ValueError(
+            f"Subagent '{name}' (default) does not support tool_approval — "
+            "default subagents run inline and cannot handle interrupt resume. "
+            "Change type to 'compiled' to use tool_approval."
+        )
 
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
@@ -437,24 +448,26 @@ def _build_compiled_subagent(
         "Subagent '%s' [compiled] using model: %s", name, _format_model_log(spec)
     )
 
-    tool_names: list[str] = agent_cfg.get("tools", [])
+    # Step 1: Resolve allowed tools (renamed from "tools")
+    allowed_names: list[str] = agent_cfg.get("allowed_tools", [])
     mcp_names: list[str] = agent_cfg.get("mcps", [])
 
-    if tool_names:
+    if allowed_names:
         resolved_tools: list[Any] = agent_config.resolve_tools(
-            tool_names, tools, agent_name=name
+            allowed_names, tools, agent_name=name
         )
     elif mcp_names and tools:
-        logger.info(
-            "Subagent '%s' [compiled] declared MCP servers %s but no explicit tools; "
-            "exposing all %d available MCP tool(s)",
-            name,
-            mcp_names,
-            len(tools),
-        )
         resolved_tools = list(tools)
     else:
         resolved_tools = []
+
+    # Step 2: Filter denied tools
+    denied_names: list[str] = agent_cfg.get("denied_tools", [])
+    if denied_names:
+        resolved_tools = filter_denied_tools(
+            resolved_tools, denied_names, agent_name=name
+        )
+
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
     # Build fallback middleware if spec has fallback configured
@@ -472,6 +485,14 @@ def _build_compiled_subagent(
     middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
     if middleware:
         create_kwargs["middleware"] = middleware
+
+    # tool_approval for compiled subagents: pass interrupt_on to their own graph
+    approval_names: list[str] = agent_cfg.get("tool_approval", [])
+    if approval_names:
+        import inspect as _inspect
+
+        if "interrupt_on" in _inspect.signature(create_deep_agent).parameters:
+            create_kwargs["interrupt_on"] = {n: True for n in approval_names}
 
     _inner = create_deep_agent(**create_kwargs)
 
@@ -504,6 +525,12 @@ def _build_async_subagent(
     never from frontmatter config. The env var name follows the convention:
     ``ASYNC_SUBAGENT_<NAME>_TOKEN`` (uppercased, hyphens → underscores).
     """
+    if agent_cfg.get("tool_approval"):
+        raise ValueError(
+            f"Subagent '{name}' (async) does not support tool_approval — "
+            "async subagents run remotely and cannot trigger local interrupts"
+        )
+
     if AsyncSubAgent is None:
         raise ValueError(
             f"Subagent '{name}' (async) requires deepagents with async support. "

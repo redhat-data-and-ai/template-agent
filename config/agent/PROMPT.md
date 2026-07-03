@@ -5,7 +5,7 @@ description: >
   routes to analyst and publisher subagents, manages TODO lists and
   delegates health metric analysis.
 model: gemini-2.5-pro
-tools:
+allowed_tools:
   - validate_email
   - queue_task
   - check_task_status
