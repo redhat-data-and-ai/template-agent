@@ -327,9 +327,13 @@ class TestAgentFactory:
 
         assert result is mock_compiled
         call_kwargs = mock_create.call_args.kwargs
-        assert "interrupt_on" in call_kwargs, "interrupt_on was not passed to create_deep_agent"
+        assert "interrupt_on" in call_kwargs, (
+            "interrupt_on was not passed to create_deep_agent"
+        )
         assert isinstance(call_kwargs["interrupt_on"], dict)
-        assert len(call_kwargs["interrupt_on"]) > 0, "interrupt_on dict must not be empty"
+        assert len(call_kwargs["interrupt_on"]) > 0, (
+            "interrupt_on dict must not be empty"
+        )
         assert all(v is True for v in call_kwargs["interrupt_on"].values())
 
     @pytest.mark.asyncio

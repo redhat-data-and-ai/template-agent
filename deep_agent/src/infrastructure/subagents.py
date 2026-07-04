@@ -392,7 +392,6 @@ def _build_default_subagent(
 
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
-    subagent_middleware = [*fallback_mw]
 
     subagent_params: dict[str, Any] = {
         "name": name,
@@ -459,7 +458,6 @@ def _build_compiled_subagent(
 
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
-    compiled_middleware = [*fallback_mw]
 
     create_kwargs = {
         "name": name,

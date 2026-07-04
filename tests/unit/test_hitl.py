@@ -20,7 +20,9 @@ def _tool(name: str) -> MagicMock:
 class TestBuildInterruptOn:
     def test_disabled_returns_empty(self):
         config = HumanApprovalConfig(enabled=False, mode="all")
-        result = build_interrupt_on(config, [_tool("send_email"), _tool("delete_record")])
+        result = build_interrupt_on(
+            config, [_tool("send_email"), _tool("delete_record")]
+        )
         assert result == {}
 
     def test_mode_none_returns_empty(self):
@@ -41,7 +43,9 @@ class TestBuildInterruptOn:
         config = HumanApprovalConfig(enabled=True, mode="all")
         result = build_interrupt_on(config, [])
         for builtin in _DEEPAGENTS_BUILTIN_TOOLS:
-            assert builtin in result, f"built-in tool '{builtin}' missing from interrupt_on"
+            assert builtin in result, (
+                f"built-in tool '{builtin}' missing from interrupt_on"
+            )
 
     def test_empty_tool_list_still_covers_builtins(self):
         """An agent with no MCP tools still gets HITL for built-in filesystem tools."""
@@ -53,7 +57,9 @@ class TestBuildInterruptOn:
     def test_exclude_removes_listed_tools(self):
         tools = [_tool("send_email"), _tool("search_web"), _tool("health_check")]
         config = HumanApprovalConfig(
-            enabled=True, mode="all", exclude=["health_check", "search_web", "ls", "read_file"]
+            enabled=True,
+            mode="all",
+            exclude=["health_check", "search_web", "ls", "read_file"],
         )
         result = build_interrupt_on(config, tools)
         assert result.get("send_email") is True

@@ -283,11 +283,6 @@ async def agent(runtime: ServerRuntime) -> Any:
     subagents = load_subagents(tools=mcp_tools)
     backend = get_configured_backend()
 
-    from deep_agent.src.infrastructure.middleware import (
-        build_middleware_list,
-        resolve_memory_param,
-    )
-
     middleware_overrides = orchestrator_cfg.get("middleware")
     resolved_mw = agent_config.resolve_agent_middleware(
         model_name, middleware_overrides

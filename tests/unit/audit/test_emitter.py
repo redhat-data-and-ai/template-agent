@@ -20,7 +20,9 @@ def _clear_context():
 class TestEmitAuditEventDisabled:
     def test_noop_when_disabled(self):
         with patch("deep_agent.src.audit.emitter.is_audit_enabled", return_value=False):
-            with patch("deep_agent.src.audit.emitter.sys.stdout", new_callable=StringIO) as out:
+            with patch(
+                "deep_agent.src.audit.emitter.sys.stdout", new_callable=StringIO
+            ) as out:
                 emit_audit_event("llm_call", model="test")
                 assert out.getvalue() == ""
 
@@ -29,7 +31,9 @@ class TestEmitAuditEventEnabled:
     def test_emits_envelope(self):
         bind_audit_context(user="alice@example.com", org="acme", trace_id="trace-1")
         with patch("deep_agent.src.audit.emitter.is_audit_enabled", return_value=True):
-            with patch("deep_agent.src.audit.emitter.sys.stdout", new_callable=StringIO) as out:
+            with patch(
+                "deep_agent.src.audit.emitter.sys.stdout", new_callable=StringIO
+            ) as out:
                 emit_audit_event("llm_call", model="gemini", phase="start")
                 record = json.loads(out.getvalue().strip())
                 assert record["event"] == "platform.audit"

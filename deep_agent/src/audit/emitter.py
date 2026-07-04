@@ -18,11 +18,26 @@ from deep_agent.utils.pylogger import SERVICE_NAME, get_python_logger
 logger = get_python_logger()
 
 # Sensitive keys to redact from audit details
-SENSITIVE_KEYS = frozenset({
-    "password", "token", "apikey", "api_key", "secret", "authorization",
-    "cookie", "session", "auth", "credentials", "privatekey", "private_key",
-    "accesstoken", "access_token", "refreshtoken", "refresh_token"
-})
+SENSITIVE_KEYS = frozenset(
+    {
+        "password",
+        "token",
+        "apikey",
+        "api_key",
+        "secret",
+        "authorization",
+        "cookie",
+        "session",
+        "auth",
+        "credentials",
+        "privatekey",
+        "private_key",
+        "accesstoken",
+        "access_token",
+        "refreshtoken",
+        "refresh_token",
+    }
+)
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -42,7 +57,7 @@ def _scrub_details(details: dict[str, Any], depth: int = 0) -> dict[str, Any]:
     if depth > MAX_DEPTH:
         return {"error": "max_depth_exceeded"}
 
-    scrubbed = {}
+    scrubbed: dict[str, Any] = {}
     for key, value in details.items():
         if _is_sensitive_key(key):
             scrubbed[key] = "[REDACTED]"
@@ -106,7 +121,7 @@ def _safe_json_default(obj: Any) -> str:
     if isinstance(obj, datetime):
         return obj.isoformat()
     if hasattr(obj, "isoformat"):  # date, time, etc.
-        return obj.isoformat()
+        return str(obj.isoformat())
     # Allow Path and UUID
     if isinstance(obj, (Path, UUID)):
         return str(obj)
@@ -119,23 +134,23 @@ def _emit_envelope(envelope: dict[str, Any]) -> None:
 
     try:
         line = json.dumps(
-            _format_record(envelope),
-            default=_safe_json_default,
-            ensure_ascii=False
+            _format_record(envelope), default=_safe_json_default, ensure_ascii=False
         )
 
         if len(line) > MAX_SIZE:
             logger.warning(
                 "audit_event_too_large",
                 size=len(line),
-                event_type=envelope.get("audit_event_type")
+                event_type=envelope.get("audit_event_type"),
             )
             # Emit a truncated error event instead
             error_envelope = {
                 **envelope,
-                "details": {"error": "event_too_large", "size": len(line)}
+                "details": {"error": "event_too_large", "size": len(line)},
             }
-            line = json.dumps(_format_record(error_envelope), default=_safe_json_default)
+            line = json.dumps(
+                _format_record(error_envelope), default=_safe_json_default
+            )
 
         sys.stdout.write(f"{line}\n")
         sys.stdout.flush()
@@ -144,7 +159,7 @@ def _emit_envelope(envelope: dict[str, Any]) -> None:
             "audit_emit_failed",
             error=str(exc),
             error_type=type(exc).__name__,
-            event_type=envelope.get("audit_event_type")
+            event_type=envelope.get("audit_event_type"),
         )
         enqueue(envelope)
 
@@ -155,18 +170,12 @@ def _flush_buffer() -> None:
     for envelope in pending:
         try:
             line = json.dumps(
-                _format_record(envelope),
-                default=_safe_json_default,
-                ensure_ascii=False
+                _format_record(envelope), default=_safe_json_default, ensure_ascii=False
             )
             sys.stdout.write(f"{line}\n")
             sys.stdout.flush()
         except Exception as exc:
-            logger.debug(
-                "audit_flush_failed",
-                error=str(exc),
-                remaining=len(pending)
-            )
+            logger.debug("audit_flush_failed", error=str(exc), remaining=len(pending))
             # Re-enqueue this event and stop (preserves order)
             enqueue(envelope)
             break

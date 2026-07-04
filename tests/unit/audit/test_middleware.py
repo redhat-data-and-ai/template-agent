@@ -32,7 +32,12 @@ class TestClassifyToolCallParity:
         ("tool", "args", "mcp_names", "expected"),
         [
             ("task", {"subagent": "researcher"}, frozenset(), "subagent_delegation"),
-            ("gitlab_search", {"q": "x"}, frozenset({"gitlab_search"}), "mcp_tool_call"),
+            (
+                "gitlab_search",
+                {"q": "x"},
+                frozenset({"gitlab_search"}),
+                "mcp_tool_call",
+            ),
             ("edit_file", {"path": "/memories/x.md"}, frozenset(), "memory_write"),
             ("calculate_bmi", {}, frozenset(), ""),
         ],
@@ -49,7 +54,9 @@ class TestAuditMiddlewareClassification:
         request.messages = []
         handler = MagicMock(return_value=MagicMock())
 
-        with patch("deep_agent.src.audit.middleware.is_audit_enabled", return_value=True):
+        with patch(
+            "deep_agent.src.audit.middleware.is_audit_enabled", return_value=True
+        ):
             with patch("deep_agent.src.audit.middleware.emit_audit_event") as emit:
                 mw.wrap_model_call(request, handler)
                 assert emit.call_count == 2
@@ -64,7 +71,9 @@ class TestAuditMiddlewareClassification:
         request.messages = []
         handler = MagicMock(return_value=MagicMock())
 
-        with patch("deep_agent.src.audit.middleware.is_audit_enabled", return_value=True):
+        with patch(
+            "deep_agent.src.audit.middleware.is_audit_enabled", return_value=True
+        ):
             with patch("deep_agent.src.audit.middleware.emit_audit_event") as emit:
                 mw.wrap_model_call(request, handler)
                 assert emit.call_args_list[0].kwargs["agent"] == "orchestrator"
@@ -80,7 +89,9 @@ class TestAuditMiddlewareClassification:
         }
         handler = AsyncMock(return_value=MagicMock())
 
-        with patch("deep_agent.src.audit.middleware.is_audit_enabled", return_value=True):
+        with patch(
+            "deep_agent.src.audit.middleware.is_audit_enabled", return_value=True
+        ):
             with patch("deep_agent.src.audit.middleware.emit_audit_event") as emit:
                 await mw.awrap_tool_call(request, handler)
                 emit.assert_called_once()
@@ -98,7 +109,9 @@ class TestAuditMiddlewareClassification:
         request.tool_call = {"name": "gitlab_search", "args": {"q": "x"}, "id": "1"}
         handler = AsyncMock(return_value=MagicMock())
 
-        with patch("deep_agent.src.audit.middleware.is_audit_enabled", return_value=True):
+        with patch(
+            "deep_agent.src.audit.middleware.is_audit_enabled", return_value=True
+        ):
             with patch("deep_agent.src.audit.middleware.emit_audit_event") as emit:
                 await mw.awrap_tool_call(request, handler)
                 emit.assert_called_once()
@@ -112,7 +125,9 @@ class TestAuditMiddlewareClassification:
         request.tool_call = {"name": "calculate_bmi", "args": {}, "id": "1"}
         handler = AsyncMock(return_value=MagicMock())
 
-        with patch("deep_agent.src.audit.middleware.is_audit_enabled", return_value=True):
+        with patch(
+            "deep_agent.src.audit.middleware.is_audit_enabled", return_value=True
+        ):
             with patch("deep_agent.src.audit.middleware.emit_audit_event") as emit:
                 await mw.awrap_tool_call(request, handler)
                 emit.assert_not_called()
@@ -124,7 +139,9 @@ class TestAuditMiddlewareClassification:
         request.tool_call = {"name": "calculate_bmi", "args": {}, "id": "1"}
         handler = AsyncMock(return_value=MagicMock())
 
-        with patch("deep_agent.src.audit.middleware.is_audit_enabled", return_value=True):
+        with patch(
+            "deep_agent.src.audit.middleware.is_audit_enabled", return_value=True
+        ):
             with patch("deep_agent.src.audit.middleware.emit_audit_event") as emit:
                 await mw.awrap_tool_call(request, handler)
                 emit.assert_not_called()

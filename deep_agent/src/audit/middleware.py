@@ -54,7 +54,9 @@ def _model_name(request: ModelRequest[Any]) -> str:
     model = request.model
     if isinstance(model, str):
         return model
-    return getattr(model, "model_name", None) or getattr(model, "model", None) or "unknown"
+    return (
+        getattr(model, "model_name", None) or getattr(model, "model", None) or "unknown"
+    )
 
 
 def classify_tool_call(
@@ -83,6 +85,7 @@ class AuditMiddleware(AgentMiddleware):
         subagent: str | None = None,
         agent: str | None = None,
     ) -> None:
+        """Initialize with optional MCP tool filter and agent identity."""
         self._mcp_tool_names = mcp_tool_names or frozenset()
         self._agent = agent or subagent or _ORCHESTRATOR_AGENT
 
@@ -166,6 +169,7 @@ class AuditMiddleware(AgentMiddleware):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
+        """Async wrapper that audits LLM model invocations."""
         if not is_audit_enabled():
             return await handler(request)
 
@@ -201,9 +205,7 @@ class AuditMiddleware(AgentMiddleware):
         return response
 
     def _classify_tool(self, tool_name: str, args: dict[str, Any]) -> str:
-        return classify_tool_call(
-            tool_name, args, mcp_tool_names=self._mcp_tool_names
-        )
+        return classify_tool_call(tool_name, args, mcp_tool_names=self._mcp_tool_names)
 
     def _emit_tool_event(
         self,
@@ -228,8 +230,8 @@ class AuditMiddleware(AgentMiddleware):
             details["error"] = error
 
         if audit_type == AuditEventType.SUBAGENT_DELEGATION:
-            details["delegated_subagent"] = (
-                tool_args.get("subagent") or tool_args.get("name")
+            details["delegated_subagent"] = tool_args.get("subagent") or tool_args.get(
+                "name"
             )
         elif audit_type == AuditEventType.MEMORY_WRITE:
             details["path"] = _tool_path(tool_args)
@@ -294,6 +296,7 @@ class AuditMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
+        """Async wrapper that audits tool invocations."""
         if not is_audit_enabled():
             return await handler(request)
 
