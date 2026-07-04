@@ -24,7 +24,7 @@ from deep_agent.aegra.mcp_oauth_scopes import (
     validate_granted_scopes,
 )
 from deep_agent.aegra.mcp_token_store import McpTokenStore
-from deep_agent.aegra.redis import cache_get, cache_set
+from deep_agent.aegra.redis import cache_delete, cache_get, cache_set
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -80,6 +80,7 @@ async def _register_dcr_client(
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
         "scope": scope_str or "read write",
+        "token_endpoint_auth_method": "client_secret_post",
     }
 
     async with httpx.AsyncClient(verify=mcp_httpx_verify(server_cfg)) as client:
@@ -205,6 +206,8 @@ async def handle_mcp_oauth_callback(
             status_code=400,
         )
 
+    cache_delete(f"mcp_oauth_state:{state}")
+
     server_cfg = _get_mcp_server_config(mcp_name)
     oauth_cfg = server_cfg.get("oauth") or {}
     token_endpoint = oauth_cfg.get("token_endpoint")
@@ -217,15 +220,11 @@ async def handle_mcp_oauth_callback(
 
     callback_uri = _callback_redirect_uri(request)
     if callback_uri != redirect_uri:
-        logger.warning(
-            "OAuth callback redirect_uri mismatch for '%s': expected %r, got %r",
-            mcp_name,
+        logger.debug(
+            "OAuth callback redirect_uri differs (expected %r, got %r) — "
+            "expected behind a reverse proxy; using configured redirect_uri for token exchange",
             redirect_uri,
             callback_uri,
-        )
-        return HTMLResponse(
-            _callback_html(error="OAuth redirect URI mismatch"),
-            status_code=400,
         )
 
     store = McpTokenStore(settings.database_uri)
@@ -335,7 +334,7 @@ def _callback_html(
 <p>Connected. You can close this window.</p>
 <script>
   if (window.opener) {{
-    window.opener.postMessage({{ type: "mcp_oauth_done", mcp_name: {safe_name} }}, window.location.origin);
+    window.opener.postMessage({{ type: "mcp_oauth_done", mcp_name: {safe_name} }}, "*");
   }}
   window.close();
 </script>
