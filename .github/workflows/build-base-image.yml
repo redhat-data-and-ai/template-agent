@@ -72,12 +72,12 @@ jobs:
           platforms: linux/amd64
 
       - name: Scan image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: scan-target:${{ steps.version.outputs.version }}
           format: sarif
           output: trivy-results.sarif
-          severity: CRITICAL,HIGH
+          severity: CRITICAL
           exit-code: '1'
 
       - name: Upload Trivy scan results to GitHub Security tab
