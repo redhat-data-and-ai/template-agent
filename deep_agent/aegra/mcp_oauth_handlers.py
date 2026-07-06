@@ -334,7 +334,7 @@ def _callback_html(
 <p>Connected. You can close this window.</p>
 <script>
   if (window.opener) {{
-    window.opener.postMessage({{ type: "mcp_oauth_done", mcp_name: {safe_name} }}, "*");
+    window.opener.postMessage({{ type: "mcp_oauth_done", mcp_name: {safe_name} }}, window.location.origin);
   }}
   window.close();
 </script>
