@@ -7,6 +7,7 @@ on:
     branches:
       - main
       - deep-agent
+      - feat/rhitaif-221
   workflow_dispatch:  # Allow manual trigger for testing
 
 permissions:
