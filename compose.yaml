@@ -8,6 +8,10 @@
 ##   make demo          - Clone repos, configure, start full stack
 ##   make clean         - Stop stack, remove data + cloned repos
 ##
+## Observability profile:  Adds Jaeger (also enabled by `make container`)
+##   docker compose --profile observability up
+##   Set ENABLE_OTEL=true in .env to enable metrics/tracing export
+##
 ## Services (always):
 ##   pgvector              - Postgres (agent checkpoints)
 ##   redis                 - Aegra broker (SSE streaming, job queue)
@@ -16,6 +20,9 @@
 ## Services (demo profile):
 ##   template-mcp-server   - MCP server with SSO auth (port 5001)
 ##   template-ui           - React/Fastify frontend with SSO auth (port 8080)
+##
+## Services (observability profile):
+##   jaeger                - Jaeger UI for trace visualization (UI :16686)
 
 services:
   pgvector:
@@ -109,6 +116,11 @@ services:
       - POSTGRES_PASSWORD=postgres
       - REDIS_URL=redis://redis:6379/0
       - REDIS_BROKER_ENABLED=true
+      # OTEL (enable via env — make container sets these when Jaeger profile is active)
+      - ENABLE_OTEL=${ENABLE_OTEL:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - ENABLE_OTEL_TRACES=${ENABLE_OTEL_TRACES:-false}
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4317}
     depends_on:
       pgvector:
         condition: service_healthy
@@ -155,6 +167,21 @@ services:
       timeout: 5s
       retries: 5
       start_period: 45s
+    networks:
+      - demo-network
+
+  # ── Observability Stack ──────────────────────────────────────────────
+
+  jaeger:
+    profiles: [observability]
+    image: jaegertracing/all-in-one:1.55
+    container_name: demo-jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317"         # OTLP gRPC receiver (internal only)
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
     networks:
       - demo-network
 

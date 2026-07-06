@@ -7,10 +7,14 @@ rewrites and context metadata injection.
 
 from typing import Any, Dict, List, Union
 
+from langchain_core.messages import BaseMessage
+
 from deep_agent.src.streaming.context import StreamContext
 
 
-def convert_message_to_api_format(chat_message, ctx: StreamContext) -> dict[str, Any]:
+def convert_message_to_api_format(
+    chat_message: Any, ctx: StreamContext
+) -> dict[str, Any]:
     """Convert ChatMessage to simplified API format.
 
     Args:
@@ -76,7 +80,7 @@ def remove_tool_calls(
     ]
 
 
-def should_skip_message(message) -> tuple[bool, str | None]:
+def should_skip_message(message: BaseMessage) -> tuple[bool, str | None]:
     """Determine if a message should be skipped.
 
     Args:

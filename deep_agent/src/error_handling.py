@@ -88,6 +88,36 @@ subagent_retry = retry(
     reraise=True,
 )
 
+try:
+    from pymongo.errors import (
+        AutoReconnect,
+        ConnectionFailure,
+        NetworkTimeout,
+        NotPrimaryError,
+        ServerSelectionTimeoutError,
+    )
+
+    _MONGO_TRANSIENT_ERRORS: tuple[type[Exception], ...] = (
+        AutoReconnect,
+        ConnectionFailure,
+        NetworkTimeout,
+        NotPrimaryError,
+        ServerSelectionTimeoutError,
+        ConnectionError,
+        TimeoutError,
+        OSError,
+    )
+except ImportError:  # pragma: no cover - pymongo optional at import time
+    _MONGO_TRANSIENT_ERRORS = (ConnectionError, TimeoutError, OSError)
+
+mongo_retry = retry(
+    retry=retry_if_exception_type(_MONGO_TRANSIENT_ERRORS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.2, min=0.1, max=2),
+    before_sleep=_log_retry,
+    reraise=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Circuit Breaker

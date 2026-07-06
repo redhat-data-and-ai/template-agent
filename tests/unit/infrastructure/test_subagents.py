@@ -39,7 +39,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ),
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -123,7 +126,7 @@ class TestLoadSubagents:
                     "model": "gemini-2.5-flash",
                     "description": "Analyst",
                     "body": "Prompt",
-                    "tools": ["calculate_bmi", "search_web"],
+                    "allowed_tools": ["calculate_bmi", "search_web"],
                 }
             }
             mock_resolve_tools.return_value = [mock_tool1, mock_tool2]
@@ -256,7 +259,7 @@ class TestLoadSubagents:
                     "model": "gemini-2.5-flash",
                     "description": "Analyst",
                     "body": "Prompt",
-                    "tools": [],
+                    "allowed_tools": [],
                 }
             }
             mock_create_model.return_value = mock_model
@@ -409,9 +412,7 @@ class TestAgentTypeSystem:
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
-            patch(
-                "deepagents.create_deep_agent"
-            ) as mock_create_agent,
+            patch("deepagents.create_deep_agent") as mock_create_agent,
             patch(
                 "deep_agent.src.infrastructure.backend.get_configured_backend"
             ) as mock_get_backend,
@@ -494,7 +495,9 @@ class TestAgentTypeSystem:
                     # No graph_id
                 }
             }
-            with pytest.raises(SubAgentError, match="requires deepagents with async support"):
+            with pytest.raises(
+                SubAgentError, match="requires deepagents with async support"
+            ):
                 load_subagents(tools=[])
 
 
@@ -516,7 +519,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -547,8 +553,13 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
+            patch(
+                "langchain.agents.middleware.ModelFallbackMiddleware"
+            ) as mock_middleware,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -583,8 +594,13 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
+            patch(
+                "langchain.agents.middleware.ModelFallbackMiddleware"
+            ) as mock_middleware,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -619,8 +635,13 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
+            patch(
+                "langchain.agents.middleware.ModelFallbackMiddleware"
+            ) as mock_middleware,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -659,7 +680,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -699,8 +723,13 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
+            patch(
+                "langchain.agents.middleware.ModelFallbackMiddleware"
+            ) as mock_middleware,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -718,3 +747,286 @@ class TestSubagentProviderConfig:
             call_kwargs = mock_sa.call_args[1]
             assert "middleware" in call_kwargs
             assert len(call_kwargs["middleware"]) == 1
+
+
+class TestToolAccessControl:
+    """Tests for allowed_tools, denied_tools, and tool_approval in subagent building."""
+
+    def test_denied_tools_filtered_from_resolved(self):
+        """Subagent with denied_tools has those tools removed."""
+        mock_tool_a = MagicMock()
+        mock_tool_a.name = "tool_a"
+        mock_tool_b = MagicMock()
+        mock_tool_b.name = "tool_b"
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "agent1": {
+                    "name": "agent1",
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a", "tool_b"],
+                    "denied_tools": ["tool_b"],
+                }
+            }
+            mock_resolve.return_value = [mock_tool_a, mock_tool_b]
+            mock_filter.return_value = [mock_tool_a]
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool_a, mock_tool_b])
+
+            mock_filter.assert_called_once_with(
+                [mock_tool_a, mock_tool_b], ["tool_b"], agent_name="agent1"
+            )
+            mock_sa.assert_called_once()
+            call_kwargs = mock_sa.call_args[1]
+            assert call_kwargs["tools"] == [mock_tool_a]
+
+    def test_default_subagent_rejects_tool_approval(self):
+        """Default subagent with tool_approval raises error — must use compiled."""
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+        ):
+            mock_get_configs.return_value = {
+                "agent1": {
+                    "name": "agent1",
+                    "type": "default",
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["sensitive_tool"],
+                    "tool_approval": ["sensitive_tool"],
+                }
+            }
+            with pytest.raises(SubAgentError, match="does not support tool_approval"):
+                load_subagents(tools=[])
+
+    def test_tool_approval_names_from_default_subagents_in_config(self):
+        """tool_approval field is read from default subagent configs."""
+        with patch(
+            "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+        ) as mock_get_configs:
+            configs = {
+                "default_agent": {
+                    "name": "default_agent",
+                    "type": "default",
+                    "tool_approval": ["send_email", "search_web"],
+                },
+                "compiled_agent": {
+                    "name": "compiled_agent",
+                    "type": "compiled",
+                    "tool_approval": ["delete_record"],
+                },
+            }
+            mock_get_configs.return_value = configs
+            # Verify default subagent has tool_approval, compiled does not
+            default_approvals = [
+                t
+                for _, c in configs.items()
+                if c.get("type", "default") == "default"
+                for t in c.get("tool_approval", [])
+            ]
+            assert "send_email" in default_approvals
+            assert "search_web" in default_approvals
+            assert "delete_record" not in default_approvals
+
+    def test_async_subagent_rejects_tool_approval(self):
+        """Async subagent with tool_approval raises error."""
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+        ):
+            mock_get_configs.return_value = {
+                "remote": {
+                    "name": "remote",
+                    "type": "async",
+                    "description": "Remote agent",
+                    "body": "",
+                    "graph_id": "remote-graph",
+                    "tool_approval": ["some_tool"],
+                }
+            }
+            with pytest.raises(SubAgentError, match="does not support tool_approval"):
+                load_subagents(tools=[])
+
+    def test_denied_tools_with_mcp_inheritance(self):
+        """Subagent inheriting all MCP tools still filters denied ones."""
+        mock_tool_a = MagicMock()
+        mock_tool_a.name = "safe_tool"
+        mock_tool_b = MagicMock()
+        mock_tool_b.name = "dangerous_tool"
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={"mcps": ["my-mcp"]},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "admin": {
+                    "name": "admin",
+                    "model": "gemini-2.5-flash",
+                    "description": "Admin",
+                    "body": "Prompt",
+                    # No allowed_tools — inherits all via mcps
+                    "denied_tools": ["dangerous_tool"],
+                }
+            }
+            mock_filter.return_value = [mock_tool_a]
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool_a, mock_tool_b])
+
+            mock_filter.assert_called_once()
+
+    def test_compiled_subagent_gets_denied_tools_filtered(self):
+        """Compiled subagent also filters denied tools (same as default)."""
+        mock_tool = MagicMock()
+        mock_tool.name = "tool_a"
+        mock_model = MagicMock()
+        mock_graph = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deepagents.create_deep_agent") as mock_create_agent,
+            patch(
+                "deep_agent.src.infrastructure.backend.get_configured_backend"
+            ) as mock_backend,
+            patch(
+                "deep_agent.src.infrastructure.subagents.CompiledSubAgent"
+            ) as mock_compiled,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "type": "compiled",
+                    "model": "gemini-2.5-pro",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a", "tool_b"],
+                    "denied_tools": ["tool_b"],
+                }
+            }
+            mock_resolve.return_value = [mock_tool]
+            mock_filter.return_value = [mock_tool]
+            mock_create_agent.return_value = mock_graph
+            mock_backend.return_value = MagicMock()
+            mock_compiled.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool])
+
+            mock_filter.assert_called_once()
+
+    def test_two_subagents_get_different_tool_sets(self):
+        """Two subagents with different allowed_tools get isolated tool sets."""
+        mock_tool_a = MagicMock()
+        mock_tool_a.name = "tool_a"
+        mock_tool_b = MagicMock()
+        mock_tool_b.name = "tool_b"
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+        ):
+            mock_get_configs.return_value = {
+                "agent_x": {
+                    "name": "agent_x",
+                    "model": "gemini-2.5-flash",
+                    "description": "Agent X",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a"],
+                },
+                "agent_y": {
+                    "name": "agent_y",
+                    "model": "gemini-2.5-flash",
+                    "description": "Agent Y",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_b"],
+                },
+            }
+            # resolve_tools returns different results per call
+            mock_resolve.side_effect = [[mock_tool_a], [mock_tool_b]]
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool_a, mock_tool_b])
+
+            assert mock_sa.call_count == 2
+            calls = mock_sa.call_args_list
+            # First subagent gets tool_a only
+            assert calls[0][1]["tools"] == [mock_tool_a]
+            # Second subagent gets tool_b only
+            assert calls[1][1]["tools"] == [mock_tool_b]

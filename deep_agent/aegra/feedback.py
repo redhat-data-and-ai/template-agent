@@ -1,8 +1,8 @@
-"""User feedback HTTP endpoint for Langfuse scores (B-1).
+"""User feedback HTTP endpoints for Langfuse scores (B-1).
 
-Registers ``POST /feedback`` on the Aegra custom FastAPI app (see
-``http.app`` in ``aegra.json``). Aegra loads this app as the base
-application and merges core LangGraph Platform routes onto it.
+Registers ``POST /feedback`` and ``GET /feedback/{thread_id}`` on the
+Aegra custom FastAPI app via :data:`feedback_router` (mounted from
+``http_app.py``).
 
 When Langfuse credentials are absent, submissions are logged and accepted
 without contacting Langfuse.
@@ -15,84 +15,22 @@ from __future__ import annotations
 
 import json
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from deep_agent.aegra.telemetry import get_langfuse_client
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.feedback.repository import FeedbackRepository
 from deep_agent.src.schema import FeedbackRequest, FeedbackResponse
 from deep_agent.src.settings import settings
-from deep_agent.utils.pylogger import (
-    bind_request_context,
-    clear_request_context,
-    get_python_logger,
-)
+from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-
-def _patch_aegra_persistence_if_inmemory() -> None:
-    """Disable aegra_api database initialization when running in-memory mode.
-
-    The aegra_api lifespan unconditionally calls db_manager.initialize() which
-    opens a PostgreSQL connection pool. When deploying without a database
-    (USE_INMEMORY_SAVER=true), this causes the pod to crash. This patch
-    replaces initialize() with a no-op so the lifespan completes cleanly.
-    """
-    import os
-
-    disable_persistence = os.environ.get("AEGRA_DISABLE_PERSISTENCE", "").lower() in (
-        "true",
-        "1",
-    )
-    use_inmemory = os.environ.get("USE_INMEMORY_SAVER", "").lower() in ("true", "1")
-
-    if not (disable_persistence or use_inmemory):
-        return
-
-    try:
-        from aegra_api.core.database import db_manager
-
-        async def _noop_initialize() -> None:
-            logger.info("aegra_db_initialize_skipped_inmemory_mode")
-
-        db_manager.initialize = _noop_initialize  # type: ignore[method-assign]
-        logger.info("aegra_persistence_patched_for_inmemory_mode")
-    except ImportError:
-        pass
-
-
-_patch_aegra_persistence_if_inmemory()
-
-from deep_agent.aegra.shutdown import register_atexit
-
-register_atexit()
-
-app = FastAPI(title="template-agent-custom")
-
-
-class TraceIDMiddleware(BaseHTTPMiddleware):
-    """Propagate X-Trace-ID from incoming requests into the logging context.
-
-    Every log line emitted during a request will include the trace_id,
-    enabling end-to-end correlation across UI → BFF → Agent.
-    """
-
-    async def dispatch(self, request: Request, call_next: Any) -> Any:
-        trace_id = request.headers.get("x-trace-id") or uuid4().hex
-        bind_request_context(trace_id=trace_id)
-        response = await call_next(request)
-        response.headers["X-Trace-ID"] = trace_id
-        clear_request_context()
-        return response
-
-
-app.add_middleware(TraceIDMiddleware)
+feedback_router = APIRouter(tags=["feedback"])
 
 
 def _score_to_feedback_polarity(req: FeedbackRequest) -> Literal["up", "down"]:
@@ -276,11 +214,22 @@ async def feedback_handler(request: Request) -> JSONResponse:
     )
 
 
-@app.get("/feedback/{thread_id}")
+def _validate_thread_id(thread_id: str) -> str:
+    """Validate that thread_id is a well-formed UUID."""
+    try:
+        return str(UUID(thread_id))
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Invalid thread_id format (expected UUID)"
+        ) from None
+
+
+@feedback_router.get("/feedback/{thread_id}")
 async def get_thread_feedback(
     thread_id: str, user_id: str = "anonymous"
 ) -> dict[str, Any]:
     """Return all feedback for a thread."""
+    thread_id = _validate_thread_id(thread_id)
     if not settings.database_uri:
         return {"feedback": []}
     repo = FeedbackRepository(settings.database_uri)
@@ -288,10 +237,38 @@ async def get_thread_feedback(
     return {"feedback": items}
 
 
-@app.get("/info")
+@feedback_router.get("/threads/{thread_id}/token-usage")
+async def get_thread_token_usage_endpoint(thread_id: str) -> dict[str, Any]:
+    """Return cumulative token usage for a thread."""
+    thread_id = _validate_thread_id(thread_id)
+    from dataclasses import asdict
+
+    from deep_agent.src.token_budget.service import (
+        TokenUsageNotFoundError,
+        TokenUsageUnavailableError,
+        get_thread_token_usage,
+    )
+
+    try:
+        usage = await get_thread_token_usage(thread_id)
+    except TokenUsageNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No token usage for thread {thread_id}",
+        ) from None
+    except TokenUsageUnavailableError:
+        raise HTTPException(
+            status_code=503,
+            detail="Token usage storage unavailable",
+        ) from None
+
+    return asdict(usage)
+
+
+@feedback_router.get("/info")
 async def get_agent_info() -> dict[str, str]:
     """Return agent identity metadata from config."""
     return {"name": agent_config.get_name()}
 
 
-app.add_api_route("/feedback", feedback_handler, methods=["POST"])
+feedback_router.add_api_route("/feedback", feedback_handler, methods=["POST"])

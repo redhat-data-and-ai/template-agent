@@ -59,9 +59,7 @@ def _warm_models() -> bool:
             if sub_model:
                 spec = parse_model_config(sub_model)
                 get_or_create_model_from_spec(spec)
-                logger.info(
-                    "Warmed subagent '%s' model: %s", name, spec.display_name()
-                )
+                logger.info("Warmed subagent '%s' model: %s", name, spec.display_name())
 
         return True
     except Exception:

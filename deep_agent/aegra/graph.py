@@ -57,13 +57,28 @@ _graph_cache: dict[str, Any] = {}
 _graph_cache_ts: dict[str, float] = {}
 
 
+def invalidate_graph_cache() -> None:
+    """Clear the compiled graph cache (e.g. after MCP OAuth connect)."""
+    global _graph_cache, _graph_cache_ts  # noqa: PLW0603
+    _graph_cache.clear()
+    _graph_cache_ts.clear()
+
+
 def _graph_fingerprint(
     model_name: str,
     system_prompt: str,
     tool_names: list[str],
+    hitl_enabled: bool = False,
+    hitl_mode: str = "all",
+    hitl_exclude: list[str] | None = None,
 ) -> str:
     """Stable fingerprint for graph cache keying."""
-    raw = f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}"
+    hitl_flag = (
+        f"hitl={int(hitl_enabled)}"
+        f",mode={hitl_mode}"
+        f",exclude={','.join(sorted(hitl_exclude or []))}"
+    )
+    raw = f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}\0{hitl_flag}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -96,6 +111,9 @@ async def agent(runtime: ServerRuntime) -> Any:
     """
     await _ensure_startup()
 
+    # Start timing graph build for OTEL metrics
+    build_start_mono = time.monotonic()
+
     from deepagents import create_deep_agent
 
     from deep_agent.aegra.mcp import (
@@ -103,12 +121,12 @@ async def agent(runtime: ServerRuntime) -> Any:
         refresh_access_token,
         set_mcp_auth_context,
     )
+    from deep_agent.aegra.mcp_tool_auth import wrap_mcp_tools_for_auth
     from deep_agent.src.agent.config import agent_config
     from deep_agent.src.infrastructure.async_tasks import build_async_middleware
     from deep_agent.src.infrastructure.backend import get_configured_backend
     from deep_agent.src.infrastructure.providers import (
         register_profiles_from_config,
-        resolve_model_from_config,
     )
     from deep_agent.src.infrastructure.subagents import load_subagents
 
@@ -119,17 +137,17 @@ async def agent(runtime: ServerRuntime) -> Any:
     if sso_token:
         sso_token = await refresh_access_token(sso_token, refresh_token)
 
-    set_mcp_auth_context(sso_token, refresh_token)
+    user_identity = getattr(user, "identity", None) if user else None
 
+    set_mcp_auth_context(sso_token, refresh_token, user_identity)
     orchestrator_cfg = agent_config.get_orchestrator_config()
     agent_name = orchestrator_cfg.get("name", "orchestrator")
     orch_model_raw = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
     system_prompt = orchestrator_cfg.get("body", "")
     skill_paths = orchestrator_cfg.get("skill_paths", [])
-    tool_names = orchestrator_cfg.get("tools", [])
+    tool_names = orchestrator_cfg.get("allowed_tools", [])
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
-    user_identity = getattr(user, "identity", None) if user else None
     if user_identity:
         try:
             from deep_agent.src.cache.personalization_cache import (
@@ -199,7 +217,9 @@ async def agent(runtime: ServerRuntime) -> Any:
     mcp_tools = await get_mcp_tools(
         sso_token=sso_token,
         server_names=mcp_server_names or None,
+        user_id=user_identity,
     )
+    mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
     tools = agent_config.resolve_tools(tool_names, mcp_tools, agent_name=agent_name)
     if not tools and not tool_names and mcp_server_names and mcp_tools:
         logger.info(
@@ -210,24 +230,6 @@ async def agent(runtime: ServerRuntime) -> Any:
         )
         tools = mcp_tools
 
-    cache_key = _graph_fingerprint(
-        model_name,
-        system_prompt,
-        [t.name for t in tools],
-    )
-    now = time.time()
-    graph_ttl = float(agent_config.get_cache_config().graph.ttl)
-    cached = _graph_cache.get(cache_key)
-    if cached is not None and (now - _graph_cache_ts.get(cache_key, 0)) < graph_ttl:
-        age = now - _graph_cache_ts[cache_key]
-        logger.warning("Graph cache HIT (age=%.1fs) — skipping rebuild", age)
-        return cached
-
-    logger.warning("Graph cache MISS — full rebuild")
-
-    subagents = load_subagents(tools=mcp_tools)
-    backend = get_configured_backend()
-
     from deep_agent.src.infrastructure.middleware import (
         build_middleware_list,
         resolve_memory_param,
@@ -237,6 +239,40 @@ async def agent(runtime: ServerRuntime) -> Any:
     resolved_mw = agent_config.resolve_agent_middleware(
         model_name, middleware_overrides
     )
+
+    cache_key = _graph_fingerprint(
+        model_name,
+        system_prompt,
+        [t.name for t in tools],
+        hitl_enabled=resolved_mw.human_approval.enabled,
+        hitl_mode=resolved_mw.human_approval.mode,
+        hitl_exclude=resolved_mw.human_approval.exclude,
+    )
+    now = time.time()
+    graph_ttl = float(agent_config.get_cache_config().graph.ttl)
+    cached = _graph_cache.get(cache_key)
+    if cached is not None and (now - _graph_cache_ts.get(cache_key, 0)) < graph_ttl:
+        age = now - _graph_cache_ts[cache_key]
+        logger.warning("Graph cache HIT (age=%.1fs) — skipping rebuild", age)
+
+        # Record cache hit metric
+        from deep_agent.aegra.otel import record_graph_built
+
+        mcp_tool_count = sum(1 for t in tools if t.name.startswith("mcp__"))
+        record_graph_built(
+            build_start_mono,
+            cache_hit=True,
+            mcp_tool_count=mcp_tool_count,
+            attributes={"model": model_name, "agent": agent_name},
+        )
+
+        return cached
+
+    logger.warning("Graph cache MISS — full rebuild")
+
+    subagents = load_subagents(tools=mcp_tools)
+    backend = get_configured_backend()
+
     middleware = build_middleware_list(resolved_mw, model=model, backend=backend)
     memory = resolve_memory_param(resolved_mw)
     skills_param = skill_paths if resolved_mw.skills_enabled else None
@@ -270,6 +306,23 @@ async def agent(runtime: ServerRuntime) -> Any:
         except (ImportError, TypeError):
             pass
 
+    if "interrupt_on" in create_sig.parameters:
+        from deep_agent.src.agent.config.hitl import build_interrupt_on
+
+        interrupt_on = build_interrupt_on(resolved_mw.human_approval, tools)
+        if interrupt_on:
+            create_kwargs["interrupt_on"] = interrupt_on
+        elif resolved_mw.human_approval.enabled:
+            logger.warning(
+                "HITL is enabled but interrupt_on is empty — "
+                "no tool calls will be interrupted (all tools may be excluded)"
+            )
+    elif resolved_mw.human_approval.enabled:
+        logger.warning(
+            "HITL is enabled but create_deep_agent does not support interrupt_on — "
+            "upgrade deepagents to activate human-in-the-loop approval"
+        )
+
     compiled = create_deep_agent(**create_kwargs)
 
     _graph_cache[cache_key] = compiled
@@ -283,6 +336,17 @@ async def agent(runtime: ServerRuntime) -> Any:
         sub_count,
         len(middleware),
         bool(sso_token),
+    )
+
+    # Record cache miss metric (graph was built)
+    from deep_agent.aegra.otel import record_graph_built
+
+    mcp_tool_count = sum(1 for t in tools if t.name.startswith("mcp__"))
+    record_graph_built(
+        build_start_mono,
+        cache_hit=False,
+        mcp_tool_count=mcp_tool_count,
+        attributes={"model": model_name, "agent": agent_name},
     )
 
     return compiled

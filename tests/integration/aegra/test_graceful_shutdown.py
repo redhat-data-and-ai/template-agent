@@ -59,10 +59,7 @@ class TestShutdownUnderConcurrentActivity:
             await asyncio.sleep(duration)
             completed_tasks.append(task_id)
 
-        tasks = [
-            asyncio.create_task(simulate_graph_run(i, i * 0.05))
-            for i in range(5)
-        ]
+        tasks = [asyncio.create_task(simulate_graph_run(i, i * 0.05)) for i in range(5)]
 
         patches = _mock_all_subsystems(drain_seconds=0.3)
         with patches[0], patches[1], patches[2], patches[3]:

@@ -9,6 +9,7 @@ from deep_agent.aegra.mcp import (
     _connect_single_server,
     _get_server_configs,
     get_mcp_tools,
+    mcp_httpx_verify,
 )
 
 
@@ -50,6 +51,19 @@ class TestGetServerConfigs:
             assert result == {}
 
 
+class TestMcpHttpxVerify:
+    """Tests for mcp_httpx_verify helper."""
+
+    def test_defaults_to_true(self):
+        assert mcp_httpx_verify({}) is True
+
+    def test_respects_ssl_verify_false(self):
+        assert mcp_httpx_verify({"ssl_verify": False}) is False
+
+    def test_respects_ssl_verify_true(self):
+        assert mcp_httpx_verify({"ssl_verify": True}) is True
+
+
 class TestBuildServerConfig:
     """Tests for _build_server_config function."""
 
@@ -61,7 +75,7 @@ class TestBuildServerConfig:
             "auth": True,
             "ssl_verify": True,
         }
-        config = _build_server_config(entry, sso_token=None)
+        config = _build_server_config(entry, None)
 
         assert config["url"] == "http://localhost:8000/mcp/"
         assert config["transport"] == "http"
@@ -76,7 +90,7 @@ class TestBuildServerConfig:
             "auth": True,
             "ssl_verify": True,
         }
-        config = _build_server_config(entry, sso_token="test_token_123")
+        config = _build_server_config(entry, "test_token_123")
 
         assert config["url"] == "https://api.example.com/mcp/"
         assert config["transport"] == "https"
@@ -91,7 +105,7 @@ class TestBuildServerConfig:
             "auth": True,
             "ssl_verify": False,
         }
-        config = _build_server_config(entry, sso_token=None)
+        config = _build_server_config(entry, None)
 
         assert "httpx_client_factory" in config
         assert callable(config["httpx_client_factory"])
@@ -107,14 +121,14 @@ class TestBuildServerConfig:
             "auth": False,
             "ssl_verify": True,
         }
-        config = _build_server_config(entry, sso_token="should_be_ignored")
+        config = _build_server_config(entry, "should_be_ignored")
 
         assert config["headers"] == {}
 
     def test_config_defaults(self):
         """Test that missing optional fields use sensible defaults."""
         entry = {"url": "http://localhost:8000/mcp/"}
-        config = _build_server_config(entry, sso_token="tok")
+        config = _build_server_config(entry, "tok")
 
         assert config["transport"] == "streamable_http"
         assert config["headers"] == {"Authorization": "Bearer tok"}
@@ -139,7 +153,7 @@ class TestConnectSingleServer:
             "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
-            tools = await _connect_single_server("test_server", config, timeout=5)
+            tools = await _connect_single_server("test_server", config, {}, timeout=5)
 
             assert len(tools) == 1
             assert tools[0].name == "test_tool"
@@ -158,7 +172,7 @@ class TestConnectSingleServer:
             "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
-            tools = await _connect_single_server("slow_server", config, timeout=1)
+            tools = await _connect_single_server("slow_server", config, {}, timeout=1)
 
             assert tools == []
 
@@ -176,7 +190,7 @@ class TestConnectSingleServer:
             "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
-            tools = await _connect_single_server("broken_server", config, timeout=5)
+            tools = await _connect_single_server("broken_server", config, {}, timeout=5)
 
             assert tools == []
 
@@ -192,7 +206,7 @@ class TestConnectSingleServer:
             "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
-            tools = await _connect_single_server("faulty_server", config, timeout=5)
+            tools = await _connect_single_server("faulty_server", config, {}, timeout=5)
 
             assert tools == []
 
@@ -227,12 +241,8 @@ class TestGetMCPTools:
         mock_tool.name = "tool1"
 
         with (
-            patch(
-                "deep_agent.aegra.mcp._get_server_configs"
-            ) as mock_get_configs,
-            patch(
-                "deep_agent.aegra.mcp._connect_single_server"
-            ) as mock_connect,
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
             mock_connect.return_value = [mock_tool]
@@ -273,12 +283,8 @@ class TestGetMCPTools:
         tool_b2.name = "unique_b"
 
         with (
-            patch(
-                "deep_agent.aegra.mcp._get_server_configs"
-            ) as mock_get_configs,
-            patch(
-                "deep_agent.aegra.mcp._connect_single_server"
-            ) as mock_connect,
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
             mock_connect.side_effect = [[tool_a1, tool_a2], [tool_b1, tool_b2]]
@@ -303,9 +309,7 @@ class TestGetMCPTools:
             }
         }
 
-        with patch(
-            "deep_agent.aegra.mcp._get_server_configs"
-        ) as mock_get_configs:
+        with patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs:
             mock_get_configs.return_value = mock_servers
 
             tools = await get_mcp_tools()
@@ -316,9 +320,7 @@ class TestGetMCPTools:
     async def test_no_servers_configured_returns_empty_list(self):
         """Test that no MCP servers configured returns empty list."""
         _reset_mcp_cache()
-        with patch(
-            "deep_agent.aegra.mcp._get_server_configs"
-        ) as mock_get_configs:
+        with patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs:
             mock_get_configs.return_value = {}
 
             tools = await get_mcp_tools()
@@ -343,12 +345,8 @@ class TestGetMCPTools:
         }
 
         with (
-            patch(
-                "deep_agent.aegra.mcp._get_server_configs"
-            ) as mock_get_configs,
-            patch(
-                "deep_agent.aegra.mcp._connect_single_server"
-            ) as mock_connect,
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
             mock_connect.return_value = []
@@ -374,21 +372,15 @@ class TestGetMCPTools:
         mock_tool.name = "tool1"
 
         with (
-            patch(
-                "deep_agent.aegra.mcp._get_server_configs"
-            ) as mock_get_configs,
-            patch(
-                "deep_agent.aegra.mcp._build_server_config"
-            ) as mock_build_config,
-            patch(
-                "deep_agent.aegra.mcp._connect_single_server"
-            ) as mock_connect,
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._build_server_config") as mock_build_config,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
             mock_build_config.return_value = {"url": "http://localhost/mcp/"}
             mock_connect.return_value = [mock_tool]
 
-            await get_mcp_tools(sso_token="test_token_123")
+            await get_mcp_tools("test_token_123")
 
             # Verify _build_server_config was called with the token
             mock_build_config.assert_called_once()
@@ -413,12 +405,8 @@ class TestGetMCPTools:
         tool3.name = "tool3"
 
         with (
-            patch(
-                "deep_agent.aegra.mcp._get_server_configs"
-            ) as mock_get_configs,
-            patch(
-                "deep_agent.aegra.mcp._connect_single_server"
-            ) as mock_connect,
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
             mock_connect.side_effect = [[tool1], [tool2], [tool3]]
@@ -442,12 +430,8 @@ class TestGetMCPTools:
         tool_w.name = "wanted_tool"
 
         with (
-            patch(
-                "deep_agent.aegra.mcp._get_server_configs"
-            ) as mock_get_configs,
-            patch(
-                "deep_agent.aegra.mcp._connect_single_server"
-            ) as mock_connect,
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_connect,
         ):
             mock_get_configs.return_value = mock_servers
             mock_connect.return_value = [tool_w]
