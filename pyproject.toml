@@ -42,7 +42,6 @@ dependencies = [
     "opentelemetry-sdk>=1.33.1,<2.0.0",
     "opentelemetry-exporter-otlp>=1.33.1,<2.0.0",
     "opentelemetry-instrumentation-fastapi>=0.52b1,<1.0.0",
-    "pyarrow>=23.0.1",
 ]
 
 [project.optional-dependencies]
