@@ -137,13 +137,19 @@ async def consolidate_user_memories(
             to_delete = [i for i in group if i != keep]
             for idx in to_delete:
                 await conn.execute(
-                    "DELETE FROM user_memories WHERE id = %s",
-                    (str(memories[idx]["id"]),),
+                    "DELETE FROM user_memories WHERE id = %s AND user_id = %s",
+                    (str(memories[idx]["id"]), user_id),
                 )
                 deleted += 1
 
         if deleted:
             await conn.commit()
+            try:
+                from deep_agent.src.cache.personalization_cache import invalidate
+
+                await invalidate(user_id)
+            except Exception:
+                pass
             logger.info(
                 "Consolidated user %s: deleted %d duplicate(s) from %d group(s)",
                 user_id[:8],

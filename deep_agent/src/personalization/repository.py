@@ -122,7 +122,15 @@ class PersonalizationRepository:
                 (str(memory_id), user_id),
             )
             await conn.commit()
-            return bool(cur.rowcount > 0)
+            deleted = bool(cur.rowcount > 0)
+        if deleted:
+            try:
+                from deep_agent.src.cache.personalization_cache import invalidate
+
+                await invalidate(user_id)
+            except Exception:
+                logger.warning("Cache invalidation failed for user %s", user_id[:8])
+        return deleted
 
     # ── Rules ─────────────────────────────────────────────────
 
@@ -180,6 +188,25 @@ class PersonalizationRepository:
             await conn.commit()
         return rule
 
+    async def delete_all_memories(self, user_id: str) -> int:
+        """Delete all memories for a user; return count of deleted rows."""
+        await self.ensure_tables()
+        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+            cur = await conn.execute(
+                "DELETE FROM user_memories WHERE user_id = %s",
+                (user_id,),
+            )
+            await conn.commit()
+            count: int = cur.rowcount
+        if count > 0:
+            try:
+                from deep_agent.src.cache.personalization_cache import invalidate
+
+                await invalidate(user_id)
+            except Exception:
+                logger.warning("Cache invalidation failed for user %s", user_id[:8])
+        return count
+
     async def delete_rule(self, user_id: str, rule_id: uuid.UUID) -> bool:
         """Delete a rule by id; return True if a row was removed."""
         await self.ensure_tables()
@@ -189,4 +216,31 @@ class PersonalizationRepository:
                 (str(rule_id), user_id),
             )
             await conn.commit()
-            return bool(cur.rowcount > 0)
+            deleted = bool(cur.rowcount > 0)
+        if deleted:
+            try:
+                from deep_agent.src.cache.personalization_cache import invalidate
+
+                await invalidate(user_id)
+            except Exception:
+                logger.warning("Cache invalidation failed for user %s", user_id[:8])
+        return deleted
+
+    async def delete_all_rules(self, user_id: str) -> int:
+        """Delete all rules for a user; return count of deleted rows."""
+        await self.ensure_tables()
+        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+            cur = await conn.execute(
+                "DELETE FROM user_rules WHERE user_id = %s",
+                (user_id,),
+            )
+            await conn.commit()
+            count: int = cur.rowcount
+        if count > 0:
+            try:
+                from deep_agent.src.cache.personalization_cache import invalidate
+
+                await invalidate(user_id)
+            except Exception:
+                logger.warning("Cache invalidation failed for user %s", user_id[:8])
+        return count

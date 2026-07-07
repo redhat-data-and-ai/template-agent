@@ -168,6 +168,7 @@ async def test_check_and_record_skips_daily_without_user_id() -> None:
 
 
 def test_mongo_repo_returns_singleton() -> None:
+    pytest.importorskip("pymongo")
     import deep_agent.src.token_budget.service as service_module
 
     service_module._mongo_repo_instance = None

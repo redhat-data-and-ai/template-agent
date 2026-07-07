@@ -73,8 +73,8 @@ class TestCreateModel:
                 create_model("gpt-4")
 
             error_msg = str(exc_info.value)
-            assert "gpt-4" in error_msg
-            assert "not a known Vertex AI model" in error_msg
+            assert "Model 'gpt-4' is not a known Vertex AI model" in error_msg
+            assert "Known Vertex AI models:" in error_msg
 
     def test_model_creation_errors_are_raised(self):
         """Test that model creation errors are raised."""

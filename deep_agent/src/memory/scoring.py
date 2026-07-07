@@ -58,17 +58,13 @@ def apply_access_boost(current_score: float) -> float:
     return min(current_score + ACCESS_BOOST, 1.0)
 
 
-async def decay_all_memories(database_uri: str) -> int:
-    """Recalculate scores for all memories in the database.
+async def decay_user_memories(database_uri: str, user_id: str) -> int:
+    """Recalculate scores for a single user's memories.
 
     Returns the number of memories updated.
     """
     import psycopg
     from psycopg.rows import dict_row
-
-    if not memory_settings.is_enabled("decay"):
-        logger.debug("Memory decay disabled — skipping")
-        return 0
 
     now = datetime.now(timezone.utc)
     updated = 0
@@ -76,7 +72,10 @@ async def decay_all_memories(database_uri: str) -> int:
     async with await psycopg.AsyncConnection.connect(
         database_uri, row_factory=dict_row
     ) as conn:
-        cur = await conn.execute("SELECT id, score, updated_at FROM user_memories")
+        cur = await conn.execute(
+            "SELECT id, score, updated_at FROM user_memories WHERE user_id = %s",
+            (user_id,),
+        )
         rows = await cur.fetchall()
 
         for row in rows:
@@ -93,5 +92,34 @@ async def decay_all_memories(database_uri: str) -> int:
         if updated:
             await conn.commit()
 
-    logger.info("Decay scoring: updated %d / %d memories", updated, len(rows))
+    logger.info(
+        "Decay scoring for user %s: updated %d / %d memories",
+        user_id[:8],
+        updated,
+        len(rows),
+    )
     return updated
+
+
+async def decay_all_users(database_uri: str) -> int:
+    """Recalculate decay scores across all users. Returns total updates."""
+    import psycopg
+
+    if not memory_settings.is_enabled("decay"):
+        logger.debug("Memory decay disabled — skipping")
+        return 0
+
+    async with await psycopg.AsyncConnection.connect(database_uri) as conn:
+        cur = await conn.execute("SELECT DISTINCT user_id FROM user_memories")
+        user_ids = [row[0] for row in await cur.fetchall()]
+
+    total = 0
+    for uid in user_ids:
+        total += await decay_user_memories(database_uri, uid)
+
+    logger.info(
+        "Decay scoring complete: %d updates across %d users",
+        total,
+        len(user_ids),
+    )
+    return total

@@ -5,6 +5,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, PropertyMock, patch
 
 import pytest
+
+pymongo = pytest.importorskip("pymongo")
 from pymongo.errors import ServerSelectionTimeoutError
 
 from deep_agent.src.token_budget.mongo_repository import TokenUsageMongoRepository

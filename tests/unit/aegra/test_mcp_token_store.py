@@ -105,4 +105,4 @@ class TestMcpTokenStoreRedis:
         with patch("deep_agent.aegra.mcp_token_store.cache_delete", fake_delete):
             assert await store.delete_token("default", "user-1", "oauth-mcp") is True
 
-        assert deleted_keys == ["mcp_oauth_token:default:user-1:oauth-mcp"]
+        assert deleted_keys == ["mcp_oauth_token:user-1:oauth-mcp"]

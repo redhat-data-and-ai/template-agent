@@ -85,9 +85,9 @@ async def _run_memory_jobs(database_uri: str) -> dict[str, int]:
     results: dict[str, int] = {}
 
     try:
-        from deep_agent.src.memory.scoring import decay_all_memories
+        from deep_agent.src.memory.scoring import decay_all_users
 
-        results["decay"] = await decay_all_memories(database_uri)
+        results["decay"] = await decay_all_users(database_uri)
     except Exception:
         logger.error("Decay job failed", exc_info=True)
         results["decay"] = -1

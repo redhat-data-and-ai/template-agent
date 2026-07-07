@@ -29,7 +29,7 @@ class TestScheduler:
         with (
             patch.object(scheduler, "memory_settings", enabled),
             patch(
-                "deep_agent.src.memory.scoring.decay_all_memories",
+                "deep_agent.src.memory.scoring.decay_all_users",
                 new_callable=AsyncMock,
                 return_value=5,
             ),
@@ -58,7 +58,7 @@ class TestScheduler:
     async def test_run_once_handles_job_failure(self):
         with (
             patch(
-                "deep_agent.src.memory.scoring.decay_all_memories",
+                "deep_agent.src.memory.scoring.decay_all_users",
                 new_callable=AsyncMock,
                 side_effect=Exception("boom"),
             ),

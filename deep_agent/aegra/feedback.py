@@ -33,6 +33,21 @@ logger = get_python_logger()
 feedback_router = APIRouter(tags=["feedback"])
 
 
+async def _authenticated_user_id(request: Request) -> str:
+    """Return the SSO sub from the incoming Bearer token."""
+    from deep_agent.aegra.auth import DEV_USER_ID, ENABLE_AUTH, _decode_token
+
+    if not ENABLE_AUTH:
+        return DEV_USER_ID
+
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return "anonymous"
+
+    payload = _decode_token(auth_header[7:])
+    return str(payload["sub"])
+
+
 def _score_to_feedback_polarity(req: FeedbackRequest) -> Literal["up", "down"]:
     """Map request name/value to stored feedback polarity."""
     name_lower = (req.name or "").lower()
@@ -194,6 +209,9 @@ async def feedback_handler(request: Request) -> JSONResponse:
             },
         )
 
+    jwt_user_id = await _authenticated_user_id(request)
+    payload["user_id"] = jwt_user_id
+
     try:
         resp = await record_feedback(payload)
     except ValidationError as exc:
@@ -225,11 +243,10 @@ def _validate_thread_id(thread_id: str) -> str:
 
 
 @feedback_router.get("/feedback/{thread_id}")
-async def get_thread_feedback(
-    thread_id: str, user_id: str = "anonymous"
-) -> dict[str, Any]:
-    """Return all feedback for a thread."""
+async def get_thread_feedback(thread_id: str, request: Request) -> dict[str, Any]:
+    """Return all feedback for a thread, scoped to the authenticated user."""
     thread_id = _validate_thread_id(thread_id)
+    user_id = await _authenticated_user_id(request)
     if not settings.database_uri:
         return {"feedback": []}
     repo = FeedbackRepository(settings.database_uri)
@@ -238,9 +255,12 @@ async def get_thread_feedback(
 
 
 @feedback_router.get("/threads/{thread_id}/token-usage")
-async def get_thread_token_usage_endpoint(thread_id: str) -> dict[str, Any]:
-    """Return cumulative token usage for a thread."""
+async def get_thread_token_usage_endpoint(
+    thread_id: str, request: Request
+) -> dict[str, Any]:
+    """Return cumulative token usage for a thread (authenticated)."""
     thread_id = _validate_thread_id(thread_id)
+    await _authenticated_user_id(request)
     from dataclasses import asdict
 
     from deep_agent.src.token_budget.service import (

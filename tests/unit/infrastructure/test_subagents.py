@@ -93,7 +93,7 @@ class TestLoadSubagents:
 
             assert result == [mock_subagent]
             mock_create_model.assert_called_once()
-            # Should be called without middleware when no fallback
+            # Should be called without middleware when no fallback and audit disabled
             mock_sa.assert_called_once_with(
                 name="analyst",
                 model=mock_model,
@@ -176,6 +176,10 @@ class TestLoadSubagents:
             patch(
                 "deep_agent.src.infrastructure.subagents.build_audit_middleware",
                 return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.to_virtual_skill_paths",
+                return_value=["/skills/bmi-report"],
             ),
         ):
             mock_get_configs.return_value = {
@@ -580,6 +584,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.SubAgent",
                 return_value=MagicMock(),
             ) as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -621,6 +629,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.SubAgent",
                 return_value=MagicMock(),
             ) as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -662,6 +674,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.SubAgent",
                 return_value=MagicMock(),
             ) as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -750,6 +766,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.SubAgent",
                 return_value=MagicMock(),
             ) as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
