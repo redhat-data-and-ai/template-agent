@@ -3,7 +3,7 @@ name: Build and Push Base Image
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - '*'
     branches:
       - main
       - deep-agent
