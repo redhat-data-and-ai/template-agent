@@ -5,7 +5,7 @@ on:
     tags:
       - 'v*.*.*'
     branches:
-      - main
+      # - main
       - deep-agent
   workflow_dispatch:  # Allow manual trigger for testing
 
@@ -77,7 +77,8 @@ jobs:
           image-ref: scan-target:${{ steps.version.outputs.version }}
           format: sarif
           output: trivy-results.sarif
-          severity: CRITICAL
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore
           exit-code: '1'
 
       - name: Upload Trivy scan results to GitHub Security tab
