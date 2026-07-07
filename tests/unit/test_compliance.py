@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 import httpx
+from langchain.agents.middleware.types import ExtendedModelResponse, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
@@ -285,6 +286,184 @@ class TestHooks:
             result = await middleware.awrap_tool_call(request, mock_handler)
 
         assert result == tool_result
+
+
+class TestWrapModelCall:
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_passes_nostream_tags_to_handler(self):
+        middleware = RegoTrajectoryMiddleware()
+        request = ModelRequest(
+            model=MagicMock(),
+            tools=[],
+            system_message=None,
+            response_format=None,
+            messages=[HumanMessage(content="Hello")],
+            tool_choice=None,
+            state={"messages": [HumanMessage(content="Hello")]},
+            runtime=MagicMock(),
+            model_settings={},
+        )
+        handler_request: ModelRequest | None = None
+
+        async def mock_handler(req: ModelRequest) -> ModelResponse:
+            nonlocal handler_request
+            handler_request = req
+            return ModelResponse(result=[AIMessage(content="Hi there!")])
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
+            await middleware.awrap_model_call(request, mock_handler)
+
+        assert handler_request is not None
+        assert "nostream" in handler_request.model_settings["tags"]
+        assert "langsmith:nostream" in handler_request.model_settings["tags"]
+
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_allows_compliant_response(self):
+        middleware = RegoTrajectoryMiddleware()
+        request = ModelRequest(
+            model=MagicMock(),
+            tools=[],
+            system_message=None,
+            response_format=None,
+            messages=[HumanMessage(content="Hello")],
+            tool_choice=None,
+            state={"messages": [HumanMessage(content="Hello")]},
+            runtime=MagicMock(),
+        )
+        original = ModelResponse(result=[AIMessage(content="Hello! How can I help you?")])
+
+        async def mock_handler(_req: ModelRequest) -> ModelResponse:
+            return original
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
+            result = await middleware.awrap_model_call(request, mock_handler)
+
+        assert result is original
+
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_replaces_violating_response(self):
+        middleware = RegoTrajectoryMiddleware(enable_retry=True)
+        request = ModelRequest(
+            model=MagicMock(),
+            tools=[],
+            system_message=None,
+            response_format=None,
+            messages=[HumanMessage(content="Tell me about BMI")],
+            tool_choice=None,
+            state={"messages": [HumanMessage(content="Tell me about BMI")]},
+            runtime=MagicMock(),
+        )
+        denial_reasons = ["Banned word 'BMI' found in agent response"]
+
+        async def mock_handler(_req: ModelRequest) -> ModelResponse:
+            return ModelResponse(result=[AIMessage(content="BMI stands for Body Mass Index")])
+
+        with patch.object(middleware, "_evaluate_policy", return_value=(False, denial_reasons)):
+            result = await middleware.awrap_model_call(request, mock_handler)
+
+        assert isinstance(result, ExtendedModelResponse)
+        assert len(result.model_response.result) == 1
+        denial_content = result.model_response.result[0].content
+        assert POLICY_DENIAL_MESSAGE in denial_content
+        assert "Banned word 'BMI' found in agent response" in denial_content
+        assert "Retry the prompt :" in denial_content
+        assert "BMI stands for Body Mass Index" in denial_content
+        assert result.command is not None
+        context = result.command.update["policy_violation_context"]
+        assert context["checkpoint"] == "awrap_model_call"
+        assert context["retry_available"] is True
+        assert context["blocked_input"] == "BMI stands for Body Mass Index"
+
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_skips_empty_ai_content(self):
+        middleware = RegoTrajectoryMiddleware()
+        request = ModelRequest(
+            model=MagicMock(),
+            tools=[],
+            system_message=None,
+            response_format=None,
+            messages=[HumanMessage(content="Search")],
+            tool_choice=None,
+            state={"messages": [HumanMessage(content="Search")]},
+            runtime=MagicMock(),
+        )
+        tool_call_response = ModelResponse(
+            result=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "search_web",
+                            "args": {"q": "bmi"},
+                            "id": "1",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            ]
+        )
+
+        async def mock_handler(_req: ModelRequest) -> ModelResponse:
+            return tool_call_response
+
+        with patch.object(middleware, "_evaluate_policy") as mock_eval:
+            result = await middleware.awrap_model_call(request, mock_handler)
+
+        assert result is tool_call_response
+        mock_eval.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_uses_hardcoded_response_when_configured(self):
+        middleware = RegoTrajectoryMiddleware()
+        request = ModelRequest(
+            model=MagicMock(),
+            tools=[],
+            system_message=None,
+            response_format=None,
+            messages=[HumanMessage(content="Tell me about BMI")],
+            tool_choice=None,
+            state={"messages": [HumanMessage(content="Tell me about BMI")]},
+            runtime=MagicMock(),
+        )
+        handler_called = False
+
+        async def mock_handler(_req: ModelRequest) -> ModelResponse:
+            nonlocal handler_called
+            handler_called = True
+            return ModelResponse(result=[AIMessage(content="Should not be used")])
+
+        with patch(
+            "deep_agent.src.infrastructure.compliance.settings"
+        ) as mock_settings:
+            mock_settings.COMPLIANCE_HARDCODED_MODEL_RESPONSE = (
+                "BMI stands for Body Mass Index"
+            )
+            with patch.object(middleware, "_evaluate_policy", return_value=(True, [])):
+                result = await middleware.awrap_model_call(request, mock_handler)
+
+        assert handler_called is False
+        assert result.result[0].content == "BMI stands for Body Mass Index"
+
+    @pytest.mark.asyncio
+    async def test_aafter_model_skips_when_handled_by_awrap_model_call(self):
+        middleware = RegoTrajectoryMiddleware()
+        state = {
+            "messages": [
+                HumanMessage(content="Tell me about BMI"),
+                AIMessage(content=POLICY_DENIAL_MESSAGE),
+            ],
+            "policy_violation_context": {
+                "checkpoint": "awrap_model_call",
+                "denial_reasons": ["Banned word 'BMI' found in agent response"],
+                "retry_available": True,
+            },
+        }
+
+        with patch.object(middleware, "_evaluate_policy") as mock_eval:
+            result = await middleware.aafter_model(state, runtime=None)
+
+        assert result is None
+        mock_eval.assert_not_called()
 
 
 class TestMiddlewareBuilder:

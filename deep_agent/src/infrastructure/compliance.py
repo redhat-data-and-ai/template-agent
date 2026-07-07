@@ -6,18 +6,28 @@ import json
 from typing import Any
 
 import httpx
+from collections.abc import Awaitable, Callable
+
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import hook_config
+from langchain.agents.middleware.types import (
+    ExtendedModelResponse,
+    ModelRequest,
+    ModelResponse,
+    hook_config,
+)
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.types import Command
 
 from deep_agent.utils.pylogger import get_python_logger
+from deep_agent.src.settings import settings
 
 logger = get_python_logger()
 
 POLICY_DENIAL_MESSAGE = (
     "This output is blocked by our compliance policies."
 )
+
+_NOSTREAM_TAGS = ("nostream", "langsmith:nostream")
 
 
 class RegoTrajectoryMiddleware(AgentMiddleware):
@@ -136,6 +146,113 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
                 return content or None
         return None
 
+    @staticmethod
+    def _with_nostream_tags(request: ModelRequest[Any]) -> ModelRequest[Any]:
+        """Return a model request that suppresses token streaming during invoke."""
+        model_settings = dict(request.model_settings or {})
+        tags = list(model_settings.get("tags") or [])
+        for tag in _NOSTREAM_TAGS:
+            if tag not in tags:
+                tags.append(tag)
+        model_settings["tags"] = tags
+        return request.override(model_settings=model_settings)
+
+    @staticmethod
+    def _extract_last_ai_content(messages: list[Any]) -> str:
+        for msg in reversed(messages):
+            if getattr(msg, "type", None) == "ai":
+                content = str(getattr(msg, "content", ""))
+                if content:
+                    return content
+        return ""
+
+    def _build_llm_violation_context(
+        self,
+        *,
+        reasons: list[str],
+        violation_context: dict[str, Any],
+        original_content: str,
+        checkpoint: str,
+        violated_at: int | None = None,
+    ) -> dict[str, Any]:
+        offer_retry = self.enable_retry and violation_context.get("retry_available", True)
+        context: dict[str, Any] = {
+            "checkpoint": checkpoint,
+            "denial_reasons": reasons,
+            "retry_available": offer_retry,
+        }
+        if violated_at is not None:
+            context["violated_at"] = violated_at
+        if offer_retry:
+            context["blocked_input"] = original_content
+        return context
+
+    def _build_llm_denial_content(
+        self,
+        reasons: list[str],
+        *,
+        original_content: str,
+        violation_context: dict[str, Any],
+    ) -> str:
+        offer_retry = self.enable_retry and violation_context.get("retry_available", True)
+        return self._format_retry_prompt(
+            reasons,
+            call_input=original_content if offer_retry else None,
+        )
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
+    ) -> ModelResponse[Any] | ExtendedModelResponse[Any]:
+        """Evaluate OPA on the full model response before it reaches the stream."""
+        hardcoded = settings.COMPLIANCE_HARDCODED_MODEL_RESPONSE.strip()
+        if hardcoded:
+            logger.warning(
+                "compliance_using_hardcoded_model_response",
+                content_length=len(hardcoded),
+            )
+            response = ModelResponse(result=[AIMessage(content=hardcoded)])
+        else:
+            response = await handler(self._with_nostream_tags(request))
+        original_content = self._extract_last_ai_content(response.result)
+        if not original_content:
+            return response
+
+        logger.info(
+            "llm_response_generated",
+            content_length=len(original_content),
+            content_preview=original_content[:200],
+        )
+
+        trajectory_messages = list(request.state.get("messages", [])) + list(response.result)
+        allowed, reasons = self._evaluate_policy(
+            self._parse_trajectory(trajectory_messages),
+            {"action": "llm_response", "agent_message": original_content},
+        )
+        if allowed:
+            return response
+
+        violation_context = request.state.get("policy_violation_context", {})
+        denial_content = self._build_llm_denial_content(
+            reasons,
+            original_content=original_content,
+            violation_context=violation_context,
+        )
+        return ExtendedModelResponse(
+            model_response=ModelResponse(result=[AIMessage(content=denial_content)]),
+            command=Command(
+                update={
+                    "policy_violation_context": self._build_llm_violation_context(
+                        reasons=reasons,
+                        violation_context=violation_context,
+                        original_content=original_content,
+                        checkpoint="awrap_model_call",
+                    ),
+                },
+            ),
+        )
+
     @hook_config(can_jump_to=["end"])
     async def abefore_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
         messages = state.get("messages", [])
@@ -177,6 +294,10 @@ Focus on providing helpful information within policy boundaries.""")],
 
     @hook_config(can_jump_to=["end"])
     async def aafter_model(self, state: dict, runtime: Any) -> dict[str, Any] | None:
+        violation_context = state.get("policy_violation_context", {})
+        if violation_context.get("checkpoint") == "awrap_model_call":
+            return None
+
         messages = state.get("messages", [])
         last_ai_content = ""
         last_ai_index = -1
@@ -196,27 +317,26 @@ Focus on providing helpful information within policy boundaries.""")],
         if allowed:
             return None
 
-        violation_context = state.get("policy_violation_context", {})
-        offer_retry = self.enable_retry and violation_context.get("retry_available", True)
         filtered_messages = messages[:last_ai_index] if last_ai_index > 0 else []
 
         return {
             "jump_to": "end",
             "messages": filtered_messages + [
                 AIMessage(
-                    content=self._format_retry_prompt(
+                    content=self._build_llm_denial_content(
                         reasons,
-                        call_input=last_ai_content if offer_retry else None,
+                        original_content=last_ai_content,
+                        violation_context=violation_context,
                     )
                 )
             ],
-            "policy_violation_context": {
-                "checkpoint": "aafter_model",
-                "denial_reasons": reasons,
-                "retry_available": offer_retry,
-                "violated_at": last_ai_index,
-                **({"blocked_input": last_ai_content} if offer_retry else {}),
-            },
+            "policy_violation_context": self._build_llm_violation_context(
+                reasons=reasons,
+                violation_context=violation_context,
+                original_content=last_ai_content,
+                checkpoint="aafter_model",
+                violated_at=last_ai_index,
+            ),
         }
 
     async def awrap_tool_call(self, request: Any, handler: Any) -> Any:

@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     MIDDLEWARE_ENABLED: bool = Field(default=True)
     OPA_URL: str = Field(default="http://localhost:8181/v1/data/agent/authz")
     OPA_TIMEOUT: float = Field(default=2.0)
+    COMPLIANCE_HARDCODED_MODEL_RESPONSE: str = Field(
+        default="",
+        description=(
+            "When set, awrap_model_call skips the LLM and uses this text as the "
+            "generated response (for compliance override testing)."
+        ),
+    )
 
     # ── CLI ───────────────────────────────────────────────────────────
     ENABLE_CLI: bool = Field(default=True)
