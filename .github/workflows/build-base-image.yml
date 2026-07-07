@@ -71,7 +71,7 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
-      - name: Scan image for vulnerabilities (table - debug)
+      - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: scan-target:${{ steps.version.outputs.version }}
@@ -79,18 +79,17 @@ jobs:
           severity: CRITICAL,HIGH
           scanners: vuln
           trivyignores: .trivyignore
-          exit-code: '0'
+          exit-code: '1'
 
-      - name: Scan image for vulnerabilities
+      - name: Generate SARIF report
         uses: aquasecurity/trivy-action@v0.36.0
+        if: always()
         with:
           image-ref: scan-target:${{ steps.version.outputs.version }}
           format: sarif
           output: trivy-results.sarif
-          severity: CRITICAL,HIGH
           scanners: vuln
-          trivyignores: .trivyignore
-          exit-code: '1'
+          exit-code: '0'
 
       - name: Upload Trivy scan results to GitHub Security tab
         if: always() && hashFiles('trivy-results.sarif') != ''
