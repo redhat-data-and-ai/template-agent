@@ -35,9 +35,14 @@ _OAUTH_STATE_TTL_SECONDS = 300
 
 
 def _callback_redirect_uri(request: Request) -> str:
-    """Reconstruct the OAuth callback URL (scheme + host + path, no query)."""
-    url = request.url
-    return f"{url.scheme}://{url.netloc}{url.path}"
+    """Reconstruct the OAuth callback URL using the canonical public base URL.
+
+    Behind a reverse proxy (e.g. MCP ingress with nginx rewrite-target),
+    request.url.path is the rewritten pod-local path, not the original
+    public path.  Use AGENT_PUBLIC_BASE_URL so the URI matches what was
+    registered during DCR / authorization.
+    """
+    return settings.oauth_callback_url
 
 
 def _pkce_pair() -> tuple[str, str]:
