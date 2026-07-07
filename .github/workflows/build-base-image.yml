@@ -71,6 +71,15 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
+      - name: Scan image for vulnerabilities (table - debug)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: scan-target:${{ steps.version.outputs.version }}
+          format: table
+          severity: CRITICAL,HIGH
+          trivyignores: .trivyignore
+          exit-code: '0'
+
       - name: Scan image for vulnerabilities
         uses: aquasecurity/trivy-action@v0.36.0
         with:
