@@ -1,0 +1,6 @@
+# CVE-2026-31072: APScheduler RCE via insecure deserialization (CRITICAL)
+# No fixed version available as of 2026-07-07.
+# Risk mitigated: AsyncScheduler is used with in-memory store only (no persistent
+# job store backend), so the deserialization attack vector is not exposed.
+# Revisit when APScheduler 4.x releases a patched version.
+CVE-2026-31072

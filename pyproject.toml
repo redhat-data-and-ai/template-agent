@@ -15,7 +15,7 @@ requires-python = ">=3.12.2,<3.13"
 dependencies = [
     "deepagents==0.4.12",
     "pydantic==2.12.5",
-    "pydantic-settings==2.13.1",
+    "pydantic-settings==2.14.2",
     "python-dotenv==1.2.2",
     "langchain-google-genai==4.2.2",
     "langchain-google-vertexai==3.2.2",
@@ -42,11 +42,12 @@ dependencies = [
     "opentelemetry-sdk>=1.33.1,<2.0.0",
     "opentelemetry-exporter-otlp>=1.33.1,<2.0.0",
     "opentelemetry-instrumentation-fastapi>=0.52b1,<1.0.0",
+    "pyarrow>=23.0.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.4.1",
+    "pytest==9.1.1",
     "pytest-asyncio==1.0.0",
     "pytest-cov==6.2.1",
     "pytest-mock>=3.14.0",
