@@ -106,7 +106,7 @@ harness_profiles:
 # Resolution order: defaults → profile (matched from model: field) → per-agent overrides
 middleware:
   human_approval:
-    enabled: true    # set to false to disable human-in-the-loop tool approval
+    enabled: false   # disabled for tool_approval demo to disable human-in-the-loop tool approval
     mode: all        # 'all' = every tool; 'none' = disabled
     exclude:
       - write_todos         # internal task tracking — no user approval needed

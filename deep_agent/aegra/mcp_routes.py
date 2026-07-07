@@ -85,4 +85,31 @@ async def get_agent_info() -> dict[str, Any]:
         for name, cfg in servers.items()
         if cfg.get("enabled") and cfg.get("auth_mode") in ("oauth", "dcr")
     )
-    return {"name": agent_config.get_name(), "oauth_mcps": oauth_mcps}
+
+    orch_cfg = agent_config.get_orchestrator_config()
+    subagent_cfgs = agent_config.get_all_subagent_configs()
+
+    tool_access: dict[str, Any] = {
+        "orchestrator": {
+            "name": orch_cfg.get("name", "orchestrator"),
+            "allowed_tools": orch_cfg.get("allowed_tools", []),
+            "denied_tools": orch_cfg.get("denied_tools", []),
+            "tool_approval": orch_cfg.get("tool_approval", []),
+        },
+        "subagents": [
+            {
+                "name": cfg.get("name", name),
+                "type": cfg.get("type", "default"),
+                "allowed_tools": cfg.get("allowed_tools", []),
+                "denied_tools": cfg.get("denied_tools", []),
+                "tool_approval": cfg.get("tool_approval", []),
+            }
+            for name, cfg in subagent_cfgs.items()
+        ],
+    }
+
+    return {
+        "name": agent_config.get_name(),
+        "oauth_mcps": oauth_mcps,
+        "tool_access": tool_access,
+    }
