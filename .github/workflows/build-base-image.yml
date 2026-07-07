@@ -77,6 +77,7 @@ jobs:
           image-ref: scan-target:${{ steps.version.outputs.version }}
           format: table
           severity: CRITICAL,HIGH
+          scanners: vuln
           trivyignores: .trivyignore
           exit-code: '0'
 
@@ -87,6 +88,7 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
+          scanners: vuln
           trivyignores: .trivyignore
           exit-code: '1'
 
