@@ -92,9 +92,6 @@ def _append_guardrails(target: list[Any], resolved: ResolvedMiddlewareConfig) ->
     if resolved.tool_retry.enabled and resolved.tool_retry.tools:
         _append_if_built(target, _build_tool_retry(resolved.tool_retry))
 
-    if resolved.pii.enabled and resolved.pii.rules:
-        target.extend(_build_pii_middleware(resolved.pii))
-
 
 def build_excluded_middleware(
     resolved: ResolvedMiddlewareConfig,
@@ -166,10 +163,29 @@ def _build_model_retry(config: Any) -> Any | None:
     try:
         from langchain.agents.middleware import ModelRetryMiddleware
 
+        from deep_agent.src.guardrails import (
+            ContentSafetyError,
+            InputContentSafetyError,
+            ToolContentSafetyError,
+        )
+
+        def _on_failure(exc: Exception) -> str:
+            # Safety errors: return clean user-facing refusal instead of raw exception text.
+            # retry_on already skips retrying these, so exc is the original exception.
+            if isinstance(exc, ToolContentSafetyError):
+                return "I wasn't able to complete this task due to a content safety policy issue."
+            if isinstance(exc, (InputContentSafetyError, ContentSafetyError)):
+                return "I can't help with that request due to content safety policy."
+            # All other errors: preserve the standard format.
+            exc_type = type(exc).__name__
+            return f"Model call failed with {exc_type}: {exc}"
+
         return ModelRetryMiddleware(
             max_retries=config.max_retries,
             backoff_factor=config.backoff_factor,
             initial_delay=config.initial_delay,
+            retry_on=lambda exc: not isinstance(exc, ContentSafetyError),
+            on_failure=_on_failure,
         )
     except ImportError:
         logger.debug("ModelRetryMiddleware not available")
@@ -202,26 +218,6 @@ def _build_tool_retry(config: Any) -> Any | None:
     except ImportError:
         logger.debug("ToolRetryMiddleware not available")
         return None
-
-
-def _build_pii_middleware(config: Any) -> list[Any]:
-    """Build PIIMiddleware instances for each PII rule."""
-    results: list[Any] = []
-    try:
-        from langchain.agents.middleware import PIIMiddleware
-
-        for rule in config.rules:
-            try:
-                results.append(
-                    PIIMiddleware(
-                        rule.type, strategy=rule.strategy, apply_to_input=True
-                    )
-                )
-            except (ValueError, TypeError) as e:
-                logger.warning("Skipping PII rule '%s': %s", rule.type, e)
-    except ImportError:
-        logger.debug("PIIMiddleware not available")
-    return results
 
 
 def _build_summarization_tool_middleware(

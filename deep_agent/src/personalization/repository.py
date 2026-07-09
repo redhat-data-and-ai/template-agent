@@ -102,6 +102,19 @@ class PersonalizationRepository:
 
     async def create_memory(self, user_id: str, content: str) -> Memory:
         """Insert a new memory and return the created model."""
+        from deep_agent.src.settings import settings
+
+        if settings.GUARDIAN_ENABLED:
+            from deep_agent.src.guardrails.client import check_safety
+
+            is_safe, verdict = await check_safety(content, context="memory")
+            if not is_safe:
+                logger.warning(
+                    "guardian_blocked_memory", user_id=user_id, verdict=verdict
+                )
+                raise ValueError(
+                    "Memory content failed safety check and was not saved."
+                )
         await self.ensure_tables()
         mem = Memory(user_id=user_id, content=content)
         async with await psycopg.AsyncConnection.connect(self._uri) as conn:
@@ -147,6 +160,17 @@ class PersonalizationRepository:
         is_active: bool = True,
     ) -> Rule:
         """Create or update a rule and return the model."""
+        from deep_agent.src.settings import settings
+
+        if settings.GUARDIAN_ENABLED:
+            from deep_agent.src.guardrails.client import check_safety
+
+            is_safe, verdict = await check_safety(content, context="rule")
+            if not is_safe:
+                logger.warning(
+                    "guardian_blocked_rule", user_id=user_id, verdict=verdict
+                )
+                raise ValueError("Rule content failed safety check and was not saved.")
         await self.ensure_tables()
         now = datetime.utcnow()
         rid = rule_id or uuid.uuid4()

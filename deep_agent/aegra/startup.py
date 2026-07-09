@@ -160,15 +160,17 @@ async def _start_scheduler() -> str:
 
 
 def _setup_telemetry() -> str:
-    """Register Langfuse tracing and token budget tracking if configured."""
+    """Register PII middleware, Langfuse tracing, token budget, and Guardian."""
     try:
         from deep_agent.aegra.telemetry import (
+            setup_guardian_guardrails,
             setup_langfuse_tracing,
             setup_token_budget_tracking,
         )
 
         setup_langfuse_tracing()
-        setup_token_budget_tracking()  # Callback-based tracking
+        setup_token_budget_tracking()
+        setup_guardian_guardrails()
         return "ok"
     except Exception as exc:
         logger.warning("Telemetry setup failed: %s", exc)

@@ -27,6 +27,7 @@ logger = get_python_logger()
 
 _langfuse_tracing_initialized = False
 _token_budget_tracing_initialized = False
+_guardian_initialized = False
 
 
 def _get_trace_name() -> str:
@@ -156,6 +157,7 @@ class TokenBudgetObservabilityProvider:
     def get_metadata(
         self, run_id: str, thread_id: str, user_identity: str | None = None
     ) -> dict[str, Any]:
+        """Return token-budget metadata keys for RunnableConfig injection."""
         from deep_agent.src.token_budget.callback import (
             THREAD_ID_METADATA_KEY,
             USER_ID_METADATA_KEY,
@@ -169,6 +171,7 @@ class TokenBudgetObservabilityProvider:
         return metadata
 
     def is_enabled(self) -> bool:
+        """Return True if token budget tracking is active for this agent."""
         try:
             from deep_agent.src.agent.config import agent_config
 
@@ -229,6 +232,49 @@ def setup_token_budget_tracking() -> None:
         logger.warning(
             "Failed to register token budget observability provider", exc_info=True
         )
+
+
+def setup_guardian_guardrails() -> None:
+    """Register Granite Guardian LangChain callback for input/output safety checks."""
+    global _guardian_initialized  # noqa: PLW0603
+    if _guardian_initialized:
+        return
+    _guardian_initialized = True
+
+    from deep_agent.src.settings import settings
+
+    if not settings.GUARDIAN_ENABLED:
+        logger.info("Granite Guardian disabled — set GUARDIAN_ENABLED=true to enable")
+        return
+
+    if not settings.GUARDIAN_API_BASE:
+        logger.warning("GUARDIAN_API_BASE not set — Guardian guardrails disabled")
+        return
+
+    try:
+        from langchain_core.tracers.context import register_configure_hook
+
+        from deep_agent.src.guardrails.callback import GraniteGuardianCallbackHandler
+
+        _guardian_ctx_var: contextvars.ContextVar = contextvars.ContextVar(
+            "guardian_handler", default=None
+        )
+        os.environ.setdefault("GUARDIAN_ENABLED", "true")
+        register_configure_hook(
+            _guardian_ctx_var,
+            True,
+            GraniteGuardianCallbackHandler,
+            env_var="GUARDIAN_ENABLED",
+        )
+        logger.info(
+            "Granite Guardian callback registered (model=%s, block_output=%s)",
+            settings.GUARDIAN_MODEL,
+            settings.GUARDIAN_BLOCK_OUTPUT,
+        )
+    except ImportError:
+        logger.warning("langchain_core not available — Guardian callback disabled")
+    except Exception:
+        logger.warning("Failed to register Guardian callback", exc_info=True)
 
 
 def get_langfuse_client() -> Any:

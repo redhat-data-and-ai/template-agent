@@ -56,6 +56,25 @@ _startup_done = False  # noqa: E402
 _graph_cache: dict[str, Any] = {}
 _graph_cache_ts: dict[str, float] = {}
 
+_SAFETY_STOP_INSTRUCTION = """
+## Content Safety (Enforced by Framework)
+
+If any tool, subagent, or skill response contains the phrase "blocked due to content safety policy issue":
+- **STOP ALL WORK IMMEDIATELY.**
+- Do NOT retry the tool or subagent.
+- Do NOT rephrase the request and try again.
+"""
+
+
+def _append_safety_stop_instruction(system_prompt: str) -> str:
+    """Append the framework-level content safety stop instruction to any system prompt.
+
+    Appended unconditionally when Guardian is enabled so every agent built with
+    this framework gets the hard-stop rule without requiring users to add it to
+    their own PROMPT.md.
+    """
+    return system_prompt.rstrip() + "\n" + _SAFETY_STOP_INSTRUCTION
+
 
 def invalidate_graph_cache() -> None:
     """Clear the compiled graph cache (e.g. after MCP OAuth connect)."""
@@ -254,6 +273,14 @@ async def agent(runtime: ServerRuntime) -> Any:
     if async_mw is not None:
         middleware.append(async_mw)
 
+    from deep_agent.src.settings import settings as app_settings
+
+    if app_settings.GUARDIAN_ENABLED:
+        from deep_agent.src.guardrails.tool_proxy import wrap_tools
+
+        tools = wrap_tools(tools)
+        system_prompt = _append_safety_stop_instruction(system_prompt)
+
     create_kwargs: dict[str, Any] = {
         "name": agent_name,
         "model": model,
@@ -279,7 +306,17 @@ async def agent(runtime: ServerRuntime) -> Any:
         except (ImportError, TypeError):
             pass
 
-    compiled = create_deep_agent(**create_kwargs)
+    _inner_graph = create_deep_agent(**create_kwargs)
+
+    if app_settings.GUARDIAN_ENABLED:
+        from deep_agent.aegra.safety import SafetyAwareRunnable
+
+        _inner_graph = SafetyAwareRunnable(_inner_graph, outermost=True)
+        logger.info(
+            "graph_guardian_enabled: wrapped with SafetyAwareRunnable and GuardianToolProxy"
+        )
+
+    compiled = _inner_graph
 
     _graph_cache[cache_key] = compiled
     _graph_cache_ts[cache_key] = time.time()

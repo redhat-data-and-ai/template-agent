@@ -373,6 +373,13 @@ def _build_default_subagent(
     fallback_mw = _build_fallback_middleware(spec)
     subagent_middleware = [*fallback_mw]
 
+    from deep_agent.src.settings import settings as app_settings
+
+    if app_settings.GUARDIAN_ENABLED:
+        from deep_agent.src.guardrails.tool_proxy import wrap_tools
+
+        resolved_tools = wrap_tools(resolved_tools)
+
     subagent_params: dict[str, Any] = {
         "name": name,
         "model": _resolve_subagent_model(agent_cfg),
@@ -439,6 +446,13 @@ def _build_compiled_subagent(
     fallback_mw = _build_fallback_middleware(spec)
     compiled_middleware = [*fallback_mw]
 
+    from deep_agent.src.settings import settings as app_settings
+
+    if app_settings.GUARDIAN_ENABLED:
+        from deep_agent.src.guardrails.tool_proxy import wrap_tools
+
+        resolved_tools = wrap_tools(resolved_tools)
+
     create_kwargs = {
         "name": name,
         "model": _resolve_subagent_model(agent_cfg),
@@ -451,12 +465,20 @@ def _build_compiled_subagent(
     if compiled_middleware:
         create_kwargs["middleware"] = compiled_middleware
 
-    compiled_graph = create_deep_agent(**create_kwargs)
+    _inner = create_deep_agent(**create_kwargs)
+
+    if app_settings.GUARDIAN_ENABLED:
+        from deep_agent.aegra.safety import SafetyAwareRunnable
+
+        _inner = SafetyAwareRunnable(_inner)
+        logger.info("subagent '%s' [compiled] wrapped with SafetyAwareRunnable", name)
+
+    runnable = _inner
 
     return CompiledSubAgent(
         name=name,
         description=agent_cfg.get("description", ""),
-        runnable=compiled_graph,
+        runnable=runnable,
     )
 
 
