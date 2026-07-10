@@ -138,8 +138,8 @@ class Settings(BaseSettings):
     ENABLE_CLI: bool = Field(default=True)
 
     # ── Platform ──────────────────────────────────────────────────────
-    AI_PLATFORM_AGENT_NAME: str = Field(default="")
-    AI_PLATFORM_AGENT_ORG: str = Field(default="")
+    DEPLOYED_AGENT_NAME: str = Field(default="")
+    DEPLOYED_AGENT_ORG: str = Field(default="")
     PLATFORM_AUDIT_ENABLED: bool = Field(default=True)
     PLATFORM_AUDIT_BUFFER_MAX: int = Field(default=1000, ge=1, le=100_000)
 
@@ -160,10 +160,10 @@ class Settings(BaseSettings):
         Combines org + agent name when deployed via agent-engine.
         Falls back to the generic config name for local dev.
         """
-        if self.AI_PLATFORM_AGENT_ORG and self.AI_PLATFORM_AGENT_NAME:
-            return f"{self.AI_PLATFORM_AGENT_ORG}/{self.AI_PLATFORM_AGENT_NAME}"
-        if self.AI_PLATFORM_AGENT_NAME:
-            return self.AI_PLATFORM_AGENT_NAME
+        if self.DEPLOYED_AGENT_ORG and self.DEPLOYED_AGENT_NAME:
+            return f"{self.DEPLOYED_AGENT_ORG}/{self.DEPLOYED_AGENT_NAME}"
+        if self.DEPLOYED_AGENT_NAME:
+            return self.DEPLOYED_AGENT_NAME
         from deep_agent.src.agent.config import agent_config
         return agent_config.get_name()
 
