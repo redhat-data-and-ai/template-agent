@@ -158,6 +158,56 @@ class UpdateEventHandler:
         return all_messages
 
 
+class RepetitionDetector:
+    """Detects degenerate LLM output loops (repeated token sequences).
+
+    Maintains a rolling buffer per tool_call_id. When the same short phrase
+    repeats more than `max_repeats` times, signals that the stream should stop.
+    """
+
+    def __init__(self, window_size: int = 200, max_repeats: int = 4):
+        self._buffers: dict[str | None, str] = {}
+        self._window_size = window_size
+        self._max_repeats = max_repeats
+        self._halted: set[str | None] = set()
+
+    def is_halted(self, tool_call_id: str | None) -> bool:
+        return tool_call_id in self._halted
+
+    def check(self, token: str, tool_call_id: str | None) -> bool:
+        """Append token and return True if repetition detected."""
+        if tool_call_id in self._halted:
+            return True
+
+        buf = self._buffers.get(tool_call_id, "")
+        buf += token
+        if len(buf) > self._window_size * 2:
+            buf = buf[-self._window_size:]
+        self._buffers[tool_call_id] = buf
+
+        if len(buf) < 40:
+            return False
+
+        for phrase_len in range(8, min(60, len(buf) // self._max_repeats) + 1):
+            phrase = buf[-phrase_len:]
+            count = buf.count(phrase)
+            if count >= self._max_repeats:
+                logger.warning(
+                    "Repetition loop detected — halting stream",
+                    tool_call_id=tool_call_id,
+                    repeated_phrase=phrase[:80],
+                    count=count,
+                )
+                self._halted.add(tool_call_id)
+                return True
+
+        return False
+
+    def reset(self) -> None:
+        self._buffers.clear()
+        self._halted.clear()
+
+
 class TokenEventHandler:
     """Handles 'messages' stream mode events (token streaming)."""
 
@@ -168,6 +218,7 @@ class TokenEventHandler:
             tracker: Tool call tracker for associating tokens with tools.
         """
         self.tracker = tracker
+        self.repetition_detector = RepetitionDetector()
 
     def handle(self, event: tuple, ctx: StreamContext) -> list[dict[str, Any]]:
         """Process token streaming events.
@@ -193,13 +244,17 @@ class TokenEventHandler:
         if not content:
             return []
 
+        content_str = convert_message_content_to_string(content)
+        tool_call_id = extract_tool_call_id(msg) or self.tracker.current_id
+
+        if self.repetition_detector.check(content_str, tool_call_id):
+            return []
+
         token_event = {
             "type": "token",
-            "content": convert_message_content_to_string(content),
+            "content": content_str,
         }
 
-        # Associate token with tool call if applicable
-        tool_call_id = extract_tool_call_id(msg) or self.tracker.current_id
         if tool_call_id:
             token_event["tool_call_id"] = tool_call_id
 

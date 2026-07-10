@@ -37,16 +37,21 @@ CLAUDE_MODELS = [
 def create_model(
     model_name: str,
     temperature: float = 0.0,
+    max_output_tokens: int | None = None,
 ) -> Union[ChatGoogleGenerativeAI, ChatAnthropicVertex]:
     """Create a Vertex AI model (Gemini or Claude).
 
     Args:
         model_name: Model name from GEMINI_MODELS or CLAUDE_MODELS
         temperature: Model temperature (default: 0.0)
+        max_output_tokens: Hard cap on generated tokens per call.
+            Defaults to settings.MAX_OUTPUT_TOKENS (env: MAX_OUTPUT_TOKENS).
 
     Returns:
         Configured model instance
     """
+    if max_output_tokens is None:
+        max_output_tokens = settings.MAX_OUTPUT_TOKENS
     if not model_name or not model_name.strip():
         raise ValueError("model_name cannot be empty")
 
@@ -74,19 +79,19 @@ def create_model(
         )
 
         if is_claude:
-            # Use ChatAnthropicVertex for Claude models
             return ChatAnthropicVertex(
                 model=model_name,
                 project=project,
                 credentials=credentials,
                 temperature=temperature,
+                max_tokens=max_output_tokens,
                 max_retries=2,
             )
         else:
-            # Use ChatGoogleGenerativeAI for Gemini models
             return ChatGoogleGenerativeAI(
                 model=model_name,
                 temperature=temperature,
+                max_output_tokens=max_output_tokens,
                 credentials=credentials,
                 project=project,
                 max_retries=2,

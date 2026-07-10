@@ -128,6 +128,15 @@ class Settings(BaseSettings):
         },
     )
 
+    # LLM Generation Limits
+    MAX_OUTPUT_TOKENS: int = Field(
+        default=8192,
+        json_schema_extra={
+            "env": "MAX_OUTPUT_TOKENS",
+            "description": "Hard cap on generated tokens per LLM call. Prevents runaway generation.",
+        },
+    )
+
     @property
     def database_uri(self) -> str:
         """Generate database URI from individual components.
