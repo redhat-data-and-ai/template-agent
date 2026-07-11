@@ -105,6 +105,12 @@ harness_profiles:
 # Controls which deepagents middleware is active and how it behaves.
 # Resolution order: defaults → profile (matched from model: field) → per-agent overrides
 middleware:
+  human_approval:
+    enabled: true    # set to false to disable human-in-the-loop tool approval
+    mode: all        # 'all' = every tool; 'none' = disabled
+    exclude:
+      - write_todos         # internal task tracking — no user approval needed
+      - compact_conversation  # internal memory management — no user approval needed
   summarization_tool:
     enabled: true
   memory:
@@ -167,7 +173,7 @@ async_tasks:
 #   - For readOnlyRootFilesystem SCC, use state or composite with emptyDir volume.
 filesystem:
   backend:
-    type: state
+    type: composite
     local_shell:
       timeout: 120
       max_output_bytes: 100000
@@ -175,12 +181,13 @@ filesystem:
       enabled: true
       scope: user
     routes:
+      "/skills/": filesystem_readonly
       "/memories/": store
       "/reports/": store
       "/": state
   permissions:
     - operations: [read, glob, grep, ls]
-      paths: ["config/**", "docs/**", "reports/**"]
+      paths: ["config/**", "docs/**", "reports/**", "skills/**"]
       mode: allow
     - operations: [write, edit]
       paths: ["reports/**", "memories/**"]
@@ -244,6 +251,16 @@ token_budget:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Langfuse auto-activates when secrets are provided. No additional config needed.
 # OTEL traces export to Jaeger/Tempo/Collector via OTEL_EXPORTER_OTLP_ENDPOINT.
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Platform                                                           [env-var]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+platform:
+  audit:
+    enabled: false
+    buffer_max: 1000
+# Env: PLATFORM_AUDIT_ENABLED, PLATFORM_AUDIT_BUFFER_MAX
+# Org context: ORG
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Logging                                                            [env-var]

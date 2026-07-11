@@ -36,8 +36,12 @@ async def test_increment_usage_retries_transient_mongo_error() -> None:
         ),
         patch.object(TokenUsageMongoRepository, "ensure_indexes", new=AsyncMock()),
     ):
-        repo = TokenUsageMongoRepository("mongodb://mongodb:27017", db_name="tokenusage")
-        result = await repo.increment_usage("thread-1", 100, 50, agent_name="health-assistant")
+        repo = TokenUsageMongoRepository(
+            "mongodb://mongodb:27017", db_name="tokenusage"
+        )
+        result = await repo.increment_usage(
+            "thread-1", 100, 50, agent_name="health-assistant"
+        )
 
     assert result == expected
     assert collection.find_one_and_update.await_count == 2
@@ -57,7 +61,9 @@ async def test_increment_usage_does_not_retry_runtime_error() -> None:
         ),
         patch.object(TokenUsageMongoRepository, "ensure_indexes", new=AsyncMock()),
     ):
-        repo = TokenUsageMongoRepository("mongodb://mongodb:27017", db_name="tokenusage")
+        repo = TokenUsageMongoRepository(
+            "mongodb://mongodb:27017", db_name="tokenusage"
+        )
         with pytest.raises(RuntimeError, match="Failed to increment Mongo token usage"):
             await repo.increment_usage("thread-1", 100, 50)
 
@@ -87,7 +93,9 @@ async def test_ensure_indexes_runs_once_per_process() -> None:
             return_value=daily_collection,
         ),
     ):
-        repo = TokenUsageMongoRepository("mongodb://mongodb:27017", db_name="tokenusage")
+        repo = TokenUsageMongoRepository(
+            "mongodb://mongodb:27017", db_name="tokenusage"
+        )
         await repo.ensure_indexes()
         await repo.ensure_indexes()
 

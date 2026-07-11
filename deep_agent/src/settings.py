@@ -145,8 +145,13 @@ class Settings(BaseSettings):
     # ── CLI ───────────────────────────────────────────────────────────
     ENABLE_CLI: bool = Field(default=True)
 
+    # ── Platform ──────────────────────────────────────────────────────
+    AI_PLATFORM_AGENT_ORG: str = Field(default="")
+    PLATFORM_AUDIT_ENABLED: bool = Field(default=True)
+    PLATFORM_AUDIT_BUFFER_MAX: int = Field(default=1000, ge=1, le=100_000)
+
     # ── FLAG TO SWITCH TO RELOAD FROM DISK ────────────────────────────
-    CONFIG_AUTO_RELOAD: bool = Field(default=False)
+    CONFIG_AUTO_RELOAD: bool = Field(default=True)
 
     # ── MCP OAuth ─────────────────────────────────────────────────────
     MCP_TOKEN_ENCRYPTION_KEY: Optional[str] = Field(default=None)

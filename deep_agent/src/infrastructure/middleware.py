@@ -19,11 +19,37 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
 
+def build_audit_middleware(
+    *,
+    mcp_tool_names: frozenset[str] | None = None,
+    subagent: str | None = None,
+    agent: str | None = None,
+) -> Any | None:
+    """Return AuditMiddleware when platform audit is enabled, else None."""
+    from deep_agent.src.audit.config import is_audit_enabled
+
+    if not is_audit_enabled():
+        return None
+
+    from deep_agent.src.audit.middleware import AuditMiddleware
+
+    return AuditMiddleware(
+        mcp_tool_names=mcp_tool_names or frozenset(),
+        subagent=subagent,
+        agent=agent,
+    )
+
+
+def _mcp_tool_names_from_tools(tools: list[Any]) -> frozenset[str]:
+    return frozenset(getattr(t, "name", "") for t in tools if getattr(t, "name", None))
+
+
 def build_middleware_list(
     resolved: ResolvedMiddlewareConfig,
     *,
     model: Any | None = None,
     backend: Any | None = None,
+    mcp_tool_names: frozenset[str] | None = None,
 ) -> list[Any]:
     """Build a list of middleware instances from resolved config.
 
@@ -36,16 +62,21 @@ def build_middleware_list(
         resolved: Fully resolved middleware configuration for this agent.
         model: Chat model instance for SummarizationToolMiddleware.
         backend: Backend instance for SummarizationToolMiddleware.
+        mcp_tool_names: MCP tool names for platform audit classification.
 
     Returns:
         List of middleware instances to pass as middleware= parameter.
         Empty list means only deepagents defaults apply.
     """
+    middlewares: list[Any] = []
+
+    audit_mw = build_audit_middleware(mcp_tool_names=mcp_tool_names)
+    if audit_mw is not None:
+        middlewares.append(audit_mw)
+
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
-        return []
-
-    middlewares: list[Any] = []
+        return middlewares
 
     if resolved.summarization_tool_enabled:
         _append_if_built(

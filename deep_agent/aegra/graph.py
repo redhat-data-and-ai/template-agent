@@ -87,9 +87,17 @@ def _graph_fingerprint(
     model_name: str,
     system_prompt: str,
     tool_names: list[str],
+    hitl_enabled: bool = False,
+    hitl_mode: str = "all",
+    hitl_exclude: list[str] | None = None,
 ) -> str:
     """Stable fingerprint for graph cache keying."""
-    raw = f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}"
+    hitl_flag = (
+        f"hitl={int(hitl_enabled)}"
+        f",mode={hitl_mode}"
+        f",exclude={','.join(sorted(hitl_exclude or []))}"
+    )
+    raw = f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}\0{hitl_flag}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -238,10 +246,24 @@ async def agent(runtime: ServerRuntime) -> Any:
         )
         tools = mcp_tools
 
+    from deep_agent.src.infrastructure.middleware import (
+        build_middleware_list,
+        resolve_memory_param,
+    )
+
+    middleware_overrides = orchestrator_cfg.get("middleware")
+    resolved_mw = agent_config.resolve_agent_middleware(
+        model_name, middleware_overrides
+    )
+
+    hitl = getattr(resolved_mw, "human_approval", None)
     cache_key = _graph_fingerprint(
         model_name,
         system_prompt,
         [t.name for t in tools],
+        hitl_enabled=hitl.enabled if hitl else False,
+        hitl_mode=hitl.mode if hitl else "",
+        hitl_exclude=hitl.exclude if hitl else [],
     )
     now = time.time()
     graph_ttl = float(agent_config.get_cache_config().graph.ttl)
@@ -256,18 +278,23 @@ async def agent(runtime: ServerRuntime) -> Any:
     subagents = load_subagents(tools=mcp_tools)
     backend = get_configured_backend()
 
-    from deep_agent.src.infrastructure.middleware import (
-        build_middleware_list,
-        resolve_memory_param,
-    )
-
     middleware_overrides = orchestrator_cfg.get("middleware")
     resolved_mw = agent_config.resolve_agent_middleware(
         model_name, middleware_overrides
     )
-    middleware = build_middleware_list(resolved_mw, model=model, backend=backend)
+    middleware = build_middleware_list(
+        resolved_mw,
+        model=model,
+        backend=backend,
+        mcp_tool_names=frozenset(t.name for t in mcp_tools),
+    )
     memory = resolve_memory_param(resolved_mw)
-    skills_param = skill_paths if resolved_mw.skills_enabled else None
+    if skill_paths and resolved_mw.skills_enabled:
+        from deep_agent.src.agent.config.resolver import to_virtual_skill_paths
+
+        skills_param = to_virtual_skill_paths(skill_paths)
+    else:
+        skills_param = None
 
     async_mw = build_async_middleware(subagents, providers_config.async_tasks)
     if async_mw is not None:
@@ -305,6 +332,24 @@ async def agent(runtime: ServerRuntime) -> Any:
                 create_kwargs["permissions"] = permissions
         except (ImportError, TypeError):
             pass
+
+    if hitl and hitl.enabled and "interrupt_on" in create_sig.parameters:
+        try:
+            from deep_agent.src.agent.config.hitl import build_interrupt_on
+
+            interrupt_on = build_interrupt_on(hitl, tools)
+            if interrupt_on:
+                create_kwargs["interrupt_on"] = interrupt_on
+            else:
+                logger.warning(
+                    "HITL is enabled but interrupt_on is empty — "
+                    "no tool calls will be interrupted (all tools may be excluded)"
+                )
+        except ImportError:
+            logger.warning(
+                "HITL is enabled but hitl module not available — "
+                "upgrade deepagents to activate human-in-the-loop approval"
+            )
 
     _inner_graph = create_deep_agent(**create_kwargs)
 

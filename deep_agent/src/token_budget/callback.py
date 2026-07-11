@@ -127,6 +127,7 @@ class TokenBudgetCallbackHandler(AsyncCallbackHandler):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
+        """Record token usage from a completed LLM call."""
         await self._record_tokens(response, metadata, extract_tokens_from_llm_result)
 
 

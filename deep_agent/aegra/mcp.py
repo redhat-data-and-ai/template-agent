@@ -1,7 +1,7 @@
 """MCP (Model Context Protocol) client for external tool integration.
 
 This module manages connections to MCP servers that provide tools for agents.
-It reads server configurations from config/mcp.json, establishes parallel
+It reads server configurations from config/agent/mcp.json, establishes parallel
 connections with fault isolation, and retrieves all available tools.
 
 Why this exists:
@@ -85,6 +85,9 @@ class _TokenInjectorInterceptor:
 
         user_id = _current_user_id.get()
         auth_mode = self._server_cfg.get("auth_mode", "sso")
+
+        if auth_mode == "api_key":
+            return await handler(request)
 
         try:
             if auth_mode in ("oauth", "dcr"):
@@ -246,6 +249,13 @@ async def _resolve_connection_token(
     if auth_mode == "sso":
         return sso_token
 
+    if auth_mode == "api_key":
+        env_var = entry.get("auth_env_var", "")
+        api_key = os.environ.get(env_var, "").strip().strip('"')
+        if not api_key:
+            logger.warning("MCP auth_mode=api_key but %s is not set", env_var)
+        return api_key or None
+
     if not user_id:
         return None
 
@@ -297,6 +307,60 @@ def _build_server_config(
     return config
 
 
+def _create_auth_placeholder_tool(mcp_name: str) -> Any:
+    """Create a stub tool that triggers NeedsAuthorization when called.
+
+    When an MCP server requires OAuth/DCR but the user hasn't authenticated yet,
+    we inject this placeholder. When the LLM calls it, NeedsAuthorization fires,
+    which mcp_tool_auth wraps into a LangGraph interrupt, and the UI shows the
+    connect button.
+    """
+    from langchain_core.tools import StructuredTool
+    from pydantic import BaseModel
+    from pydantic import Field as PydanticField
+
+    class _Input(BaseModel):
+        query: str = PydanticField(default="", description="Your request for this tool")
+
+    safe = mcp_name.replace("-", "_")
+
+    async def _require_auth(query: str = "") -> str:
+        from deep_agent.aegra.mcp_auth import (
+            NeedsAuthorization,
+            get_mcp_credential_resolver,
+        )
+
+        user_id = _current_user_id.get()
+        if user_id:
+            resolver = get_mcp_credential_resolver()
+            server_cfg = _get_server_configs().get(mcp_name, {})
+            try:
+                if await resolver.has_valid_token(user_id, mcp_name, server_cfg):
+                    return (
+                        f"Successfully connected to {mcp_name}. "
+                        f"The tools are now available — please ask the user to "
+                        f"repeat their request so the updated tools can be loaded."
+                    )
+            except Exception:
+                pass
+
+        raise NeedsAuthorization(
+            mcp_name,
+            get_mcp_credential_resolver().connect_url(mcp_name),
+        )
+
+    return StructuredTool(
+        name=f"mcp__{safe}",
+        description=(
+            f"Use {mcp_name} tools. "
+            f"Authentication is required — calling this will prompt the user to connect."
+        ),
+        func=lambda query="": "",
+        coroutine=_require_auth,
+        args_schema=_Input,
+    )
+
+
 async def _connect_single_server(
     name: str,
     config: dict[str, Any],
@@ -323,51 +387,58 @@ async def _connect_single_server(
         logger.warning(f"[{name}] circuit breaker open — skipping connection")
         return []
 
-    try:
-        async with asyncio.timeout(timeout):
-            client = MultiServerMCPClient(
-                {name: config},
-                tool_interceptors=[
-                    _TokenInjectorInterceptor(name, server_cfg),
-                ],
-            )
-            tools: list[Any] = await client.get_tools()
-        logger.info(f"[{name}] loaded {len(tools)} tool(s)")
-        breaker.record_success()
-        return tools
-    except TimeoutError:
-        breaker.record_failure()
-        logger.error(f"[{name}] timeout after {timeout}s ({config.get('url')})")
-    except Exception as exc:
-        from deep_agent.aegra.mcp_auth import get_mcp_credential_resolver
-
-        if _is_needs_authorization(exc):
-            logger.info(
-                "[%s] MCP OAuth required — connect at %s",
-                name,
-                get_mcp_credential_resolver().connect_url(name),
-            )
-        elif _is_auth_error(exc):
-            auth_mode = server_cfg.get("auth_mode", "sso")
-            if auth_mode in ("oauth", "dcr"):
+    max_attempts = 2
+    for attempt in range(1, max_attempts + 1):
+        try:
+            async with asyncio.timeout(timeout):
+                client = MultiServerMCPClient(
+                    {name: config},
+                    tool_interceptors=[
+                        _TokenInjectorInterceptor(name, server_cfg),
+                    ],
+                )
+                tools: list[Any] = await client.get_tools()
+            logger.info(f"[{name}] loaded {len(tools)} tool(s)")
+            breaker.record_success()
+            return tools
+        except TimeoutError:
+            if attempt < max_attempts:
+                logger.warning(
+                    f"[{name}] timeout after {timeout}s (attempt {attempt}/{max_attempts}), retrying"
+                )
+                continue
+            breaker.record_failure()
+            logger.error(f"[{name}] timeout after {timeout}s ({config.get('url')})")
+        except Exception as exc:
+            if _is_needs_authorization(exc):
                 logger.info(
-                    "[%s] MCP tool discovery auth failed — connect OAuth first "
-                    "(POST /mcp/%s/connect)",
+                    "[%s] MCP OAuth required — returning auth placeholder tool",
                     name,
-                    name,
+                )
+                return [_create_auth_placeholder_tool(name)]
+            elif _is_auth_error(exc):
+                auth_mode = server_cfg.get("auth_mode", "sso")
+                if auth_mode in ("oauth", "dcr"):
+                    logger.info(
+                        "[%s] MCP tool discovery auth failed — returning auth placeholder tool",
+                        name,
+                    )
+                    return [_create_auth_placeholder_tool(name)]
+                else:
+                    logger.warning(
+                        f"[{name}] MCP auth failed — {type(exc).__name__}: {exc}"
+                    )
+            elif _is_connection_error(exc) and not required:
+                breaker.record_failure()
+                logger.warning(
+                    f"[{name}] not reachable ({config.get('url')}) — skipped"
                 )
             else:
-                logger.warning(
-                    f"[{name}] MCP auth failed — {type(exc).__name__}: {exc}"
+                breaker.record_failure()
+                logger.error(
+                    f"[{name}] connection failed ({config.get('url')})", exc_info=True
                 )
-        elif _is_connection_error(exc) and not required:
-            breaker.record_failure()
-            logger.warning(f"[{name}] not reachable ({config.get('url')}) — skipped")
-        else:
-            breaker.record_failure()
-            logger.error(
-                f"[{name}] connection failed ({config.get('url')})", exc_info=True
-            )
+            return []
     return []
 
 
@@ -460,7 +531,7 @@ async def get_mcp_tools(
     Subsequent calls within the TTL window return the cached tool list
     without reconnecting, eliminating ~3-4s of overhead per request.
 
-    Loads server definitions from ``config/mcp.json``, connects to
+    Loads server definitions from ``config/agent/mcp.json``, connects to
     each enabled server in parallel, and returns a deduplicated flat list.
 
     When ``server_names`` is provided, only the servers whose names match
@@ -514,8 +585,18 @@ async def get_mcp_tools(
     discovery_token = _mcp_tool_discovery.set(True)
     try:
         connect_jobs = []
+        placeholder_tools: list[list[Any]] = []
         for name, entry in enabled.items():
             bearer = await _resolve_connection_token(name, entry, sso_token, user_id)
+            auth_mode = entry.get("auth_mode", "sso")
+            if auth_mode in ("oauth", "dcr") and bearer is None:
+                logger.info(
+                    "[%s] No OAuth token for %s server — using auth placeholder",
+                    name,
+                    auth_mode,
+                )
+                placeholder_tools.append([_create_auth_placeholder_tool(name)])
+                continue
             connect_jobs.append(
                 _connect_single_server(
                     name=name,
@@ -526,6 +607,7 @@ async def get_mcp_tools(
                 )
             )
         results: list[list[Any]] = await asyncio.gather(*connect_jobs)
+        results.extend(placeholder_tools)
     finally:
         _mcp_tool_discovery.reset(discovery_token)
 
