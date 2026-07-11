@@ -158,7 +158,7 @@ class GuardianToolProxy(BaseTool):
 
         # Phase 1: pre-check args before the inner tool executes.
         if settings.GUARDIAN_ENABLED:
-            arg_text = str(input)[:500]
+            arg_text = str(input)
             is_safe, verdict = await check_safety(arg_text, context="tool_input")
             if not is_safe:
                 logger.warning(
@@ -182,9 +182,9 @@ class GuardianToolProxy(BaseTool):
 
         # Phase 3: post-check the result.
         if isinstance(result, _TM):
-            content = str(result.content)[:500]
+            content = str(result.content)
         else:
-            content = str(result)[:500] if result is not None else ""
+            content = str(result) if result is not None else ""
         if not content or not settings.GUARDIAN_ENABLED:
             return result
 
