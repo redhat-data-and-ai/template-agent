@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     REQUEST_LOG_BODY: bool = Field(default=True)
     REQUEST_LOG_BODY_MAX_SIZE: int = Field(default=10240)
 
+    # ── Security ──────────────────────────────────────────────────────
+    REQUEST_BODY_MAX_SIZE: int = Field(
+        default=10 * 1024 * 1024,  # 10MB
+        description="Maximum request body size in bytes (DoS protection)",
+    )
+
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
 
@@ -85,6 +91,18 @@ class Settings(BaseSettings):
     SSO_DEV_USERNAME: str = Field(default="John Doe")
     SSO_DEV_USER_ID: str = Field(default="dev-user")
     ENABLE_USER_ID_ENCRYPTION: bool = Field(default=False)
+
+    # ── Environment ───────────────────────────────────────────────────
+    ENVIRONMENT: str = Field(
+        default="development",
+        description="Runtime environment: development, production, staging. "
+        "Production mode enforces auth, SSL verification, and PII scrubbing.",
+    )
+
+    @property
+    def is_production(self) -> bool:
+        """True when running in production environment."""
+        return self.ENVIRONMENT.lower() == "production"
 
     # ── Observability (Langfuse) ──────────────────────────────────────
     LANGFUSE_PUBLIC_KEY: Optional[str] = Field(default=None)
@@ -180,7 +198,7 @@ class Settings(BaseSettings):
 
 
 def validate_config(settings: Settings) -> None:
-    """Validate port range and log level."""
+    """Validate port range, log level, and production constraints."""
     if not (1024 <= settings.AGENT_PORT <= 65535):
         raise AppException(
             f"AGENT_PORT must be between 1024 and 65535, got {settings.AGENT_PORT}",
@@ -200,6 +218,24 @@ def validate_config(settings: Settings) -> None:
             raise AppException(
                 "AGENT_PUBLIC_BASE_URL must use https:// in production "
                 "(http:// is permitted only for localhost, 127.0.0.1, or ::1)",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
+    # Production-specific validations
+    if settings.is_production:
+        # Enforce auth in production
+        if not settings.ENABLE_AUTH:
+            raise AppException(
+                "ENABLE_AUTH must be true in production. "
+                "Configure SSO_ISSUER_URL, SSO_CLIENT_ID, and SSO_CLIENT_SECRET.",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
+        # Enforce HTTPS for public URL in production
+        if settings.AGENT_PUBLIC_BASE_URL and settings.is_dev_public_url:
+            raise AppException(
+                "AGENT_PUBLIC_BASE_URL cannot use http://localhost in production. "
+                "Configure a valid https:// URL.",
                 ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
             )
 

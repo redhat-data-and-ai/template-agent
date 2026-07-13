@@ -24,6 +24,7 @@ USER 65532
 
 COPY --chown=65532:root deep_agent /app/deep_agent
 COPY --chown=65532:root aegra.json /app/aegra.json
+COPY --chown=65532:root entrypoint.sh /app/entrypoint.sh
 
 ENV PYTHONPATH=/app
 ENV AGENT_HOST=0.0.0.0
@@ -33,4 +34,5 @@ ENV CONFIG_PATH=/app/config/agent
 
 EXPOSE 5002
 
-CMD ["/bin/sh", "-c", "exec /app/.venv/bin/python -m deep_agent.aegra.entrypoint"]
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["/app/.venv/bin/python", "-m", "deep_agent.aegra.entrypoint"]

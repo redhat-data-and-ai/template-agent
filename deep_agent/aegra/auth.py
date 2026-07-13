@@ -39,6 +39,16 @@ logger = get_python_logger()
 auth = Auth()
 
 ENABLE_AUTH = os.environ.get("ENABLE_AUTH", "true").lower() == "true"
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development").lower()
+
+# Enforce auth in production - fail fast at startup
+if ENVIRONMENT == "production" and not ENABLE_AUTH:
+    raise RuntimeError(
+        "ENABLE_AUTH=false is not permitted when ENVIRONMENT=production. "
+        "Production deployments must use SSO authentication. "
+        "Set ENABLE_AUTH=true and configure SSO_ISSUER_URL, SSO_CLIENT_ID, and SSO_CLIENT_SECRET."
+    )
+
 SSO_ISSUER_URL = os.environ.get("SSO_ISSUER_URL", "")
 SSO_CLIENT_ID = os.environ.get("SSO_CLIENT_ID", "")
 SSO_CLIENT_SECRET = os.environ.get("SSO_CLIENT_SECRET", "")
@@ -146,10 +156,19 @@ def _build_dev_user() -> dict[str, Any]:
 async def authenticate(headers: dict) -> dict:
     """Validate the Bearer token from the Authorization header.
 
-    When ENABLE_AUTH is false, returns a dev user identity.
+    When ENABLE_AUTH is false AND not in production, returns a dev user identity.
+    Production always requires authentication.
     Extracts access_token and refresh_token for downstream propagation.
     """
+    # Block auth bypass in production (defense-in-depth)
+    if ENVIRONMENT == "production" and not ENABLE_AUTH:
+        raise PermissionError(
+            "Authentication bypass disabled in production. "
+            "Set ENABLE_AUTH=true and configure SSO credentials."
+        )
+
     if not ENABLE_AUTH:
+        logger.warning("Auth bypass active (development mode)")
         return _build_dev_user()
 
     auth_header = headers.get("authorization", "")

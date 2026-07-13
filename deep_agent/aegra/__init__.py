@@ -18,4 +18,6 @@ Modules:
     entrypoint: Container config validation and server startup
 """
 
-__version__ = "0.1.0"
+import os as _os
+
+__version__ = _os.environ.get("APPLICATION_VERSION", "").strip() or "0.2.0"

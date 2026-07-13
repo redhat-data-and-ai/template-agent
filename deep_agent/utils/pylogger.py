@@ -106,14 +106,18 @@ for _name in SILENT_LOGGERS:
 _trace_id_var: ContextVar[str | None] = ContextVar("trace_id", default=None)
 _user_id_var: ContextVar[str | None] = ContextVar("user_id", default=None)
 _thread_id_var: ContextVar[str | None] = ContextVar("thread_id", default=None)
-_org_var: ContextVar[str | None] = ContextVar("org", default=None)
+_request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
+_org_id_var: ContextVar[str | None] = ContextVar("org_id", default=None)
+_agent_id_var: ContextVar[str | None] = ContextVar("agent_id", default=None)
 
 
 def bind_request_context(
     trace_id: str | None = None,
     user_id: str | None = None,
     thread_id: str | None = None,
-    org: str | None = None,
+    request_id: str | None = None,
+    org_id: str | None = None,
+    agent_id: str | None = None,
 ) -> None:
     """Bind per-request identifiers into the logging context.
 
@@ -126,8 +130,12 @@ def bind_request_context(
         _user_id_var.set(user_id)
     if thread_id:
         _thread_id_var.set(thread_id)
-    if org:
-        _org_var.set(org)
+    if request_id:
+        _request_id_var.set(request_id)
+    if org_id:
+        _org_id_var.set(org_id)
+    if agent_id:
+        _agent_id_var.set(agent_id)
 
 
 def clear_request_context() -> None:
@@ -135,7 +143,9 @@ def clear_request_context() -> None:
     _trace_id_var.set(None)
     _user_id_var.set(None)
     _thread_id_var.set(None)
-    _org_var.set(None)
+    _request_id_var.set(None)
+    _org_id_var.set(None)
+    _agent_id_var.set(None)
 
 
 def _inject_request_context(
@@ -145,15 +155,21 @@ def _inject_request_context(
     rid = _trace_id_var.get()
     uid = _user_id_var.get()
     tid = _thread_id_var.get()
-    oid = _org_var.get()
+    req_id = _request_id_var.get()
+    oid = _org_id_var.get()
+    aid = _agent_id_var.get()
     if rid:
         event_dict["trace_id"] = rid
     if uid:
         event_dict["user_id"] = uid
     if tid:
         event_dict["thread_id"] = tid
+    if req_id:
+        event_dict["request_id"] = req_id
     if oid:
-        event_dict["org"] = oid
+        event_dict["org_id"] = oid
+    if aid:
+        event_dict["agent_id"] = aid
     event_dict["service"] = SERVICE_NAME
     return event_dict
 
