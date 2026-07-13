@@ -127,6 +127,8 @@ class LangfuseObservabilityProvider:
         self, run_id: str, thread_id: str, user_identity: str | None = None
     ) -> dict[str, Any]:
         """Return Langfuse metadata keys for RunnableConfig injection."""
+        from deep_agent.utils.pylogger import _trace_id_var
+
         metadata: dict[str, Any] = {
             "langfuse_trace_name": _get_trace_name(),
         }
@@ -134,6 +136,9 @@ class LangfuseObservabilityProvider:
             metadata["langfuse_user_id"] = user_identity
         if thread_id:
             metadata["langfuse_session_id"] = thread_id
+        trace_id = _trace_id_var.get()
+        if trace_id:
+            metadata["langfuse_tags"] = [f"trace_id:{trace_id}"]
         return metadata
 
     def is_enabled(self) -> bool:
@@ -147,7 +152,7 @@ class LangfuseObservabilityProvider:
 
 
 class TokenBudgetObservabilityProvider:
-    """Inject thread_id into RunnableConfig metadata for the token budget callback."""
+    """Inject thread_id and trace_id into RunnableConfig metadata for the token budget callback."""
 
     def get_callbacks(self) -> list[Any]:
         """Return empty list — callbacks are handled by register_configure_hook."""
@@ -156,21 +161,26 @@ class TokenBudgetObservabilityProvider:
     def get_metadata(
         self, run_id: str, thread_id: str, user_identity: str | None = None
     ) -> dict[str, Any]:
-        """Return RunnableConfig metadata keys for token budget tracking."""
+        """Return token budget metadata keys for RunnableConfig injection."""
         from deep_agent.src.token_budget.callback import (
             THREAD_ID_METADATA_KEY,
+            TRACE_ID_METADATA_KEY,
             USER_ID_METADATA_KEY,
         )
+        from deep_agent.utils.pylogger import _trace_id_var
 
         metadata: dict[str, Any] = {}
         if thread_id:
             metadata[THREAD_ID_METADATA_KEY] = thread_id
         if user_identity:
             metadata[USER_ID_METADATA_KEY] = user_identity
+        trace_id = _trace_id_var.get()
+        if trace_id:
+            metadata[TRACE_ID_METADATA_KEY] = trace_id
         return metadata
 
     def is_enabled(self) -> bool:
-        """Return True when per-thread token budget tracking is configured."""
+        """Return True if token budget tracking is active."""
         try:
             from deep_agent.src.agent.config import agent_config
 

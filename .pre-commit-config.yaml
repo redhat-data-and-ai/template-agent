@@ -12,6 +12,7 @@ repos:
       - id: check-case-conflict
       - id: check-docstring-first
       - id: check-json
+        exclude: ^config/agent/mcp\.json$
       - id: check-toml
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -27,7 +28,7 @@ repos:
     hooks:
       - id: mypy
         args: [--ignore-missing-imports]
-        additional_dependencies: [types-requests, types-PyYAML]
+        additional_dependencies: [types-requests, types-PyYAML, types-cachetools]
         exclude: ^tests/
 
 

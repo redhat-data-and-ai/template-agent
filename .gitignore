@@ -195,9 +195,6 @@ safety-report.json
 TASKS.md
 ROADMAP.md
 
-# Demo environment (make demo)
-.demo/
-
 # Kind cluster cloned repos (make kind)
 .kind/
 

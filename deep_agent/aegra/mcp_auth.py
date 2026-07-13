@@ -23,6 +23,7 @@ from deep_agent.aegra.mcp_oauth_scopes import (
 )
 from deep_agent.aegra.mcp_token_store import McpOAuthToken, McpTokenStore
 from deep_agent.aegra.redis import distributed_lock
+from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
@@ -302,7 +303,8 @@ class McpCredentialResolver:
             )
 
         if auth_mode == "dcr":
-            client = await self._store.get_client(mcp_name)
+            current_agent_name = agent_config.get_name()
+            client = await self._store.get_client(current_agent_name, mcp_name)
             if client is None:
                 return None, None
             return client.client_id, client.client_secret

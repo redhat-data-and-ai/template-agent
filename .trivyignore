@@ -1,0 +1,11 @@
+# CVE-2026-31072: APScheduler RCE via insecure deserialization (CRITICAL)
+# No fixed version available as of 2026-07-07.
+# Risk mitigated: AsyncScheduler is used with in-memory store only (no persistent
+# job store backend), so the deserialization attack vector is not exposed.
+# Revisit when APScheduler 4.x releases a patched version.
+CVE-2026-31072
+
+# CVE-2026-25087: pyarrow DoS via use-after-free when reading IPC files (HIGH)
+# Fixed in pyarrow 23.0.1, but pinning it causes a build dependency conflict.
+# pyarrow is a transitive dep — not used directly. Revisit when upstream resolves.
+CVE-2026-25087

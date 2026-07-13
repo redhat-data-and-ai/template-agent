@@ -11,6 +11,7 @@ Why this exists:
 
 Functions:
     resolve_skill_paths: Convert skill names to skill directory paths
+    to_virtual_skill_paths: Convert absolute paths to virtual /skills/<name> paths
     resolve_tools: Convert tool names to tool objects
 """
 
@@ -53,6 +54,37 @@ def resolve_skill_paths(
         logger.warning(f"Agent '{agent_name}' references unknown skills: {missing}")
 
     return skill_paths
+
+
+def to_virtual_skill_paths(skill_paths: list[str]) -> list[str]:
+    """Convert absolute filesystem skill paths to virtual /skills/<name> paths.
+
+    The CompositeBackend routes /skills/ to a ReadOnlyFilesystemBackend. This
+    function transforms the absolute paths produced by resolve_skill_paths()
+    into the virtual paths expected by that routing.
+
+    Note: only the leaf directory name is used. Nested skill directories
+    (e.g., /skills/category/my-skill) are not currently supported.
+
+    Args:
+        skill_paths: Absolute filesystem paths from resolve_skill_paths().
+
+    Returns:
+        Virtual paths like ["/skills/my-skill", "/skills/other-skill"].
+    """
+    virtual: list[str] = []
+    for p in skill_paths:
+        name = Path(p).name
+        parent_name = Path(p).parent.name
+        if parent_name != "skills":
+            logger.warning(
+                "Skill path '%s' is not directly under a 'skills/' directory — "
+                "only leaf name '%s' is used for virtual path",
+                p,
+                name,
+            )
+        virtual.append(f"/skills/{name}")
+    return virtual
 
 
 def resolve_tools(

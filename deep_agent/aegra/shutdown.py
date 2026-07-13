@@ -173,7 +173,16 @@ def _handle_signal(signum: int, loop: asyncio.AbstractEventLoop) -> None:
     global _shutting_down  # noqa: PLW0603
     _shutting_down = True
     logger.info("Signal %d received — scheduling async shutdown", signum)
-    loop.create_task(run_shutdown())
+    loop.create_task(_shutdown_and_exit())
+
+
+async def _shutdown_and_exit() -> None:
+    """Run graceful shutdown then terminate the process."""
+    await run_shutdown()
+    logger.info("Shutdown complete — exiting")
+    import sys
+
+    sys.exit(0)
 
 
 _async_shutdown_started = False

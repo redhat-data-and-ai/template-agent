@@ -1,4 +1,4 @@
-.PHONY: local dev test clean deploy deploy-headless undeploy undeploy-headless demo kind kind-down test-triggers test-integration test-headless headless
+.PHONY: local dev test clean deploy deploy-headless undeploy undeploy-headless kind kind-down container container-down local-down test-triggers test-integration test-headless headless
 
 # OpenShift namespace (can be overridden: make deploy openshift NAMESPACE=my-project)
 NAMESPACE ?= $(shell oc project -q 2>/dev/null)
@@ -27,11 +27,13 @@ install:
 	@chmod +x /tmp/activate_and_shell.sh
 	@exec /tmp/activate_and_shell.sh
 
-clean: ## Remove build artifacts, venv, and tear down demo stack
-	@echo "Stopping demo stack (if running)..."
-	@podman-compose down -v 2>/dev/null || true
-	@podman rmi template-agent_template-mcp-server template-agent_template-agent template-agent_template-ui 2>/dev/null || true
-	@rm -rf $(DEMO_DIR)
+clean: ## Remove build artifacts, venv, and tear down compose stack
+	@echo "Stopping agent on port 5002 (if running)..."
+	@lsof -ti :5002 | xargs kill -9 2>/dev/null || true
+	@echo "Stopping compose stack (if running)..."
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container down -v 2>/dev/null || true
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml stop pgvector redis 2>/dev/null || true
+	@podman rmi template-agent_template-agent 2>/dev/null || true
 	@echo "Cleaning up build artifacts..."
 	@rm -rf .venv
 	@rm -rf __pycache__
@@ -87,31 +89,45 @@ eval-promptfoo:
 	@cd config/agent/evals/promptfoo && npx promptfoo@latest eval
 
 mock-mcp:
-	@echo "Starting Mock MCP Server..."
-	@./scripts/start-mock-mcp.sh
+	@if [ ! -d ".venv" ]; then \
+		echo "Error: Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
+	@echo "Starting Mock MCP Server on http://localhost:5001 (Ctrl+C to stop)..."
+	@.venv/bin/python tests/mocks/mock_mcp_server.py
 
 local-with-mock:
-	@echo "This will start both Mock MCP Server and Agent"
 	@echo "Run in separate terminals:"
 	@echo "  Terminal 1: make mock-mcp"
 	@echo "  Terminal 2: make local"
-	@echo ""
-	@echo "Or use podman-compose to run everything together"
 
 local:
 	@echo "Setting up local environment..."
-	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
+	@test -f .env 2>/dev/null || (echo "Creating .env from .env.example..." && cp .env.example .env 2>/dev/null) || true
 	@lsof -ti :5002 | xargs kill -9 2>/dev/null || true
+	@echo "Cleaning up stale containers from previous naming scheme..."
+	@podman rm -f demo-pgvector demo-redis 2>/dev/null || true
 	@echo "Starting infrastructure (Postgres + Redis)..."
-	@podman-compose -f compose.yaml up -d pgvector redis
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml up -d pgvector redis
 	@echo "Waiting for Postgres to be ready..."
-	@until podman exec demo-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
-	@podman exec demo-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
-		|| podman exec demo-pgvector psql -U postgres -c "CREATE DATABASE aegra;"
+	@until podman exec template-agent-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
+	@podman exec template-agent-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
+		|| podman exec template-agent-pgvector psql -U postgres -c "CREATE DATABASE aegra;"
 	@echo "Starting agent with LangGraph Platform..."
 	@echo "API available at: http://localhost:5002"
-	@echo "Press Ctrl+C to stop the server"
-	@. .venv/bin/activate && REDIS_BROKER_ENABLED=true REDIS_URL=redis://localhost:6379/0 aegra dev --port 5002 --no-db-check
+	@echo "Press Ctrl+C to stop the server (Postgres/Redis keep running — use 'make local-down' to stop them)"
+	@trap 'lsof -ti :5002 | xargs kill -INT 2>/dev/null || true; sleep 2; lsof -ti :5002 | xargs kill -9 2>/dev/null || true; exit 130' INT TERM; \
+	REDIS_BROKER_ENABLED=true \
+		POSTGRES_HOST=localhost \
+		POSTGRES_PORT=5432 \
+		POSTGRES_DB=template_agent \
+		POSTGRES_USER=postgres \
+		POSTGRES_PASSWORD=postgres \
+		REDIS_URL=redis://localhost:6379/0 \
+		.venv/bin/aegra dev --port 5002 --no-db-check
+
+local-down:
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml stop pgvector redis
 
 headless: ## Start agent in headless mode (background worker with event triggers)
 	@echo "Setting up headless environment..."
@@ -133,144 +149,46 @@ container:
 	@echo "Agent:  http://localhost:5002"
 	@echo "Jaeger: http://localhost:16686"
 	@export PODMAN_COMPOSE_SILENT=true; \
+	trap 'export PODMAN_COMPOSE_SILENT=true; podman-compose -f compose.yaml --profile observability down --timeout 10 2>/dev/null || true; exit 130' INT TERM; \
 	ENABLE_OTEL=true \
 	OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317 \
 	ENABLE_OTEL_TRACES=true \
 	OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://jaeger:4317 \
 	podman-compose --profile observability --no-ansi up --build --force-recreate --remove-orphans --timeout=60
 
+container-down:
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile observability down
+
 # ---------------------------------------------------------------------------
 # Development environment targets
 # ---------------------------------------------------------------------------
 
-dev: ## Start full dev stack with all services (Redis, Postgres)
-	@echo "Starting development stack..."
-	@echo "Services: pgvector, redis, template-agent"
-	@echo "Agent:    http://localhost:5002"
+dev: ## Start agent + deps in containers (detached, tail logs)
+	@echo "Starting agent stack (pgvector, redis, template-agent)..."
+	@echo "Agent: http://localhost:5002"
 	@echo ""
 	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
-	podman-compose up --build -d
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container up --build -d
 	@echo ""
 	@echo "Tailing agent logs (Ctrl+C to stop)..."
 	@echo ""
-	podman-compose logs -f template-agent
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container logs -f template-agent
 
 dev-down: ## Stop dev stack
-	podman-compose down
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container down
 
 dev-clean: ## Stop dev stack and remove all data
-	podman-compose down -v
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container down -v
 	@echo "All dev data volumes removed"
 
 dev-logs: ## Tail all service logs
-	podman-compose logs -f
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container logs -f
 
 dev-restart: ## Restart dev stack
-	podman-compose restart
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container restart
 
 dev-agent: ## Restart just the agent service
-	podman-compose restart template-agent
-
-# ---------------------------------------------------------------------------
-# Demo environment: Agent + MCP Server with SSO auth
-# ---------------------------------------------------------------------------
-
-DEMO_DIR := .demo
-DEMO_MCP_REPO := https://github.com/redhat-data-and-ai/template-mcp-server.git
-DEMO_MCP_BRANCH := feat/rh-flavour
-DEMO_UI_REPO := https://github.com/redhat-data-and-ai/template-ui.git
-DEMO_UI_BRANCH := feat/rh-flavour
-
-demo: ## Start demo: UI + agent + MCP server with SSO auth (end-to-end)
-	@echo "╔═══════════════════════════════════════════════════════════════════╗"
-	@echo "║  Demo: Template UI + Agent + MCP Server with SSO Authentication  ║"
-	@echo "╚═══════════════════════════════════════════════════════════════════╝"
-	@echo ""
-	@# --- Step 1: Clone MCP server if needed ---
-	@if [ ! -d "$(DEMO_DIR)/template-mcp-server" ]; then \
-		echo "Cloning template-mcp-server (branch: $(DEMO_MCP_BRANCH))..."; \
-		mkdir -p $(DEMO_DIR); \
-		git clone --branch $(DEMO_MCP_BRANCH) --depth 1 $(DEMO_MCP_REPO) $(DEMO_DIR)/template-mcp-server; \
-	else \
-		echo "MCP server already cloned at $(DEMO_DIR)/template-mcp-server"; \
-	fi
-	@# --- Step 2: Clone UI if needed ---
-	@if [ ! -d "$(DEMO_DIR)/template-ui" ]; then \
-		echo "Cloning template-ui (branch: $(DEMO_UI_BRANCH))..."; \
-		mkdir -p $(DEMO_DIR); \
-		git clone --branch $(DEMO_UI_BRANCH) --depth 1 $(DEMO_UI_REPO) $(DEMO_DIR)/template-ui; \
-	else \
-		echo "UI already cloned at $(DEMO_DIR)/template-ui"; \
-	fi
-	@# --- Step 3: Ensure agent .env exists ---
-	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
-	@# --- Step 4: Generate MCP server .env from agent's SSO config ---
-	@echo "Generating MCP server .env from agent SSO config..."
-	@SSO_ISSUER=$$(grep -E '^SSO_ISSUER_URL=' .env | cut -d'=' -f2- | tr -d '"' | tr -d "'"); \
-	SSO_CID=$$(grep -E '^SSO_CLIENT_ID=' .env | cut -d'=' -f2- | tr -d '"' | tr -d "'"); \
-	SSO_CSEC=$$(grep -E '^SSO_CLIENT_SECRET=' .env | cut -d'=' -f2- | tr -d '"' | tr -d "'"); \
-	echo "# Auto-generated by make demo — do not edit" > $(DEMO_DIR)/mcp-server.env; \
-	echo "MCP_HOST=0.0.0.0" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "MCP_PORT=5001" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "MCP_TRANSPORT_PROTOCOL=http" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "ENABLE_AUTH=True" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "PYTHON_LOG_LEVEL=INFO" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "SSO_CLIENT_ID=$$SSO_CID" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "SSO_CLIENT_SECRET=$$SSO_CSEC" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "SSO_CALLBACK_URL=http://localhost:5001/auth/callback/oidc" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "SSO_AUTHORIZATION_URL=$${SSO_ISSUER}/protocol/openid-connect/auth" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "SSO_TOKEN_URL=$${SSO_ISSUER}/protocol/openid-connect/token" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "SSO_INTROSPECTION_URL=$${SSO_ISSUER}/protocol/openid-connect/token/introspect" >> $(DEMO_DIR)/mcp-server.env; \
-	echo "MCP server .env generated (SSO endpoints derived from SSO_ISSUER_URL)"
-	@# --- Step 5: Generate UI .env from agent's SSO config ---
-	@echo "Generating UI .env from agent SSO config..."
-	@SSO_ISSUER=$$(grep -E '^SSO_ISSUER_URL=' .env | cut -d'=' -f2- | tr -d '"' | tr -d "'"); \
-	SSO_CID=$$(grep -E '^SSO_CLIENT_ID=' .env | cut -d'=' -f2- | tr -d '"' | tr -d "'"); \
-	SSO_CSEC=$$(grep -E '^SSO_CLIENT_SECRET=' .env | cut -d'=' -f2- | tr -d '"' | tr -d "'"); \
-	echo "# Auto-generated by make demo — do not edit" > $(DEMO_DIR)/ui.env; \
-	echo "PORT=8080" >> $(DEMO_DIR)/ui.env; \
-	echo "ENVIRONMENT=development" >> $(DEMO_DIR)/ui.env; \
-	echo "COOKIE_SIGN=template-demo-cookie-secret-32chars!" >> $(DEMO_DIR)/ui.env; \
-	echo "AUTH_ENABLED=true" >> $(DEMO_DIR)/ui.env; \
-	echo "SSO_CLIENT_ID=$$SSO_CID" >> $(DEMO_DIR)/ui.env; \
-	echo "SSO_CLIENT_SECRET=$$SSO_CSEC" >> $(DEMO_DIR)/ui.env; \
-	echo "SSO_ISSUER_HOST=$$SSO_ISSUER" >> $(DEMO_DIR)/ui.env; \
-	echo "SSO_CALLBACK_URL=http://localhost:8080/auth/callback/oidc" >> $(DEMO_DIR)/ui.env; \
-	echo "AGENT_HOST=http://template-agent:5002" >> $(DEMO_DIR)/ui.env; \
-	echo "CORS_ORIGIN=http://localhost:8080" >> $(DEMO_DIR)/ui.env; \
-	echo "REDIS_HOST=redis" >> $(DEMO_DIR)/ui.env; \
-	echo "REDIS_PORT=6379" >> $(DEMO_DIR)/ui.env; \
-	echo "UI .env generated (SSO + agent connection configured)"
-	@# --- Step 6: Generate Postgres init script (creates mcp_server DB) ---
-	@echo "CREATE DATABASE mcp_server;" > $(DEMO_DIR)/init-databases.sql
-	@# --- Step 7: Generate demo MCP config (container hostname) ---
-	@echo '{"mcpServers":{"template-mcp-server":{"url":"http://template-mcp-server:5001/mcp","transport":"streamable_http","enabled":true,"auth":true,"ssl_verify":false,"timeout":30}}}' | python3 -m json.tool > $(DEMO_DIR)/mcp.json
-	@# --- Step 8: Write MCP config for container hostnames ---
-	@cp $(DEMO_DIR)/mcp.json config/agent/mcp.json
-	@# --- Step 9: Start demo stack ---
-	@echo ""
-	@echo "Services: pgvector, redis, template-mcp-server, template-agent, template-ui"
-	@echo "UI:         http://localhost:8080  (SSO login)"
-	@echo "Agent:      http://localhost:5002"
-	@echo "MCP Server: http://localhost:5001  (SSO auth enabled)"
-	@echo ""
-	podman-compose --profile demo up --build --force-recreate -d
-	@echo ""
-	@echo "Waiting for services to be healthy..."
-	@sleep 15
-	@echo ""
-	@echo "╔═══════════════════════════════════════════════════════════════╗"
-	@echo "║  Demo running!  Open http://localhost:8080 to start          ║"
-	@echo "║  Token flow: Browser → UI → Agent → MCP Server              ║"
-	@echo "╚═══════════════════════════════════════════════════════════════╝"
-	@echo ""
-	@echo "Tailing UI + agent + MCP server logs (Ctrl+C to stop)..."
-	@echo ""
-	@trap 'kill 0 2>/dev/null' EXIT; \
-		podman logs -f --names demo-ui & \
-		podman logs -f --names demo-mcp-server & \
-		podman logs -f --names demo-agent & \
-		wait
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml --profile container restart template-agent
 
 # Deployment targets
 deploy:
@@ -366,6 +284,10 @@ KIND_MCP_IMAGE := template-mcp-server:local
 KIND_UI_IMAGE := template-ui:local
 KIND_NS := template-agent
 KIND_DIR := .kind
+KIND_MCP_REPO := https://github.com/redhat-data-and-ai/template-mcp-server.git
+KIND_MCP_BRANCH := feat/rh-flavour
+KIND_UI_REPO := https://github.com/redhat-data-and-ai/template-ui.git
+KIND_UI_BRANCH := feat/rh-flavour
 KCTL := kubectl --context $(KIND_CTX)
 
 kind: ## Deploy full stack (agent + MCP + UI) to a local Kind cluster
@@ -377,16 +299,16 @@ kind: ## Deploy full stack (agent + MCP + UI) to a local Kind cluster
 	@which kubectl > /dev/null || (echo "Error: kubectl not found." && exit 1)
 	@# --- Step 1: Clone MCP server and UI if needed ---
 	@if [ ! -d "$(KIND_DIR)/template-mcp-server" ]; then \
-		echo "Cloning template-mcp-server (branch: $(DEMO_MCP_BRANCH))..."; \
+		echo "Cloning template-mcp-server (branch: $(KIND_MCP_BRANCH))..."; \
 		mkdir -p $(KIND_DIR); \
-		git clone --branch $(DEMO_MCP_BRANCH) --depth 1 $(DEMO_MCP_REPO) $(KIND_DIR)/template-mcp-server; \
+		git clone --branch $(KIND_MCP_BRANCH) --depth 1 $(KIND_MCP_REPO) $(KIND_DIR)/template-mcp-server; \
 	else \
 		echo "MCP server already cloned"; \
 	fi
 	@if [ ! -d "$(KIND_DIR)/template-ui" ]; then \
-		echo "Cloning template-ui (branch: $(DEMO_UI_BRANCH))..."; \
+		echo "Cloning template-ui (branch: $(KIND_UI_BRANCH))..."; \
 		mkdir -p $(KIND_DIR); \
-		git clone --branch $(DEMO_UI_BRANCH) --depth 1 $(DEMO_UI_REPO) $(KIND_DIR)/template-ui; \
+		git clone --branch $(KIND_UI_BRANCH) --depth 1 $(KIND_UI_REPO) $(KIND_DIR)/template-ui; \
 	else \
 		echo "UI already cloned"; \
 	fi

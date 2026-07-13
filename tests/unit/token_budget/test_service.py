@@ -119,6 +119,7 @@ async def test_check_and_record_increments_mongo_and_daily_usage() -> None:
         cumulative_input=100,
         cumulative_output=50,
         timestamp=ANY,
+        trace_id=None,
     )
     emit_daily.assert_called_once_with(
         user_id="user-1",
