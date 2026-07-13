@@ -46,7 +46,33 @@ class TestCodeExecutionConfigDefaults:
         from deep_agent.src.code_execution.config import CodeExecutionConfig
 
         cfg = CodeExecutionConfig()
-        assert cfg.supported_languages == {"python", "shell", "node"}
+        assert cfg.supported_languages == {
+            "python",
+            "python-ds",
+            "python-ml",
+            "shell",
+            "node",
+        }
+
+    def test_new_feature_defaults(self):
+        from deep_agent.src.code_execution.config import CodeExecutionConfig
+
+        cfg = CodeExecutionConfig()
+        assert cfg.network_access == "deny"
+        assert cfg.max_concurrent_per_org == 3
+        assert cfg.queue_timeout_seconds == 30.0
+        assert cfg.max_input_file_size == 1_048_576
+        assert cfg.cost_tracking_enabled is False
+        assert cfg.streaming_enabled is False
+
+    def test_custom_image_variants(self):
+        from deep_agent.src.code_execution.config import CodeExecutionConfig
+
+        cfg = CodeExecutionConfig()
+        assert "python-ds" in cfg.images
+        assert "python-ml" in cfg.images
+        assert cfg.entrypoints["python-ds"] == ["python", "-c"]
+        assert cfg.entrypoints["python-ml"] == ["python", "-c"]
 
 
 class TestCodeExecutionConfigValidation:
@@ -67,3 +93,28 @@ class TestCodeExecutionConfigValidation:
 
         with pytest.raises(Exception):
             CodeExecutionConfig(pod_poll_interval_seconds=0.1)
+
+    def test_concurrent_limit_min(self):
+        from deep_agent.src.code_execution.config import CodeExecutionConfig
+
+        with pytest.raises(Exception):
+            CodeExecutionConfig(max_concurrent_per_org=0)
+
+    def test_queue_timeout_min(self):
+        from deep_agent.src.code_execution.config import CodeExecutionConfig
+
+        with pytest.raises(Exception):
+            CodeExecutionConfig(queue_timeout_seconds=0.5)
+
+    def test_network_access_values(self):
+        from deep_agent.src.code_execution.config import CodeExecutionConfig
+
+        for val in ("deny", "allow_internet", "per_execution"):
+            cfg = CodeExecutionConfig(network_access=val)
+            assert cfg.network_access == val
+
+    def test_network_access_invalid(self):
+        from deep_agent.src.code_execution.config import CodeExecutionConfig
+
+        with pytest.raises(Exception):
+            CodeExecutionConfig(network_access="invalid")

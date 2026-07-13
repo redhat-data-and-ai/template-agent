@@ -1,9 +1,7 @@
 """Observability for code execution — OTEL metrics, tracing, audit, logs.
 
 Uses stdlib logging (not structlog) to ensure log output reaches
-stdout/stderr inside the LangGraph graph-execution context, where
-structlog's cached logger proxy may not be connected to the correct
-handler chain.
+stdout/stderr inside the LangGraph graph-execution context.
 """
 
 from __future__ import annotations
@@ -75,8 +73,16 @@ class CodeExecutionMetrics:
         """Initialize metrics with an OTEL tracer."""
         self._tracer = get_tracer()
 
+    # --- Execution metrics ---
+
     def record_execution(
-        self, *, language: str, org: str, exit_code: int, status: str, duration: float
+        self,
+        *,
+        language: str,
+        org: str,
+        exit_code: int,
+        status: str,
+        duration: float,
     ) -> None:
         """Record an execution metric event."""
         _log_json(
@@ -116,11 +122,65 @@ class CodeExecutionMetrics:
         """Decrement the active execution counter."""
         _log_json(logging.DEBUG, "code_execution_active_decrement", org=org)
 
+    # --- Queue metrics ---
+
+    def record_queue_wait(self, *, org: str, duration: float) -> None:
+        """Record how long an execution waited in the queue."""
+        _log_json(
+            logging.INFO,
+            "code_execution_queue_wait",
+            org=org,
+            wait_seconds=round(duration, 3),
+        )
+
+    def record_rejected(self, *, org: str) -> None:
+        """Record a rejected execution due to queue timeout."""
+        _log_json(logging.WARNING, "code_execution_rejected", org=org)
+
+    def log_queued(self, *, org: str) -> None:
+        """Log that an execution entered the queue."""
+        _log_json(logging.DEBUG, "code_execution_queued", org=org)
+
+    def log_dequeued(self, *, org: str, wait_seconds: float) -> None:
+        """Log that an execution left the queue."""
+        _log_json(
+            logging.DEBUG,
+            "code_execution_dequeued",
+            org=org,
+            wait_seconds=round(wait_seconds, 3),
+        )
+
+    # --- Cost tracking ---
+
+    def record_resource_usage(
+        self,
+        *,
+        org: str,
+        language: str,
+        cpu_seconds: float,
+        memory_mb_seconds: float,
+        duration: float,
+    ) -> None:
+        """Record per-execution resource usage for cost tracking."""
+        _log_json(
+            logging.INFO,
+            "code_execution_resource_usage",
+            org=org,
+            language=language,
+            cpu_seconds=round(cpu_seconds, 4),
+            memory_mb_seconds=round(memory_mb_seconds, 2),
+            duration_seconds=round(duration, 3),
+        )
+
+    # --- OTEL Tracing ---
+
     def start_span(self, name: str, **attributes: Any) -> Any:
         """Start an OTEL tracing span."""
         if self._tracer is None:
             return None
         return self._tracer.start_span(name, attributes=attributes)
+
+    # --- Platform Audit ---
 
     def emit_audit(
         self,
@@ -152,6 +212,8 @@ class CodeExecutionMetrics:
             stdout_bytes=stdout_bytes,
             stderr_bytes=stderr_bytes,
         )
+
+    # --- Structured Logging ---
 
     def log_started(self, **fields: Any) -> None:
         """Log that a code execution has started."""

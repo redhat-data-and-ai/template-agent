@@ -160,6 +160,8 @@ middleware:
     max_output_bytes: 1048576
     images:
       python: "python:3.12-slim"
+      python-ds: "python:3.12-slim"       # data science (pandas, numpy, scipy)
+      python-ml: "python:3.12-slim"       # machine learning (torch, transformers)
       shell: "bash:5"
       node: "node:22-slim"
     resource_requests:
@@ -168,6 +170,17 @@ middleware:
     resource_limits:
       cpu: "500m"
       memory: "256Mi"
+    # --- Network Access Control ---
+    network_access: deny                  # deny | allow_internet | per_execution
+    # --- Execution Queuing ---
+    max_concurrent_per_org: 3             # max simultaneous jobs per org
+    queue_timeout_seconds: 30             # reject if queued longer than this
+    # --- File I/O ---
+    max_input_file_size: 1048576          # 1MB max total input files
+    # --- Cost Tracking ---
+    cost_tracking_enabled: false          # emit resource usage OTEL metrics
+    # --- Streaming ---
+    streaming_enabled: false              # real-time stdout/stderr streaming
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

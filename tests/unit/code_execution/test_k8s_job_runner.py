@@ -190,3 +190,143 @@ class TestParseContainerStatus:
         )
         assert status == "success"
         assert exit_code == 0
+
+
+class TestManifestNetworkLabel:
+    def test_allow_network_label(self):
+        from deep_agent.src.code_execution.k8s_job_runner import K8sJobRunner
+
+        config = CodeExecutionConfig()
+        runner = K8sJobRunner(config)
+        manifest = runner.build_job_manifest(
+            language="python",
+            code="x=1",
+            timeout=30,
+            namespace="ns",
+            execution_id="id",
+            allow_network=True,
+        )
+        labels = manifest.metadata.labels
+        assert labels["ai-platform.io/allow-internet"] == "true"
+
+    def test_no_network_label_by_default(self):
+        from deep_agent.src.code_execution.k8s_job_runner import K8sJobRunner
+
+        config = CodeExecutionConfig()
+        runner = K8sJobRunner(config)
+        manifest = runner.build_job_manifest(
+            language="python",
+            code="x=1",
+            timeout=30,
+            namespace="ns",
+            execution_id="id",
+        )
+        labels = manifest.metadata.labels
+        assert "ai-platform.io/allow-internet" not in labels
+
+
+class TestManifestInputConfigmap:
+    def test_configmap_volume_mount(self):
+        from deep_agent.src.code_execution.k8s_job_runner import K8sJobRunner
+
+        config = CodeExecutionConfig()
+        runner = K8sJobRunner(config)
+        manifest = runner.build_job_manifest(
+            language="python",
+            code="x=1",
+            timeout=30,
+            namespace="ns",
+            execution_id="id",
+            input_configmap_name="code-exec-input-abc12345",
+        )
+        pod_spec = manifest.spec.template.spec
+        volume_names = [v.name for v in pod_spec.volumes]
+        mount_paths = [vm.mount_path for vm in pod_spec.containers[0].volume_mounts]
+        assert "input" in volume_names
+        assert "/input" in mount_paths
+        assert "/output" in mount_paths
+
+    def test_no_input_volume_without_configmap(self):
+        from deep_agent.src.code_execution.k8s_job_runner import K8sJobRunner
+
+        config = CodeExecutionConfig()
+        runner = K8sJobRunner(config)
+        manifest = runner.build_job_manifest(
+            language="python",
+            code="x=1",
+            timeout=30,
+            namespace="ns",
+            execution_id="id",
+        )
+        pod_spec = manifest.spec.template.spec
+        volume_names = [v.name for v in pod_spec.volumes]
+        assert "input" not in volume_names
+        assert "output" in volume_names
+
+
+class TestOutputVolume:
+    def test_output_emptydir_always_present(self):
+        from deep_agent.src.code_execution.k8s_job_runner import K8sJobRunner
+
+        config = CodeExecutionConfig()
+        runner = K8sJobRunner(config)
+        manifest = runner.build_job_manifest(
+            language="python",
+            code="x=1",
+            timeout=30,
+            namespace="ns",
+            execution_id="id",
+        )
+        pod_spec = manifest.spec.template.spec
+        volume_names = [v.name for v in pod_spec.volumes]
+        mount_paths = [vm.mount_path for vm in pod_spec.containers[0].volume_mounts]
+        assert "output" in volume_names
+        assert "/output" in mount_paths
+
+
+class TestCpuMemoryParsing:
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("100m", 100_000_000),
+            ("1", 1_000_000_000),
+            ("250m", 250_000_000),
+            ("500n", 500),
+        ],
+    )
+    def test_parse_cpu(self, value, expected):
+        from deep_agent.src.code_execution.k8s_job_runner import K8sJobRunner
+
+        assert K8sJobRunner._parse_cpu(value) == expected
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("128Mi", 128 * 1024 * 1024),
+            ("1Gi", 1024 * 1024 * 1024),
+            ("256Ki", 256 * 1024),
+            ("1000M", 1000 * 1000 * 1000),
+        ],
+    )
+    def test_parse_memory(self, value, expected):
+        from deep_agent.src.code_execution.k8s_job_runner import K8sJobRunner
+
+        assert K8sJobRunner._parse_memory(value) == expected
+
+
+class TestExecutionResultWithCost:
+    def test_default_cost_fields(self):
+        from deep_agent.src.code_execution.k8s_job_runner import ExecutionResult
+
+        result = ExecutionResult(
+            stdout="ok",
+            stderr="",
+            exit_code=0,
+            duration_seconds=1.0,
+            status="success",
+            job_name="j",
+            namespace="ns",
+        )
+        assert result.cpu_seconds == 0.0
+        assert result.memory_mb_seconds == 0.0
+        assert result.output_files == {}
