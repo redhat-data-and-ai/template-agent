@@ -1218,17 +1218,320 @@ flowchart TB
 
 ---
 
-## 13. Future Considerations (Not In Scope)
+## 13. Future Capabilities (Roadmap)
 
-These are explicitly out of scope but noted for future reference:
+These capabilities are not in the current implementation but are architecturally planned. Each section includes the design approach, K8s primitives involved, and integration points.
 
-- **Persistent sandbox mode** — long-running pod per session for interactive development (would be a `BaseSandbox` subclass)
-- **File input/output** — passing files to/from execution pods (would need PVC or ConfigMap mounting)
-- **Network access control** — per-execution NetworkPolicy for allowing/blocking internet access
-- **Custom package installation** — pre-built images with domain-specific libraries (pandas, sklearn, etc.)
-- **Execution queuing** — rate limiting concurrent executions per org
-- **Cost tracking** — per-org execution resource usage reporting
-- **WebSocket streaming** — real-time stdout/stderr streaming to the UI during execution
+### 13.1 File Input/Output — Passing Files To/From Execution Pods
+
+```mermaid
+flowchart LR
+    subgraph agent["🤖 Agent Pod"]
+        style agent fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#111
+        MW["CodeExecution<br/>Middleware"]
+        UPLOAD["Upload files<br/>to ConfigMap/PVC"]
+        DOWNLOAD["Download files<br/>from PVC"]
+    end
+
+    subgraph k8s["☸️ K8s Resources"]
+        style k8s fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
+        CM["ConfigMap<br/>(small files ≤1MB)"]
+        PVC["Ephemeral PVC<br/>(large files/datasets)"]
+    end
+
+    subgraph job["🐳 Exec Pod"]
+        style job fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
+        CODE["User code reads<br/>/input/* and writes<br/>/output/*"]
+    end
+
+    MW --> UPLOAD --> CM
+    MW --> UPLOAD --> PVC
+    CM -->|"volumeMount<br/>/input"| CODE
+    PVC -->|"volumeMount<br/>/input + /output"| CODE
+    CODE -->|"Results in<br/>/output/*"| DOWNLOAD
+    DOWNLOAD --> MW
+
+    style MW fill:#c4b5fd,stroke:#8b5cf6,color:#111
+    style UPLOAD fill:#c4b5fd,stroke:#8b5cf6,color:#111
+    style DOWNLOAD fill:#c4b5fd,stroke:#8b5cf6,color:#111
+    style CM fill:#fde68a,stroke:#f59e0b,color:#111
+    style PVC fill:#fde68a,stroke:#f59e0b,color:#111
+    style CODE fill:#bbf7d0,stroke:#22c55e,color:#111
+```
+
+**Design approach:**
+- **Small files (≤1MB)**: Use K8s ConfigMaps. The middleware creates a ConfigMap with file contents, mounts it at `/input/` in the Job pod. ConfigMap is deleted with the Job.
+- **Large files/datasets**: Use ephemeral PVCs (`ReadWriteOnce`). The middleware writes data to the PVC via a transient init pod, mounts it in the executor pod at `/input/` (read) and `/output/` (write). After execution, the middleware reads output files from the PVC via another transient pod, then deletes the PVC.
+- **Tool schema change**: `execute_code` gains optional `input_files: dict[str, str]` (filename → content) and returns `output_files: dict[str, str]` alongside stdout/stderr.
+- **Size limits**: ConfigMap path for files < 1MB total; PVC path for larger payloads. Configurable threshold in `CodeExecutionConfig`.
+- **Security**: File contents are ephemeral — ConfigMaps and PVCs are deleted in the `finally` block alongside the Job.
+
+---
+
+### 13.2 Network Access Control — Per-Execution NetworkPolicy
+
+```mermaid
+flowchart TD
+    subgraph policies["🔐 Network Policies"]
+        style policies fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#111
+
+        subgraph deny["Default: Deny All Egress"]
+            style deny fill:#fee2e2,stroke:#ef4444,stroke-width:2px,color:#111
+            NP1["NetworkPolicy<br/>code-exec-deny-egress<br/>━━━━━━━━━━━━━━━━<br/>podSelector: code-execution<br/>policyTypes: [Egress]<br/>egress: [] (none)"]
+        end
+
+        subgraph allow["Opt-In: Allow Internet"]
+            style allow fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
+            NP2["NetworkPolicy<br/>code-exec-allow-egress<br/>━━━━━━━━━━━━━━━━<br/>podSelector: code-execution<br/>+ allow-internet: true<br/>egress:<br/>  - ports: [443, 80]<br/>    to: [0.0.0.0/0]<br/>  except: [10.0.0.0/8,<br/>    172.16.0.0/12]"]
+        end
+    end
+
+    subgraph config["⚙️ Config"]
+        style config fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
+        CFG["code_execution:<br/>  network_access: deny<br/>  # or: allow_internet"]
+    end
+
+    config -->|"deny"| deny
+    config -->|"allow_internet"| allow
+
+    style NP1 fill:#fecaca,stroke:#ef4444,color:#111
+    style NP2 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style CFG fill:#fde68a,stroke:#f59e0b,color:#111
+```
+
+**Design approach:**
+- **Default: deny all egress.** Execution pods cannot reach the internet or internal services. A namespace-scoped `NetworkPolicy` with `podSelector: app.kubernetes.io/name: code-execution` and empty `egress: []` blocks all outbound traffic.
+- **Opt-in: allow internet.** A second `NetworkPolicy` with an additional label (`allow-internet: "true"`) permits egress to ports 443/80 while blocking internal RFC1918 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`). The middleware adds the label to the Job pod when `network_access: allow_internet` is configured.
+- **Per-execution override**: The `execute_code` tool gains an optional `network: bool = False` param. When `True` and config allows it, the pod gets the `allow-internet` label.
+- **Config addition**: `code_execution.network_access: deny | allow_internet | per_execution`
+- **RBAC**: No additional RBAC needed — NetworkPolicies are namespace-scoped and pre-provisioned.
+
+---
+
+### 13.3 Custom Package Installation — Pre-Built Domain Images
+
+```mermaid
+flowchart TB
+    subgraph registry["📦 Image Registry"]
+        style registry fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#111
+        BASE["python:3.12-slim<br/><small>Default — no extras</small>"]
+        DS["python-datascience:3.12<br/><small>pandas, numpy, scipy,<br/>sklearn, matplotlib</small>"]
+        ML["python-ml:3.12<br/><small>torch, transformers,<br/>huggingface-hub</small>"]
+        FIN["python-finance:3.12<br/><small>pandas, yfinance,<br/>quantlib</small>"]
+    end
+
+    subgraph config["⚙️ agent.yaml"]
+        style config fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
+        CFG["images:<br/>  python: python:3.12-slim<br/>  python-ds: python-datascience:3.12<br/>  python-ml: python-ml:3.12<br/>  python-fin: python-finance:3.12"]
+    end
+
+    subgraph build["🏗️ Image Build Pipeline"]
+        style build fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#111
+        DF["Dockerfile per variant<br/>FROM python:3.12-slim<br/>RUN pip install pandas numpy ..."]
+        CI["CI/CD builds + pushes<br/>to internal registry"]
+        SCAN["Trivy/Clair scan<br/>for CVEs"]
+        DF --> CI --> SCAN
+    end
+
+    config --> registry
+    build --> registry
+
+    style BASE fill:#bfdbfe,stroke:#3b82f6,color:#111
+    style DS fill:#bbf7d0,stroke:#22c55e,color:#111
+    style ML fill:#c4b5fd,stroke:#8b5cf6,color:#111
+    style FIN fill:#fde68a,stroke:#f59e0b,color:#111
+    style CFG fill:#fde68a,stroke:#f59e0b,color:#111
+    style DF fill:#ddd6fe,stroke:#8b5cf6,color:#111
+    style CI fill:#ddd6fe,stroke:#8b5cf6,color:#111
+    style SCAN fill:#ddd6fe,stroke:#8b5cf6,color:#111
+```
+
+**Design approach:**
+- **Pre-built images** for common domains: `python-datascience`, `python-ml`, `python-finance`, each with curated library sets. Dockerfiles maintained in the platform repo, built by CI/CD, pushed to the internal registry (`images.paas.redhat.com/...`).
+- **Config-driven**: Add image variants to `code_execution.images` in `agent.yaml`. The `language` field in `execute_code` becomes a variant selector: `python` (base), `python-ds` (data science), etc.
+- **Security**: All images scanned for CVEs via Trivy/Clair in the CI pipeline. Only images from the internal registry are allowed (enforced by OpenShift image policy). No runtime `pip install` — read-only filesystem prevents it.
+- **Per-org customization**: Orgs can register custom images via the registry component's agent frontmatter `runtime.images` field. The agent-engine propagates these to the agent pod's config.
+- **Version pinning**: Each image variant is tagged with semver + build SHA. The `images` config supports explicit tags: `python-datascience:1.2.3-abc123`.
+
+---
+
+### 13.4 Execution Queuing — Rate Limiting Concurrent Executions Per Org
+
+```mermaid
+flowchart TD
+    subgraph middleware["🔧 CodeExecutionMiddleware"]
+        style middleware fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#111
+        REQ["execute_code request"]
+        SEM["asyncio.Semaphore<br/>(per-org, max=N)"]
+        QUEUE["Waiting in queue"]
+        EXEC["Execute via K8s Job"]
+
+        REQ --> SEM
+        SEM -->|"Slot available"| EXEC
+        SEM -->|"At capacity"| QUEUE
+        QUEUE -->|"Slot freed"| EXEC
+    end
+
+    subgraph limits["📊 Limits"]
+        style limits fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
+        L1["max_concurrent_per_org: 3<br/><small>Default: 3 concurrent Jobs</small>"]
+        L2["queue_timeout_seconds: 30<br/><small>Reject if queued > 30s</small>"]
+        L3["K8s ResourceQuota<br/><small>namespace-scoped Job limit</small>"]
+    end
+
+    subgraph metrics["📈 Queue Metrics"]
+        style metrics fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
+        M1["code_execution_queue_depth<br/><small>UpDownCounter per org</small>"]
+        M2["code_execution_queue_wait_seconds<br/><small>Histogram</small>"]
+        M3["code_execution_rejected_total<br/><small>Counter — queue full</small>"]
+    end
+
+    limits --> SEM
+    EXEC --> metrics
+    QUEUE --> metrics
+
+    style REQ fill:#c4b5fd,stroke:#8b5cf6,color:#111
+    style SEM fill:#fde68a,stroke:#f59e0b,color:#111
+    style QUEUE fill:#fed7aa,stroke:#f97316,color:#111
+    style EXEC fill:#bbf7d0,stroke:#22c55e,color:#111
+    style L1 fill:#fde68a,stroke:#f59e0b,color:#111
+    style L2 fill:#fde68a,stroke:#f59e0b,color:#111
+    style L3 fill:#fde68a,stroke:#f59e0b,color:#111
+    style M1 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style M2 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style M3 fill:#bbf7d0,stroke:#22c55e,color:#111
+```
+
+**Design approach:**
+- **Client-side**: `asyncio.Semaphore` per org in the middleware, defaulting to `max_concurrent_per_org: 3`. If all slots are occupied, requests queue with a `queue_timeout_seconds: 30` — after which the agent receives `"Code execution queue full, try again later"`.
+- **Server-side**: K8s `ResourceQuota` on the agent namespace limits total Jobs: `count/jobs.batch: 5`. This is a hard backstop independent of the client-side semaphore.
+- **Queue metrics**: `code_execution_queue_depth` (how many are waiting), `code_execution_queue_wait_seconds` (how long they waited), `code_execution_rejected_total` (how many were dropped).
+- **Config**: `code_execution.max_concurrent_per_org: 3` and `code_execution.queue_timeout_seconds: 30`.
+- **Fairness**: Per-org semaphores prevent one org from monopolizing cluster resources. Combined with K8s resource limits on each Job, total resource consumption is bounded.
+
+---
+
+### 13.5 Cost Tracking — Per-Org Execution Resource Usage Reporting
+
+```mermaid
+flowchart LR
+    subgraph collection["📊 Data Collection"]
+        style collection fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#111
+        MW["Middleware records<br/>per-execution:<br/>cpu_seconds, memory_mb_seconds,<br/>duration, org, language"]
+        K8S["K8s Metrics Server<br/>actual resource usage<br/>from cAdvisor"]
+    end
+
+    subgraph storage["💾 Storage"]
+        style storage fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
+        PG["PostgreSQL<br/>code_execution_usage<br/>━━━━━━━━━━━━━━━━<br/>org, timestamp,<br/>cpu_seconds, mem_mb_s,<br/>executions_count,<br/>language"]
+    end
+
+    subgraph reporting["📈 Reporting"]
+        style reporting fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
+        API["GET /api/v1/usage<br/>?org=myorg&period=7d"]
+        DASH["Grafana Dashboard<br/>Resource usage by org"]
+        ALERT["Budget alerts<br/>when org exceeds<br/>monthly threshold"]
+    end
+
+    MW --> PG
+    K8S --> PG
+    PG --> API
+    PG --> DASH
+    PG --> ALERT
+
+    style MW fill:#93c5fd,stroke:#3b82f6,color:#111
+    style K8S fill:#93c5fd,stroke:#3b82f6,color:#111
+    style PG fill:#fde68a,stroke:#f59e0b,color:#111
+    style API fill:#bbf7d0,stroke:#22c55e,color:#111
+    style DASH fill:#bbf7d0,stroke:#22c55e,color:#111
+    style ALERT fill:#bbf7d0,stroke:#22c55e,color:#111
+```
+
+**Design approach:**
+- **Data points per execution**: `cpu_seconds` (from K8s Metrics API or request-based estimate), `memory_mb_seconds` (peak memory × duration), `execution_count`, `language`, `org`, `timestamp`.
+- **Collection**: The middleware already records `code_execution_duration_seconds` with org/language labels. For cost tracking, extend to persist aggregated usage to PostgreSQL (the platform's existing database) via a periodic flush (every 5 minutes) or per-execution insert.
+- **K8s Metrics API**: Optionally query the Metrics Server (`/apis/metrics.k8s.io/v1beta1/namespaces/{ns}/pods/{pod}`) before cleanup to get actual CPU/memory usage. Falls back to config-based estimates if Metrics API is unavailable.
+- **Reporting API**: New endpoint on the agent-engine: `GET /api/v1/usage?org=myorg&period=7d` returns aggregated usage. Powers a Grafana dashboard and budget alerts.
+- **Budget alerts**: Configurable per-org monthly thresholds. When `cpu_hours > threshold`, emit a warning audit event and optionally disable code execution for that org until the next billing period.
+
+---
+
+### 13.6 WebSocket Streaming — Real-Time stdout/stderr to the UI
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as 🖥️ Browser UI
+    participant GW as 🌐 Gateway
+    participant AG as 🤖 Agent
+    participant MW as 🔧 Middleware
+    participant K8S as ☸️ K8s API
+    participant POD as 🐳 Exec Pod
+
+    rect rgb(219, 234, 254)
+        Note over UI,GW: WebSocket Upgrade
+        UI->>GW: WS /api/v1/exec/stream/{execution_id}
+        GW->>AG: Proxy WebSocket
+    end
+
+    rect rgb(237, 233, 254)
+        Note over MW,POD: Streamed Execution
+        MW->>K8S: Create Job
+        K8S->>POD: Schedule pod
+
+        loop Pod log stream
+            MW->>K8S: read_namespaced_pod_log(follow=True)
+            K8S-->>MW: Log chunk (stdout line)
+            MW-->>AG: Stream chunk via callback
+            AG-->>GW: WS frame
+            GW-->>UI: WS frame (real-time)
+        end
+
+        POD->>POD: Code completes
+        K8S-->>MW: Pod Succeeded
+    end
+
+    rect rgb(220, 252, 231)
+        Note over MW,UI: Final Result
+        MW-->>AG: ToolMessage (full output)
+        AG-->>GW: SSE response
+        GW-->>UI: Final answer
+    end
+```
+
+**Design approach:**
+- **Dual output path**: The middleware streams log chunks in real-time via a callback mechanism AND collects the full output for the `ToolMessage`. The agent/UI gets live feedback while code runs.
+- **K8s log streaming**: `CoreV1Api.read_namespaced_pod_log(follow=True, _preload_content=False)` returns a streaming response. The middleware reads chunks and forwards them.
+- **Transport**: SSE (Server-Sent Events) through the existing Aegra streaming infrastructure. Each chunk is a `code_execution_output` SSE event with `{execution_id, stream: "stdout"|"stderr", data: "line..."}`.
+- **Fallback**: If streaming fails (network interruption, pod crash), the middleware falls back to post-completion log collection (current behavior). The `ToolMessage` always contains the complete output regardless of streaming success.
+- **UI integration**: The template-ui listens for `code_execution_output` SSE events and renders them in a live terminal widget during execution. When the `ToolMessage` arrives, the terminal closes and the result is shown inline.
+- **Config**: `code_execution.streaming_enabled: true` (default: false). When false, current behavior (post-completion collection) is used.
+
+---
+
+### Roadmap Priority
+
+```mermaid
+gantt
+    title Code Execution Roadmap
+    dateFormat  YYYY-MM
+    axisFormat  %b %Y
+
+    section Phase 1 (Done)
+    Core middleware + K8s Jobs          :done, p1, 2026-07, 2026-07
+
+    section Phase 2 (Next)
+    Custom domain images                :active, p2a, 2026-08, 2026-08
+    Network access control              :p2b, 2026-08, 2026-09
+
+    section Phase 3
+    File I/O (ConfigMap + PVC)          :p3a, 2026-09, 2026-10
+    Execution queuing                   :p3b, 2026-09, 2026-10
+
+    section Phase 4
+    WebSocket streaming                 :p4a, 2026-10, 2026-11
+    Cost tracking                       :p4b, 2026-11, 2026-12
+```
 
 ---
 
