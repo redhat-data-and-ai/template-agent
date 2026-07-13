@@ -1,16 +1,43 @@
-"""Observability for code execution — OTEL metrics, tracing, audit, logs."""
+"""Observability for code execution — OTEL metrics, tracing, audit, logs.
+
+Uses stdlib logging (not structlog) to ensure log output reaches
+stdout/stderr inside the LangGraph graph-execution context, where
+structlog's cached logger proxy may not be connected to the correct
+handler chain.
+"""
 
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
+import sys
+from datetime import UTC, datetime
 from typing import Any
 
-from deep_agent.utils.pylogger import get_python_logger
+logger = logging.getLogger("deep_agent.src.code_execution")
+if not logger.handlers:
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.DEBUG)
 
-logger = get_python_logger()
+
+def _log_json(level: int, event: str, **fields: Any) -> None:
+    """Emit a structured JSON log line to stderr."""
+    record = {
+        "event": event,
+        "logger": "deep_agent.src.code_execution",
+        "level": logging.getLevelName(level).lower(),
+        "timestamp": datetime.now(UTC).isoformat(),
+        "service": "template-agent",
+        **{k: v for k, v in fields.items() if v is not None},
+    }
+    logger.log(level, json.dumps(record, default=str))
 
 
 def _get_tracer() -> Any:
+    """Return an OTEL tracer, or None if unavailable."""
     try:
         from deep_agent.aegra.otel import get_tracer
 
@@ -20,24 +47,24 @@ def _get_tracer() -> Any:
 
 
 def get_tracer() -> Any:
-    """Return the OTEL tracer for code execution."""
+    """Return the code-execution OTEL tracer."""
     return _get_tracer()
 
 
 def emit_audit_event(event_type: str, **details: Any) -> None:
-    """Emit an audit event, silently skipping if emitter is unavailable."""
+    """Emit a platform audit event, falling back gracefully."""
     try:
         from deep_agent.src.audit.emitter import emit_audit_event as _emit
 
         _emit(event_type, **details)
     except ImportError:
-        logger.debug("Audit emitter not available, skipping audit event")
+        _log_json(logging.DEBUG, "audit_emitter_unavailable")
     except Exception as exc:
-        logger.warning("Failed to emit audit event: %s", exc)
+        _log_json(logging.WARNING, "audit_emit_failed", error=str(exc))
 
 
 def compute_code_hash(code: str) -> str:
-    """Return a SHA-256 hash of the given code string."""
+    """Return a SHA-256 hash of the code string."""
     return f"sha256:{hashlib.sha256(code.encode()).hexdigest()}"
 
 
@@ -52,7 +79,8 @@ class CodeExecutionMetrics:
         self, *, language: str, org: str, exit_code: int, status: str, duration: float
     ) -> None:
         """Record an execution metric event."""
-        logger.info(
+        _log_json(
+            logging.INFO,
             "code_execution_metric",
             language=language,
             org=org,
@@ -63,7 +91,8 @@ class CodeExecutionMetrics:
 
     def record_error(self, *, language: str, org: str, error_type: str) -> None:
         """Record an execution error metric."""
-        logger.warning(
+        _log_json(
+            logging.WARNING,
             "code_execution_error_metric",
             language=language,
             org=org,
@@ -72,7 +101,8 @@ class CodeExecutionMetrics:
 
     def record_scheduling_latency(self, *, org: str, duration: float) -> None:
         """Record pod scheduling latency."""
-        logger.debug(
+        _log_json(
+            logging.DEBUG,
             "code_execution_scheduling_metric",
             org=org,
             scheduling_seconds=round(duration, 3),
@@ -80,11 +110,11 @@ class CodeExecutionMetrics:
 
     def increment_active(self, *, org: str) -> None:
         """Increment the active execution counter."""
-        logger.debug("code_execution_active_increment", org=org)
+        _log_json(logging.DEBUG, "code_execution_active_increment", org=org)
 
     def decrement_active(self, *, org: str) -> None:
         """Decrement the active execution counter."""
-        logger.debug("code_execution_active_decrement", org=org)
+        _log_json(logging.DEBUG, "code_execution_active_decrement", org=org)
 
     def start_span(self, name: str, **attributes: Any) -> Any:
         """Start an OTEL tracing span."""
@@ -125,24 +155,24 @@ class CodeExecutionMetrics:
 
     def log_started(self, **fields: Any) -> None:
         """Log that a code execution has started."""
-        logger.info("code_execution_started", **fields)
+        _log_json(logging.INFO, "code_execution_started", **fields)
 
     def log_completed(self, **fields: Any) -> None:
         """Log that a code execution completed."""
-        logger.info("code_execution_completed", **fields)
+        _log_json(logging.INFO, "code_execution_completed", **fields)
 
     def log_timeout(self, **fields: Any) -> None:
         """Log that a code execution timed out."""
-        logger.warning("code_execution_timeout", **fields)
+        _log_json(logging.WARNING, "code_execution_timeout", **fields)
 
     def log_oom(self, **fields: Any) -> None:
-        """Log that a code execution was OOM-killed."""
-        logger.warning("code_execution_oom_killed", **fields)
+        """Log that a code execution was OOM killed."""
+        _log_json(logging.WARNING, "code_execution_oom_killed", **fields)
 
     def log_failed(self, **fields: Any) -> None:
         """Log that a code execution failed."""
-        logger.error("code_execution_failed", **fields)
+        _log_json(logging.ERROR, "code_execution_failed", **fields)
 
     def log_cleanup(self, **fields: Any) -> None:
-        """Log a cleanup event for a code execution job."""
-        logger.debug("code_execution_cleanup", **fields)
+        """Log code execution cleanup."""
+        _log_json(logging.DEBUG, "code_execution_cleanup", **fields)

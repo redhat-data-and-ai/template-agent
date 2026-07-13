@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
@@ -10,9 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from deep_agent.src.code_execution.config import CodeExecutionConfig
-from deep_agent.utils.pylogger import get_python_logger
-
-logger = get_python_logger()
+from deep_agent.src.code_execution.metrics import _log_json
 
 
 @dataclass
@@ -208,7 +207,12 @@ class K8sJobRunner:
                 namespace=ns,
                 body=manifest,
             )
-            logger.info("code_execution_job_created", job_name=job_name, namespace=ns)
+            _log_json(
+                logging.INFO,
+                "code_execution_job_created",
+                job_name=job_name,
+                namespace=ns,
+            )
 
             pod_name = await self._wait_for_pod(job_name, ns)
             stdout, stderr = await self._collect_logs(pod_name, ns)
@@ -241,7 +245,12 @@ class K8sJobRunner:
             )
         except Exception as exc:
             duration = time.monotonic() - started
-            logger.error("code_execution_failed", error=str(exc), job_name=job_name)
+            _log_json(
+                logging.ERROR,
+                "code_execution_failed",
+                error=str(exc),
+                job_name=job_name,
+            )
             return ExecutionResult(
                 stdout="",
                 stderr=str(exc),
@@ -297,7 +306,9 @@ class K8sJobRunner:
                 logs = logs[: self._config.max_output_bytes] + "\n[truncated at 1MB]"
             return logs, ""
         except Exception as exc:
-            logger.warning("code_execution_log_collection_failed", error=str(exc))
+            _log_json(
+                logging.WARNING, "code_execution_log_collection_failed", error=str(exc)
+            )
             return "", f"[warning: logs partially collected: {exc}]"
 
     async def _get_exit_info(
@@ -337,8 +348,11 @@ class K8sJobRunner:
                 namespace=namespace,
                 body=client.V1DeleteOptions(propagation_policy="Foreground"),
             )
-            logger.debug("code_execution_cleanup", job_name=job_name)
+            _log_json(logging.DEBUG, "code_execution_cleanup", job_name=job_name)
         except Exception as exc:
-            logger.warning(
-                "code_execution_cleanup_failed", job_name=job_name, error=str(exc)
+            _log_json(
+                logging.WARNING,
+                "code_execution_cleanup_failed",
+                job_name=job_name,
+                error=str(exc),
             )
