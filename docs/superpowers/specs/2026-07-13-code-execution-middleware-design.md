@@ -1421,6 +1421,77 @@ flowchart TB
 - **Per-org customization**: Orgs can register custom images via the registry component's agent frontmatter `runtime.images` field. The agent-engine propagates these to the agent pod's config.
 - **Version pinning**: Each image variant is tagged with semver + build SHA. The `images` config supports explicit tags: `python-datascience:1.2.3-abc123`.
 
+### Image Configuration Flow — Who Controls What
+
+The image configuration flows through 3 levels, from platform defaults to per-agent overrides:
+
+```mermaid
+flowchart TB
+    subgraph sre["🔧 Level 1: Platform SRE Team"]
+        style sre fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#111
+        BUILD["Build domain images<br/><small>Dockerfile per variant<br/>FROM python:3.12-slim<br/>RUN pip install pandas numpy ...</small>"]
+        SCAN["CVE scan via Trivy/Clair"]
+        PUSH["Push to internal registry<br/><small>images.paas.redhat.com/ddis-asteroid/</small>"]
+        BUILD --> SCAN --> PUSH
+    end
+
+    subgraph platform["📋 Level 2: Platform Team (template-agent repo)"]
+        style platform fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
+        YAML["config/agent/runtime/agent.yaml<br/>━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br/>code_execution:<br/>  images:<br/>    python: python:3.12-slim<br/>    python-ds: images.paas.../python-ds:3.12<br/>    python-ml: images.paas.../python-ml:3.12"]
+    end
+
+    subgraph author["✏️ Level 3: Agent Author (per-agent override)"]
+        style author fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
+        AGENTS["Registry: AGENTS.md frontmatter<br/>━━━━━━━━━━━━━━━━━━━━━━━━━━━━<br/>runtime:<br/>  code_execution:<br/>    images:<br/>      python-ds: my-org/custom-ds:1.0"]
+    end
+
+    subgraph engine["⚙️ Agent Engine (materialization)"]
+        style engine fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#111
+        MERGE["Merge: platform defaults<br/>+ agent overrides<br/>→ final agent config"]
+    end
+
+    subgraph pod["🤖 Deployed Agent Pod"]
+        style pod fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#111
+        CONFIG["CodeExecutionConfig<br/>images dict resolved<br/>at middleware init"]
+        JOB["K8s Job uses<br/>resolved image"]
+    end
+
+    PUSH --> YAML
+    YAML --> MERGE
+    AGENTS --> MERGE
+    MERGE --> CONFIG
+    CONFIG --> JOB
+
+    style BUILD fill:#93c5fd,stroke:#3b82f6,color:#111
+    style SCAN fill:#93c5fd,stroke:#3b82f6,color:#111
+    style PUSH fill:#93c5fd,stroke:#3b82f6,color:#111
+    style YAML fill:#bbf7d0,stroke:#22c55e,color:#111
+    style AGENTS fill:#fde68a,stroke:#f59e0b,color:#111
+    style MERGE fill:#c4b5fd,stroke:#8b5cf6,color:#111
+    style CONFIG fill:#bbf7d0,stroke:#22c55e,color:#111
+    style JOB fill:#bbf7d0,stroke:#22c55e,color:#111
+```
+
+**Configuration levels (highest wins):**
+
+| Level | Who | Where | When |
+|---|---|---|---|
+| **Platform default** | Platform team | `config/agent/runtime/agent.yaml` in template-agent repo | Committed to repo, deployed with every agent |
+| **Per-agent override** | Agent author | `AGENTS.md` frontmatter in Registry (`runtime.code_execution.images`) | Agent-engine materializes overrides during deploy |
+| **Environment variable** | Ops/SRE | OpenShift ConfigMap → env vars on agent pod | Runtime override without config change |
+
+**How it flows in production:**
+
+1. **SRE team** maintains Dockerfiles for domain images in the platform CI repo. Each image is built, scanned (Trivy/Clair), and pushed to `images.paas.redhat.com/ddis-asteroid/`
+2. **Platform team** updates `agent.yaml` with the image URLs as defaults — all agents get these unless overridden
+3. **Agent author** can override specific images in their `AGENTS.md` frontmatter via the Registry. The agent-engine's `resolve_middleware()` merges these overrides with platform defaults during materialization
+4. **Agent-engine** deploys the agent pod with the merged config. The `CodeExecutionConfig.images` dict contains the final resolved image URLs
+5. **CodeExecutionMiddleware** reads `config.images[language]` at Job creation time to select the container image
+
+**Local development:** Use `python:3.12-slim` (base) for all variants. Build and `kind load` custom images only when testing domain-specific libraries.
+
+**OpenShift:** Images must be from the internal registry (enforced by cluster image policy). The `readOnlyRootFilesystem: true` constraint prevents runtime `pip install` — all libraries must be pre-installed in the image.
+
 ---
 
 ### 13.4 Execution Queuing — Rate Limiting Concurrent Executions Per Org
