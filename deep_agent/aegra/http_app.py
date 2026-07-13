@@ -11,11 +11,16 @@ from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from deep_agent.aegra.feedback import feedback_router
 from deep_agent.aegra.mcp_routes import router as mcp_router
+from deep_agent.aegra.security_middleware import (
+    RequestSizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import (
     bind_request_context,
@@ -81,6 +86,30 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="template-agent-custom", lifespan=_lifespan)
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Global exception handler with PII scrubbing for production."""
+    from deep_agent.src.pii_scrubber import scrub_error_response
+
+    logger.error(
+        "Unhandled exception: %s",
+        exc,
+        exc_info=True,
+        extra={"path": request.url.path, "method": request.method},
+    )
+
+    # Create scrubbed error response
+    error_response = scrub_error_response(
+        detail="An unexpected error occurred. Please try again later.",
+        exc=exc,
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=error_response,
+    )
+
+
 class TraceIDMiddleware(BaseHTTPMiddleware):
     """Propagate X-Trace-ID from incoming requests into the logging context.
 
@@ -107,5 +136,17 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(TraceIDMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(
+    RequestSizeLimitMiddleware, max_size_bytes=settings.REQUEST_BODY_MAX_SIZE
+)
 app.include_router(mcp_router)
 app.include_router(feedback_router)
+
+
+@app.get("/version")
+def version() -> dict[str, str]:
+    """Return service name and version."""
+    from deep_agent.aegra import __version__
+
+    return {"service": "template-agent", "version": __version__}

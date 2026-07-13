@@ -23,11 +23,13 @@ _TOKEN_KEY_PREFIX = "mcp_oauth_token:"
 
 CREATE_OAUTH_CLIENTS_TABLE = """
 CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
-    mcp_name           TEXT PRIMARY KEY,
+    agent_name         TEXT NOT NULL,
+    mcp_name           TEXT NOT NULL,
     client_id          TEXT NOT NULL,
     client_secret      TEXT,
     registration_data  JSONB,
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (agent_name, mcp_name)
 );
 """
 
@@ -56,6 +58,12 @@ BEGIN
               AND table_name = 'mcp_oauth_clients'
               AND column_name = 'updated_at'
         )
+        OR NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'mcp_oauth_clients'
+              AND column_name = 'agent_name'
+        )
     ) THEN
         DROP TABLE mcp_oauth_clients;
     END IF;
@@ -67,6 +75,7 @@ END $$;
 class McpOAuthClient:
     """Registered OAuth client for a DCR-backed MCP server."""
 
+    agent_name: str
     mcp_name: str
     client_id: str
     client_secret: str | None = None
@@ -155,20 +164,21 @@ class McpTokenStore:
             _TABLES_ENSURED = True
             logger.info("MCP OAuth client table ensured")
 
-    async def get_client(self, mcp_name: str) -> McpOAuthClient | None:
-        """Return the registered OAuth client for *mcp_name*, if any."""
+    async def get_client(self, agent_name: str, mcp_name: str) -> McpOAuthClient | None:
+        """Return the registered OAuth client for *(agent_name, mcp_name)*, if any."""
         await self.ensure_tables()
         async with await psycopg.AsyncConnection.connect(
             self._uri, row_factory=dict_row
         ) as conn:
             cur = await conn.execute(
-                "SELECT * FROM mcp_oauth_clients WHERE mcp_name = %s",
-                (mcp_name,),
+                "SELECT * FROM mcp_oauth_clients WHERE agent_name = %s AND mcp_name = %s",
+                (agent_name, mcp_name),
             )
             row = await cur.fetchone()
             if row is None:
                 return None
             return McpOAuthClient(
+                agent_name=row["agent_name"],
                 mcp_name=row["mcp_name"],
                 client_id=row["client_id"],
                 client_secret=decrypt_secret(row["client_secret"]),
@@ -178,28 +188,30 @@ class McpTokenStore:
 
     async def upsert_client(
         self,
+        agent_name: str,
         mcp_name: str,
         client_id: str,
         client_secret: str | None = None,
         registration_data: dict[str, Any] | None = None,
     ) -> McpOAuthClient:
-        """Insert or update the OAuth client record for *mcp_name*."""
+        """Insert or update the OAuth client record for *(agent_name, mcp_name)*."""
         await self.ensure_tables()
         enc_secret = encrypt_secret(client_secret)
         async with await psycopg.AsyncConnection.connect(self._uri) as conn:
             await conn.execute(
                 """
                 INSERT INTO mcp_oauth_clients (
-                    mcp_name, client_id, client_secret, registration_data, updated_at
+                    agent_name, mcp_name, client_id, client_secret, registration_data, updated_at
                 )
-                VALUES (%s, %s, %s, %s, now())
-                ON CONFLICT (mcp_name) DO UPDATE SET
+                VALUES (%s, %s, %s, %s, %s, now())
+                ON CONFLICT (agent_name, mcp_name) DO UPDATE SET
                     client_id = EXCLUDED.client_id,
                     client_secret = EXCLUDED.client_secret,
                     registration_data = EXCLUDED.registration_data,
                     updated_at = now()
                 """,
                 (
+                    agent_name,
                     mcp_name,
                     client_id,
                     enc_secret,
@@ -208,6 +220,7 @@ class McpTokenStore:
             )
             await conn.commit()
         return McpOAuthClient(
+            agent_name=agent_name,
             mcp_name=mcp_name,
             client_id=client_id,
             client_secret=client_secret,

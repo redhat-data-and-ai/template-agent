@@ -59,10 +59,11 @@ def _wrap_single_tool(tool: Any) -> Any:
     if func is not None and inspect.isfunction(func):
 
         def wrapped_func(**kwargs: Any) -> Any:
-            try:
-                return func(**kwargs)
-            except NeedsAuthorization as exc:
-                interrupt(_mcp_auth_interrupt_payload(exc))
+            while True:
+                try:
+                    return func(**kwargs)
+                except NeedsAuthorization as exc:
+                    interrupt(_mcp_auth_interrupt_payload(exc))
 
         try:
             return tool.model_copy(update={"func": wrapped_func})

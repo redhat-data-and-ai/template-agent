@@ -17,6 +17,7 @@ times is safe (each step guards against double-init).
 """
 
 import asyncio
+import os
 import time
 
 from deep_agent.utils.pylogger import get_python_logger
@@ -42,8 +43,10 @@ async def run_startup() -> dict[str, str]:
 
     results["config"] = await _validate_config()
     results["database"] = await _ensure_database()
+    _check_mcp_encryption_key()
     results["cache"] = await _warm_caches()
     results["scheduler"] = await _start_scheduler()
+    results["otel"] = _setup_otel()
     results["telemetry"] = _setup_telemetry()
 
     _upgrade_signal_handlers()
@@ -77,8 +80,28 @@ async def _validate_config() -> str:
         validate_config(settings)
         return "ok"
     except Exception as exc:
-        logger.warning("Config validation warning: %s", exc)
-        return f"warning: {exc}"
+        logger.error("Config validation failed: %s", exc)
+        raise  # Re-raise to fail startup
+
+
+def _check_mcp_encryption_key() -> None:
+    """Warn if any MCP server uses oauth/dcr but MCP_TOKEN_ENCRYPTION_KEY is not set."""
+    try:
+        from deep_agent.src.agent.config import agent_config
+
+        servers = agent_config.get_mcp_servers()
+        needs_key = any(
+            s.get("auth_mode") in ("oauth", "dcr")
+            for s in servers.values()
+            if isinstance(s, dict) and s.get("enabled", False)
+        )
+        if needs_key and not os.environ.get("MCP_TOKEN_ENCRYPTION_KEY"):
+            logger.error(
+                "MCP_TOKEN_ENCRYPTION_KEY is not set but one or more MCP servers "
+                "use auth_mode 'oauth' or 'dcr'. Token encryption will fail."
+            )
+    except Exception:
+        logger.debug("MCP encryption key check skipped", exc_info=True)
 
 
 async def _ensure_database() -> str:
@@ -156,6 +179,18 @@ async def _start_scheduler() -> str:
         return "ok" if started else "skipped: already running"
     except Exception as exc:
         logger.warning("Scheduler start failed: %s", exc)
+        return f"warning: {exc}"
+
+
+def _setup_otel() -> str:
+    """Initialize OpenTelemetry metrics and tracing."""
+    try:
+        from deep_agent.aegra.otel import initialize_telemetry
+
+        initialize_telemetry()
+        return "ok"
+    except Exception as exc:
+        logger.warning("OTEL setup failed: %s", exc)
         return f"warning: {exc}"
 
 

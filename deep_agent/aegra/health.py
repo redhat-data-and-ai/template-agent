@@ -8,7 +8,7 @@ Response format::
 
     {
       "status": "healthy" | "degraded" | "unhealthy",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "uptime_seconds": 1234.5,
       "checks": {
         "database": {"status": "ok", "latency_ms": 5.2},
@@ -25,6 +25,7 @@ import asyncio
 import time
 from typing import Any
 
+from deep_agent.aegra import __version__
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -102,6 +103,42 @@ def check_cache() -> dict[str, Any]:
         return {"status": "skipped"}
 
 
+def check_otel() -> dict[str, Any]:
+    """Return OpenTelemetry initialization status."""
+    try:
+        from deep_agent.aegra.otel import (
+            _initialized,
+            _otel_enabled,
+            _resolve_config,
+            is_tracing_enabled,
+        )
+
+        if not _initialized:
+            return {"status": "not_initialized"}
+
+        _, endpoint, _, _, _ = _resolve_config()
+
+        # Try to get OTEL SDK version
+        sdk_version = None
+        try:
+            import opentelemetry
+
+            sdk_version = opentelemetry.__version__
+        except Exception:
+            pass
+
+        return {
+            "status": "ok",
+            "initialized": _initialized,
+            "enabled": _otel_enabled,
+            "tracing_active": is_tracing_enabled(),
+            "endpoint": endpoint if _otel_enabled else None,
+            "sdk_version": sdk_version,
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)[:200]}
+
+
 async def get_health_status() -> dict[str, Any]:
     """Run all health checks and return a combined status."""
     checks: dict[str, Any] = {}
@@ -110,6 +147,7 @@ async def get_health_status() -> dict[str, Any]:
     checks["database"] = await check_database()
     checks["redis"] = await check_redis()
     checks["cache"] = check_cache()
+    checks["otel"] = check_otel()
 
     all_statuses = [c.get("status", "unknown") for c in checks.values()]
 
@@ -122,7 +160,7 @@ async def get_health_status() -> dict[str, Any]:
 
     return {
         "status": overall,
-        "version": "0.1.0",
+        "version": __version__,
         "uptime_seconds": round(time.monotonic() - _start_time, 1),
         "checks": checks,
     }
@@ -135,7 +173,7 @@ async def health_response() -> tuple[int, dict[str, Any]]:
     if is_shutting_down():
         return 503, {
             "status": "shutting_down",
-            "version": "0.1.0",
+            "version": __version__,
             "uptime_seconds": round(time.monotonic() - _start_time, 1),
         }
 

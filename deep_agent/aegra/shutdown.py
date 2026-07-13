@@ -127,6 +127,7 @@ def run_shutdown_sync() -> None:
     logger.info("Sync shutdown initiated (atexit)")
 
     for key, step in [
+        ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse_sync),
         ("graph_cache", _clear_graph_cache),
         ("redis", _close_redis),
@@ -172,7 +173,16 @@ def _handle_signal(signum: int, loop: asyncio.AbstractEventLoop) -> None:
     global _shutting_down  # noqa: PLW0603
     _shutting_down = True
     logger.info("Signal %d received — scheduling async shutdown", signum)
-    loop.create_task(run_shutdown())
+    loop.create_task(_shutdown_and_exit())
+
+
+async def _shutdown_and_exit() -> None:
+    """Run graceful shutdown then terminate the process."""
+    await run_shutdown()
+    logger.info("Shutdown complete — exiting")
+    import sys
+
+    sys.exit(0)
 
 
 _async_shutdown_started = False
@@ -199,6 +209,7 @@ async def run_shutdown() -> dict[str, str]:
 
     for key, step in [
         ("drain", _drain),
+        ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse),
         ("scheduler", _stop_scheduler),
         ("graph_cache", _clear_graph_cache),
@@ -315,6 +326,18 @@ def _clear_graph_cache() -> str:
         return "ok"
     except Exception as exc:
         logger.warning("Graph cache clear failed: %s", exc)
+        return f"error: {exc}"
+
+
+def _shutdown_otel() -> str:
+    """Shutdown OpenTelemetry providers and flush pending telemetry."""
+    try:
+        from deep_agent.aegra.otel import shutdown_telemetry
+
+        shutdown_telemetry()
+        return "ok"
+    except Exception as exc:
+        logger.warning("OTEL shutdown failed: %s", exc)
         return f"error: {exc}"
 
 
