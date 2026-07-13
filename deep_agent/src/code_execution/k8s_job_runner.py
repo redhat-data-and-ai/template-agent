@@ -163,12 +163,12 @@ class K8sJobRunner:
         self, *, exit_code: int, termination_reason: str | None
     ) -> tuple[int, str]:
         """Parse container exit code and reason into a status tuple."""
-        if exit_code == 0 and termination_reason is None:
-            return exit_code, "success"
         if termination_reason == "OOMKilled":
             return exit_code, "oom_killed"
         if termination_reason == "DeadlineExceeded":
             return exit_code, "timeout"
+        if exit_code == 0:
+            return exit_code, "success"
         return exit_code, "failed"
 
     def resolve_namespace(self) -> str:
@@ -267,22 +267,32 @@ class K8sJobRunner:
                 phase = pod.status.phase
                 if phase in ("Succeeded", "Failed"):
                     return str(pod.metadata.name)
-                if phase == "Running":
-                    return str(pod.metadata.name)
             await asyncio.sleep(self._config.pod_poll_interval_seconds)
         raise asyncio.TimeoutError(
             f"Pod for {job_name} did not start within {self._config.pod_poll_timeout_seconds}s"
         )
 
     async def _collect_logs(self, pod_name: str, namespace: str) -> tuple[str, str]:
+        """Read stdout/stderr from pod logs."""
         assert self._core_api is not None
         try:
-            logs = await asyncio.to_thread(
+            raw_logs = await asyncio.to_thread(
                 self._core_api.read_namespaced_pod_log,
                 name=pod_name,
                 namespace=namespace,
                 container="executor",
             )
+            if isinstance(raw_logs, bytes):
+                logs = raw_logs.decode("utf-8", errors="replace")
+            else:
+                logs = str(raw_logs)
+                if logs.startswith("b'") or logs.startswith('b"'):
+                    import ast
+
+                    try:
+                        logs = ast.literal_eval(logs).decode("utf-8", errors="replace")
+                    except Exception:
+                        pass
             if len(logs) > self._config.max_output_bytes:
                 logs = logs[: self._config.max_output_bytes] + "\n[truncated at 1MB]"
             return logs, ""
@@ -293,6 +303,7 @@ class K8sJobRunner:
     async def _get_exit_info(
         self, pod_name: str, namespace: str
     ) -> tuple[int, str | None]:
+        """Extract exit code and termination reason from container status."""
         assert self._core_api is not None
         try:
             pod = await asyncio.to_thread(
@@ -306,6 +317,11 @@ class K8sJobRunner:
                         cs.state.terminated.exit_code or 0,
                         cs.state.terminated.reason,
                     )
+            phase = pod.status.phase
+            if phase == "Succeeded":
+                return 0, None
+            if phase == "Failed":
+                return 1, None
             return -1, None
         except Exception:
             return -1, None

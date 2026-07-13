@@ -179,3 +179,14 @@ class TestParseContainerStatus:
         )
         assert status == "success"
         assert exit_code == 0
+
+    def test_success_with_completed_reason(self):
+        from deep_agent.src.code_execution.k8s_job_runner import K8sJobRunner
+
+        config = CodeExecutionConfig()
+        runner = K8sJobRunner(config)
+        exit_code, status = runner.parse_container_status(
+            exit_code=0, termination_reason="Completed"
+        )
+        assert status == "success"
+        assert exit_code == 0
