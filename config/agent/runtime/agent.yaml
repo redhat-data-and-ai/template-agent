@@ -152,6 +152,22 @@ middleware:
       - type: url
         strategy: redact
   extra: []
+  # --- Code Execution (ephemeral K8s Job sandbox) ---
+  code_execution:
+    enabled: false
+    max_timeout_seconds: 60
+    max_code_length: 50000
+    max_output_bytes: 1048576
+    images:
+      python: "python:3.12-slim"
+      shell: "bash:5"
+      node: "node:22-slim"
+    resource_requests:
+      cpu: "100m"
+      memory: "128Mi"
+    resource_limits:
+      cpu: "500m"
+      memory: "256Mi"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

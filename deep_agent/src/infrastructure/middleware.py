@@ -55,6 +55,12 @@ def build_middleware_list(
 
     _append_guardrails(middlewares, resolved)
 
+    if resolved.code_execution.enabled:
+        _append_if_built(
+            middlewares,
+            _build_code_execution(resolved.code_execution),
+        )
+
     for dotted_path in resolved.extra_middleware:
         _append_if_built(middlewares, _import_middleware(dotted_path))
 
@@ -251,6 +257,22 @@ def _build_summarization_tool_middleware(
         return None
     except Exception as e:
         logger.warning("Failed to create SummarizationToolMiddleware: %s", e)
+        return None
+
+
+def _build_code_execution(config: Any) -> Any | None:
+    """Build CodeExecutionMiddleware for sandboxed code execution."""
+    try:
+        from deep_agent.src.code_execution.middleware import CodeExecutionMiddleware
+
+        return CodeExecutionMiddleware(config=config)
+    except ImportError:
+        logger.debug(
+            "CodeExecutionMiddleware not available (missing kubernetes package?)"
+        )
+        return None
+    except Exception as e:
+        logger.warning("Failed to create CodeExecutionMiddleware: %s", e)
         return None
 
 
