@@ -327,6 +327,74 @@ sequenceDiagram
     end
 ```
 
+### 4.4 Usage: Chat Agent vs Headless Agent
+
+The middleware is **transparent to both invocation modes** — it works identically regardless of how the agent is called.
+
+```mermaid
+flowchart TB
+    subgraph chat["💬 Chat Agent (via UI)"]
+        style chat fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#111
+        U["👤 User Browser"]
+        UI["🖥️ template-ui<br/>(port 8080)"]
+        AG1["🤖 Agent Graph<br/>+ CodeExecutionMW"]
+        J1["🐳 K8s Job"]
+
+        U -->|"'compute median'"| UI
+        UI -->|"SSE /api/chat"| AG1
+        AG1 -->|"execute_code"| J1
+        J1 -->|"stdout: 4.5"| AG1
+        AG1 -->|"SSE stream"| UI
+        UI -->|"'The median is 4.5'"| U
+    end
+
+    subgraph headless["🔌 Headless Agent (via API)"]
+        style headless fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
+        API["📡 API Client<br/>(curl, SDK, CI/CD)"]
+        AG2["🤖 Agent Graph<br/>+ CodeExecutionMW"]
+        J2["🐳 K8s Job"]
+
+        API -->|"POST /api/chat"| AG2
+        AG2 -->|"execute_code"| J2
+        J2 -->|"stdout: 4.5"| AG2
+        AG2 -->|"JSON response"| API
+    end
+
+    subgraph async_sub["🔄 Async Subagent"]
+        style async_sub fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
+        ORCH["🤖 Orchestrator"]
+        SUB["🤖 Subagent<br/>+ own CodeExecutionMW"]
+        J3["🐳 K8s Job"]
+
+        ORCH -->|"task tool"| SUB
+        SUB -->|"execute_code"| J3
+        J3 -->|"result"| SUB
+        SUB -->|"summary"| ORCH
+    end
+
+    style U fill:#93c5fd,stroke:#3b82f6,color:#111
+    style UI fill:#93c5fd,stroke:#3b82f6,color:#111
+    style AG1 fill:#bfdbfe,stroke:#3b82f6,color:#111
+    style J1 fill:#bfdbfe,stroke:#3b82f6,color:#111
+    style API fill:#86efac,stroke:#22c55e,color:#111
+    style AG2 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style J2 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style ORCH fill:#fde68a,stroke:#f59e0b,color:#111
+    style SUB fill:#fde68a,stroke:#f59e0b,color:#111
+    style J3 fill:#fde68a,stroke:#f59e0b,color:#111
+```
+
+**Key behaviors by invocation mode:**
+
+| Mode | How execute_code appears | Execution path | Result format |
+|---|---|---|---|
+| **Chat agent** (UI) | LLM sees it in tool list, calls it when user asks to compute/analyze | Same middleware chain → K8s Job | Formatted in agent's natural-language response, streamed via SSE |
+| **Headless agent** (API) | Same — tool injected by middleware | Same middleware chain → K8s Job | Included in JSON response body |
+| **Async subagent** | Only if subagent's own middleware has `code_execution.enabled: true` | Independent middleware chain on remote Agent Protocol server | Returned to orchestrator as subagent result text |
+| **Compiled subagent** (in-process) | Only via `awrap_model_call` (async path). Sync `.invoke()` subagents do NOT get the tool injected — sync `wrap_model_call` passes through | Same process, separate middleware instance | ToolMessage returned to orchestrator |
+
+**The tool is invisible when disabled.** With `code_execution.enabled: false`, the middleware's `awrap_model_call` passes through without injecting the tool — the LLM never sees `execute_code` in its tool list and cannot call it. No config change to the agent prompt is needed.
+
 ---
 
 ## 5. Requirements Traceability Matrix
