@@ -1674,7 +1674,146 @@ gantt
 
 ---
 
-## 14. Glossary
+## 14. Ephemeral Pod Observability — What Happened, Where to Find It
+
+Ephemeral execution pods are deleted after each run. All evidence of what happened is captured **before deletion** across 4 sources. This section documents where to find every piece of information about a past execution.
+
+### Observability Sources
+
+```mermaid
+flowchart TB
+    subgraph pod["🐳 Ephemeral Pod (exists ~2-5 seconds)"]
+        style pod fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111,stroke-dasharray: 8 4
+        CODE["User code runs"]
+        STDOUT["stdout / stderr"]
+        EXIT["exit code"]
+        CODE --> STDOUT
+        CODE --> EXIT
+    end
+
+    subgraph capture["📸 Captured BEFORE Deletion"]
+        style capture fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
+        LOGS["CoreV1Api<br/>read_namespaced_pod_log()"]
+        STATUS["CoreV1Api<br/>read_namespaced_pod()"]
+        METRICS["CustomObjectsApi<br/>metrics.k8s.io"]
+    end
+
+    subgraph persist["💾 Persisted After Pod Deletion"]
+        style persist fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#111
+        TM["ToolMessage<br/>(in agent state)"]
+        SLOG["Structured Logs<br/>(stderr → Sumo Logic)"]
+        K8SEVT["K8s Events<br/>(persist ~1 hour)"]
+        AUDIT["Audit Events<br/>(stdout → Sumo Logic)"]
+    end
+
+    STDOUT --> LOGS --> TM
+    EXIT --> STATUS --> SLOG
+    METRICS --> SLOG
+    CODE --> K8SEVT
+    LOGS --> AUDIT
+
+    style CODE fill:#fde68a,stroke:#f59e0b,color:#111
+    style STDOUT fill:#fde68a,stroke:#f59e0b,color:#111
+    style EXIT fill:#fde68a,stroke:#f59e0b,color:#111
+    style LOGS fill:#bbf7d0,stroke:#22c55e,color:#111
+    style STATUS fill:#bbf7d0,stroke:#22c55e,color:#111
+    style METRICS fill:#bbf7d0,stroke:#22c55e,color:#111
+    style TM fill:#93c5fd,stroke:#3b82f6,color:#111
+    style SLOG fill:#93c5fd,stroke:#3b82f6,color:#111
+    style K8SEVT fill:#93c5fd,stroke:#3b82f6,color:#111
+    style AUDIT fill:#93c5fd,stroke:#3b82f6,color:#111
+```
+
+### Where to Find What
+
+| What You Want to Know | Source | How to Query | Retention |
+|---|---|---|---|
+| **What code was sent** | Agent structured logs | `grep code_execution_started <logfile>` → `code_length` field | Log retention (Sumo Logic) |
+| **What the code returned (stdout/stderr)** | ToolMessage in chat UI + agent thread state | Visible in chat; also in LangGraph checkpointer (Postgres) | Thread lifetime |
+| **Did the pod actually run** | K8s Events | `kubectl get events -n ap-{org}-{agent}` → `Scheduled, Pulled, Created, Started, Completed` | ~1 hour after deletion |
+| **How long it took** | Agent structured logs | `grep code_execution_completed <logfile>` → `duration_ms` field | Log retention |
+| **Exit code (success/failure)** | Agent structured logs | `grep code_execution_completed <logfile>` → `exit_code`, `status` fields | Log retention |
+| **Was it OOM killed / timed out** | Agent structured logs | `grep code_execution_timeout\|code_execution_oom <logfile>` | Log retention |
+| **Resource usage (CPU/memory)** | Agent structured logs | `grep code_execution_resource_usage <logfile>` → `cpu_seconds`, `memory_mb_seconds` | Log retention |
+| **Who ran it (user/org)** | Audit events | `grep code_execution <audit_log>` → `user`, `org`, `trace_id` | Audit retention |
+| **Which code produced which result** | Audit events | `code_hash=sha256:...` — hash of code without logging actual source | Audit retention |
+| **Pod lifecycle timing** | K8s Events | Timestamps on `Scheduled → Pulled → Created → Started → Completed` events | ~1 hour |
+| **Was a ConfigMap created (file I/O)** | Agent structured logs | `grep configmap_created\|configmap_deleted <logfile>` | Log retention |
+| **Was a NetworkPolicy created** | Agent structured logs | `grep network_policy_created\|network_policy_deleted <logfile>` | Log retention |
+| **Queue wait time** | Agent structured logs | `grep code_execution_queue_wait <logfile>` → `wait_seconds` | Log retention |
+
+### Example: Reconstructing a Past Execution
+
+Given a `job_name` like `code-exec-c2024058`, you can reconstruct the full story:
+
+```bash
+# 1. What was sent
+grep c2024058 /tmp/agent-stderr.log | grep started
+# → language=python, code_length=168, timeout=60s, network=false
+
+# 2. What happened
+grep c2024058 /tmp/agent-stderr.log | grep "completed\|metric\|resource"
+# → exit_code=0, status=success, duration=3047ms, cpu=0.304s, memory=388.8MB·s
+
+# 3. K8s pod lifecycle
+kubectl get events -n ap-default-agent --field-selector involvedObject.name=code-exec-c2024058
+# → Scheduled → Created → Started → Completed (timestamps)
+
+# 4. The actual output
+# → Visible in the chat UI under the execute_code tool result
+# → Also in LangGraph thread state (Postgres checkpointer)
+```
+
+### What Is NOT Captured (Security by Design)
+
+| Data | Why Not Captured | Alternative |
+|---|---|---|
+| **Actual source code** | May contain secrets, PII, or proprietary logic | `code_hash` (SHA-256) in audit events — correlate without exposure |
+| **Full stdout in logs** | May be large (up to 1MB) or contain sensitive output | Stored in ToolMessage (agent thread state), not in structured logs |
+| **Container filesystem** | Ephemeral — destroyed with pod | Use `/output` volume + future output file collection |
+| **Node-level container logs** | Deleted when pod is garbage collected | Captured by middleware before deletion |
+
+### Log Lifecycle Across Environments
+
+```mermaid
+flowchart LR
+    subgraph local["🖥️ Local Dev"]
+        style local fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#111
+        L1["stderr → /tmp/agent-stderr.log"]
+        L2["kubectl get events"]
+        L3["Chat UI shows ToolMessage"]
+    end
+
+    subgraph kind["☸️ Kind Cluster"]
+        style kind fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#111
+        K1["stderr → container logs"]
+        K2["kubectl get events"]
+        K3["Jaeger (if OTEL enabled)"]
+    end
+
+    subgraph openshift["🔴 OpenShift Production"]
+        style openshift fill:#fce7f3,stroke:#ec4899,stroke-width:2px,color:#111
+        O1["stderr → Sumo Logic sidecar<br/>→ Sumo Logic dashboard"]
+        O2["OTEL metrics → Prometheus<br/>→ Grafana dashboard"]
+        O3["OTEL traces → Jaeger/Tempo<br/>→ request waterfall"]
+        O4["Audit events → stdout<br/>→ Sumo Logic audit trail"]
+    end
+
+    style L1 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style L2 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style L3 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style K1 fill:#93c5fd,stroke:#3b82f6,color:#111
+    style K2 fill:#93c5fd,stroke:#3b82f6,color:#111
+    style K3 fill:#93c5fd,stroke:#3b82f6,color:#111
+    style O1 fill:#f9a8d4,stroke:#ec4899,color:#111
+    style O2 fill:#f9a8d4,stroke:#ec4899,color:#111
+    style O3 fill:#f9a8d4,stroke:#ec4899,color:#111
+    style O4 fill:#f9a8d4,stroke:#ec4899,color:#111
+```
+
+---
+
+## 15. Glossary
 
 | Term | Definition |
 |---|---|
