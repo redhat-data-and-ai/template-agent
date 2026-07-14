@@ -142,15 +142,53 @@ middleware:
     enabled: true
     max_retries: 2
     tools: ["calculate_bmi", "search_web", "send_email"]
+  # All PII rules in one place. provider routes each rule:
+  # provider: default  — stock langchain PIIMiddleware (one-way, parallel)
+  # provider: regex    — token-map scrubber with built-in regex
+  # provider: presidio — token-map scrubber with Presidio NLP
+  # provider: custom   — token-map scrubber with your own regex
+  #
+  # strategy: scrub    — reversible tokenization ([EMAIL_1] restored in LLM output)
+  # strategy: mask     — one-way partial mask (keeps last 4 chars, e.g. ****-1234)
+  # strategy: redact   — one-way ***REDACTED***
+  # strategy: block    — reject the entire request if this PII type appears in user input
   pii:
-    enabled: true
+    enabled: false
+    trace_strategy: hash   # "redact" (***REDACTED***) or "hash" ([HASH:abc123] — correlatable across requests)
     rules:
-      - type: credit_card
+      - name: credit_card
         strategy: mask
-      - type: ip
+        provider: default
+
+      - name: ip
         strategy: redact
-      - type: url
+        provider: default
+
+      - name: url
         strategy: redact
+        provider: default
+
+      - name: email
+        strategy: scrub
+        provider: regex
+        label: MAIL
+
+      - name: address
+        strategy: block
+        provider: presidio
+
+      - name: pan_card               # Indian PAN
+        strategy: block
+        provider: custom
+        regex: '\b[A-Z]{5}[0-9]{4}[A-Z]\b'
+
+      # ── Add custom rules below ──────────────────────────────────────────
+      # - name: employee_id
+      #   strategy: scrub
+      #   provider: custom
+      #   regex: '\bEMP-\d{6}\b'
+      #   label: EMP_ID
+
   extra: []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]

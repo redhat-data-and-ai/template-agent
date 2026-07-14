@@ -31,6 +31,7 @@ from .cache import CacheFileConfig
 from .filesystem import FilesystemFileConfig
 from .middleware import (
     MiddlewareFileConfig,
+    PIIConfig,
     ResolvedMiddlewareConfig,
     resolve_middleware,
 )
@@ -544,6 +545,11 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return self._name
+
+    def get_custom_pii_config(self) -> PIIConfig:
+        """Return the pii config (non-default rules) from agent.yaml."""
+        self._ensure_loaded()
+        return self._middleware_config.defaults.pii
 
     def get_middleware_config(self) -> MiddlewareFileConfig:
         """Get the pre-loaded middleware file configuration.

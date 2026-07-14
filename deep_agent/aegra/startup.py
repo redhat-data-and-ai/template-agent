@@ -199,11 +199,13 @@ def _setup_telemetry() -> str:
     try:
         from deep_agent.aegra.telemetry import (
             setup_langfuse_tracing,
+            setup_pii_middleware,
             setup_token_budget_tracking,
         )
 
+        setup_pii_middleware()        # must be first — Langfuse handler depends on the scrubber
         setup_langfuse_tracing()
-        setup_token_budget_tracking()  # Callback-based tracking
+        setup_token_budget_tracking()
         return "ok"
     except Exception as exc:
         logger.warning("Telemetry setup failed: %s", exc)

@@ -327,7 +327,15 @@ async def agent(runtime: ServerRuntime) -> Any:
                 "upgrade deepagents to activate human-in-the-loop approval"
             )
 
-    compiled = create_deep_agent(**create_kwargs)
+    _inner_graph = create_deep_agent(**create_kwargs)
+
+    from deep_agent.src.pii import get_scrubber
+    if get_scrubber() is not None:
+        from deep_agent.src.pii.runnable import PIIAwareRunnable
+        compiled = PIIAwareRunnable(_inner_graph)
+        logger.info("graph_pii_enabled: wrapped with PIIAwareRunnable")
+    else:
+        compiled = _inner_graph
 
     _graph_cache[cache_key] = compiled
     _graph_cache_ts[cache_key] = time.time()

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from deep_agent.utils.pylogger import get_python_logger
 
@@ -100,16 +100,28 @@ class ToolRetryConfig(BaseModel):
 
 
 class PIIRule(BaseModel):
-    """A single PII detection rule."""
+    """A single PII rule — provider determines which backend handles it."""
 
-    type: str
-    strategy: str = "redact"
+    name: str
+    strategy: str = "redact"                     # scrub/mask/hash/redact/block
+    provider: str = "default"                    # default/regex/presidio/custom
+    regex: str | None = None                     # required when provider=custom
+    label: str | None = None                     # token label prefix (default: NAME.upper())
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise(cls, data: dict) -> dict:
+        # Accept legacy `type` field as alias for `name` (old stock deepagents format)
+        if "type" in data and "name" not in data:
+            data["name"] = data.pop("type")
+        return data
 
 
 class PIIConfig(BaseModel):
-    """Config for PIIMiddleware — detect and handle PII."""
+    """Unified PII config — all rules in one place, provider routes each rule."""
 
     enabled: bool = False
+    trace_strategy: str = "hash"   # "redact" or "hash" — how PII appears in Langfuse traces
     rules: list[PIIRule] = Field(default_factory=list)
 
 

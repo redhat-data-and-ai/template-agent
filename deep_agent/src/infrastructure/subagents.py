@@ -473,12 +473,19 @@ def _build_compiled_subagent(
     if middleware:
         create_kwargs["middleware"] = middleware
 
-    compiled_graph = create_deep_agent(**create_kwargs)
+    _inner = create_deep_agent(**create_kwargs)
+
+    from deep_agent.src.pii import get_scrubber
+    if get_scrubber() is not None:
+        from deep_agent.src.pii.runnable import PIIAwareRunnable
+        runnable = PIIAwareRunnable(_inner)
+    else:
+        runnable = _inner
 
     return CompiledSubAgent(
         name=name,
         description=agent_cfg.get("description", ""),
-        runnable=compiled_graph,
+        runnable=runnable,
     )
 
 
