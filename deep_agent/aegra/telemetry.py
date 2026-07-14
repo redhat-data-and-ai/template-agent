@@ -52,23 +52,18 @@ def setup_pii_middleware() -> None:
 
     Must be called before setup_langfuse_tracing() so that the global
     scrubber is available when the Langfuse handler activates.
-    No-op when PII_MIDDLEWARE_ENABLED is false or already initialised.
+    No-op when pii.enabled is false in agent.yaml or already initialised.
     """
     global _pii_initialized  # noqa: PLW0603
     if _pii_initialized:
         return
     _pii_initialized = True
 
-    from deep_agent.src.settings import settings
-
-    if not settings.PII_MIDDLEWARE_ENABLED:
-        logger.info("PII middleware disabled — set PII_MIDDLEWARE_ENABLED=true to enable")
-        return
-
     try:
         from deep_agent.src.agent.config import agent_config
         from deep_agent.src.pii import init_pii_middleware
         from deep_agent.src.pii.config import ActionType, PIIConfig, PIIRule
+        from deep_agent.src.settings import settings
 
         pii_cfg = agent_config.get_custom_pii_config()
         if not pii_cfg.enabled or not pii_cfg.rules:

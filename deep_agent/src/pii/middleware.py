@@ -62,7 +62,7 @@ def _synced_additional_kwargs(msg: Any, tool_calls: list[dict]) -> dict[str, Any
 class PIIMiddleware(AgentMiddleware):
     """AgentMiddleware that scrubs PII from model inputs and restores it in outputs.
 
-    Registered via build_middleware_list() when PII_MIDDLEWARE_ENABLED=true.
+    Registered via build_middleware_list() when pii.enabled is true in agent.yaml.
     The global scrubber must be initialised (init_pii_middleware called) before
     this middleware is instantiated.
     """

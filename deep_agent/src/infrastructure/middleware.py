@@ -78,7 +78,7 @@ def build_middleware_list(
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
         return middlewares
 
-    if settings.PII_MIDDLEWARE_ENABLED:
+    if resolved.pii.enabled:
         _append_if_built(middlewares, _build_custom_pii_middleware())
 
     if resolved.summarization_tool_enabled:
