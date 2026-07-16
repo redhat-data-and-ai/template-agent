@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+data:
+  ENVIRONMENT: "production"
+  PYTHON_LOG_LEVEL: "INFO"
+  LANGFUSE_TRACING_ENVIRONMENT: "production"
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "template_agent"
+  REDIS_URL: "redis://redis:6379/0"

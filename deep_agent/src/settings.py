@@ -10,6 +10,7 @@ Hierarchy (highest wins):
 """
 
 from typing import Optional
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -19,6 +20,8 @@ from deep_agent.src.exceptions import AppException, ErrorCodes
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
+
+_DEV_PUBLIC_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 try:
     load_dotenv()
@@ -56,6 +59,12 @@ class Settings(BaseSettings):
     REQUEST_LOG_BODY: bool = Field(default=True)
     REQUEST_LOG_BODY_MAX_SIZE: int = Field(default=10240)
 
+    # ── Security ──────────────────────────────────────────────────────
+    REQUEST_BODY_MAX_SIZE: int = Field(
+        default=10 * 1024 * 1024,  # 10MB
+        description="Maximum request body size in bytes (DoS protection)",
+    )
+
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
 
@@ -65,6 +74,10 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = Field(default="template_agent")
     POSTGRES_USER: str = Field(default="postgres")
     POSTGRES_PASSWORD: str = Field(default="postgres")
+
+    # ── MongoDB ───────────────────────────────────────────────────────
+    MONGODB_URI: Optional[str] = Field(default=None, repr=False)
+    MONGODB_DB: str = Field(default="tokenusage")
 
     # ── Redis ─────────────────────────────────────────────────────────
     REDIS_URL: str = Field(default="redis://redis:6379/0")
@@ -79,11 +92,46 @@ class Settings(BaseSettings):
     SSO_DEV_USER_ID: str = Field(default="dev-user")
     ENABLE_USER_ID_ENCRYPTION: bool = Field(default=False)
 
+    # ── Environment ───────────────────────────────────────────────────
+    ENVIRONMENT: str = Field(
+        default="development",
+        description="Runtime environment: development, production, staging. "
+        "Production mode enforces auth, SSL verification, and PII scrubbing.",
+    )
+
+    @property
+    def is_production(self) -> bool:
+        """True when running in production environment."""
+        return self.ENVIRONMENT.lower() == "production"
+
     # ── Observability (Langfuse) ──────────────────────────────────────
     LANGFUSE_PUBLIC_KEY: Optional[str] = Field(default=None)
     LANGFUSE_SECRET_KEY: Optional[str] = Field(default=None)
     LANGFUSE_BASE_URL: Optional[str] = Field(default=None)
     LANGFUSE_TRACING_ENVIRONMENT: str = Field(default="development")
+
+    # ── OpenTelemetry ─────────────────────────────────────────────────
+    ENABLE_OTEL_METRICS: bool = Field(default=False)
+    ENABLE_OTEL_TRACES: bool = Field(default=False)
+    OTEL_SERVICE_NAME: str = Field(default="template-agent")
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = Field(
+        default="",
+        description="OTLP gRPC metrics endpoint (OpenShift: otel-gateway:4327)",
+    )
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: str = Field(
+        default="",
+        description="OTLP gRPC traces endpoint (local/dev-loop: Jaeger :4317)",
+    )
+    OTEL_AUTH_TOKEN: str = Field(default="", repr=False)
+    OTEL_METRIC_EXPORT_INTERVAL_MILLIS: int = Field(default=10000)
+
+    def resolved_otel_traces_endpoint(self) -> str:
+        """Return the configured OTLP traces exporter endpoint."""
+        return self.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+
+    def otel_traces_active(self) -> bool:
+        """Return True when trace export is enabled and an endpoint is configured."""
+        return bool(self.ENABLE_OTEL_TRACES and self.resolved_otel_traces_endpoint())
 
     # ── Google Cloud ──────────────────────────────────────────────────
     GOOGLE_APPLICATION_CREDENTIALS_CONTENT: Optional[str] = Field(default=None)
@@ -116,10 +164,53 @@ class Settings(BaseSettings):
     # ── CLI ───────────────────────────────────────────────────────────
     ENABLE_CLI: bool = Field(default=True)
 
+    # ── Platform ──────────────────────────────────────────────────────
+    DEPLOYED_AGENT_NAME: str = Field(default="")
+    DEPLOYED_AGENT_ORG: str = Field(default="")
+    PLATFORM_AUDIT_ENABLED: bool = Field(default=True)
+    PLATFORM_AUDIT_BUFFER_MAX: int = Field(default=1000, ge=1, le=100_000)
+
     # ── FLAG TO SWITCH TO RELOAD FROM DISK ────────────────────────────
-    CONFIG_AUTO_RELOAD: bool = Field(default=False)
+    CONFIG_AUTO_RELOAD: bool = Field(default=True)
+
+    # ── MCP OAuth ─────────────────────────────────────────────────────
+    MCP_TOKEN_ENCRYPTION_KEY: Optional[str] = Field(default=None)
+    MCP_TOKEN_ENCRYPTION_KEY_PREVIOUS: Optional[str] = Field(default=None)
+    AGENT_PUBLIC_BASE_URL: Optional[str] = Field(default=None)
 
     # ── Derived ───────────────────────────────────────────────────────
+
+    @property
+    def agent_deployment_id(self) -> str:
+        """Unique identity for this agent deployment, used as DCR/token key.
+
+        Combines org + agent name when deployed via agent-engine.
+        Falls back to the generic config name for local dev.
+        """
+        if self.DEPLOYED_AGENT_ORG and self.DEPLOYED_AGENT_NAME:
+            return f"{self.DEPLOYED_AGENT_ORG}/{self.DEPLOYED_AGENT_NAME}"
+        if self.DEPLOYED_AGENT_NAME:
+            return self.DEPLOYED_AGENT_NAME
+        from deep_agent.src.agent.config import agent_config
+        return agent_config.get_name()
+
+    @property
+    def agent_public_base_url(self) -> str:
+        """Public base URL for MCP OAuth connect/callback endpoints."""
+        if self.AGENT_PUBLIC_BASE_URL:
+            return self.AGENT_PUBLIC_BASE_URL.rstrip("/")
+        return f"http://localhost:{self.AGENT_PORT}"
+
+    @property
+    def is_dev_public_url(self) -> bool:
+        """True when the public base URL is an allowed local HTTP dev endpoint."""
+        parsed = urlparse(self.agent_public_base_url)
+        return parsed.scheme == "http" and parsed.hostname in _DEV_PUBLIC_HOSTS
+
+    @property
+    def oauth_callback_url(self) -> str:
+        """Canonical OAuth redirect URI derived from AGENT_PUBLIC_BASE_URL."""
+        return f"{self.agent_public_base_url}/mcp/oauth/callback"
 
     @property
     def database_uri(self) -> str:
@@ -131,7 +222,7 @@ class Settings(BaseSettings):
 
 
 def validate_config(settings: Settings) -> None:
-    """Validate port range and log level."""
+    """Validate port range, log level, and production constraints."""
     if not (1024 <= settings.AGENT_PORT <= 65535):
         raise AppException(
             f"AGENT_PORT must be between 1024 and 65535, got {settings.AGENT_PORT}",
@@ -144,6 +235,33 @@ def validate_config(settings: Settings) -> None:
             f"PYTHON_LOG_LEVEL must be one of {valid_log_levels}, got {settings.PYTHON_LOG_LEVEL}",
             ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
         )
+
+    if settings.AGENT_PUBLIC_BASE_URL and not settings.is_dev_public_url:
+        parsed = urlparse(settings.AGENT_PUBLIC_BASE_URL)
+        if parsed.scheme != "https":
+            raise AppException(
+                "AGENT_PUBLIC_BASE_URL must use https:// in production "
+                "(http:// is permitted only for localhost, 127.0.0.1, or ::1)",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
+    # Production-specific validations
+    if settings.is_production:
+        # Enforce auth in production
+        if not settings.ENABLE_AUTH:
+            raise AppException(
+                "ENABLE_AUTH must be true in production. "
+                "Configure SSO_ISSUER_URL, SSO_CLIENT_ID, and SSO_CLIENT_SECRET.",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
+        # Enforce HTTPS for public URL in production
+        if settings.AGENT_PUBLIC_BASE_URL and settings.is_dev_public_url:
+            raise AppException(
+                "AGENT_PUBLIC_BASE_URL cannot use http://localhost in production. "
+                "Configure a valid https:// URL.",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
 
 
 settings = Settings()

@@ -39,7 +39,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ),
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -409,9 +412,7 @@ class TestAgentTypeSystem:
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
-            patch(
-                "deepagents.create_deep_agent"
-            ) as mock_create_agent,
+            patch("deepagents.create_deep_agent") as mock_create_agent,
             patch(
                 "deep_agent.src.infrastructure.backend.get_configured_backend"
             ) as mock_get_backend,
@@ -494,7 +495,9 @@ class TestAgentTypeSystem:
                     # No graph_id
                 }
             }
-            with pytest.raises(SubAgentError, match="requires deepagents with async support"):
+            with pytest.raises(
+                SubAgentError, match="requires deepagents with async support"
+            ):
                 load_subagents(tools=[])
 
 
@@ -516,7 +519,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -547,8 +553,13 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
+            patch(
+                "langchain.agents.middleware.ModelFallbackMiddleware"
+            ) as mock_middleware,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -583,8 +594,13 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
+            patch(
+                "langchain.agents.middleware.ModelFallbackMiddleware"
+            ) as mock_middleware,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -619,8 +635,13 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
+            patch(
+                "langchain.agents.middleware.ModelFallbackMiddleware"
+            ) as mock_middleware,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -659,7 +680,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()),
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -699,8 +723,13 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=mock_model,
             ) as mock_from_spec,
-            patch("langchain.agents.middleware.ModelFallbackMiddleware") as mock_middleware,
-            patch("deep_agent.src.infrastructure.subagents.SubAgent", return_value=MagicMock()) as mock_sa,
+            patch(
+                "langchain.agents.middleware.ModelFallbackMiddleware"
+            ) as mock_middleware,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
         ):
             mock_get_configs.return_value = {
                 "analyst": {

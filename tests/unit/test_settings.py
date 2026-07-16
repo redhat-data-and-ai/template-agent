@@ -98,3 +98,27 @@ class TestValidateConfig:
     def test_port_boundary_high(self):
         s = Settings(AGENT_PORT=65535)
         validate_config(s)
+
+
+class TestValidateConfigPublicBaseUrl:
+    def test_allows_localhost_http_base_url(self):
+        validate_config(
+            Settings(AGENT_PUBLIC_BASE_URL="http://localhost:5002", AGENT_PORT=5002)
+        )
+
+    def test_requires_https_for_production_base_url(self):
+        with pytest.raises(
+            AppException, match="AGENT_PUBLIC_BASE_URL must use https://"
+        ):
+            validate_config(Settings(AGENT_PUBLIC_BASE_URL="http://agent.example.com"))
+
+    def test_allows_https_production_base_url(self):
+        validate_config(Settings(AGENT_PUBLIC_BASE_URL="https://agent.example.com"))
+
+    def test_oauth_callback_url_derived_from_public_base_url(self):
+        s = Settings(AGENT_PUBLIC_BASE_URL="https://agent.example.com")
+        assert s.oauth_callback_url == "https://agent.example.com/mcp/oauth/callback"
+
+    def test_oauth_callback_url_defaults_to_localhost(self):
+        s = Settings(AGENT_PORT=5002)
+        assert s.oauth_callback_url == "http://localhost:5002/mcp/oauth/callback"

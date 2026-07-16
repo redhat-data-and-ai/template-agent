@@ -12,6 +12,8 @@ concerns that don't belong in the agent itself.
 
 from typing import Any, TypedDict
 
+from deep_agent.aegra import __version__
+
 
 class AegraMetadata(TypedDict, total=False):
     """Platform-level metadata tracked alongside agent state."""
@@ -49,7 +51,7 @@ def make_health_status(
     """Build a health status dict from agent configuration."""
     return HealthStatus(
         status="healthy",
-        version="0.1.0",
+        version=__version__,
         agent_name=agent_name,
         model=model,
         mcp_tools_loaded=mcp_tools_count,

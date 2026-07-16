@@ -32,8 +32,6 @@ spec:
               value: "5002"
             - name: PYTHON_LOG_LEVEL
               value: "INFO"
-            - name: MCP_SERVER_URL
-              value: "http://mcp-server:5001/mcp"
             - name: POSTGRES_HOST
               valueFrom:
                 configMapKeyRef:

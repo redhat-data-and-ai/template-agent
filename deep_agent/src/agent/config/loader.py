@@ -16,13 +16,15 @@ Classes:
 """
 
 import json
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
 from deep_agent.src.exceptions import AppException, ErrorCodes
 from deep_agent.src.settings import settings
+from deep_agent.src.token_budget.config import TokenBudgetConfig
 from deep_agent.utils.pylogger import get_python_logger
 
 from .cache import CacheFileConfig
@@ -32,17 +34,63 @@ from .middleware import (
     ResolvedMiddlewareConfig,
     resolve_middleware,
 )
+from .otel import OtelFileConfig
 from .parser import inject_runtime_values, parse_frontmatter
 from .providers import ProvidersFileConfig
 from .resolver import resolve_skill_paths, resolve_tools
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
+
+def _strip_jsonc_comments(text: str) -> str:
+    """Remove ``//`` line comments outside JSON string literals."""
+    result: list[str] = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            result.append(ch)
+            i += 1
+            while i < n:
+                c = text[i]
+                result.append(c)
+                if c == "\\":
+                    i += 1
+                    if i < n:
+                        result.append(text[i])
+                elif c == '"':
+                    break
+                i += 1
+            i += 1
+            continue
+
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] not in "\n\r":
+                i += 1
+            continue
+
+        result.append(ch)
+        i += 1
+
+    return "".join(result)
+
+
+def _load_jsonc(path: Path) -> dict[str, Any]:
+    """Load JSON with optional ``//`` line comments."""
+    raw = path.read_text()
+    return cast(dict[str, Any], json.loads(_strip_jsonc_comments(raw)))
+
+
 # Config directory path - read from CONFIG_PATH env var for base image pattern
 # Falls back to repo-root config/agent/ for backward compatibility
-import os
-_AGENT_CONFIG_DIR = Path(os.getenv("CONFIG_PATH",
-    str(Path(__file__).parent.parent.parent.parent.parent / "config" / "agent")))
+_AGENT_CONFIG_DIR = Path(
+    os.getenv(
+        "CONFIG_PATH",
+        str(Path(__file__).parent.parent.parent.parent.parent / "config" / "agent"),
+    )
+)
 
 
 class AgentConfig:
@@ -65,6 +113,8 @@ class AgentConfig:
     _filesystem_config: FilesystemFileConfig
     _providers_config: ProvidersFileConfig
     _cache_config: CacheFileConfig
+    _otel_config: OtelFileConfig
+    _token_budget_config: TokenBudgetConfig
     _name: str
 
     def __new__(cls, base_dir: Path | None = None) -> "AgentConfig":
@@ -114,6 +164,26 @@ class AgentConfig:
             logger.warning("Failed to parse runtime/agent.yaml, using defaults: %s", e)
             return {}
 
+    def _load_otel_config(self) -> OtelFileConfig:
+        """Load OpenTelemetry configuration from observability.yaml.
+
+        Returns:
+            OtelFileConfig with OTEL settings, or defaults if missing.
+        """
+        otel_yaml = self._base_dir / "runtime" / "observability.yaml"
+        if not otel_yaml.is_file():
+            logger.info("No observability.yaml found — OTEL disabled by default")
+            return OtelFileConfig()
+
+        try:
+            raw = yaml.safe_load(otel_yaml.read_text()) or {}
+            config: OtelFileConfig = OtelFileConfig.model_validate(raw.get("otel", {}))
+            logger.info("Loaded OTEL config from observability.yaml")
+            return config
+        except Exception as e:
+            logger.warning("Failed to parse observability.yaml, using defaults: %s", e)
+            return OtelFileConfig()
+
     def _ensure_loaded(self) -> None:
         """Lazy load configurations on first access.
 
@@ -124,7 +194,7 @@ class AgentConfig:
             if self._configs_loaded:
                 logger.debug("CONFIG_AUTO_RELOAD=true: reloading configs from disk")
             self._configs_loaded = False
-        
+
         if self._configs_loaded:
             return
 
@@ -158,6 +228,14 @@ class AgentConfig:
         # Extract cache section
         self._cache_config = CacheFileConfig.model_validate(raw.get("cache", {}))
 
+        # Load OTEL config from observability.yaml
+        self._otel_config = self._load_otel_config()
+
+        # Extract token budget section
+        self._token_budget_config = TokenBudgetConfig.model_validate(
+            raw.get("token_budget", {})
+        )
+
         # Extract top-level identity
         self._name = raw.get("name", "Agent")
         # Scan skills first, as orchestrator and subagents need them for resolution
@@ -188,9 +266,7 @@ class AgentConfig:
         Raises:
             AppException: If ``mcps`` is not a list of strings.
         """
-        if not isinstance(mcps, list) or not all(
-            isinstance(s, str) for s in mcps
-        ):
+        if not isinstance(mcps, list) or not all(isinstance(s, str) for s in mcps):
             raise AppException(
                 f"Agent '{agent_name}': 'mcps' must be a list of strings",
                 ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
@@ -274,6 +350,70 @@ class AgentConfig:
 
         return subagents
 
+    @staticmethod
+    def _validate_mcp_server(name: str, cfg: dict[str, Any]) -> None:
+        """Log clear errors for invalid per-MCP OAuth/DCR configuration."""
+        auth_mode = cfg.get("auth_mode", "sso")
+        cfg["auth_mode"] = auth_mode
+
+        if auth_mode not in ("sso", "oauth", "dcr", "api_key"):
+            logger.error(
+                "MCP server '%s': invalid auth_mode '%s' (expected sso, oauth, dcr, or api_key)",
+                name,
+                auth_mode,
+            )
+            return
+
+        if auth_mode not in ("oauth", "dcr"):
+            return
+
+        oauth = cfg.get("oauth")
+        if not isinstance(oauth, dict):
+            logger.error(
+                "MCP server '%s': auth_mode '%s' requires an 'oauth' block",
+                name,
+                auth_mode,
+            )
+            return
+
+        for field in (
+            "authorization_endpoint",
+            "token_endpoint",
+        ):
+            if not oauth.get(field):
+                logger.error(
+                    "MCP server '%s': oauth.%s is required for auth_mode '%s'",
+                    name,
+                    field,
+                    auth_mode,
+                )
+
+        if oauth.get("redirect_uri"):
+            logger.warning(
+                "MCP server '%s': oauth.redirect_uri in mcp.json is ignored — "
+                "redirect URI is derived from AGENT_PUBLIC_BASE_URL",
+                name,
+            )
+
+        if auth_mode == "oauth" and not oauth.get("client_id"):
+            logger.error(
+                "MCP server '%s': oauth.client_id is required for auth_mode 'oauth'",
+                name,
+            )
+
+        if oauth.get("client_secret"):
+            logger.warning(
+                "MCP server '%s': oauth.client_secret in mcp.json is insecure — "
+                "use oauth.client_secret_env with an environment variable name instead",
+                name,
+            )
+
+        if auth_mode == "dcr" and not oauth.get("registration_endpoint"):
+            logger.error(
+                "MCP server '%s': oauth.registration_endpoint is required for auth_mode 'dcr'",
+                name,
+            )
+
     def _load_mcp_servers(self) -> dict[str, Any]:
         """Load MCP server configuration at initialization.
 
@@ -286,8 +426,11 @@ class AgentConfig:
             return {}
 
         try:
-            data = json.loads(mcp_path.read_bytes())
+            data = _load_jsonc(mcp_path)
             servers: dict[str, Any] = data.get("mcpServers", {})
+            for name, cfg in servers.items():
+                if isinstance(cfg, dict):
+                    self._validate_mcp_server(name, cfg)
             logger.info(f"Loaded {len(servers)} MCP server config(s)")
             return servers
         except Exception as e:
@@ -388,6 +531,11 @@ class AgentConfig:
         self._ensure_loaded()
         return self._cache_config
 
+    def get_token_budget_config(self) -> TokenBudgetConfig:
+        """Get the pre-loaded per-thread token budget configuration."""
+        self._ensure_loaded()
+        return self._token_budget_config
+
     def get_name(self) -> str:
         """Get the agent display name from config.
 
@@ -424,6 +572,15 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return resolve_middleware(self._middleware_config, model_name, agent_overrides)
+
+    def get_otel_config(self) -> OtelFileConfig:
+        """Get the pre-loaded OTEL configuration.
+
+        Returns:
+            The parsed OTEL config from observability.yaml.
+        """
+        self._ensure_loaded()
+        return self._otel_config
 
     def get_pyproject_path(self) -> Path:
         """Get the skill sandbox pyproject.toml path.

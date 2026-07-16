@@ -16,6 +16,14 @@ from deep_agent.src.infrastructure.middleware import (
 class TestBuildMiddlewareList:
     """Test middleware instance construction from resolved config."""
 
+    @pytest.fixture(autouse=True)
+    def _disable_audit(self):
+        with patch(
+            "deep_agent.src.audit.config.is_audit_enabled",
+            return_value=False,
+        ):
+            yield
+
     def test_returns_empty_when_master_switch_off(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
         with patch(
@@ -43,12 +51,17 @@ class TestBuildMiddlewareList:
         resolved = ResolvedMiddlewareConfig(
             summarization_tool_enabled=False, extra_middleware=[]
         )
-        with patch(
-            "deep_agent.src.infrastructure.middleware.settings"
-        ) as mock_settings:
+        with (
+            patch("deep_agent.src.infrastructure.middleware.settings") as mock_settings,
+            patch(
+                "deep_agent.src.infrastructure.middleware._build_summarization_tool_middleware",
+            ) as build_sum,
+        ):
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert result == []
+            build_sum.assert_not_called()
+        # Default guardrails (model/tool limits + model retry) still apply.
+        assert len(result) == 3
 
     def test_includes_extra_middleware(self):
         resolved = ResolvedMiddlewareConfig(
@@ -62,7 +75,8 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert len(result) == 1
+        assert len(result) == 4
+        assert any(isinstance(m, _DummyMiddleware) for m in result)
 
 
 class TestBuildExcludedMiddleware:

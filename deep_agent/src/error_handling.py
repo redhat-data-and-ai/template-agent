@@ -88,6 +88,36 @@ subagent_retry = retry(
     reraise=True,
 )
 
+try:
+    from pymongo.errors import (
+        AutoReconnect,
+        ConnectionFailure,
+        NetworkTimeout,
+        NotPrimaryError,
+        ServerSelectionTimeoutError,
+    )
+
+    _MONGO_TRANSIENT_ERRORS: tuple[type[Exception], ...] = (
+        AutoReconnect,
+        ConnectionFailure,
+        NetworkTimeout,
+        NotPrimaryError,
+        ServerSelectionTimeoutError,
+        ConnectionError,
+        TimeoutError,
+        OSError,
+    )
+except ImportError:  # pragma: no cover - pymongo optional at import time
+    _MONGO_TRANSIENT_ERRORS = (ConnectionError, TimeoutError, OSError)
+
+mongo_retry = retry(
+    retry=retry_if_exception_type(_MONGO_TRANSIENT_ERRORS),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.2, min=0.1, max=2),
+    before_sleep=_log_retry,
+    reraise=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Circuit Breaker
@@ -309,6 +339,7 @@ def classify_error(exc: Exception) -> dict[str, Any]:
     """Classify an exception into a structured error response for the API.
 
     Returns a dict suitable for yielding as a stream error event.
+    PII is scrubbed in production environments.
 
     Args:
         exc: The exception to classify.
@@ -316,6 +347,9 @@ def classify_error(exc: Exception) -> dict[str, Any]:
     Returns:
         Structured error dict with type, message, recoverable flag, and error_type.
     """
+    from deep_agent.src.pii_scrubber import scrub_pii
+    from deep_agent.src.settings import settings
+
     if isinstance(exc, RateLimitError):
         return {
             "message": "Rate limit exceeded — please wait and try again",
@@ -323,19 +357,31 @@ def classify_error(exc: Exception) -> dict[str, Any]:
             "error_type": "rate_limit",
         }
     if isinstance(exc, TransientError):
+        message = f"Service temporarily unavailable: {exc.message}"
         return {
-            "message": f"Service temporarily unavailable: {exc.message}",
+            "message": scrub_pii(message) if settings.is_production else message,
             "recoverable": True,
             "error_type": "transient",
         }
     if isinstance(exc, AppException):
         return {
-            "message": exc.message,
+            "message": scrub_pii(exc.message)
+            if settings.is_production
+            else exc.message,
             "recoverable": False,
             "error_type": exc.code,
         }
+
+    # Generic error - minimal info in production
+    if settings.is_production:
+        return {
+            "message": "Internal server error",
+            "recoverable": False,
+            "error_type": "unknown",
+        }
+
     return {
-        "message": "Internal server error",
+        "message": f"Internal server error: {str(exc)}",
         "recoverable": False,
         "error_type": "unknown",
     }
