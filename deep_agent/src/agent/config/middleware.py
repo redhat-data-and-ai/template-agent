@@ -103,10 +103,10 @@ class PIIRule(BaseModel):
     """A single PII rule — provider determines which backend handles it."""
 
     name: str
-    strategy: str = "redact"                     # scrub/mask/hash/redact/block
-    provider: str = "default"                    # default/regex/presidio/custom
-    regex: str | None = None                     # required when provider=custom
-    label: str | None = None                     # token label prefix (default: NAME.upper())
+    strategy: str = "redact"  # scrub/mask/hash/redact/block
+    provider: str = "default"  # default/regex/presidio/custom
+    regex: str | None = None  # required when provider=custom
+    label: str | None = None  # token label prefix (default: NAME.upper())
 
     @model_validator(mode="before")
     @classmethod
@@ -121,12 +121,14 @@ class PIIConfig(BaseModel):
     """Unified PII config — all rules in one place, provider routes each rule."""
 
     enabled: bool = False
-    trace_strategy: str = "hash"   # "redact" or "hash" — how PII appears in Langfuse traces
+    trace_strategy: str = (
+        "hash"  # "redact" or "hash" — how PII appears in Langfuse traces
+    )
     rules: list[PIIRule] = Field(default_factory=list)
 
 
 class MiddlewareDefaults(BaseModel):
-    """Global middleware defaults from middleware.yaml."""
+    """Global middleware defaults from agent.yaml."""
 
     summarization_tool: SummarizationToolConfig = Field(
         default_factory=SummarizationToolConfig
@@ -140,7 +142,6 @@ class MiddlewareDefaults(BaseModel):
     model_retry: ModelRetryConfig = Field(default_factory=ModelRetryConfig)
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
-    pii: PIIConfig = Field(default_factory=PIIConfig)
     extra: list[str] = Field(default_factory=list)
 
 
@@ -174,7 +175,6 @@ class ResolvedMiddlewareConfig(BaseModel):
     model_retry: ModelRetryConfig = Field(default_factory=ModelRetryConfig)
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
-    pii: PIIConfig = Field(default_factory=PIIConfig)
     extra_middleware: list[str] = Field(default_factory=list)
     excluded_middleware: list[str] = Field(default_factory=list)
 
@@ -269,7 +269,6 @@ def resolve_middleware(
         model_retry=defaults.model_retry,
         model_fallback=defaults.model_fallback,
         tool_retry=defaults.tool_retry,
-        pii=defaults.pii,
         extra_middleware=extra,
         excluded_middleware=profile.excluded_middleware,
     )

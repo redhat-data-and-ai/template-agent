@@ -15,16 +15,22 @@ Intercepts every model call via awrap_model_call/wrap_model_call so:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 
 from langchain.agents.middleware.types import AgentMiddleware
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, SystemMessage
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    AnyMessage,
+    BaseMessage,
+    SystemMessage,
+)
 
 from deep_agent.utils.pylogger import get_python_logger
 
 if TYPE_CHECKING:
     from langchain.agents.middleware.types import ModelRequest, ModelResponse
+
     from deep_agent.src.pii.scrubber import PIIScrubber
 
 logger = get_python_logger()
@@ -34,12 +40,18 @@ def _extract_text(content: Any, max_len: int = 120) -> str:
     if isinstance(content, str):
         return content[:max_len]
     if isinstance(content, list):
-        parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        parts = [
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        ]
         return " ".join(parts)[:max_len]
     return repr(content)[:max_len]
 
 
-def _synced_additional_kwargs(msg: Any, tool_calls: list[dict]) -> dict[str, Any] | None:
+def _synced_additional_kwargs(
+    msg: Any, tool_calls: list[dict]
+) -> dict[str, Any] | None:
     """Mirror tool_calls[0].args into additional_kwargs.function_call.arguments."""
     additional_kwargs = getattr(msg, "additional_kwargs", None)
     if not isinstance(additional_kwargs, dict):
@@ -56,7 +68,10 @@ def _synced_additional_kwargs(msg: Any, tool_calls: list[dict]) -> dict[str, Any
             new_args = original_args
     else:
         new_args = args
-    return {**additional_kwargs, "function_call": {**function_call, "arguments": new_args}}
+    return {
+        **additional_kwargs,
+        "function_call": {**function_call, "arguments": new_args},
+    }
 
 
 class PIIMiddleware(AgentMiddleware):
@@ -68,6 +83,7 @@ class PIIMiddleware(AgentMiddleware):
     """
 
     def __init__(self, scrubber: "PIIScrubber") -> None:
+        """Initialise with a pre-built PIIScrubber."""
         self._scrubber = scrubber
 
     # ── Input blocking ────────────────────────────────────────────────────
@@ -83,20 +99,28 @@ class PIIMiddleware(AgentMiddleware):
             return None
 
         messages = (
-            state.get("messages", []) if isinstance(state, dict)
+            state.get("messages", [])
+            if isinstance(state, dict)
             else getattr(state, "messages", [])
         )
         human_msg = next(
-            (m for m in reversed(messages)
-             if (getattr(m, "type", None) or (m.get("role") if isinstance(m, dict) else None))
-             in ("human", "user")),
+            (
+                m
+                for m in reversed(messages)
+                if (
+                    getattr(m, "type", None)
+                    or (m.get("role") if isinstance(m, dict) else None)
+                )
+                in ("human", "user")
+            ),
             None,
         )
         if not human_msg:
             return None
 
         content = (
-            human_msg.get("content") if isinstance(human_msg, dict)
+            human_msg.get("content")
+            if isinstance(human_msg, dict)
             else getattr(human_msg, "content", "")
         )
         if not isinstance(content, str) or not content:
@@ -116,15 +140,18 @@ class PIIMiddleware(AgentMiddleware):
         from langchain_core.messages import AIMessage
         from langgraph.constants import END
         from langgraph.types import Command
+
         return Command(
             update={"messages": [AIMessage(content=reply)]},
             goto=END,
         )
 
     async def abefore_agent(self, state: Any, runtime: Any) -> Any:
+        """Block requests containing PII with strategy: block before the agent runs."""
         return self._check_input_blocked(state)
 
     def before_agent(self, state: Any, runtime: Any) -> Any:
+        """Block requests containing PII with strategy: block before the agent runs."""
         return self._check_input_blocked(state)
 
     # ── Thread-aware setup ────────────────────────────────────────────────
@@ -132,8 +159,11 @@ class PIIMiddleware(AgentMiddleware):
     def _get_thread_id(self) -> str | None:
         try:
             from langgraph.config import get_config
+
             config = get_config()
-            return (config or {}).get("configurable", {}).get("thread_id")
+            return cast(
+                str | None, (config or {}).get("configurable", {}).get("thread_id")
+            )
         except Exception:
             return None
 
@@ -147,7 +177,10 @@ class PIIMiddleware(AgentMiddleware):
         if thread_id:
             self._scrubber.save_thread_map(thread_id)
         self._scrubber.snapshot_to_container()
-        logger.debug("pii_middleware snapshot tokens=%d", len(self._scrubber.snapshot_token_map()))
+        logger.debug(
+            "pii_middleware snapshot tokens=%d",
+            len(self._scrubber.snapshot_token_map()),
+        )
 
     # ── Scrubbing helpers ─────────────────────────────────────────────────
 
@@ -158,7 +191,9 @@ class PIIMiddleware(AgentMiddleware):
             result = []
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    result.append({**block, "text": self._scrubber.scrub(block["text"])})
+                    result.append(
+                        {**block, "text": self._scrubber.scrub(block["text"])}
+                    )
                 else:
                     result.append(block)
             return result
@@ -173,7 +208,9 @@ class PIIMiddleware(AgentMiddleware):
     def _scrub_message(self, msg: BaseMessage) -> BaseMessage:
         content = self._scrub_content(msg.content)
         kwargs: dict[str, Any] = {"content": content}
-        if isinstance(msg, (AIMessage, AIMessageChunk)) and getattr(msg, "tool_calls", None):
+        if isinstance(msg, (AIMessage, AIMessageChunk)) and getattr(
+            msg, "tool_calls", None
+        ):
             scrubbed_tool_calls = [
                 {**tc, "args": self._scrub_tool_args(tc.get("args", {}))}
                 for tc in msg.tool_calls
@@ -207,21 +244,30 @@ class PIIMiddleware(AgentMiddleware):
             result = []
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    result.append({**block, "text": cls._restore_str(block.get("text", ""), token_map)})
+                    result.append(
+                        {
+                            **block,
+                            "text": cls._restore_str(block.get("text", ""), token_map),
+                        }
+                    )
                 else:
                     result.append(block)
             return result
         return content
 
     @classmethod
-    def _restore_tool_args_with_map(cls, args: dict[str, Any], token_map: dict[str, str]) -> dict[str, Any]:
+    def _restore_tool_args_with_map(
+        cls, args: dict[str, Any], token_map: dict[str, str]
+    ) -> dict[str, Any]:
         return {
             k: cls._restore_str(v, token_map) if isinstance(v, str) else v
             for k, v in args.items()
         }
 
     @classmethod
-    def _restore_message_with_map(cls, msg: BaseMessage, token_map: dict[str, str]) -> BaseMessage:
+    def _restore_message_with_map(
+        cls, msg: BaseMessage, token_map: dict[str, str]
+    ) -> BaseMessage:
         if not isinstance(msg, (AIMessage, AIMessageChunk)):
             return msg
         if not token_map:
@@ -231,7 +277,12 @@ class PIIMiddleware(AgentMiddleware):
         kwargs: dict[str, Any] = {"content": content}
         if getattr(msg, "tool_calls", None):
             restored_tool_calls = [
-                {**tc, "args": cls._restore_tool_args_with_map(tc.get("args", {}), token_map)}
+                {
+                    **tc,
+                    "args": cls._restore_tool_args_with_map(
+                        tc.get("args", {}), token_map
+                    ),
+                }
                 for tc in msg.tool_calls
             ]
             kwargs["tool_calls"] = restored_tool_calls
@@ -253,13 +304,15 @@ class PIIMiddleware(AgentMiddleware):
         request: "ModelRequest",
         handler: Callable[["ModelRequest"], Awaitable["ModelResponse"]],
     ) -> "ModelResponse":
+        """Scrub PII from the model request and restore it in the response (async)."""
         from langchain.agents.middleware.types import ModelResponse
 
         thread_id = self._setup_scrub()
 
-        scrubbed_messages: list[AnyMessage] = [self._scrub_message(m) for m in request.messages]
+        scrubbed_messages: list[AnyMessage] = [
+            self._scrub_message(m) for m in request.messages
+        ]
         scrubbed_system = self._scrub_system(request.system_message)
-
 
         # Snapshot NOW — before the async handler crosses any context boundary.
         # self._scrubber.restore() reads a ContextVar which may be empty after
@@ -272,23 +325,34 @@ class PIIMiddleware(AgentMiddleware):
             overrides["system_message"] = scrubbed_system
 
         scrubbed_request = request.override(**overrides)
-        logger.debug("pii_middleware awrap_model_call scrubbed=%d token_map=%d", len(scrubbed_messages), len(token_map))
+        logger.debug(
+            "pii_middleware awrap_model_call scrubbed=%d token_map=%d",
+            len(scrubbed_messages),
+            len(token_map),
+        )
 
         response = await handler(scrubbed_request)
 
-        restored_result = [self._restore_message_with_map(m, token_map) for m in response.result]
-        return ModelResponse(result=restored_result, structured_response=response.structured_response)
+        restored_result = [
+            self._restore_message_with_map(m, token_map) for m in response.result
+        ]
+        return ModelResponse(
+            result=restored_result, structured_response=response.structured_response
+        )
 
     def wrap_model_call(
         self,
         request: "ModelRequest",
         handler: Callable[["ModelRequest"], "ModelResponse"],
     ) -> "ModelResponse":
+        """Scrub PII from the model request and restore it in the response (sync)."""
         from langchain.agents.middleware.types import ModelResponse
 
         thread_id = self._setup_scrub()
 
-        scrubbed_messages: list[AnyMessage] = [self._scrub_message(m) for m in request.messages]
+        scrubbed_messages: list[AnyMessage] = [
+            self._scrub_message(m) for m in request.messages
+        ]
         scrubbed_system = self._scrub_system(request.system_message)
 
         token_map = self._scrubber.snapshot_token_map()
@@ -302,14 +366,19 @@ class PIIMiddleware(AgentMiddleware):
 
         response = handler(scrubbed_request)
 
-        restored_result = [self._restore_message_with_map(m, token_map) for m in response.result]
-        return ModelResponse(result=restored_result, structured_response=response.structured_response)
+        restored_result = [
+            self._restore_message_with_map(m, token_map) for m in response.result
+        ]
+        return ModelResponse(
+            result=restored_result, structured_response=response.structured_response
+        )
 
 
 def build_pii_middleware() -> PIIMiddleware | None:
     """Build PIIMiddleware from the global scrubber, or None if PII is not active."""
     try:
         from deep_agent.src.pii import get_scrubber
+
         scrubber = get_scrubber()
         if scrubber is None:
             logger.debug("PIIMiddleware: scrubber not initialised — skipping")

@@ -116,6 +116,7 @@ class AgentConfig:
     _cache_config: CacheFileConfig
     _otel_config: OtelFileConfig
     _token_budget_config: TokenBudgetConfig
+    _pii_config: PIIConfig
     _name: str
 
     def __new__(cls, base_dir: Path | None = None) -> "AgentConfig":
@@ -164,6 +165,26 @@ class AgentConfig:
         except Exception as e:
             logger.warning("Failed to parse runtime/agent.yaml, using defaults: %s", e)
             return {}
+
+    def _load_pii_config(self) -> PIIConfig:
+        """Load PII configuration from runtime/pii.yaml.
+
+        Returns PIIConfig with enabled=False if the file does not exist —
+        absence of the file is the canonical way to disable PII.
+        """
+        pii_yaml = self._base_dir / "runtime" / "pii.yaml"
+        if not pii_yaml.is_file():
+            logger.info("No pii.yaml found — PII disabled")
+            return PIIConfig()
+
+        try:
+            raw = yaml.safe_load(pii_yaml.read_text()) or {}
+            config: PIIConfig = PIIConfig.model_validate(raw)
+            logger.info("Loaded PII config from pii.yaml (enabled=%s)", config.enabled)
+            return config
+        except Exception as e:
+            logger.warning("Failed to parse pii.yaml, PII disabled: %s", e)
+            return PIIConfig()
 
     def _load_otel_config(self) -> OtelFileConfig:
         """Load OpenTelemetry configuration from observability.yaml.
@@ -231,6 +252,9 @@ class AgentConfig:
 
         # Load OTEL config from observability.yaml
         self._otel_config = self._load_otel_config()
+
+        # Load PII config from pii.yaml (absent file = disabled)
+        self._pii_config = self._load_pii_config()
 
         # Extract token budget section
         self._token_budget_config = TokenBudgetConfig.model_validate(
@@ -547,9 +571,9 @@ class AgentConfig:
         return self._name
 
     def get_custom_pii_config(self) -> PIIConfig:
-        """Return the pii config (non-default rules) from agent.yaml."""
+        """Return the PII config loaded from pii.yaml."""
         self._ensure_loaded()
-        return self._middleware_config.defaults.pii
+        return self._pii_config
 
     def get_middleware_config(self) -> MiddlewareFileConfig:
         """Get the pre-loaded middleware file configuration.

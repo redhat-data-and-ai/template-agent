@@ -78,7 +78,11 @@ def build_middleware_list(
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
         return middlewares
 
-    if resolved.pii.enabled:
+    from deep_agent.src.agent.config import agent_config
+
+    pii_cfg = agent_config.get_custom_pii_config()
+
+    if pii_cfg.enabled:
         _append_if_built(middlewares, _build_custom_pii_middleware())
 
     if resolved.summarization_tool_enabled:
@@ -126,8 +130,11 @@ def _append_guardrails(target: list[Any], resolved: ResolvedMiddlewareConfig) ->
     if resolved.tool_retry.enabled and resolved.tool_retry.tools:
         _append_if_built(target, _build_tool_retry(resolved.tool_retry))
 
-    if resolved.pii.enabled and resolved.pii.rules:
-        target.extend(_build_pii_middleware(resolved.pii))
+    from deep_agent.src.agent.config import agent_config
+
+    pii_cfg = agent_config.get_custom_pii_config()
+    if pii_cfg.enabled and pii_cfg.rules:
+        target.extend(_build_pii_middleware(pii_cfg))
 
 
 def build_excluded_middleware(
@@ -242,6 +249,7 @@ def _build_custom_pii_middleware() -> Any | None:
     """Build the custom token-map PIIMiddleware from the global scrubber."""
     try:
         from deep_agent.src.pii.middleware import build_pii_middleware
+
         return build_pii_middleware()
     except ImportError:
         logger.debug("Custom PIIMiddleware not available")
@@ -249,7 +257,8 @@ def _build_custom_pii_middleware() -> Any | None:
 
 
 def _build_pii_middleware(config: Any) -> list[Any]:
-    """Route rules by provider:
+    """Route rules by provider.
+
     - provider: default → ParallelPIIMiddleware (stock langchain, one-way)
     - others            → handled by custom PIIMiddleware via global scrubber
     """
@@ -263,7 +272,9 @@ def _build_pii_middleware(config: Any) -> list[Any]:
                 continue
             try:
                 instances.append(
-                    PIIMiddleware(rule.name, strategy=rule.strategy, apply_to_input=True)
+                    PIIMiddleware(
+                        rule.name, strategy=rule.strategy, apply_to_input=True
+                    )
                 )
             except (ValueError, TypeError) as e:
                 logger.warning("Skipping PII rule '%s': %s", rule.name, e)
@@ -276,6 +287,7 @@ def _build_pii_middleware(config: Any) -> list[Any]:
 
             async def abefore_model(self, state: Any, runtime: Any) -> Any:
                 import asyncio
+
                 results = await asyncio.gather(
                     *(inst.abefore_model(state, runtime) for inst in instances),
                     return_exceptions=True,
@@ -291,8 +303,12 @@ def _build_pii_middleware(config: Any) -> list[Any]:
 
             def before_model(self, state: Any, runtime: Any) -> Any:
                 from concurrent.futures import ThreadPoolExecutor
+
                 with ThreadPoolExecutor() as pool:
-                    futures = [pool.submit(inst.before_model, state, runtime) for inst in instances]
+                    futures = [
+                        pool.submit(inst.before_model, state, runtime)
+                        for inst in instances
+                    ]
                     results = [f.result() for f in futures]
                 for r in results:
                     if isinstance(r, BaseException):

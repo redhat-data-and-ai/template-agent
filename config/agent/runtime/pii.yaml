@@ -1,0 +1,52 @@
+# PII Detection and Scrubbing
+#
+# If this file does not exist, PII processing is disabled.
+# Set enabled: false to keep the config but turn it off without deleting the file.
+#
+# provider routes each rule:
+#   default  — stock langchain PIIMiddleware (one-way, parallel)
+#   regex    — token-map scrubber with built-in regex
+#   presidio — token-map scrubber with Presidio NLP
+#   custom   — token-map scrubber with your own regex
+#
+# strategy controls what happens to detected PII:
+#   scrub    — reversible tokenization ([EMAIL_1] restored in LLM output)
+#   mask     — one-way partial mask (keeps last 4 chars, e.g. ****-1234)
+#   redact   — one-way ***REDACTED***
+#   block    — reject the entire request if this PII type appears in user input
+
+enabled: false
+trace_strategy: hash   # "redact" (***REDACTED***) or "hash" ([HASH:abc123] — correlatable across requests)
+rules:
+  - name: credit_card
+    strategy: mask
+    provider: default
+
+  - name: ip
+    strategy: redact
+    provider: default
+
+  - name: url
+    strategy: redact
+    provider: default
+
+  - name: email
+    strategy: scrub
+    provider: regex
+    label: MAIL
+
+  - name: address
+    strategy: block
+    provider: presidio
+
+  - name: pan_card               # Indian PAN
+    strategy: block
+    provider: custom
+    regex: '\b[A-Z]{5}[0-9]{4}[A-Z]\b'
+
+  # ── Add custom rules below ──────────────────────────────────────────
+  # - name: employee_id
+  #   strategy: scrub
+  #   provider: custom
+  #   regex: '\bEMP-\d{6}\b'
+  #   label: EMP_ID
