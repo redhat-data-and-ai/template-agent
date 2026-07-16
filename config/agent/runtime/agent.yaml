@@ -182,7 +182,7 @@ middleware:
     # --- Cost Tracking ---
     cost_tracking_enabled: false          # emit resource usage OTEL metrics
     # --- Streaming ---
-    streaming_enabled: true               # real-time stdout/stderr streaming via SSE
+    streaming_enabled: false              # real-time stdout/stderr streaming via SSE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

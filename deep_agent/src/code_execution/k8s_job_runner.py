@@ -267,6 +267,7 @@ class K8sJobRunner:
                 namespace=ns,
             )
 
+            scheduling_start = time.monotonic()
             if on_output and self._config.streaming_enabled:
                 pod_name = await self._wait_for_pod(job_name, ns, wait_for_running=True)
                 stdout, stderr = await self._collect_logs_streaming(
@@ -276,6 +277,14 @@ class K8sJobRunner:
             else:
                 pod_name = await self._wait_for_pod(job_name, ns)
                 stdout, stderr = await self._collect_logs(pod_name, ns)
+
+            scheduling_duration = time.monotonic() - scheduling_start
+            from deep_agent.src.code_execution.metrics import CodeExecutionMetrics
+
+            CodeExecutionMetrics().record_scheduling_latency(
+                org=os.environ.get("AI_PLATFORM_AGENT_ORG", "default"),
+                duration=scheduling_duration,
+            )
 
             raw_exit_code, termination_reason = await self._get_exit_info(pod_name, ns)
             exit_code, status = self.parse_container_status(

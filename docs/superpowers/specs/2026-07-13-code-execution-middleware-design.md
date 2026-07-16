@@ -44,7 +44,10 @@ flowchart TD
     style R1 fill:#fef3c7,stroke:#f59e0b,color:#111
 ```
 
+
+
 **Limitations**:
+
 - Agent cannot run calculations, data transformations, or validations
 - Agent cannot verify its own outputs by executing code
 - Agent cannot install/use Python libraries dynamically
@@ -90,7 +93,10 @@ flowchart TD
     style F2 fill:#dcfce7,stroke:#22c55e,color:#111
 ```
 
+
+
 **Capabilities unlocked**:
+
 - Direct computation: math, statistics, data processing
 - Code verification: agent tests its own hypotheses
 - Library usage: pandas, numpy, sympy in Python; npm packages in Node
@@ -102,16 +108,18 @@ flowchart TD
 
 ## 3. Benefits & Business Value
 
-| Benefit | Impact |
-|---------|--------|
-| **Agent competence** | Agents can answer quantitative questions with actual computation, not approximations |
-| **Security isolation** | Code runs in ephemeral, sandboxed pods — never in the agent's own container. Zero K8s API access, read-only filesystem, no privilege escalation |
-| **Multi-tenant safety** | Each org's executions run in the org's own namespace, inheriting existing NetworkPolicy and RBAC isolation |
-| **Resource control** | Configurable CPU/memory limits and timeouts per execution prevent runaway code from affecting the platform |
-| **Full auditability** | Every execution is traced end-to-end: who ran what code, when, where, how long, what it returned — across OTEL metrics, distributed tracing, platform audit events, and structured logs |
-| **Zero operational burden** | Ephemeral Jobs auto-delete on completion; K8s TTL controller provides a safety net; no persistent infrastructure to manage |
-| **Extensible language support** | Adding a new language is a one-line config change (image + entrypoint mapping) |
-| **Demo-ready** | Clean, visible flow for stakeholder demos: "Agent writes Python → pod appears → output returns → pod disappears" |
+
+| Benefit                         | Impact                                                                                                                                                                                  |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent competence**            | Agents can answer quantitative questions with actual computation, not approximations                                                                                                    |
+| **Security isolation**          | Code runs in ephemeral, sandboxed pods — never in the agent's own container. Zero K8s API access, read-only filesystem, no privilege escalation                                         |
+| **Multi-tenant safety**         | Each org's executions run in the org's own namespace, inheriting existing NetworkPolicy and RBAC isolation                                                                              |
+| **Resource control**            | Configurable CPU/memory limits and timeouts per execution prevent runaway code from affecting the platform                                                                              |
+| **Full auditability**           | Every execution is traced end-to-end: who ran what code, when, where, how long, what it returned — across OTEL metrics, distributed tracing, platform audit events, and structured logs |
+| **Zero operational burden**     | Ephemeral Jobs auto-delete on completion; K8s TTL controller provides a safety net; no persistent infrastructure to manage                                                              |
+| **Extensible language support** | Adding a new language is a one-line config change (image + entrypoint mapping)                                                                                                          |
+| **Demo-ready**                  | Clean, visible flow for stakeholder demos: "Agent writes Python → pod appears → output returns → pod disappears"                                                                        |
+
 
 ---
 
@@ -160,6 +168,8 @@ flowchart LR
     style D3 fill:#f0fdf4,stroke:#86efac,color:#111
     style D4 fill:#f0fdf4,stroke:#86efac,color:#111
 ```
+
+
 
 **Selected: DynamicToolMiddleware pattern** — following LangChain's `createCodeInterpreterMiddleware()` precedent and the `DynamicToolMiddleware` pattern from LangChain docs.
 
@@ -232,22 +242,26 @@ flowchart TB
     style AUDIT fill:#f9a8d4,stroke:#ec4899,color:#111
 ```
 
+
+
 **Key integration points**:
 
-| Integration Point | How | Source |
-|---|---|---|
-| **Namespace** | Jobs run in the agent's own namespace (`ap-{org}-{agent}`) which already exists, created by agent-engine | Agent-engine `namespace.py`: `agent_namespace(org, name)` |
-| **Identity (org/agent)** | Read from env vars `AI_PLATFORM_AGENT_ORG` + `AI_PLATFORM_AGENT_NAME` set on agent pods by agent-engine | Agent-engine `deployer.py` |
-| **Identity (user)** | From audit context ContextVar, bound by `graph.py` via `bind_audit_context(user=user_identity)` | Audit `context.py` |
-| **Labels** | Follow platform convention: `ai-platform.io/org`, `ai-platform.io/agent`, `app.kubernetes.io/managed-by` | Agent-engine `deployer.py` |
-| **Security context** | Match platform standard: `runAsNonRoot`, `readOnlyRootFilesystem`, drop all caps | Gateway + agent-engine manifests |
-| **K8s API auth** | `load_incluster_config()` with `load_kube_config()` fallback | Agent-engine `namespace.py`: `load_k8s_config()` |
-| **OTEL metrics** | Register on existing `MetricsContainer` meter via `get_metrics()` | `otel.py` |
-| **OTEL tracing** | Create spans via `get_tracer()` | `otel.py` |
-| **Audit events** | Emit via `emit_audit_event()` with existing context | Audit `emitter.py` |
-| **Structured logs** | Use `get_python_logger()` | `pylogger.py` |
-| **Middleware registration** | Add to `build_middleware_list()` in `infrastructure/middleware.py` | Existing pattern |
-| **Config** | New `code_execution:` section in `agent.yaml`, loaded by `AgentConfig` | Existing config pattern |
+
+| Integration Point           | How                                                                                                      | Source                                                    |
+| --------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| **Namespace**               | Jobs run in the agent's own namespace (`ap-{org}-{agent}`) which already exists, created by agent-engine | Agent-engine `namespace.py`: `agent_namespace(org, name)` |
+| **Identity (org/agent)**    | Read from env vars `AI_PLATFORM_AGENT_ORG` + `AI_PLATFORM_AGENT_NAME` set on agent pods by agent-engine  | Agent-engine `deployer.py`                                |
+| **Identity (user)**         | From audit context ContextVar, bound by `graph.py` via `bind_audit_context(user=user_identity)`          | Audit `context.py`                                        |
+| **Labels**                  | Follow platform convention: `ai-platform.io/org`, `ai-platform.io/agent`, `app.kubernetes.io/managed-by` | Agent-engine `deployer.py`                                |
+| **Security context**        | Match platform standard: `runAsNonRoot`, `readOnlyRootFilesystem`, drop all caps                         | Gateway + agent-engine manifests                          |
+| **K8s API auth**            | `load_incluster_config()` with `load_kube_config()` fallback                                             | Agent-engine `namespace.py`: `load_k8s_config()`          |
+| **OTEL metrics**            | Register on existing `MetricsContainer` meter via `get_metrics()`                                        | `otel.py`                                                 |
+| **OTEL tracing**            | Create spans via `get_tracer()`                                                                          | `otel.py`                                                 |
+| **Audit events**            | Emit via `emit_audit_event()` with existing context                                                      | Audit `emitter.py`                                        |
+| **Structured logs**         | Use `get_python_logger()`                                                                                | `pylogger.py`                                             |
+| **Middleware registration** | Add to `build_middleware_list()` in `infrastructure/middleware.py`                                       | Existing pattern                                          |
+| **Config**                  | New `code_execution:` section in `agent.yaml`, loaded by `AgentConfig`                                   | Existing config pattern                                   |
+
 
 ### 4.3 Request Flow (End-to-End)
 
@@ -327,6 +341,8 @@ sequenceDiagram
     end
 ```
 
+
+
 ### 4.4 Usage: Chat Agent vs Headless Agent
 
 The middleware is **transparent to both invocation modes** — it works identically regardless of how the agent is called.
@@ -384,14 +400,18 @@ flowchart TB
     style J3 fill:#fde68a,stroke:#f59e0b,color:#111
 ```
 
+
+
 **Key behaviors by invocation mode:**
 
-| Mode | How execute_code appears | Execution path | Result format |
-|---|---|---|---|
-| **Chat agent** (UI) | LLM sees it in tool list, calls it when user asks to compute/analyze | Same middleware chain → K8s Job | Formatted in agent's natural-language response, streamed via SSE |
-| **Headless agent** (API) | Same — tool injected by middleware | Same middleware chain → K8s Job | Included in JSON response body |
-| **Async subagent** | Only if subagent's own middleware has `code_execution.enabled: true` | Independent middleware chain on remote Agent Protocol server | Returned to orchestrator as subagent result text |
-| **Compiled subagent** (in-process) | Only via `awrap_model_call` (async path). Sync `.invoke()` subagents do NOT get the tool injected — sync `wrap_model_call` passes through | Same process, separate middleware instance | ToolMessage returned to orchestrator |
+
+| Mode                               | How execute_code appears                                                                                                                  | Execution path                                               | Result format                                                    |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------- |
+| **Chat agent** (UI)                | LLM sees it in tool list, calls it when user asks to compute/analyze                                                                      | Same middleware chain → K8s Job                              | Formatted in agent's natural-language response, streamed via SSE |
+| **Headless agent** (API)           | Same — tool injected by middleware                                                                                                        | Same middleware chain → K8s Job                              | Included in JSON response body                                   |
+| **Async subagent**                 | Only if subagent's own middleware has `code_execution.enabled: true`                                                                      | Independent middleware chain on remote Agent Protocol server | Returned to orchestrator as subagent result text                 |
+| **Compiled subagent** (in-process) | Only via `awrap_model_call` (async path). Sync `.invoke()` subagents do NOT get the tool injected — sync `wrap_model_call` passes through | Same process, separate middleware instance                   | ToolMessage returned to orchestrator                             |
+
 
 **The tool is invisible when disabled.** With `code_execution.enabled: false`, the middleware's `awrap_model_call` passes through without injecting the tool — the LLM never sees `execute_code` in its tool list and cannot call it. No config change to the agent prompt is needed.
 
@@ -401,23 +421,25 @@ flowchart TB
 
 Every requirement from the original specification mapped to its implementation:
 
-| # | Requirement | Implementation | Verified By |
-|---|---|---|---|
-| R1 | Deepagents middleware intercepting execute_code tool calls | `CodeExecutionMiddleware(AgentMiddleware)` with `awrap_tool_call` checking `request.tool_call["name"] == "execute_code"` | Unit test: tool routing |
-| R2 | Spawns ephemeral K8s Job per execution | `K8sJobRunner.create_job()` → `BatchV1Api.create_namespaced_job()`, `backoffLimit: 0`, `restartPolicy: Never` | Unit test: Job manifest; Integration test: mock K8s API |
-| R3 | Configurable image | `CodeExecutionConfig.images: dict[str, str]` mapping language → container image | Unit test: config validation; Parametrized test: all 3 languages |
-| R4 | Configurable resource limits | `CodeExecutionConfig.resource_requests/limits` → Job spec `resources` | Unit test: manifest generation |
-| R5 | Configurable timeout | `CodeExecutionConfig.max_timeout_seconds` → Job `activeDeadlineSeconds` + client-side `asyncio.wait_for` | Unit test: timeout handling; Parametrized test: timeout scenario |
-| R6 | Streams stdout/stderr back to agent | `CoreV1Api.read_namespaced_pod_log()` with `follow=False` (collect after completion) | Unit test: log collection |
-| R7 | Auto-cleanup on completion/timeout | `ttlSecondsAfterFinished: 30` on Job spec + explicit `BatchV1Api.delete_namespaced_job(propagation_policy="Foreground")` in `finally` block | Unit test: cleanup runs on success/failure/timeout |
-| R8 | Namespace isolation per org | Namespace resolved from `AI_PLATFORM_AGENT_ORG` + `AI_PLATFORM_AGENT_NAME` env vars → `ap-{org}-{agent}`. Jobs execute in agent's pre-existing namespace | Unit test: namespace resolution |
-| R9 | Supports Python, shell, Node | Language → image + entrypoint mapping: `python` → `["python", "-c"]`, `shell` → `["bash", "-c"]`, `node` → `["node", "-e"]` | Parametrized test: all 3 languages |
-| R10 | Max execution time default 60s | `CodeExecutionConfig.max_timeout_seconds` default=60, range 5-300 | Unit test: config defaults |
-| R11 | Emit `code_execution_duration_seconds` metric | OTEL Histogram recorded in metrics helper, labels: `language`, `org`, `exit_code`, `status` | Unit test: metric recording |
-| R12 | Tests with mock K8s API | `unittest.mock.patch` on `kubernetes.client.BatchV1Api` and `CoreV1Api`; mock responses for create/get/delete/logs | Full test suite |
-| R13 | Full traceability/observability | 4-layer observability: OTEL metrics (5 instruments), OTEL tracing (5 spans), audit events (`code_execution` type), structured logs (8 log events) | Unit tests per layer |
-| R14 | Security isolation | `automountServiceAccountToken: false`, `runAsNonRoot: true`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault` | Unit test: manifest security fields |
-| R15 | Demo-ready flow | Agent generates Python → middleware creates Job → pod runs code → output returned → pod deleted. Visible in K8s dashboard during execution | Manual verification |
+
+| #   | Requirement                                                | Implementation                                                                                                                                                                               | Verified By                                                      |
+| --- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| R1  | Deepagents middleware intercepting execute_code tool calls | `CodeExecutionMiddleware(AgentMiddleware)` with `awrap_tool_call` checking `request.tool_call["name"] == "execute_code"`                                                                     | Unit test: tool routing                                          |
+| R2  | Spawns ephemeral K8s Job per execution                     | `K8sJobRunner.create_job()` → `BatchV1Api.create_namespaced_job()`, `backoffLimit: 0`, `restartPolicy: Never`                                                                                | Unit test: Job manifest; Integration test: mock K8s API          |
+| R3  | Configurable image                                         | `CodeExecutionConfig.images: dict[str, str]` mapping language → container image                                                                                                              | Unit test: config validation; Parametrized test: all 3 languages |
+| R4  | Configurable resource limits                               | `CodeExecutionConfig.resource_requests/limits` → Job spec `resources`                                                                                                                        | Unit test: manifest generation                                   |
+| R5  | Configurable timeout                                       | `CodeExecutionConfig.max_timeout_seconds` → Job `activeDeadlineSeconds` + client-side `asyncio.wait_for`                                                                                     | Unit test: timeout handling; Parametrized test: timeout scenario |
+| R6  | Streams stdout/stderr back to agent                        | `CoreV1Api.read_namespaced_pod_log()` with `follow=False` (collect after completion)                                                                                                         | Unit test: log collection                                        |
+| R7  | Auto-cleanup on completion/timeout                         | `ttlSecondsAfterFinished: 30` on Job spec + explicit `BatchV1Api.delete_namespaced_job(propagation_policy="Foreground")` in `finally` block                                                  | Unit test: cleanup runs on success/failure/timeout               |
+| R8  | Namespace isolation per org                                | Namespace resolved from `AI_PLATFORM_AGENT_ORG` + `AI_PLATFORM_AGENT_NAME` env vars → `ap-{org}-{agent}`. Jobs execute in agent's pre-existing namespace                                     | Unit test: namespace resolution                                  |
+| R9  | Supports Python, shell, Node                               | Language → image + entrypoint mapping: `python` → `["python", "-c"]`, `shell` → `["bash", "-c"]`, `node` → `["node", "-e"]`                                                                  | Parametrized test: all 3 languages                               |
+| R10 | Max execution time default 60s                             | `CodeExecutionConfig.max_timeout_seconds` default=60, range 5-300                                                                                                                            | Unit test: config defaults                                       |
+| R11 | Emit `code_execution_duration_seconds` metric              | OTEL Histogram recorded in metrics helper, labels: `language`, `org`, `exit_code`, `status`                                                                                                  | Unit test: metric recording                                      |
+| R12 | Tests with mock K8s API                                    | `unittest.mock.patch` on `kubernetes.client.BatchV1Api` and `CoreV1Api`; mock responses for create/get/delete/logs                                                                           | Full test suite                                                  |
+| R13 | Full traceability/observability                            | 4-layer observability: OTEL metrics (5 instruments), OTEL tracing (5 spans), audit events (`code_execution` type), structured logs (8 log events)                                            | Unit tests per layer                                             |
+| R14 | Security isolation                                         | `automountServiceAccountToken: false`, `runAsNonRoot: true`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `seccompProfile: RuntimeDefault` | Unit test: manifest security fields                              |
+| R15 | Demo-ready flow                                            | Agent generates Python → middleware creates Job → pod runs code → output returned → pod deleted. Visible in K8s dashboard during execution                                                   | Manual verification                                              |
+
 
 ---
 
@@ -489,11 +511,13 @@ spec:
 
 ### Language → Image + Entrypoint Mapping
 
-| Language | Default Image | Command | Args Pattern |
-|----------|--------------|---------|-------------|
+
+| Language | Default Image      | Command            | Args Pattern |
+| -------- | ------------------ | ------------------ | ------------ |
 | `python` | `python:3.12-slim` | `["python", "-c"]` | `["{code}"]` |
-| `shell` | `bash:5` | `["bash", "-c"]` | `["{code}"]` |
-| `node` | `node:22-slim` | `["node", "-e"]` | `["{code}"]` |
+| `shell`  | `bash:5`           | `["bash", "-c"]`   | `["{code}"]` |
+| `node`   | `node:22-slim`     | `["node", "-e"]`   | `["{code}"]` |
+
 
 Images are configurable per-deployment via `agent.yaml` to support internal registries (e.g., `images.paas.redhat.com/...`).
 
@@ -540,6 +564,8 @@ flowchart TB
     style L3 fill:#fecaca,stroke:#ef4444,color:#111
     style O1 fill:#fecaca,stroke:#ef4444,color:#111
 ```
+
+
 
 ---
 
@@ -595,6 +621,8 @@ graph TB
     style T3 fill:#ddd6fe,stroke:#8b5cf6,color:#111
     style T4 fill:#ddd6fe,stroke:#8b5cf6,color:#111
 ```
+
+
 
 ### 7.2 `config.py` — CodeExecutionConfig
 
@@ -725,6 +753,8 @@ stateDiagram-v2
     ReturnError --> [*]: ToolMessage with error
     ReturnResult --> [*]: ToolMessage with result
 ```
+
+
 
 ```python
 @dataclass
@@ -927,6 +957,8 @@ flowchart TB
     style SUMO fill:#e2e8f0,stroke:#64748b,color:#111
 ```
 
+
+
 ### Trace Correlation — Single trace_id Across All Layers
 
 ```mermaid
@@ -964,6 +996,8 @@ flowchart LR
     style Q3 fill:#bbf7d0,stroke:#22c55e,color:#111
     style Q4 fill:#bbf7d0,stroke:#22c55e,color:#111
 ```
+
+
 
 ### Audit Event Example
 
@@ -1063,20 +1097,24 @@ flowchart TD
     style DONE fill:#f0fdf4,stroke:#22c55e,color:#111
 ```
 
+
+
 ### Error Taxonomy & Agent Responses
 
-| Scenario | Detection | ToolMessage Content | Metric | Audit Status |
-|---|---|---|---|---|
-| Code exits 0 | Pod `Succeeded` | `stdout: ...\nstderr: ...\nexit_code: 0` | `status=success` | `success` |
-| Code exits non-zero | Pod `Failed`, exit_code > 0 | `stdout: ...\nstderr: ...\nexit_code: 1` | `status=failed` | `failed` |
-| Timeout | `activeDeadlineSeconds` exceeded OR `asyncio.wait_for` fires | `"Execution timed out after 60s. The code did not complete within the allowed time."` | `error_type=timeout` | `timeout` |
-| OOM killed | Container `reason: OOMKilled` | `"Execution killed: out of memory (limit: 256Mi). Reduce data size or memory usage."` | `error_type=oom_killed` | `oom_killed` |
-| Job creation fails | K8s API 4xx/5xx (quota, image pull) | `"Code execution unavailable: {sanitized_reason}"` | `error_type=job_creation_failed` | `job_creation_failed` |
-| Log collection fails | Pod logs API error | Partial result with `"[warning: logs partially collected]"` | `error_type=log_collection_failed` | `log_collection_failed` |
-| K8s API unreachable | Connection error | `"Code execution service temporarily unavailable"` | `error_type=k8s_unavailable` | `k8s_unavailable` |
-| Code too long | `len(code) > max_code_length` | `"Code exceeds maximum length of 50000 characters"` | Rejected pre-Job | — |
-| Invalid language | Language not in `images` config | `"Unsupported language: {lang}. Supported: python, shell, node"` | Rejected pre-Job | — |
-| Output too large | `len(output) > max_output_bytes` | Truncated with `"\n[truncated at 1MB]"` suffix | `status=truncated` | `truncated` |
+
+| Scenario             | Detection                                                    | ToolMessage Content                                                                   | Metric                             | Audit Status            |
+| -------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------- | ---------------------------------- | ----------------------- |
+| Code exits 0         | Pod `Succeeded`                                              | `stdout: ...\nstderr: ...\nexit_code: 0`                                              | `status=success`                   | `success`               |
+| Code exits non-zero  | Pod `Failed`, exit_code > 0                                  | `stdout: ...\nstderr: ...\nexit_code: 1`                                              | `status=failed`                    | `failed`                |
+| Timeout              | `activeDeadlineSeconds` exceeded OR `asyncio.wait_for` fires | `"Execution timed out after 60s. The code did not complete within the allowed time."` | `error_type=timeout`               | `timeout`               |
+| OOM killed           | Container `reason: OOMKilled`                                | `"Execution killed: out of memory (limit: 256Mi). Reduce data size or memory usage."` | `error_type=oom_killed`            | `oom_killed`            |
+| Job creation fails   | K8s API 4xx/5xx (quota, image pull)                          | `"Code execution unavailable: {sanitized_reason}"`                                    | `error_type=job_creation_failed`   | `job_creation_failed`   |
+| Log collection fails | Pod logs API error                                           | Partial result with `"[warning: logs partially collected]"`                           | `error_type=log_collection_failed` | `log_collection_failed` |
+| K8s API unreachable  | Connection error                                             | `"Code execution service temporarily unavailable"`                                    | `error_type=k8s_unavailable`       | `k8s_unavailable`       |
+| Code too long        | `len(code) > max_code_length`                                | `"Code exceeds maximum length of 50000 characters"`                                   | Rejected pre-Job                   | —                       |
+| Invalid language     | Language not in `images` config                              | `"Unsupported language: {lang}. Supported: python, shell, node"`                      | Rejected pre-Job                   | —                       |
+| Output too large     | `len(output) > max_output_bytes`                             | Truncated with `"\n[truncated at 1MB]"` suffix                                        | `status=truncated`                 | `truncated`             |
+
 
 ### Design Principles
 
@@ -1153,6 +1191,8 @@ flowchart LR
     style P3 fill:#bbf7d0,stroke:#22c55e,color:#111
 ```
 
+
+
 This Role can be added to the agent-engine's namespace provisioning (in `prerequisites.py`) when code execution is enabled.
 
 ### Python Dependency
@@ -1211,6 +1251,8 @@ flowchart LR
     style MK3 fill:#ddd6fe,stroke:#8b5cf6,color:#111
     style MK4 fill:#ddd6fe,stroke:#8b5cf6,color:#111
 ```
+
+
 
 ### Parametrized Test Cases
 
@@ -1295,6 +1337,8 @@ flowchart TB
     style D5 fill:#bbf7d0,stroke:#22c55e,color:#111
 ```
 
+
+
 ---
 
 ## 13. Implemented Capabilities and Future Roadmap
@@ -1338,7 +1382,10 @@ flowchart LR
     style CODE fill:#bbf7d0,stroke:#22c55e,color:#111
 ```
 
+
+
 **Design approach:**
+
 - **Small files (≤1MB)**: Use K8s ConfigMaps. The middleware creates a ConfigMap with file contents, mounts it at `/input/` in the Job pod. ConfigMap is deleted with the Job.
 - **Large files/datasets**: Use ephemeral PVCs (`ReadWriteOnce`). The middleware writes data to the PVC via a transient init pod, mounts it in the executor pod at `/input/` (read) and `/output/` (write). After execution, the middleware reads output files from the PVC via another transient pod, then deletes the PVC.
 - **Tool schema change**: `execute_code` gains optional `input_files: dict[str, str]` (filename → content) and returns `output_files: dict[str, str]` alongside stdout/stderr.
@@ -1378,7 +1425,10 @@ flowchart TD
     style CFG fill:#fde68a,stroke:#f59e0b,color:#111
 ```
 
+
+
 **Design approach:**
+
 - **Default: deny all egress.** Execution pods cannot reach the internet or internal services. A namespace-scoped `NetworkPolicy` with `podSelector: app.kubernetes.io/name: code-execution` and empty `egress: []` blocks all outbound traffic.
 - **Opt-in: allow internet.** A second `NetworkPolicy` with an additional label (`allow-internet: "true"`) permits egress to ports 443/80 while blocking internal RFC1918 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`). The middleware adds the label to the Job pod when `network_access: allow_internet` is configured.
 - **Per-execution override**: The `execute_code` tool gains an optional `network: bool = False` param. When `True` and config allows it, the pod gets the `allow-internet` label.
@@ -1425,7 +1475,10 @@ flowchart TB
     style SCAN fill:#ddd6fe,stroke:#8b5cf6,color:#111
 ```
 
+
+
 **Design approach:**
+
 - **Pre-built images** for common domains: `python-datascience`, `python-ml`, `python-finance`, each with curated library sets. Dockerfiles maintained in the platform repo, built by CI/CD, pushed to the internal registry (`images.paas.redhat.com/...`).
 - **Config-driven**: Add image variants to `code_execution.images` in `agent.yaml`. The `language` field in `execute_code` becomes a variant selector: `python` (base), `python-ds` (data science), etc.
 - **Security**: All images scanned for CVEs via Trivy/Clair in the CI pipeline. Only images from the internal registry are allowed (enforced by OpenShift image policy). No runtime `pip install` — read-only filesystem prevents it.
@@ -1483,13 +1536,17 @@ flowchart TB
     style JOB fill:#bbf7d0,stroke:#22c55e,color:#111
 ```
 
+
+
 **Configuration levels (highest wins):**
 
-| Level | Who | Where | When |
-|---|---|---|---|
-| **Platform default** | Platform team | `config/agent/runtime/agent.yaml` in template-agent repo | Committed to repo, deployed with every agent |
-| **Per-agent override** | Agent author | `AGENTS.md` frontmatter in Registry (`runtime.code_execution.images`) | Agent-engine materializes overrides during deploy |
-| **Environment variable** | Ops/SRE | OpenShift ConfigMap → env vars on agent pod | Runtime override without config change |
+
+| Level                    | Who           | Where                                                                 | When                                              |
+| ------------------------ | ------------- | --------------------------------------------------------------------- | ------------------------------------------------- |
+| **Platform default**     | Platform team | `config/agent/runtime/agent.yaml` in template-agent repo              | Committed to repo, deployed with every agent      |
+| **Per-agent override**   | Agent author  | `AGENTS.md` frontmatter in Registry (`runtime.code_execution.images`) | Agent-engine materializes overrides during deploy |
+| **Environment variable** | Ops/SRE       | OpenShift ConfigMap → env vars on agent pod                           | Runtime override without config change            |
+
 
 **How it flows in production:**
 
@@ -1552,7 +1609,10 @@ flowchart TD
     style M3 fill:#bbf7d0,stroke:#22c55e,color:#111
 ```
 
+
+
 **Design approach:**
+
 - **Client-side**: `asyncio.Semaphore` per org in the middleware, defaulting to `max_concurrent_per_org: 3`. If all slots are occupied, requests queue with a `queue_timeout_seconds: 30` — after which the agent receives `"Code execution queue full, try again later"`.
 - **Server-side**: K8s `ResourceQuota` on the agent namespace limits total Jobs: `count/jobs.batch: 5`. This is a hard backstop independent of the client-side semaphore.
 - **Queue metrics**: `code_execution_queue_depth` (how many are waiting), `code_execution_queue_wait_seconds` (how long they waited), `code_execution_rejected_total` (how many were dropped).
@@ -1597,7 +1657,10 @@ flowchart LR
     style ALERT fill:#bbf7d0,stroke:#22c55e,color:#111
 ```
 
+
+
 **Design approach:**
+
 - **Data points per execution**: `cpu_seconds` (from K8s Metrics API or request-based estimate), `memory_mb_seconds` (peak memory × duration), `execution_count`, `language`, `org`, `timestamp`.
 - **Collection**: The middleware already records `code_execution_duration_seconds` with org/language labels. For cost tracking, extend to persist aggregated usage to PostgreSQL (the platform's existing database) via a periodic flush (every 5 minutes) or per-execution insert.
 - **K8s Metrics API**: Optionally query the Metrics Server (`/apis/metrics.k8s.io/v1beta1/namespaces/{ns}/pods/{pod}`) before cleanup to get actual CPU/memory usage. Falls back to config-based estimates if Metrics API is unavailable.
@@ -1649,7 +1712,10 @@ sequenceDiagram
     end
 ```
 
+
+
 **Design approach:**
+
 - **Dual output path**: The middleware streams log chunks in real-time via a callback mechanism AND collects the full output for the `ToolMessage`. The agent/UI gets live feedback while code runs.
 - **K8s log streaming**: `CoreV1Api.read_namespaced_pod_log(follow=True, _preload_content=False)` returns a streaming response. The middleware reads chunks and forwards them.
 - **Transport**: SSE (Server-Sent Events) through the existing Aegra streaming infrastructure. Each chunk is a `code_execution_output` SSE event with `{execution_id, stream: "stdout"|"stderr", data: "line..."}`.
@@ -1696,6 +1762,8 @@ flowchart LR
     style F4 fill:#fde68a,stroke:#f59e0b,color:#111
     style F5 fill:#fde68a,stroke:#f59e0b,color:#111
 ```
+
+
 
 ---
 
@@ -1749,23 +1817,27 @@ flowchart TB
     style AUDIT fill:#93c5fd,stroke:#3b82f6,color:#111
 ```
 
+
+
 ### Where to Find What
 
-| What You Want to Know | Source | How to Query | Retention |
-|---|---|---|---|
-| **What code was sent** | Agent structured logs | `grep code_execution_started <logfile>` → `code_length` field | Log retention (Sumo Logic) |
-| **What the code returned (stdout/stderr)** | ToolMessage in chat UI + agent thread state | Visible in chat; also in LangGraph checkpointer (Postgres) | Thread lifetime |
-| **Did the pod actually run** | K8s Events | `kubectl get events -n ap-{org}-{agent}` → `Scheduled, Pulled, Created, Started, Completed` | ~1 hour after deletion |
-| **How long it took** | Agent structured logs | `grep code_execution_completed <logfile>` → `duration_ms` field | Log retention |
-| **Exit code (success/failure)** | Agent structured logs | `grep code_execution_completed <logfile>` → `exit_code`, `status` fields | Log retention |
-| **Was it OOM killed / timed out** | Agent structured logs | `grep code_execution_timeout\|code_execution_oom <logfile>` | Log retention |
-| **Resource usage (CPU/memory)** | Agent structured logs | `grep code_execution_resource_usage <logfile>` → `cpu_seconds`, `memory_mb_seconds` | Log retention |
-| **Who ran it (user/org)** | Audit events | `grep code_execution <audit_log>` → `user`, `org`, `trace_id` | Audit retention |
-| **Which code produced which result** | Audit events | `code_hash=sha256:...` — hash of code without logging actual source | Audit retention |
-| **Pod lifecycle timing** | K8s Events | Timestamps on `Scheduled → Pulled → Created → Started → Completed` events | ~1 hour |
-| **Was a ConfigMap created (file I/O)** | Agent structured logs | `grep configmap_created\|configmap_deleted <logfile>` | Log retention |
-| **Was a NetworkPolicy created** | Agent structured logs | `grep network_policy_created\|network_policy_deleted <logfile>` | Log retention |
-| **Queue wait time** | Agent structured logs | `grep code_execution_queue_wait <logfile>` → `wait_seconds` | Log retention |
+
+| What You Want to Know                      | Source                                      | How to Query                                                                                | Retention                  |
+| ------------------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------- |
+| **What code was sent**                     | Agent structured logs                       | `grep code_execution_started <logfile>` → `code_length` field                               | Log retention (Sumo Logic) |
+| **What the code returned (stdout/stderr)** | ToolMessage in chat UI + agent thread state | Visible in chat; also in LangGraph checkpointer (Postgres)                                  | Thread lifetime            |
+| **Did the pod actually run**               | K8s Events                                  | `kubectl get events -n ap-{org}-{agent}` → `Scheduled, Pulled, Created, Started, Completed` | ~1 hour after deletion     |
+| **How long it took**                       | Agent structured logs                       | `grep code_execution_completed <logfile>` → `duration_ms` field                             | Log retention              |
+| **Exit code (success/failure)**            | Agent structured logs                       | `grep code_execution_completed <logfile>` → `exit_code`, `status` fields                    | Log retention              |
+| **Was it OOM killed / timed out**          | Agent structured logs                       | `grep code_execution_timeout|code_execution_oom <logfile>`                                  | Log retention              |
+| **Resource usage (CPU/memory)**            | Agent structured logs                       | `grep code_execution_resource_usage <logfile>` → `cpu_seconds`, `memory_mb_seconds`         | Log retention              |
+| **Who ran it (user/org)**                  | Audit events                                | `grep code_execution <audit_log>` → `user`, `org`, `trace_id`                               | Audit retention            |
+| **Which code produced which result**       | Audit events                                | `code_hash=sha256:...` — hash of code without logging actual source                         | Audit retention            |
+| **Pod lifecycle timing**                   | K8s Events                                  | Timestamps on `Scheduled → Pulled → Created → Started → Completed` events                   | ~1 hour                    |
+| **Was a ConfigMap created (file I/O)**     | Agent structured logs                       | `grep configmap_created|configmap_deleted <logfile>`                                        | Log retention              |
+| **Was a NetworkPolicy created**            | Agent structured logs                       | `grep network_policy_created|network_policy_deleted <logfile>`                              | Log retention              |
+| **Queue wait time**                        | Agent structured logs                       | `grep code_execution_queue_wait <logfile>` → `wait_seconds`                                 | Log retention              |
+
 
 ### Example: Reconstructing a Past Execution
 
@@ -1791,12 +1863,14 @@ kubectl get events -n ap-default-agent --field-selector involvedObject.name=code
 
 ### What Is NOT Captured (Security by Design)
 
-| Data | Why Not Captured | Alternative |
-|---|---|---|
-| **Actual source code** | May contain secrets, PII, or proprietary logic | `code_hash` (SHA-256) in audit events — correlate without exposure |
-| **Full stdout in logs** | May be large (up to 1MB) or contain sensitive output | Stored in ToolMessage (agent thread state), not in structured logs |
-| **Container filesystem** | Ephemeral — destroyed with pod | Use `/output` volume + future output file collection |
-| **Node-level container logs** | Deleted when pod is garbage collected | Captured by middleware before deletion |
+
+| Data                          | Why Not Captured                                     | Alternative                                                        |
+| ----------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
+| **Actual source code**        | May contain secrets, PII, or proprietary logic       | `code_hash` (SHA-256) in audit events — correlate without exposure |
+| **Full stdout in logs**       | May be large (up to 1MB) or contain sensitive output | Stored in ToolMessage (agent thread state), not in structured logs |
+| **Container filesystem**      | Ephemeral — destroyed with pod                       | Use `/output` volume + future output file collection               |
+| **Node-level container logs** | Deleted when pod is garbage collected                | Captured by middleware before deletion                             |
+
 
 ### Log Lifecycle Across Environments
 
@@ -1836,19 +1910,22 @@ flowchart LR
     style O4 fill:#f9a8d4,stroke:#ec4899,color:#111
 ```
 
+
+
 ---
 
 ## 15. Glossary
 
-| Term | Definition |
-|---|---|
-| **AgentMiddleware** | LangChain interface for intercepting model and tool calls in the agent execution loop |
-| **DynamicToolMiddleware** | LangChain pattern where middleware injects tools via `wrap_model_call` and handles them in `wrap_tool_call` |
-| **BaseSandbox** | Deepagents abstract class for persistent execution environments (Docker, LangSmith, etc.) |
-| **SandboxBackendProtocol** | Deepagents protocol that enables the built-in `execute` tool on a backend |
-| **K8s Job** | Kubernetes batch workload that runs a pod to completion and tracks success/failure |
-| **activeDeadlineSeconds** | K8s Job spec field that sets a hard timeout — the Job is terminated after this many seconds |
-| **ttlSecondsAfterFinished** | K8s Job spec field that auto-deletes completed Jobs after a delay |
-| **ToolMessage** | LangChain message type returned from tool execution back to the LLM |
-| **ContextVar** | Python `contextvars.ContextVar` — async-safe per-request state (used for audit context) |
-| **OTEL** | OpenTelemetry — vendor-neutral observability framework for metrics, traces, and logs |
+
+| Term                        | Definition                                                                                                  |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **AgentMiddleware**         | LangChain interface for intercepting model and tool calls in the agent execution loop                       |
+| **DynamicToolMiddleware**   | LangChain pattern where middleware injects tools via `wrap_model_call` and handles them in `wrap_tool_call` |
+| **BaseSandbox**             | Deepagents abstract class for persistent execution environments (Docker, LangSmith, etc.)                   |
+| **SandboxBackendProtocol**  | Deepagents protocol that enables the built-in `execute` tool on a backend                                   |
+| **K8s Job**                 | Kubernetes batch workload that runs a pod to completion and tracks success/failure                          |
+| **activeDeadlineSeconds**   | K8s Job spec field that sets a hard timeout — the Job is terminated after this many seconds                 |
+| **ttlSecondsAfterFinished** | K8s Job spec field that auto-deletes completed Jobs after a delay                                           |
+| **ToolMessage**             | LangChain message type returned from tool execution back to the LLM                                         |
+| **ContextVar**              | Python `contextvars.ContextVar` — async-safe per-request state (used for audit context)                     |
+| **OTEL**                    | OpenTelemetry — vendor-neutral observability framework for metrics, traces, and logs                        |

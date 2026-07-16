@@ -162,11 +162,14 @@ class CodeExecutionMiddleware(AgentMiddleware):
         self._metrics.record_queue_wait(org=org, duration=queue_wait)
         self._metrics.log_dequeued(org=org, wait_seconds=queue_wait)
 
+        image = self._config.images.get(language, "unknown")
+
         self._metrics.increment_active(org=org)
         self._metrics.log_started(
             language=language,
             org=org,
             namespace=namespace,
+            image=image,
             timeout_seconds=timeout,
             code_length=len(code),
             network=network,
@@ -187,59 +190,74 @@ class CodeExecutionMiddleware(AgentMiddleware):
 
         started = time.monotonic()
         try:
-            result = await self._runner.run(
-                language=language,
-                code=code,
-                timeout=timeout,
-                namespace=namespace,
-                allow_network=network,
-                input_files=input_files,
-                on_output=on_output,
-            )
-
-            duration = time.monotonic() - started
-            latency_ms = round(duration * 1000, 2)
-
-            self._metrics.record_execution(
+            with self._metrics.trace_span(
+                "code_execution",
                 language=language,
                 org=org,
-                exit_code=result.exit_code,
-                status=result.status,
-                duration=duration,
-            )
-
-            if self._config.cost_tracking_enabled:
-                self._metrics.record_resource_usage(
-                    org=org,
+                namespace=namespace,
+                image=image,
+            ) as span:
+                result = await self._runner.run(
                     language=language,
-                    cpu_seconds=result.cpu_seconds,
-                    memory_mb_seconds=result.memory_mb_seconds,
+                    code=code,
+                    timeout=timeout,
+                    namespace=namespace,
+                    allow_network=network,
+                    input_files=input_files,
+                    on_output=on_output,
+                )
+
+                duration = time.monotonic() - started
+                latency_ms = round(duration * 1000, 2)
+
+                if span:
+                    span.set_attribute("exit_code", result.exit_code)
+                    span.set_attribute("status", result.status)
+                    span.set_attribute("duration_ms", latency_ms)
+                    span.set_attribute("job_name", result.job_name)
+
+                self._metrics.record_execution(
+                    language=language,
+                    org=org,
+                    exit_code=result.exit_code,
+                    status=result.status,
                     duration=duration,
                 )
 
-            self._metrics.emit_audit(
-                language=language,
-                status=result.status,
-                exit_code=result.exit_code,
-                latency_ms=latency_ms,
-                code_hash=compute_code_hash(code),
-                namespace=namespace,
-                image=self._config.images.get(language, "unknown"),
-                job_name=result.job_name,
-                timeout=timeout,
-                stdout_bytes=len(result.stdout),
-                stderr_bytes=len(result.stderr),
-            )
+                if self._config.cost_tracking_enabled:
+                    self._metrics.record_resource_usage(
+                        org=org,
+                        language=language,
+                        cpu_seconds=result.cpu_seconds,
+                        memory_mb_seconds=result.memory_mb_seconds,
+                        duration=duration,
+                    )
+
+                self._metrics.emit_audit(
+                    language=language,
+                    status=result.status,
+                    exit_code=result.exit_code,
+                    latency_ms=latency_ms,
+                    code_hash=compute_code_hash(code),
+                    namespace=namespace,
+                    image=image,
+                    job_name=result.job_name,
+                    timeout=timeout,
+                    stdout_bytes=len(result.stdout),
+                    stderr_bytes=len(result.stderr),
+                )
 
             if result.status == "timeout":
                 self._metrics.log_timeout(
                     job_name=result.job_name,
                     timeout_seconds=timeout,
+                    namespace=namespace,
                 )
             elif result.status == "oom_killed":
                 self._metrics.log_oom(
                     job_name=result.job_name,
                     memory_limit=self._config.resource_limits.get("memory", "unknown"),
+                    namespace=namespace,
                 )
             else:
                 self._metrics.log_completed(
@@ -247,6 +265,8 @@ class CodeExecutionMiddleware(AgentMiddleware):
                     duration_ms=latency_ms,
                     status=result.status,
                     job_name=result.job_name,
+                    namespace=namespace,
+                    image=image,
                 )
 
             return ToolMessage(content=result.format(), tool_call_id=tool_call_id)
