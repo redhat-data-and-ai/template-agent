@@ -74,15 +74,16 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
 
         return trajectory
 
-    def _evaluate_policy(
+    async def _evaluate_policy(
         self, trajectory: list[dict[str, Any]], current_intent: dict
     ) -> tuple[bool, list[str]]:
         try:
-            response = httpx.post(
-                self.opa_url,
-                json={"input": {"trajectory": trajectory, "current_intent": current_intent}},
-                timeout=self.timeout,
-            )
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.opa_url,
+                    json={"input": {"trajectory": trajectory, "current_intent": current_intent}},
+                    timeout=self.timeout,
+                )
             response.raise_for_status()
             result = response.json().get("result", {})
             allowed = result.get("allow", False)
@@ -108,7 +109,7 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
         if call_input is None:
             input_section = ""
         elif isinstance(call_input, dict):
-            input_section = f"\n\Retry :\n{json.dumps(call_input, indent=2)}"
+            input_section = f"\n\nRetry :\n{json.dumps(call_input, indent=2)}"
         else:
             input_section = f"\n\nRetry the prompt :\n{call_input}"
         return f"{POLICY_DENIAL_MESSAGE}\n\nReason(s):\n{reasons_text}\n{input_section}"
@@ -149,13 +150,9 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
     @staticmethod
     def _with_nostream_tags(request: ModelRequest[Any]) -> ModelRequest[Any]:
         """Return a model request that suppresses token streaming during invoke."""
-        model_settings = dict(request.model_settings or {})
-        tags = list(model_settings.get("tags") or [])
-        for tag in _NOSTREAM_TAGS:
-            if tag not in tags:
-                tags.append(tag)
-        model_settings["tags"] = tags
-        return request.override(model_settings=model_settings)
+        existing_tags = list(request.model.tags or []) if hasattr(request.model, "tags") else []
+        new_tags = existing_tags + [t for t in _NOSTREAM_TAGS if t not in existing_tags]
+        return request.override(model=request.model.with_config(tags=new_tags))
 
     @staticmethod
     def _extract_last_ai_content(messages: list[Any]) -> str:
@@ -214,7 +211,15 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
             )
             response = ModelResponse(result=[AIMessage(content=hardcoded)])
         else:
-            response = await handler(self._with_nostream_tags(request))
+            response = await handler(request)
+        has_tool_calls = any(
+            getattr(msg, "tool_calls", None)
+            for msg in response.result
+            if getattr(msg, "type", None) == "ai"
+        )
+        if has_tool_calls:
+            return response
+
         original_content = self._extract_last_ai_content(response.result)
         if not original_content:
             return response
@@ -226,7 +231,7 @@ class RegoTrajectoryMiddleware(AgentMiddleware):
         )
 
         trajectory_messages = list(request.state.get("messages", [])) + list(response.result)
-        allowed, reasons = self._evaluate_policy(
+        allowed, reasons = await self._evaluate_policy(
             self._parse_trajectory(trajectory_messages),
             {"action": "llm_response", "agent_message": original_content},
         )
@@ -276,7 +281,7 @@ Focus on providing helpful information within policy boundaries.""")],
             }
 
         trajectory = self._parse_trajectory(messages)
-        allowed, reasons = self._evaluate_policy(
+        allowed, reasons = await self._evaluate_policy(
             trajectory,
             {"action": "trajectory_validation", "trajectory_length": len(trajectory)},
         )
@@ -303,14 +308,17 @@ Focus on providing helpful information within policy boundaries.""")],
         last_ai_index = -1
         for i in range(len(messages) - 1, -1, -1):
             if getattr(messages[i], "type", None) == "ai":
-                last_ai_content = str(messages[i].content)
+                if getattr(messages[i], "tool_calls", None):
+                    return None
+                content = getattr(messages[i], "content", None)
+                last_ai_content = str(content) if content else ""
                 last_ai_index = i
                 break
 
         if not last_ai_content:
             return None
 
-        allowed, reasons = self._evaluate_policy(
+        allowed, reasons = await self._evaluate_policy(
             self._parse_trajectory(messages),
             {"action": "llm_response", "agent_message": last_ai_content},
         )
@@ -352,7 +360,7 @@ Focus on providing helpful information within policy boundaries.""")],
         if not tool_content:
             return result
 
-        allowed, reasons = self._evaluate_policy(
+        allowed, reasons = await self._evaluate_policy(
             self._parse_trajectory(request.state.get("messages", [])),
             {"action": "tool_response", "name": tool_name, "result": tool_content},
         )
@@ -384,9 +392,7 @@ Focus on providing helpful information within policy boundaries.""")],
                         name=tool_name,
                         status="error",
                     ),
-                    AIMessage(content=content),
                 ],
                 "policy_violation_context": violation_update,
             },
-            goto="end",
         )

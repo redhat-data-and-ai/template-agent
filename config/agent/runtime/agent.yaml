@@ -111,6 +111,11 @@ middleware:
     exclude:
       - write_todos         # internal task tracking — no user approval needed
       - compact_conversation  # internal memory management — no user approval needed
+      - task                # subagent delegation — subagents can't surface HITL interrupts
+      - ls                  # read-only filesystem — safe without approval
+      - read_file           # read-only filesystem — safe without approval
+      - glob                # read-only filesystem — safe without approval
+      - grep                # read-only filesystem — safe without approval
   summarization_tool:
     enabled: true
   memory:

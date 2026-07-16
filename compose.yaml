@@ -130,6 +130,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - REDIS_URL=redis://redis:6379/0
       - REDIS_BROKER_ENABLED=true
+      - OPA_URL=http://opa:8181/v1/data/agent/authz
       # Custom CA — mount a PEM at ./certs/ca.pem to trust corporate CAs
       - CUSTOM_CA_PATH=${CUSTOM_CA_PATH:-/etc/custom-ca/ca.pem}
       # OTEL (enable via env — make container sets these when Jaeger profile is active)
