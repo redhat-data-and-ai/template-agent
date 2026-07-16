@@ -4,7 +4,9 @@ This module provides the core agent functionality for the template agent,
 including initialization, configuration, and agent creation utilities.
 """
 
+import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -114,22 +116,8 @@ async def get_template_agent(
         # Add timeout wrapper for MCP connection
         async def connect_with_timeout():
             # Configure MCP client with SSL verification setting
-            server_config = {
-                "url": settings.MCP_SERVER_URL,
-                "transport": settings.MCP_TRANSPORT_PROTOCOL,
-                "headers": {"Authorization": f"Bearer {sso_token}"}
-                if sso_token
-                else {},
-            }
-
-            # Add SSL verification setting (verify=False disables cert verification)
-            if not settings.MCP_SSL_VERIFY:
-                server_config["verify"] = False
-                logger.warning(
-                    "SSL certificate verification disabled for MCP connection"
-                )
-
-            client = MultiServerMCPClient({settings.MCP_SERVER_NAME: server_config})
+            mcp_config = _load_mcp_config(sso_token)
+            client = MultiServerMCPClient(mcp_config)
             return await client.get_tools()
 
         tools = await asyncio.wait_for(
@@ -234,3 +222,49 @@ async def get_template_agent(
                 "Template agent initialized successfully with PostgreSQL checkpoint"
             )
             yield agent_redhat
+
+
+# ---------------------------------------------------------------------------
+# helper functions
+# ---------------------------------------------------------------------------
+
+
+def _load_mcp_config(sso_token: str | None) -> dict:
+    """Build MCP server configs from mcp.json, falling back to env vars."""
+    config_path = Path(settings.MCP_CONFIG_PATH)
+    if not config_path.is_file():
+        # Fallback: single server from env vars (local dev)
+        svr_cfg: dict[str, str | bool | dict[str, str]] = {
+            "url": settings.MCP_SERVER_URL,
+            "transport": settings.MCP_TRANSPORT_PROTOCOL,
+            "headers": {"Authorization": f"Bearer {sso_token}"} if sso_token else {},
+        }
+        if not settings.MCP_SSL_VERIFY:
+            svr_cfg["verify"] = False
+        return {settings.MCP_SERVER_NAME: svr_cfg}
+    try:
+        with open(config_path, "r") as f:
+            mcp_config = json.load(f)
+            servers = mcp_config.get("mcpServers", {})
+            new_mcp_config = {}
+            for key, value in servers.items():
+                cfg = dict(value)
+                mcp_prefix = cfg.pop("tool_prefix", None) or key
+                svr_cfg = {
+                    "url": cfg.get("url", ""),
+                    "transport": cfg.get("transport", ""),
+                }
+                if sso_token:
+                    svr_cfg["headers"] = {"Authorization": f"Bearer {sso_token}"}
+                if not cfg.get("ssl_verify", True):
+                    svr_cfg["verify"] = False
+                new_mcp_config[mcp_prefix] = svr_cfg
+    except Exception as e:
+        logger.error(
+            f"Failed to load MCP config from {config_path}: {e}", exc_info=True
+        )
+        raise AppException(
+            f"Failed to load MCP config from {config_path}: {str(e)}",
+            AppExceptionCode.CONFIGURATION_INITIALIZATION_ERROR,
+        )
+    return new_mcp_config

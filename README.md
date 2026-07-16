@@ -221,6 +221,42 @@ curl "http://localhost:8081/health"
 - `AGENT_SSL_KEYFILE`: SSL private key path
 - `AGENT_SSL_CERTFILE`: SSL certificate path
 
+#### MCP Server
+- `MCP_SERVER_NAME`: MCP server name used as the default tool prefix (default: template-mcp-server)
+- `MCP_SERVER_URL`: MCP server endpoint URL (default: http://localhost:5001/mcp/)
+- `MCP_TRANSPORT_PROTOCOL`: MCP transport protocol (default: streamable_http)
+- `MCP_CONNECTION_TIMEOUT`: MCP connection timeout in seconds (default: 30)
+- `MCP_SSL_VERIFY`: Enable SSL verification for MCP connections (default: false)
+- `MCP_CONFIG_PATH`: Path to the materialized `mcp.json` config file (default: /app/config/agent/mcp.json)
+
+#### MCP Tool Name Prefix
+
+When multiple MCP servers are configured, or when server names include environment suffixes (e.g. `search-mcp-prod`), tool names can become verbose. The `tool_prefix` field in `mcp.json` lets you control how tools are prefixed.
+
+**Example `mcp.json`:**
+
+```json
+{
+  "mcpServers": {
+    "search-mcp-prod": {
+      "enabled": true,
+      "url": "http://search-mcp:9090/mcp",
+      "transport": "streamable_http",
+      "ssl_verify": false,
+      "auth": true,
+      "description": "search-mcp-prod",
+      "tool_prefix": "search"
+    }
+  }
+}
+```
+
+With this config, tools from `search-mcp-prod` are exposed as `search_{tool_name}` instead of `search_mcp_prod_{tool_name}`. When `tool_prefix` is omitted, the server key is used as the prefix (existing behavior).
+
+The `mcp.json` file can be provided externally and mounted into the container at the `MCP_CONFIG_PATH` location. When the file is not present (e.g. local development), the agent falls back to the `MCP_SERVER_*` environment variables.
+
+Both the main agent and any sub-agents read the same `mcp.json`, ensuring consistent tool name prefixing across the entire agent hierarchy.
+
 ### Configuration Example
 
 ```bash

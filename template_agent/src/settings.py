@@ -139,6 +139,15 @@ class Settings(BaseSettings):
             "description": "Enable SSL certificate verification for MCP connections",
         },
     )
+    MCP_CONFIG_PATH: str = Field(
+        default="/app/config/agent/mcp.json",
+        json_schema_extra={
+            "env": "MCP_CONFIG_PATH",
+            "description": "Path to the materialized mcp.json config file. "
+            "When the file exists, MCP servers are loaded from it. "
+            "When absent, falls back to MCP_SERVER_* env vars.",
+        },
+    )
 
     # Request Logging Configuration
     REQUEST_LOGGING_ENABLED: bool = Field(
