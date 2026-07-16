@@ -1662,25 +1662,39 @@ sequenceDiagram
 ### Roadmap Priority
 
 ```mermaid
-gantt
-    title Code Execution Roadmap
-    dateFormat YYYY-MM
-    axisFormat %b %Y
+flowchart LR
+    subgraph p1["Phase 1 — Jul 2026 DONE"]
+        style p1 fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
+        P1A["Core middleware<br/>and K8s Jobs"]
+    end
 
-    section Phase 1 - Done
-    Core middleware and K8s Jobs        :done, p1, 2026-07, 2026-07
+    subgraph p2["Phase 2 — Aug 2026"]
+        style p2 fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#111
+        P2A["Custom domain<br/>images"]
+        P2B["Network access<br/>control"]
+    end
 
-    section Phase 2 - Next
-    Custom domain images                :active, p2a, 2026-08, 2026-08
-    Network access control              :p2b, 2026-08, 2026-09
+    subgraph p3["Phase 3 — Sep-Oct 2026"]
+        style p3 fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
+        P3A["File I/O<br/>ConfigMap + PVC"]
+        P3B["Execution<br/>queuing"]
+    end
 
-    section Phase 3
-    File IO with ConfigMap and PVC      :p3a, 2026-09, 2026-10
-    Execution queuing                   :p3b, 2026-09, 2026-10
+    subgraph p4["Phase 4 — Nov-Dec 2026"]
+        style p4 fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#111
+        P4A["WebSocket<br/>streaming"]
+        P4B["Cost<br/>tracking"]
+    end
 
-    section Phase 4
-    WebSocket streaming                 :p4a, 2026-10, 2026-11
-    Cost tracking                       :p4b, 2026-11, 2026-12
+    p1 --> p2 --> p3 --> p4
+
+    style P1A fill:#bbf7d0,stroke:#22c55e,color:#111
+    style P2A fill:#93c5fd,stroke:#3b82f6,color:#111
+    style P2B fill:#93c5fd,stroke:#3b82f6,color:#111
+    style P3A fill:#fde68a,stroke:#f59e0b,color:#111
+    style P3B fill:#fde68a,stroke:#f59e0b,color:#111
+    style P4A fill:#c4b5fd,stroke:#8b5cf6,color:#111
+    style P4B fill:#c4b5fd,stroke:#8b5cf6,color:#111
 ```
 
 ---
