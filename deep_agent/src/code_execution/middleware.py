@@ -245,6 +245,7 @@ class CodeExecutionMiddleware(AgentMiddleware):
                     timeout=timeout,
                     stdout_bytes=len(result.stdout),
                     stderr_bytes=len(result.stderr),
+                    scheduling_seconds=result.scheduling_seconds,
                 )
 
             if result.status == "timeout":

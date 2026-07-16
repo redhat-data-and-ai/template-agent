@@ -298,6 +298,7 @@ class CodeExecutionMetrics:
         timeout: int,
         stdout_bytes: int,
         stderr_bytes: int,
+        scheduling_seconds: float = 0.0,
     ) -> None:
         """Emit audit event with user identity from context."""
         emit_audit_event(
@@ -314,6 +315,7 @@ class CodeExecutionMetrics:
             timeout_seconds=timeout,
             stdout_bytes=stdout_bytes,
             stderr_bytes=stderr_bytes,
+            scheduling_seconds=round(scheduling_seconds, 3),
         )
 
     # --- Structured Logging (Layer 4) ---

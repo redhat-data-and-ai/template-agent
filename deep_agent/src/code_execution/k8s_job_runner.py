@@ -29,6 +29,7 @@ class ExecutionResult:
     output_files: dict[str, str] = field(default_factory=dict)
     cpu_seconds: float = 0.0
     memory_mb_seconds: float = 0.0
+    scheduling_seconds: float = 0.0
 
     def format(self) -> str:
         """Format execution result as a human-readable string."""
@@ -310,6 +311,7 @@ class K8sJobRunner:
                 namespace=ns,
                 cpu_seconds=cpu_seconds,
                 memory_mb_seconds=memory_mb_seconds,
+                scheduling_seconds=scheduling_duration,
             )
         except asyncio.TimeoutError:
             duration = time.monotonic() - started
