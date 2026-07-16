@@ -248,4 +248,5 @@ docker-compose.override.yml
 Dockerfile
 docker-compose.yml
 scripts/
-docs/
+docs/superpowers/plans/
+docs/superpowers/specs/2026-07-13-*
