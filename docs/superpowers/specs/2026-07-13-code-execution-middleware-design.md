@@ -1297,11 +1297,11 @@ flowchart TB
 
 ---
 
-## 13. Future Capabilities (Roadmap)
+## 13. Implemented Capabilities and Future Roadmap
 
-These capabilities are not in the current implementation but are architecturally planned. Each section includes the design approach, K8s primitives involved, and integration points.
+Sections 13.1–13.6 document the design for capabilities that are now **implemented** (Phase 2, commit `904908a`). Each section retains the architectural detail for reference. Section 13.7 lists what remains for future work.
 
-### 13.1 File Input/Output — Passing Files To/From Execution Pods
+### 13.1 File Input/Output — IMPLEMENTED — Passing Files To/From Execution Pods
 
 ```mermaid
 flowchart LR
@@ -1347,7 +1347,7 @@ flowchart LR
 
 ---
 
-### 13.2 Network Access Control — Per-Execution NetworkPolicy
+### 13.2 Network Access Control — IMPLEMENTED
 
 ```mermaid
 flowchart TD
@@ -1387,7 +1387,7 @@ flowchart TD
 
 ---
 
-### 13.3 Custom Package Installation — Pre-Built Domain Images
+### 13.3 Custom Package Installation — IMPLEMENTED (config), FUTURE (CI/CD pipeline)
 
 ```mermaid
 flowchart TB
@@ -1505,7 +1505,7 @@ flowchart TB
 
 ---
 
-### 13.4 Execution Queuing — Rate Limiting Concurrent Executions Per Org
+### 13.4 Execution Queuing — IMPLEMENTED
 
 ```mermaid
 flowchart TD
@@ -1561,7 +1561,7 @@ flowchart TD
 
 ---
 
-### 13.5 Cost Tracking — Per-Org Execution Resource Usage Reporting
+### 13.5 Cost Tracking — IMPLEMENTED (OTEL metrics), FUTURE (Postgres persistence)
 
 ```mermaid
 flowchart LR
@@ -1606,7 +1606,7 @@ flowchart LR
 
 ---
 
-### 13.6 WebSocket Streaming — Real-Time stdout/stderr to the UI
+### 13.6 Log Streaming — IMPLEMENTED (callback), FUTURE (SSE to UI)
 
 ```mermaid
 sequenceDiagram
@@ -1663,48 +1663,40 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    subgraph p1["Phase 1 — Jul 2026 DONE"]
-        style p1 fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
-        P1A["Core middleware<br/>and K8s Jobs"]
+    subgraph done["IMPLEMENTED"]
+        style done fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
+        D1["Core middleware + K8s Jobs"]
+        D2["File I/O via ConfigMap"]
+        D3["NetworkPolicy per execution"]
+        D4["Per-org execution queuing"]
+        D5["Custom image config"]
+        D6["Cost tracking via OTEL"]
+        D7["Log streaming via callback"]
     end
 
-    subgraph p2["Phase 2 — Jul 2026 DONE"]
-        style p2 fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
-        P2A["Custom domain<br/>images"]
-        P2B["Network access<br/>control"]
-        P2C["Execution<br/>queuing"]
-        P2D["File I/O<br/>ConfigMap + PVC"]
-        P2E["Cost tracking<br/>OTEL metrics"]
-        P2F["Log<br/>streaming"]
+    subgraph future["NOT YET IMPLEMENTED"]
+        style future fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
+        F1["CI/CD pipeline for<br/>domain images"]
+        F2["SSE streaming to UI<br/>middleware callback not<br/>wired to SSE transport"]
+        F3["Postgres cost persistence<br/>and reporting API"]
+        F4["Per-agent image overrides<br/>via Registry frontmatter"]
+        F5["Persistent sandbox mode<br/>BaseSandbox subclass"]
+        F6["Output file collection<br/>from /output volume"]
     end
 
-    subgraph p3["Phase 3 — Future"]
-        style p3 fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
-        P3A["Pre-built domain<br/>images CI/CD"]
-        P3B["Persistent sandbox<br/>BaseSandbox mode"]
-    end
-
-    subgraph p4["Phase 4 — Future"]
-        style p4 fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#111
-        P4A["SSE streaming<br/>to UI"]
-        P4B["Postgres cost<br/>persistence"]
-        P4C["Per-agent image<br/>overrides via Registry"]
-    end
-
-    p1 --> p2 --> p3 --> p4
-
-    style P1A fill:#bbf7d0,stroke:#22c55e,color:#111
-    style P2A fill:#bbf7d0,stroke:#22c55e,color:#111
-    style P2B fill:#bbf7d0,stroke:#22c55e,color:#111
-    style P2C fill:#bbf7d0,stroke:#22c55e,color:#111
-    style P2D fill:#bbf7d0,stroke:#22c55e,color:#111
-    style P2E fill:#bbf7d0,stroke:#22c55e,color:#111
-    style P2F fill:#bbf7d0,stroke:#22c55e,color:#111
-    style P3A fill:#fde68a,stroke:#f59e0b,color:#111
-    style P3B fill:#fde68a,stroke:#f59e0b,color:#111
-    style P4A fill:#c4b5fd,stroke:#8b5cf6,color:#111
-    style P4B fill:#c4b5fd,stroke:#8b5cf6,color:#111
-    style P4C fill:#c4b5fd,stroke:#8b5cf6,color:#111
+    style D1 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style D2 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style D3 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style D4 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style D5 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style D6 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style D7 fill:#bbf7d0,stroke:#22c55e,color:#111
+    style F1 fill:#fde68a,stroke:#f59e0b,color:#111
+    style F2 fill:#fde68a,stroke:#f59e0b,color:#111
+    style F3 fill:#fde68a,stroke:#f59e0b,color:#111
+    style F4 fill:#fde68a,stroke:#f59e0b,color:#111
+    style F5 fill:#fde68a,stroke:#f59e0b,color:#111
+    style F6 fill:#fde68a,stroke:#f59e0b,color:#111
 ```
 
 ---
