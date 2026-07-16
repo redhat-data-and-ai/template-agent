@@ -135,9 +135,9 @@ headless: ## Start agent in headless mode (background worker with event triggers
 	@echo "Starting infrastructure (Postgres + Redis)..."
 	@podman-compose -f compose.yaml up -d pgvector redis
 	@echo "Waiting for Postgres to be ready..."
-	@until podman exec demo-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
-	@podman exec demo-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
-		|| podman exec demo-pgvector psql -U postgres -c "CREATE DATABASE aegra;"
+	@until podman exec template-agent-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
+	@podman exec template-agent-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
+		|| podman exec template-agent-pgvector psql -U postgres -c "CREATE DATABASE aegra;"
 	@echo "Starting headless agent worker..."
 	@echo "Set mode: headless in config/agent/runtime/agent.yaml"
 	@echo "Press Ctrl+C to stop the worker"
