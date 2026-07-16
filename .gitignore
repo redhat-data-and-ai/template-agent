@@ -194,6 +194,8 @@ safety-report.json
 .safety-project.ini
 TASKS.md
 ROADMAP.md
+backend.pid
+docs/superpowers/
 
 # Kind cluster cloned repos (make kind)
 .kind/

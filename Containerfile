@@ -1,10 +1,10 @@
 # Containerfile for template-agent (single image for dev and production)
 #
-# Agent config is NOT baked in — mount config/agent at /app/config/agent
-# (compose: ./config:/app/config:ro; K8s: ConfigMap/PVC).
+# Agent config is baked in at build time. Override at runtime via volume mount:
+#   podman run -v ./config:/app/config:Z -p 5002:5002 template-agent
 #
 # Build: podman build -t template-agent .
-# Run:   podman run -v ./config:/app/config:ro -p 5002:5002 template-agent
+# Run:   podman run -p 5002:5002 template-agent
 
 FROM registry.access.redhat.com/ubi9/python-312:latest
 
@@ -22,6 +22,7 @@ RUN pip install --no-cache-dir uv && \
 USER 65532
 
 COPY --chown=65532:root deep_agent /app/deep_agent
+COPY --chown=65532:root config /app/config
 COPY --chown=65532:root aegra.json /app/aegra.json
 COPY --chown=65532:root entrypoint.sh /app/entrypoint.sh
 

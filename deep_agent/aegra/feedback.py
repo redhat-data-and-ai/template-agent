@@ -30,6 +30,44 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
+
+def _run_prerequisites_check() -> None:
+    """Run environment-aware prerequisites before aegra's lifespan.
+
+    In local mode, if DB is unreachable, patches aegra's db_manager
+    to skip initialization so the agent starts without persistence.
+    In non-local modes, crashes immediately with a clear error.
+    """
+    from deep_agent.aegra.startup import check_prerequisites
+
+    try:
+        result = check_prerequisites()
+        if result == "ok":
+            logger.info(
+                "Prerequisites check passed (ENVIRONMENT=%s)", settings.ENVIRONMENT
+            )
+        else:
+            logger.warning(
+                "Prerequisites check: %s (ENVIRONMENT=%s)", result, settings.ENVIRONMENT
+            )
+            if "db" in result:
+                try:
+                    from aegra_api.core.database import db_manager
+
+                    async def _noop_initialize() -> None:
+                        logger.warning(
+                            "Database unavailable — running without persistence"
+                        )
+
+                    db_manager.initialize = _noop_initialize
+                except ImportError:
+                    pass
+    except Exception:
+        raise
+
+
+_run_prerequisites_check()
+
 feedback_router = APIRouter(tags=["feedback"])
 
 
