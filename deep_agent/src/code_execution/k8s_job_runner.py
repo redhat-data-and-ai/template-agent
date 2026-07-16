@@ -554,11 +554,11 @@ class K8sJobRunner:
         from kubernetes import client
 
         policy_name = f"code-exec-{execution_id[:8]}"
-        selector = {
-            "matchLabels": {
+        selector = client.V1LabelSelector(
+            match_labels={
                 "ai-platform.io/execution-id": execution_id,
             }
-        }
+        )
 
         if allow_internet:
             egress = [
@@ -592,7 +592,7 @@ class K8sJobRunner:
                 namespace=namespace,
             ),
             spec=client.V1NetworkPolicySpec(
-                pod_selector=client.V1LabelSelector(**selector),
+                pod_selector=selector,
                 policy_types=["Egress"],
                 egress=egress,
             ),

@@ -154,7 +154,7 @@ middleware:
   extra: []
   # --- Code Execution (ephemeral K8s Job sandbox) ---
   code_execution:
-    enabled: false
+    enabled: true
     max_timeout_seconds: 60
     max_code_length: 50000
     max_output_bytes: 1048576
