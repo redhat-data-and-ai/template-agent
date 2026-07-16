@@ -50,18 +50,31 @@ def _run_prerequisites_check() -> None:
             logger.warning(
                 "Prerequisites check: %s (ENVIRONMENT=%s)", result, settings.ENVIRONMENT
             )
-            if "db" in result:
-                try:
-                    from aegra_api.core.database import db_manager
+            try:
+                from aegra_api.config import settings as aegra_settings
 
-                    async def _noop_initialize() -> None:
+                if "db" in result:
+                    from aegra_api.core.database import db_manager
+                    from aegra_api.services.langgraph_service import (
+                        get_langgraph_service,
+                    )
+
+                    async def _noop_db_initialize() -> None:
                         logger.warning(
                             "Database unavailable — running without persistence"
                         )
 
-                    db_manager.initialize = _noop_initialize
-                except ImportError:
-                    pass
+                    db_manager.initialize = _noop_db_initialize
+
+                    lg_service = get_langgraph_service()
+                    lg_service.initialize = _noop_db_initialize
+
+                    aegra_settings.app.RUN_MIGRATIONS_ON_STARTUP = False
+
+                if "redis" in result:
+                    aegra_settings.redis.REDIS_BROKER_ENABLED = False
+            except ImportError:
+                pass
     except Exception:
         raise
 
