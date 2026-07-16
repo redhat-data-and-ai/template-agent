@@ -90,6 +90,7 @@ def emit_token_usage(
     cumulative_input: int,
     cumulative_output: int,
     timestamp: Any | None = None,
+    trace_id: str | None = None,
 ) -> None:
     """Emit OTEL metrics and optional span events for a single LLM usage record."""
     if not token_budget_otel_enabled():
@@ -110,6 +111,8 @@ def emit_token_usage(
         "cumulative_output_tokens": cumulative_output,
         "timestamp": recorded_at,
     }
+    if trace_id:
+        attributes["app.trace_id"] = trace_id
     if user_id:
         attributes["user_id"] = user_id
 

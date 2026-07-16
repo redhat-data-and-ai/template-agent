@@ -1,6 +1,8 @@
-"""Audit event type constants."""
+"""Audit event type constants.
 
-from __future__ import annotations
+Orchestrator and subagents emit the same event types:
+  llm_call, mcp_tool_call, memory_write, subagent_delegation
+"""
 
 from typing import Final
 
@@ -10,13 +12,14 @@ MEMORY_WRITE: Final = "memory_write"
 SUBAGENT_DELEGATION: Final = "subagent_delegation"
 CODE_EXECUTION: Final = "code_execution"
 
+# Event types audited via AuditMiddleware (orchestrator + in-process subagents).
 AUDITED_MIDDLEWARE_EVENTS: frozenset[str] = frozenset(
     {LLM_CALL, MCP_TOOL_CALL, MEMORY_WRITE, SUBAGENT_DELEGATION, CODE_EXECUTION}
 )
 
 
 class AuditEventType:
-    """Namespace for audit event type constants."""
+    """Namespace for platform audit event type strings."""
 
     LLM_CALL = LLM_CALL
     MCP_TOOL_CALL = MCP_TOOL_CALL

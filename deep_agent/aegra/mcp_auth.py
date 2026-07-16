@@ -113,7 +113,8 @@ class McpCredentialResolver:
             access = _current_access_token.get()
             return bool(access)
 
-        stored = await self._store.get_token(user_id, mcp_name)
+        current_agent_name = settings.agent_deployment_id
+        stored = await self._store.get_token(current_agent_name, user_id, mcp_name)
         if stored is None:
             return False
         if self._token_valid(stored):
@@ -141,7 +142,8 @@ class McpCredentialResolver:
         mcp_name: str,
         server_cfg: dict[str, Any],
     ) -> str:
-        stored = await self._store.get_token(user_id, mcp_name)
+        current_agent_name = settings.agent_deployment_id
+        stored = await self._store.get_token(current_agent_name, user_id, mcp_name)
         if stored is None:
             raise NeedsAuthorization(mcp_name, self.connect_url(mcp_name))
 
@@ -151,13 +153,13 @@ class McpCredentialResolver:
         if not stored.refresh_token:
             raise NeedsAuthorization(mcp_name, self.connect_url(mcp_name))
 
-        lock_name = f"mcp_token_refresh:{user_id}:{mcp_name}"
+        lock_name = f"mcp_token_refresh:{current_agent_name}:{user_id}:{mcp_name}"
         async with distributed_lock(
             lock_name,
             ttl_seconds=_TOKEN_REFRESH_LOCK_TTL_SECONDS,
             wait_seconds=_TOKEN_REFRESH_LOCK_WAIT_SECONDS,
         ) as lock_state:
-            stored = await self._store.get_token(user_id, mcp_name)
+            stored = await self._store.get_token(current_agent_name, user_id, mcp_name)
             if stored is None:
                 raise NeedsAuthorization(mcp_name, self.connect_url(mcp_name))
             if self._token_valid(stored):
@@ -167,7 +169,7 @@ class McpCredentialResolver:
 
             if lock_state == "timeout":
                 refreshed_by_peer = await self._wait_for_refreshed_token(
-                    user_id, mcp_name
+                    current_agent_name, user_id, mcp_name
                 )
                 if refreshed_by_peer:
                     return refreshed_by_peer
@@ -187,12 +189,12 @@ class McpCredentialResolver:
         raise NeedsAuthorization(mcp_name, self.connect_url(mcp_name))
 
     async def _wait_for_refreshed_token(
-        self, user_id: str, mcp_name: str
+        self, agent_name: str, user_id: str, mcp_name: str
     ) -> str | None:
         """Poll storage while another request holds the refresh lock."""
         for _ in range(_TOKEN_REFRESH_WAIT_ATTEMPTS):
             await asyncio.sleep(_TOKEN_REFRESH_WAIT_POLL_SECONDS)
-            stored = await self._store.get_token(user_id, mcp_name)
+            stored = await self._store.get_token(agent_name, user_id, mcp_name)
             if stored is not None and self._token_valid(stored):
                 return stored.access_token
         logger.error(
@@ -280,6 +282,7 @@ class McpCredentialResolver:
             scopes = stored.scopes
 
         await self._store.upsert_token(
+            agent_name=stored.agent_name,
             user_id=stored.user_id,
             mcp_name=stored.mcp_name,
             access_token=new_access,
@@ -302,7 +305,8 @@ class McpCredentialResolver:
             )
 
         if auth_mode == "dcr":
-            client = await self._store.get_client(mcp_name)
+            current_agent_name = settings.agent_deployment_id
+            client = await self._store.get_client(current_agent_name, mcp_name)
             if client is None:
                 return None, None
             return client.client_id, client.client_secret

@@ -35,9 +35,14 @@ _OAUTH_STATE_TTL_SECONDS = 300
 
 
 def _callback_redirect_uri(request: Request) -> str:
-    """Reconstruct the OAuth callback URL (scheme + host + path, no query)."""
-    url = request.url
-    return f"{url.scheme}://{url.netloc}{url.path}"
+    """Reconstruct the OAuth callback URL using the canonical public base URL.
+
+    Behind a reverse proxy (e.g. MCP ingress with nginx rewrite-target),
+    request.url.path is the rewritten pod-local path, not the original
+    public path.  Use AGENT_PUBLIC_BASE_URL so the URI matches what was
+    registered during DCR / authorization.
+    """
+    return settings.oauth_callback_url
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -58,6 +63,7 @@ def _get_mcp_server_config(mcp_name: str) -> dict[str, Any]:
 
 
 async def _register_dcr_client(
+    agent_name: str,
     mcp_name: str,
     oauth_cfg: dict[str, Any],
     server_cfg: dict[str, Any],
@@ -74,7 +80,7 @@ async def _register_dcr_client(
     redirect_uri = settings.oauth_callback_url
 
     body = {
-        "client_name": f"template-agent-{mcp_name}",
+        "client_name": f"{agent_name}-{mcp_name}",
         "redirect_uris": [redirect_uri],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
@@ -85,8 +91,9 @@ async def _register_dcr_client(
         resp = await client.post(registration_endpoint, json=body, timeout=30)
         if not resp.is_success:
             logger.error(
-                "DCR registration failed for '%s': %s %s",
+                "DCR registration failed for '%s' (agent '%s'): %s %s",
                 mcp_name,
+                agent_name,
                 resp.status_code,
                 resp.text,
             )
@@ -103,6 +110,7 @@ async def _register_dcr_client(
     client_secret = data.get("client_secret")
     store = McpTokenStore(settings.database_uri)
     await store.upsert_client(
+        agent_name=agent_name,
         mcp_name=mcp_name,
         client_id=client_id,
         client_secret=client_secret,
@@ -130,13 +138,14 @@ async def handle_mcp_connect(user_id: str, mcp_name: str) -> dict[str, str]:
             )
 
     redirect_uri = settings.oauth_callback_url
+    current_agent_name = settings.agent_deployment_id
 
     store = McpTokenStore(settings.database_uri)
     if auth_mode == "dcr":
-        client = await store.get_client(mcp_name)
+        client = await store.get_client(current_agent_name, mcp_name)
         if client is None:
-            await _register_dcr_client(mcp_name, oauth_cfg, server_cfg)
-            client = await store.get_client(mcp_name)
+            await _register_dcr_client(current_agent_name, mcp_name, oauth_cfg, server_cfg)
+            client = await store.get_client(current_agent_name, mcp_name)
         client_id = client.client_id if client else None
     else:
         client_id = oauth_cfg.get("client_id")
@@ -226,11 +235,12 @@ async def handle_mcp_oauth_callback(
 
     store = McpTokenStore(settings.database_uri)
     auth_mode = server_cfg.get("auth_mode", "sso")
+    current_agent_name = settings.agent_deployment_id
     if auth_mode == "oauth":
         client_id = oauth_cfg.get("client_id")
         client_secret = resolve_oauth_client_secret(oauth_cfg, mcp_name)
     else:
-        client = await store.get_client(mcp_name)
+        client = await store.get_client(current_agent_name, mcp_name)
         client_id = client.client_id if client else None
         client_secret = client.client_secret if client else None
 
@@ -285,6 +295,7 @@ async def handle_mcp_oauth_callback(
         )
 
     await store.upsert_token(
+        agent_name=current_agent_name,
         user_id=user_id,
         mcp_name=mcp_name,
         access_token=access_token,

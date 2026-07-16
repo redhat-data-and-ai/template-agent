@@ -38,6 +38,49 @@ Test prompt.
         servers = cfg.get_mcp_servers()
         assert servers["sso-mcp"]["auth_mode"] == "sso"
 
+    def test_loads_jsonc_line_comments(self, tmp_path):
+        self._write_minimal_config_dir(tmp_path)
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            """
+            {
+              "mcpServers": {
+                "template-mcp-server": {
+                  "url": "http://host.containers.internal:5001/mcp",
+                  // "url": "http://localhost:5001/mcp",
+                  "enabled": true
+                }
+              }
+            }
+            """
+        )
+        servers = AgentConfig(tmp_path).get_mcp_servers()
+        assert (
+            servers["template-mcp-server"]["url"]
+            == "http://host.containers.internal:5001/mcp"
+        )
+
+    def test_loads_jsonc_with_escaped_quotes(self, tmp_path):
+        self._write_minimal_config_dir(tmp_path)
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            r"""
+            {
+              "mcpServers": {
+                "test-mcp": {
+                  "url": "http://host/mcp?q=\"hello\"",
+                  // comment with escaped quote: \"
+                  "label": "backslash\\and-quote",
+                  "enabled": true
+                }
+              }
+            }
+            """
+        )
+        servers = AgentConfig(tmp_path).get_mcp_servers()
+        assert servers["test-mcp"]["url"] == 'http://host/mcp?q="hello"'
+        assert servers["test-mcp"]["label"] == "backslash\\and-quote"
+
     def test_logs_error_for_oauth_without_client_id(self, tmp_path, caplog):
         self._write_minimal_config_dir(tmp_path)
         mcp_json = tmp_path / "mcp.json"

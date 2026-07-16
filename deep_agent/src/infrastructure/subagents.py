@@ -30,10 +30,12 @@ from deep_agent.src.agent.config.model import (
     infer_provider,
     parse_model_config,
 )
+from deep_agent.src.agent.config.resolver import to_virtual_skill_paths
 from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
 from deep_agent.src.exceptions import LLMError, SubAgentError
-from deep_agent.src.infrastructure.tool_access import (
-    filter_denied_tools,
+from deep_agent.src.infrastructure.middleware import (
+    _mcp_tool_names_from_tools,
+    build_audit_middleware,
 )
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -300,6 +302,23 @@ def _build_fallback_middleware(spec: ModelSpec) -> list[Any]:
     return [middleware]
 
 
+def _subagent_middleware(
+    name: str,
+    resolved_tools: list[Any],
+    fallback_mw: list[Any],
+) -> list[Any] | None:
+    """Merge audit middleware (outermost) with optional fallback middleware."""
+    middleware: list[Any] = []
+    audit_mw = build_audit_middleware(
+        mcp_tool_names=_mcp_tool_names_from_tools(resolved_tools),
+        agent=name,
+    )
+    if audit_mw is not None:
+        middleware.append(audit_mw)
+    middleware.extend(fallback_mw)
+    return middleware or None
+
+
 def _build_single_subagent(
     name: str,
     agent_cfg: dict[str, Any],
@@ -351,38 +370,29 @@ def _build_default_subagent(
         "Subagent '%s' [default] using model: %s", name, _format_model_log(spec)
     )
 
-    # Step 1: Resolve allowed tools (renamed from "tools")
-    allowed_names: list[str] = agent_cfg.get("allowed_tools", [])
+    tool_names: list[str] = agent_cfg.get("tools", [])
     mcp_names: list[str] = agent_cfg.get("mcps", [])
 
-    if allowed_names:
+    if tool_names:
         resolved_tools: list[Any] = agent_config.resolve_tools(
-            allowed_names, tools, agent_name=name
+            tool_names, tools, agent_name=name
         )
     elif mcp_names and tools:
+        logger.info(
+            "Subagent '%s' declared MCP servers %s but no explicit tools; "
+            "exposing all %d available MCP tool(s)",
+            name,
+            mcp_names,
+            len(tools),
+        )
         resolved_tools = list(tools)
     else:
         resolved_tools = []
-
-    # Step 2: Filter denied tools
-    denied_names: list[str] = agent_cfg.get("denied_tools", [])
-    if denied_names:
-        resolved_tools = filter_denied_tools(
-            resolved_tools, denied_names, agent_name=name
-        )
-
-    if agent_cfg.get("tool_approval"):
-        raise ValueError(
-            f"Subagent '{name}' (default) does not support tool_approval — "
-            "default subagents run inline and cannot handle interrupt resume. "
-            "Change type to 'compiled' to use tool_approval."
-        )
 
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
-    subagent_middleware = [*fallback_mw]
 
     subagent_params: dict[str, Any] = {
         "name": name,
@@ -394,9 +404,10 @@ def _build_default_subagent(
     if resolved_tools:
         subagent_params["tools"] = resolved_tools
     if skill_paths:
-        subagent_params["skills"] = skill_paths
-    if subagent_middleware:
-        subagent_params["middleware"] = subagent_middleware
+        subagent_params["skills"] = to_virtual_skill_paths(skill_paths)
+    middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
+    if middleware:
+        subagent_params["middleware"] = middleware
 
     return SubAgent(**subagent_params)
 
@@ -426,51 +437,41 @@ def _build_compiled_subagent(
         "Subagent '%s' [compiled] using model: %s", name, _format_model_log(spec)
     )
 
-    # Step 1: Resolve allowed tools (renamed from "tools")
-    allowed_names: list[str] = agent_cfg.get("allowed_tools", [])
+    tool_names: list[str] = agent_cfg.get("tools", [])
     mcp_names: list[str] = agent_cfg.get("mcps", [])
 
-    if allowed_names:
+    if tool_names:
         resolved_tools: list[Any] = agent_config.resolve_tools(
-            allowed_names, tools, agent_name=name
+            tool_names, tools, agent_name=name
         )
     elif mcp_names and tools:
+        logger.info(
+            "Subagent '%s' [compiled] declared MCP servers %s but no explicit tools; "
+            "exposing all %d available MCP tool(s)",
+            name,
+            mcp_names,
+            len(tools),
+        )
         resolved_tools = list(tools)
     else:
         resolved_tools = []
-
-    # Step 2: Filter denied tools
-    denied_names: list[str] = agent_cfg.get("denied_tools", [])
-    if denied_names:
-        resolved_tools = filter_denied_tools(
-            resolved_tools, denied_names, agent_name=name
-        )
-
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
-    compiled_middleware = [*fallback_mw]
 
     create_kwargs = {
         "name": name,
         "model": _resolve_subagent_model(agent_cfg),
         "system_prompt": agent_cfg.get("body", ""),
         "tools": resolved_tools or None,
-        "skills": skill_paths or None,
+        "skills": to_virtual_skill_paths(skill_paths) if skill_paths else None,
         "backend": get_configured_backend(),
     }
 
-    if compiled_middleware:
-        create_kwargs["middleware"] = compiled_middleware
-
-    # tool_approval for compiled subagents: pass interrupt_on to their own graph
-    approval_names: list[str] = agent_cfg.get("tool_approval", [])
-    if approval_names:
-        import inspect as _inspect
-
-        if "interrupt_on" in _inspect.signature(create_deep_agent).parameters:
-            create_kwargs["interrupt_on"] = {n: True for n in approval_names}
+    middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
+    if middleware:
+        create_kwargs["middleware"] = middleware
 
     compiled_graph = create_deep_agent(**create_kwargs)
 
@@ -494,12 +495,6 @@ def _build_async_subagent(
     never from frontmatter config. The env var name follows the convention:
     ``ASYNC_SUBAGENT_<NAME>_TOKEN`` (uppercased, hyphens → underscores).
     """
-    if agent_cfg.get("tool_approval"):
-        raise ValueError(
-            f"Subagent '{name}' (async) does not support tool_approval — "
-            "async subagents run remotely and cannot trigger local interrupts"
-        )
-
     if AsyncSubAgent is None:
         raise ValueError(
             f"Subagent '{name}' (async) requires deepagents with async support. "

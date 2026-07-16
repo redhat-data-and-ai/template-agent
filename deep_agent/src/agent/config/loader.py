@@ -18,7 +18,7 @@ Classes:
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -40,6 +40,48 @@ from .providers import ProvidersFileConfig
 from .resolver import resolve_skill_paths, resolve_tools
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
+
+
+def _strip_jsonc_comments(text: str) -> str:
+    """Remove ``//`` line comments outside JSON string literals."""
+    result: list[str] = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            result.append(ch)
+            i += 1
+            while i < n:
+                c = text[i]
+                result.append(c)
+                if c == "\\":
+                    i += 1
+                    if i < n:
+                        result.append(text[i])
+                elif c == '"':
+                    break
+                i += 1
+            i += 1
+            continue
+
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] not in "\n\r":
+                i += 1
+            continue
+
+        result.append(ch)
+        i += 1
+
+    return "".join(result)
+
+
+def _load_jsonc(path: Path) -> dict[str, Any]:
+    """Load JSON with optional ``//`` line comments."""
+    raw = path.read_text()
+    return cast(dict[str, Any], json.loads(_strip_jsonc_comments(raw)))
+
 
 # Config directory path - read from CONFIG_PATH env var for base image pattern
 # Falls back to repo-root config/agent/ for backward compatibility
@@ -324,9 +366,9 @@ class AgentConfig:
         auth_mode = cfg.get("auth_mode", "sso")
         cfg["auth_mode"] = auth_mode
 
-        if auth_mode not in ("sso", "oauth", "dcr"):
+        if auth_mode not in ("sso", "oauth", "dcr", "api_key"):
             logger.error(
-                "MCP server '%s': invalid auth_mode '%s' (expected sso, oauth, or dcr)",
+                "MCP server '%s': invalid auth_mode '%s' (expected sso, oauth, dcr, or api_key)",
                 name,
                 auth_mode,
             )
@@ -394,7 +436,7 @@ class AgentConfig:
             return {}
 
         try:
-            data = json.loads(mcp_path.read_bytes())
+            data = _load_jsonc(mcp_path)
             servers: dict[str, Any] = data.get("mcpServers", {})
             for name, cfg in servers.items():
                 if isinstance(cfg, dict):

@@ -14,9 +14,24 @@ router = APIRouter(tags=["mcp-oauth"])
 
 async def _authenticated_user_id(request: Request) -> str:
     """Return the SSO ``sub`` from the incoming Bearer token."""
-    from deep_agent.aegra.auth import DEV_USER_ID, ENABLE_AUTH, _decode_token
+    from deep_agent.aegra.auth import (
+        DEV_USER_ID,
+        ENABLE_AUTH,
+        ENVIRONMENT,
+        _decode_token,
+    )
+    from deep_agent.utils.pylogger import get_python_logger
+
+    logger = get_python_logger()
+
+    # Block auth bypass in production
+    if ENVIRONMENT == "production" and not ENABLE_AUTH:
+        raise HTTPException(
+            status_code=500, detail="Authentication bypass disabled in production"
+        )
 
     if not ENABLE_AUTH:
+        logger.warning("Auth bypass active for MCP routes (development mode)")
         return DEV_USER_ID
 
     auth_header = request.headers.get("authorization", "")

@@ -23,11 +23,13 @@ _TOKEN_KEY_PREFIX = "mcp_oauth_token:"
 
 CREATE_OAUTH_CLIENTS_TABLE = """
 CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
-    mcp_name           TEXT PRIMARY KEY,
+    agent_name         TEXT NOT NULL,
+    mcp_name           TEXT NOT NULL,
     client_id          TEXT NOT NULL,
     client_secret      TEXT,
     registration_data  JSONB,
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (agent_name, mcp_name)
 );
 """
 
@@ -56,6 +58,12 @@ BEGIN
               AND table_name = 'mcp_oauth_clients'
               AND column_name = 'updated_at'
         )
+        OR NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'mcp_oauth_clients'
+              AND column_name = 'agent_name'
+        )
     ) THEN
         DROP TABLE mcp_oauth_clients;
     END IF;
@@ -67,6 +75,7 @@ END $$;
 class McpOAuthClient:
     """Registered OAuth client for a DCR-backed MCP server."""
 
+    agent_name: str
     mcp_name: str
     client_id: str
     client_secret: str | None = None
@@ -76,8 +85,9 @@ class McpOAuthClient:
 
 @dataclass
 class McpOAuthToken:
-    """Stored OAuth tokens for a (user, MCP) pair."""
+    """Stored OAuth tokens for a (agent, user, MCP) tuple."""
 
+    agent_name: str
     user_id: str
     mcp_name: str
     access_token: str
@@ -95,8 +105,8 @@ class McpTokenStore:
         self._uri = database_uri
 
     @staticmethod
-    def _token_key(user_id: str, mcp_name: str) -> str:
-        return f"{_TOKEN_KEY_PREFIX}{user_id}:{mcp_name}"
+    def _token_key(agent_name: str, user_id: str, mcp_name: str) -> str:
+        return f"{_TOKEN_KEY_PREFIX}{agent_name}:{user_id}:{mcp_name}"
 
     @staticmethod
     def _serialize_datetime(value: datetime | None) -> str | None:
@@ -132,9 +142,10 @@ class McpTokenStore:
         }
 
     def _payload_to_token(
-        self, user_id: str, mcp_name: str, payload: dict[str, Any]
+        self, agent_name: str, user_id: str, mcp_name: str, payload: dict[str, Any]
     ) -> McpOAuthToken:
         return McpOAuthToken(
+            agent_name=agent_name,
             user_id=user_id,
             mcp_name=mcp_name,
             access_token=decrypt_secret(payload.get("access_token")) or "",
@@ -155,20 +166,21 @@ class McpTokenStore:
             _TABLES_ENSURED = True
             logger.info("MCP OAuth client table ensured")
 
-    async def get_client(self, mcp_name: str) -> McpOAuthClient | None:
-        """Return the registered OAuth client for *mcp_name*, if any."""
+    async def get_client(self, agent_name: str, mcp_name: str) -> McpOAuthClient | None:
+        """Return the registered OAuth client for *(agent_name, mcp_name)*, if any."""
         await self.ensure_tables()
         async with await psycopg.AsyncConnection.connect(
             self._uri, row_factory=dict_row
         ) as conn:
             cur = await conn.execute(
-                "SELECT * FROM mcp_oauth_clients WHERE mcp_name = %s",
-                (mcp_name,),
+                "SELECT * FROM mcp_oauth_clients WHERE agent_name = %s AND mcp_name = %s",
+                (agent_name, mcp_name),
             )
             row = await cur.fetchone()
             if row is None:
                 return None
             return McpOAuthClient(
+                agent_name=row["agent_name"],
                 mcp_name=row["mcp_name"],
                 client_id=row["client_id"],
                 client_secret=decrypt_secret(row["client_secret"]),
@@ -178,28 +190,30 @@ class McpTokenStore:
 
     async def upsert_client(
         self,
+        agent_name: str,
         mcp_name: str,
         client_id: str,
         client_secret: str | None = None,
         registration_data: dict[str, Any] | None = None,
     ) -> McpOAuthClient:
-        """Insert or update the OAuth client record for *mcp_name*."""
+        """Insert or update the OAuth client record for *(agent_name, mcp_name)*."""
         await self.ensure_tables()
         enc_secret = encrypt_secret(client_secret)
         async with await psycopg.AsyncConnection.connect(self._uri) as conn:
             await conn.execute(
                 """
                 INSERT INTO mcp_oauth_clients (
-                    mcp_name, client_id, client_secret, registration_data, updated_at
+                    agent_name, mcp_name, client_id, client_secret, registration_data, updated_at
                 )
-                VALUES (%s, %s, %s, %s, now())
-                ON CONFLICT (mcp_name) DO UPDATE SET
+                VALUES (%s, %s, %s, %s, %s, now())
+                ON CONFLICT (agent_name, mcp_name) DO UPDATE SET
                     client_id = EXCLUDED.client_id,
                     client_secret = EXCLUDED.client_secret,
                     registration_data = EXCLUDED.registration_data,
                     updated_at = now()
                 """,
                 (
+                    agent_name,
                     mcp_name,
                     client_id,
                     enc_secret,
@@ -208,37 +222,41 @@ class McpTokenStore:
             )
             await conn.commit()
         return McpOAuthClient(
+            agent_name=agent_name,
             mcp_name=mcp_name,
             client_id=client_id,
             client_secret=client_secret,
             registration_data=registration_data,
         )
 
-    async def get_token(self, user_id: str, mcp_name: str) -> McpOAuthToken | None:
-        """Return stored OAuth tokens for *(user_id, mcp_name)* from Redis."""
-        raw = await asyncio.to_thread(cache_get, self._token_key(user_id, mcp_name))
+    async def get_token(self, agent_name: str, user_id: str, mcp_name: str) -> McpOAuthToken | None:
+        """Return stored OAuth tokens for *(agent_name, user_id, mcp_name)* from Redis."""
+        raw = await asyncio.to_thread(cache_get, self._token_key(agent_name, user_id, mcp_name))
         if raw is None:
             return None
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
             logger.error(
-                "Corrupt MCP OAuth token payload for user '%s' MCP '%s'",
+                "Corrupt MCP OAuth token payload for agent '%s' user '%s' MCP '%s'",
+                agent_name,
                 user_id,
                 mcp_name,
             )
             return None
         if not isinstance(payload, dict):
             logger.error(
-                "Invalid MCP OAuth token payload type for user '%s' MCP '%s'",
+                "Invalid MCP OAuth token payload type for agent '%s' user '%s' MCP '%s'",
+                agent_name,
                 user_id,
                 mcp_name,
             )
             return None
-        return self._payload_to_token(user_id, mcp_name, payload)
+        return self._payload_to_token(agent_name, user_id, mcp_name, payload)
 
     async def upsert_token(
         self,
+        agent_name: str,
         user_id: str,
         mcp_name: str,
         access_token: str,
@@ -246,17 +264,18 @@ class McpTokenStore:
         expires_at: datetime | None = None,
         scopes: list[str] | None = None,
     ) -> McpOAuthToken:
-        """Insert or update OAuth tokens for *(user_id, mcp_name)* in Redis."""
+        """Insert or update OAuth tokens for *(agent_name, user_id, mcp_name)* in Redis."""
         payload = self._token_to_payload(
             access_token, refresh_token, expires_at, scopes
         )
-        key = self._token_key(user_id, mcp_name)
+        key = self._token_key(agent_name, user_id, mcp_name)
         stored = await asyncio.to_thread(cache_set_persistent, key, json.dumps(payload))
         if not stored:
             raise RuntimeError(
-                f"Failed to persist MCP OAuth token for user '{user_id}' MCP '{mcp_name}'"
+                f"Failed to persist MCP OAuth token for agent '{agent_name}' user '{user_id}' MCP '{mcp_name}'"
             )
         return McpOAuthToken(
+            agent_name=agent_name,
             user_id=user_id,
             mcp_name=mcp_name,
             access_token=access_token,
@@ -266,9 +285,9 @@ class McpTokenStore:
             updated_at=self._deserialize_datetime(payload["updated_at"]),
         )
 
-    async def delete_token(self, user_id: str, mcp_name: str) -> bool:
-        """Delete stored OAuth tokens for *(user_id, mcp_name)* from Redis."""
-        return await asyncio.to_thread(cache_delete, self._token_key(user_id, mcp_name))
+    async def delete_token(self, agent_name: str, user_id: str, mcp_name: str) -> bool:
+        """Delete stored OAuth tokens for *(agent_name, user_id, mcp_name)* from Redis."""
+        return await asyncio.to_thread(cache_delete, self._token_key(agent_name, user_id, mcp_name))
 
     @staticmethod
     def expires_at_from_token_response(data: dict[str, Any]) -> datetime | None:

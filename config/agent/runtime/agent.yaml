@@ -204,7 +204,7 @@ async_tasks:
 #   - For readOnlyRootFilesystem SCC, use state or composite with emptyDir volume.
 filesystem:
   backend:
-    type: state
+    type: composite
     local_shell:
       timeout: 120
       max_output_bytes: 100000
@@ -212,12 +212,13 @@ filesystem:
       enabled: true
       scope: user
     routes:
+      "/skills/": filesystem_readonly
       "/memories/": store
       "/reports/": store
       "/": state
   permissions:
     - operations: [read, glob, grep, ls]
-      paths: ["config/**", "docs/**", "reports/**"]
+      paths: ["config/**", "docs/**", "reports/**", "skills/**"]
       mode: allow
     - operations: [write, edit]
       paths: ["reports/**", "memories/**"]
@@ -283,6 +284,16 @@ token_budget:
 # OTEL traces export to Jaeger/Tempo/Collector via OTEL_EXPORTER_OTLP_ENDPOINT.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Platform                                                           [env-var]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+platform:
+  audit:
+    enabled: false
+    buffer_max: 1000
+# Env: PLATFORM_AUDIT_ENABLED, PLATFORM_AUDIT_BUFFER_MAX
+# Org context: ORG
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Logging                                                            [env-var]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 logging:
@@ -298,3 +309,43 @@ logging:
 server:
   host: "0.0.0.0"
   port: 5002
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Agent Mode                                                        [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# The mode field is informational — the actual mode is determined by how
+# the agent is launched:
+#   make local    → server mode (full Aegra HTTP API)
+#   make headless → headless mode (background worker with event triggers)
+# Both read triggers/sinks/health_check config from this file.
+mode: server
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Triggers (headless mode only)                                     [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+triggers:
+  webhook:
+    enabled: false
+    host: "0.0.0.0"
+    port: 8888
+    path: "/trigger"
+  cron:
+    enabled: false
+    jobs: []
+  queue:
+    enabled: false
+    backend: "redis_streams"
+    stream: "agent-tasks"
+    consumer_group: "agent-workers"
+    consumer_name: ""
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Output Sinks (headless mode only)                                 [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# All enabled sinks receive every result (fan-out). Defaults to stdout if empty.
+output_sinks: []
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Health Check (headless mode only)                                 [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Minimal HTTP endpoint for Kubernetes liveness/readiness probes.
+health_check:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080

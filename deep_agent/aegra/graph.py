@@ -111,9 +111,6 @@ async def agent(runtime: ServerRuntime) -> Any:
     """
     await _ensure_startup()
 
-    # Start timing graph build for OTEL metrics
-    build_start_mono = time.monotonic()
-
     from deepagents import create_deep_agent
 
     from deep_agent.aegra.mcp import (
@@ -220,7 +217,13 @@ async def agent(runtime: ServerRuntime) -> Any:
         user_id=user_identity,
     )
     mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
-    tools = agent_config.resolve_tools(tool_names, mcp_tools, agent_name=agent_name)
+
+    from deep_agent.src.triggers.tools import get_builtin_tools
+
+    all_available_tools = list(mcp_tools) + get_builtin_tools()
+    tools = agent_config.resolve_tools(
+        tool_names, all_available_tools, agent_name=agent_name
+    )
     if not tools and not tool_names and mcp_server_names and mcp_tools:
         logger.info(
             "Agent '%s' declared MCP servers %s but no explicit tools; exposing all %d MCP tool(s)",
@@ -240,13 +243,14 @@ async def agent(runtime: ServerRuntime) -> Any:
         model_name, middleware_overrides
     )
 
+    hitl = getattr(resolved_mw, "human_approval", None)
     cache_key = _graph_fingerprint(
         model_name,
         system_prompt,
         [t.name for t in tools],
-        hitl_enabled=resolved_mw.human_approval.enabled,
-        hitl_mode=resolved_mw.human_approval.mode,
-        hitl_exclude=resolved_mw.human_approval.exclude,
+        hitl_enabled=hitl.enabled if hitl else False,
+        hitl_mode=hitl.mode if hitl else "",
+        hitl_exclude=hitl.exclude if hitl else [],
     )
     now = time.time()
     graph_ttl = float(agent_config.get_cache_config().graph.ttl)
@@ -254,18 +258,6 @@ async def agent(runtime: ServerRuntime) -> Any:
     if cached is not None and (now - _graph_cache_ts.get(cache_key, 0)) < graph_ttl:
         age = now - _graph_cache_ts[cache_key]
         logger.warning("Graph cache HIT (age=%.1fs) — skipping rebuild", age)
-
-        # Record cache hit metric
-        from deep_agent.aegra.otel import record_graph_built
-
-        mcp_tool_count = sum(1 for t in tools if t.name.startswith("mcp__"))
-        record_graph_built(
-            build_start_mono,
-            cache_hit=True,
-            mcp_tool_count=mcp_tool_count,
-            attributes={"model": model_name, "agent": agent_name},
-        )
-
         return cached
 
     logger.warning("Graph cache MISS — full rebuild")
@@ -273,9 +265,23 @@ async def agent(runtime: ServerRuntime) -> Any:
     subagents = load_subagents(tools=mcp_tools)
     backend = get_configured_backend()
 
-    middleware = build_middleware_list(resolved_mw, model=model, backend=backend)
+    middleware_overrides = orchestrator_cfg.get("middleware")
+    resolved_mw = agent_config.resolve_agent_middleware(
+        model_name, middleware_overrides
+    )
+    middleware = build_middleware_list(
+        resolved_mw,
+        model=model,
+        backend=backend,
+        mcp_tool_names=frozenset(t.name for t in mcp_tools),
+    )
     memory = resolve_memory_param(resolved_mw)
-    skills_param = skill_paths if resolved_mw.skills_enabled else None
+    if skill_paths and resolved_mw.skills_enabled:
+        from deep_agent.src.agent.config.resolver import to_virtual_skill_paths
+
+        skills_param = to_virtual_skill_paths(skill_paths)
+    else:
+        skills_param = None
 
     async_mw = build_async_middleware(subagents, providers_config.async_tasks)
     if async_mw is not None:
@@ -306,22 +312,23 @@ async def agent(runtime: ServerRuntime) -> Any:
         except (ImportError, TypeError):
             pass
 
-    if "interrupt_on" in create_sig.parameters:
-        from deep_agent.src.agent.config.hitl import build_interrupt_on
+    if hitl and hitl.enabled and "interrupt_on" in create_sig.parameters:
+        try:
+            from deep_agent.src.agent.config.hitl import build_interrupt_on
 
-        interrupt_on = build_interrupt_on(resolved_mw.human_approval, tools)
-        if interrupt_on:
-            create_kwargs["interrupt_on"] = interrupt_on
-        elif resolved_mw.human_approval.enabled:
+            interrupt_on = build_interrupt_on(hitl, tools)
+            if interrupt_on:
+                create_kwargs["interrupt_on"] = interrupt_on
+            else:
+                logger.warning(
+                    "HITL is enabled but interrupt_on is empty — "
+                    "no tool calls will be interrupted (all tools may be excluded)"
+                )
+        except ImportError:
             logger.warning(
-                "HITL is enabled but interrupt_on is empty — "
-                "no tool calls will be interrupted (all tools may be excluded)"
+                "HITL is enabled but hitl module not available — "
+                "upgrade deepagents to activate human-in-the-loop approval"
             )
-    elif resolved_mw.human_approval.enabled:
-        logger.warning(
-            "HITL is enabled but create_deep_agent does not support interrupt_on — "
-            "upgrade deepagents to activate human-in-the-loop approval"
-        )
 
     compiled = create_deep_agent(**create_kwargs)
 
@@ -336,17 +343,6 @@ async def agent(runtime: ServerRuntime) -> Any:
         sub_count,
         len(middleware),
         bool(sso_token),
-    )
-
-    # Record cache miss metric (graph was built)
-    from deep_agent.aegra.otel import record_graph_built
-
-    mcp_tool_count = sum(1 for t in tools if t.name.startswith("mcp__"))
-    record_graph_built(
-        build_start_mono,
-        cache_hit=False,
-        mcp_tool_count=mcp_tool_count,
-        attributes={"model": model_name, "agent": agent_name},
     )
 
     return compiled

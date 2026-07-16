@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 from deepagents.backends import LocalShellBackend
+from deepagents.backends.filesystem import FilesystemBackend
+from deepagents.backends.protocol import EditResult, FileUploadResponse, WriteResult
 
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
@@ -40,6 +42,31 @@ _PASSTHROUGH_VARS = ("HOME", "USER", "LANG", "LC_ALL", "TZ", "TERM")
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 _backend: LocalShellBackend | None = None
+
+
+class ReadOnlyFilesystemBackend(FilesystemBackend):
+    """FilesystemBackend that rejects all write operations."""
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        """Reject write operations."""
+        return WriteResult(error="Read-only backend: writes not permitted")
+
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,  # noqa: FBT001, FBT002
+    ) -> EditResult:
+        """Reject edit operations."""
+        return EditResult(error="Read-only backend: edits not permitted")
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        """Reject upload operations."""
+        return [
+            FileUploadResponse(path=p, error="Read-only backend: uploads not permitted")
+            for p, _ in files
+        ]
 
 
 def _base_python() -> str:
@@ -203,7 +230,7 @@ def get_backend(
 
 
 def get_configured_backend() -> LocalShellBackend | Any:
-    """Return the backend configured by filesystem.yaml.
+    """Return the backend configured by filesystem.yaml or agent.yaml.
 
     Reads the backend type from config and builds the appropriate backend:
     - state: StateBackend (thread-scoped scratch, recommended for production)
@@ -213,10 +240,13 @@ def get_configured_backend() -> LocalShellBackend | Any:
 
     Falls back to StateBackend if config is missing or invalid.
     """
-    from deep_agent.src.agent.config.filesystem import load_filesystem_config
-
     config_path = agent_config.base_dir / "filesystem.yaml"
-    fs_config = load_filesystem_config(config_path)
+    if config_path.is_file():
+        from deep_agent.src.agent.config.filesystem import load_filesystem_config
+
+        fs_config = load_filesystem_config(config_path)
+    else:
+        fs_config = agent_config.get_filesystem_config()
 
     backend_type = fs_config.backend.type
 
@@ -300,47 +330,119 @@ def _build_store_backend(fs_config: Any) -> Any:
 
 
 def _build_composite_backend(fs_config: Any) -> Any:
-    """Build a CompositeBackend from route config.
+    """Return a factory that builds a CompositeBackend at request time.
 
-    Production-recommended pattern: StateBackend as default (scratch)
-    with StoreBackend routes for persistent paths like /memories/.
+    StateBackend and StoreBackend require ToolRuntime (only available per-request),
+    so we return a callable. ReadOnlyFilesystemBackend and LocalShellBackend are
+    built eagerly since they don't need runtime.
     """
-    try:
+    # --- Eager: backends that don't need runtime ---
+    eager_routes: dict[str, Any] = {}
+
+    for path_prefix, backend_name in fs_config.backend.routes.items():
+        if backend_name == "filesystem_readonly":
+            dir_name = path_prefix.strip("/")
+            eager_routes[path_prefix] = _build_filesystem_readonly_backend(
+                agent_config.base_dir / dir_name
+            )
+
+    if any(v == "local_shell" for v in fs_config.backend.routes.values()):
+        logger.warning(
+            "local_shell in composite routes — not recommended for production"
+        )
+        local_shell_backend = get_backend(
+            timeout=fs_config.backend.local_shell.timeout,
+            max_output_bytes=fs_config.backend.local_shell.max_output_bytes,
+        )
+        for path_prefix, backend_name in fs_config.backend.routes.items():
+            if backend_name == "local_shell":
+                eager_routes[path_prefix] = local_shell_backend
+
+    # --- Deferred config (captured for use inside factory) ---
+    store_route_prefixes = [
+        p for p, v in fs_config.backend.routes.items() if v == "store"
+    ]
+    store_scope: str | None = None
+    if store_route_prefixes:
+        scope = getattr(fs_config.backend, "store", None)
+        store_scope = scope.scope if scope else "user"
+
+    logger.info(
+        "Prepared CompositeBackend factory: %d eager route(s), %d deferred route(s)",
+        len(eager_routes),
+        len(store_route_prefixes),
+    )
+
+    # --- Factory: called per-request with ToolRuntime ---
+    def factory(runtime: Any) -> Any:
+        """Build a CompositeBackend when invoked by create_deep_agent with ToolRuntime.
+
+        We instantiate StateBackend/StoreBackend here (rather than returning
+        bare classes) because CompositeBackend needs composed *instances* —
+        this factory IS the protocol-compliant callable that create_deep_agent expects.
+        """
         from deepagents.backends.composite import CompositeBackend
         from deepagents.backends.state import StateBackend
 
-        state_backend = StateBackend()
-        store_backend = None
+        state_backend = StateBackend(runtime)
 
-        backend_map: dict[str, Any] = {
-            "state": state_backend,
-        }
+        routes: dict[str, Any] = dict(eager_routes)
 
-        if any(v == "store" for v in fs_config.backend.routes.values()):
-            store_backend = _build_store_backend(fs_config)
-            backend_map["store"] = store_backend
+        if store_route_prefixes:
+            try:
+                from deepagents.backends.store import StoreBackend
 
-        if any(v == "local_shell" for v in fs_config.backend.routes.values()):
-            logger.warning(
-                "local_shell in composite routes — not recommended for production"
-            )
-            backend_map["local_shell"] = get_backend(
-                timeout=fs_config.backend.local_shell.timeout,
-                max_output_bytes=fs_config.backend.local_shell.max_output_bytes,
-            )
+                namespace_factories = {
+                    "user": lambda rt: (
+                        rt.server_info.assistant_id,
+                        rt.server_info.user.identity,
+                    ),
+                    "assistant": lambda rt: (rt.server_info.assistant_id,),
+                    "org": lambda rt: (rt.context.org_id,),
+                }
+                ns = namespace_factories.get(
+                    store_scope or "user", namespace_factories["user"]
+                )
+                store_backend = StoreBackend(runtime, namespace=ns)
+                for prefix in store_route_prefixes:
+                    routes[prefix] = store_backend
+            except ImportError:
+                logger.warning(
+                    "StoreBackend not available — store routes will use StateBackend"
+                )
+                for prefix in store_route_prefixes:
+                    routes[prefix] = state_backend
 
-        routes: dict[str, Any] = {}
+        known_types = {"filesystem_readonly", "local_shell", "store", "state"}
         for path_prefix, backend_name in fs_config.backend.routes.items():
-            if backend_name in backend_map:
-                routes[path_prefix] = backend_map[backend_name]
-            else:
+            if backend_name not in known_types:
                 logger.warning(
                     "Unknown backend '%s' in route for '%s'", backend_name, path_prefix
                 )
 
         default_backend = routes.pop("/", state_backend)
-        logger.info("Using CompositeBackend with %d route(s)", len(routes))
         return CompositeBackend(default=default_backend, routes=routes)
-    except ImportError:
-        logger.warning("CompositeBackend not available, falling back to StateBackend")
-        return _build_state_backend()
+
+    return factory
+
+
+def _build_filesystem_readonly_backend(root_dir: Path) -> ReadOnlyFilesystemBackend:
+    """Build a read-only FilesystemBackend jailed to root_dir.
+
+    Uses virtual_mode=True to jail all paths within the given directory.
+    Write/edit/upload operations are explicitly blocked for defense-in-depth.
+
+    Args:
+        root_dir: Directory to use as the filesystem root. Derived from
+            the route prefix in agent.yaml (e.g., "/skills/" → base_dir/skills).
+    """
+    if not root_dir.is_dir():
+        logger.warning(
+            "Directory does not exist: %s — reads will return empty results",
+            root_dir,
+        )
+
+    logger.info(
+        "Using ReadOnlyFilesystemBackend (root=%s, virtual_mode=True)", root_dir
+    )
+    return ReadOnlyFilesystemBackend(root_dir=str(root_dir), virtual_mode=True)

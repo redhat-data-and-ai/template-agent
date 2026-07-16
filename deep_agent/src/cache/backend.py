@@ -10,7 +10,7 @@ Provides a ``CacheBackend`` protocol and three implementations:
 import threading
 from typing import Any, Protocol, runtime_checkable
 
-from cachetools import TTLCache  # type: ignore[import-untyped]
+from cachetools import TTLCache
 
 from deep_agent.utils.pylogger import get_python_logger
 
