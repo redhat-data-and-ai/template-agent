@@ -248,3 +248,4 @@ docker-compose.override.yml
 Dockerfile
 docker-compose.yml
 scripts/
+docs/
