@@ -1681,7 +1681,6 @@ flowchart LR
         F3["Postgres cost persistence<br/>and reporting API"]
         F4["Per-agent image overrides<br/>via Registry frontmatter"]
         F5["Persistent sandbox mode<br/>BaseSandbox subclass"]
-        F6["Output file collection<br/>from /output volume"]
     end
 
     style D1 fill:#bbf7d0,stroke:#22c55e,color:#111
@@ -1696,7 +1695,6 @@ flowchart LR
     style F3 fill:#fde68a,stroke:#f59e0b,color:#111
     style F4 fill:#fde68a,stroke:#f59e0b,color:#111
     style F5 fill:#fde68a,stroke:#f59e0b,color:#111
-    style F6 fill:#fde68a,stroke:#f59e0b,color:#111
 ```
 
 ---
