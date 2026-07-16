@@ -173,6 +173,18 @@ class CodeExecutionMiddleware(AgentMiddleware):
             input_file_count=len(input_files) if input_files else 0,
         )
 
+        on_output = None
+        if self._config.streaming_enabled:
+            try:
+                from langgraph.config import get_stream_writer
+
+                stream_writer = get_stream_writer()
+
+                def on_output(chunk: str) -> None:
+                    stream_writer({"type": "code_output", "content": chunk})
+            except Exception:
+                pass
+
         started = time.monotonic()
         try:
             result = await self._runner.run(
@@ -182,6 +194,7 @@ class CodeExecutionMiddleware(AgentMiddleware):
                 namespace=namespace,
                 allow_network=network,
                 input_files=input_files,
+                on_output=on_output,
             )
 
             duration = time.monotonic() - started

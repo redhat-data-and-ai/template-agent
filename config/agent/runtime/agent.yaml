@@ -111,6 +111,7 @@ middleware:
     exclude:
       - write_todos         # internal task tracking — no user approval needed
       - compact_conversation  # internal memory management — no user approval needed
+      - execute_code         # code execution — approval adds friction to computational tasks
   summarization_tool:
     enabled: true
   memory:
@@ -158,15 +159,11 @@ middleware:
     max_timeout_seconds: 60
     max_code_length: 50000
     max_output_bytes: 1048576
-    # Container images for each language variant.
-    # The key is used as the "language" param in execute_code tool calls.
-    # Replace placeholder images with pre-built domain images from your
-    # internal registry (e.g., images.paas.redhat.com/your-team/python-ds:3.12)
-    # that have the required libraries pre-installed.
+    # Container images per language. The key is used as the "language" param
+    # in execute_code tool calls. Add custom variants (e.g., python-ds, python-ml)
+    # when pre-built images with domain libraries are available.
     images:
-      python: "python:3.12-slim"           # base Python — no extra libraries
-      python-ds: "python:3.12-slim"        # TODO: replace with image containing pandas, numpy, scipy
-      python-ml: "python:3.12-slim"        # TODO: replace with image containing torch, transformers
+      python: "python:3.12-slim"
       shell: "bash:5"
       node: "node:22-slim"
     resource_requests:
@@ -185,7 +182,7 @@ middleware:
     # --- Cost Tracking ---
     cost_tracking_enabled: false          # emit resource usage OTEL metrics
     # --- Streaming ---
-    streaming_enabled: false              # real-time stdout/stderr streaming
+    streaming_enabled: true               # real-time stdout/stderr streaming via SSE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

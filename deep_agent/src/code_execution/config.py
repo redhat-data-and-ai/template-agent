@@ -18,8 +18,6 @@ class CodeExecutionConfig(BaseModel):
     images: dict[str, str] = Field(
         default_factory=lambda: {
             "python": "python:3.12-slim",
-            "python-ds": "python:3.12-slim",
-            "python-ml": "python:3.12-slim",
             "shell": "bash:5",
             "node": "node:22-slim",
         }
@@ -28,8 +26,6 @@ class CodeExecutionConfig(BaseModel):
     entrypoints: dict[str, list[str]] = Field(
         default_factory=lambda: {
             "python": ["python", "-c"],
-            "python-ds": ["python", "-c"],
-            "python-ml": ["python", "-c"],
             "shell": ["bash", "-c"],
             "node": ["node", "-e"],
         }

@@ -46,13 +46,7 @@ class TestCodeExecutionConfigDefaults:
         from deep_agent.src.code_execution.config import CodeExecutionConfig
 
         cfg = CodeExecutionConfig()
-        assert cfg.supported_languages == {
-            "python",
-            "python-ds",
-            "python-ml",
-            "shell",
-            "node",
-        }
+        assert cfg.supported_languages == {"python", "shell", "node"}
 
     def test_new_feature_defaults(self):
         from deep_agent.src.code_execution.config import CodeExecutionConfig
@@ -65,14 +59,27 @@ class TestCodeExecutionConfigDefaults:
         assert cfg.cost_tracking_enabled is False
         assert cfg.streaming_enabled is False
 
-    def test_custom_image_variants(self):
+    def test_custom_image_variant_via_config(self):
         from deep_agent.src.code_execution.config import CodeExecutionConfig
 
-        cfg = CodeExecutionConfig()
-        assert "python-ds" in cfg.images
-        assert "python-ml" in cfg.images
-        assert cfg.entrypoints["python-ds"] == ["python", "-c"]
-        assert cfg.entrypoints["python-ml"] == ["python", "-c"]
+        cfg = CodeExecutionConfig.model_validate(
+            {
+                "images": {
+                    "python": "python:3.12-slim",
+                    "python-ds": "my-registry/python-ds:3.12",
+                    "shell": "bash:5",
+                    "node": "node:22-slim",
+                },
+                "entrypoints": {
+                    "python": ["python", "-c"],
+                    "python-ds": ["python", "-c"],
+                    "shell": ["bash", "-c"],
+                    "node": ["node", "-e"],
+                },
+            }
+        )
+        assert "python-ds" in cfg.supported_languages
+        assert cfg.images["python-ds"] == "my-registry/python-ds:3.12"
 
 
 class TestCodeExecutionConfigValidation:
