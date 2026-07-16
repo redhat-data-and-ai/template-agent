@@ -1668,33 +1668,43 @@ flowchart LR
         P1A["Core middleware<br/>and K8s Jobs"]
     end
 
-    subgraph p2["Phase 2 — Aug 2026"]
-        style p2 fill:#dbeafe,stroke:#3b82f6,stroke-width:2px,color:#111
+    subgraph p2["Phase 2 — Jul 2026 DONE"]
+        style p2 fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#111
         P2A["Custom domain<br/>images"]
         P2B["Network access<br/>control"]
+        P2C["Execution<br/>queuing"]
+        P2D["File I/O<br/>ConfigMap + PVC"]
+        P2E["Cost tracking<br/>OTEL metrics"]
+        P2F["Log<br/>streaming"]
     end
 
-    subgraph p3["Phase 3 — Sep-Oct 2026"]
+    subgraph p3["Phase 3 — Future"]
         style p3 fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#111
-        P3A["File I/O<br/>ConfigMap + PVC"]
-        P3B["Execution<br/>queuing"]
+        P3A["Pre-built domain<br/>images CI/CD"]
+        P3B["Persistent sandbox<br/>BaseSandbox mode"]
     end
 
-    subgraph p4["Phase 4 — Nov-Dec 2026"]
+    subgraph p4["Phase 4 — Future"]
         style p4 fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#111
-        P4A["WebSocket<br/>streaming"]
-        P4B["Cost<br/>tracking"]
+        P4A["SSE streaming<br/>to UI"]
+        P4B["Postgres cost<br/>persistence"]
+        P4C["Per-agent image<br/>overrides via Registry"]
     end
 
     p1 --> p2 --> p3 --> p4
 
     style P1A fill:#bbf7d0,stroke:#22c55e,color:#111
-    style P2A fill:#93c5fd,stroke:#3b82f6,color:#111
-    style P2B fill:#93c5fd,stroke:#3b82f6,color:#111
+    style P2A fill:#bbf7d0,stroke:#22c55e,color:#111
+    style P2B fill:#bbf7d0,stroke:#22c55e,color:#111
+    style P2C fill:#bbf7d0,stroke:#22c55e,color:#111
+    style P2D fill:#bbf7d0,stroke:#22c55e,color:#111
+    style P2E fill:#bbf7d0,stroke:#22c55e,color:#111
+    style P2F fill:#bbf7d0,stroke:#22c55e,color:#111
     style P3A fill:#fde68a,stroke:#f59e0b,color:#111
     style P3B fill:#fde68a,stroke:#f59e0b,color:#111
     style P4A fill:#c4b5fd,stroke:#8b5cf6,color:#111
     style P4B fill:#c4b5fd,stroke:#8b5cf6,color:#111
+    style P4C fill:#c4b5fd,stroke:#8b5cf6,color:#111
 ```
 
 ---
