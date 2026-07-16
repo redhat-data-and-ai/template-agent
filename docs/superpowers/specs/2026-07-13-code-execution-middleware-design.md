@@ -500,34 +500,45 @@ Images are configurable per-deployment via `agent.yaml` to support internal regi
 ### Security Constraints
 
 ```mermaid
-mindmap
-    root(("🔒 Security<br/>Constraints"))
-        🚫 No K8s API
-            automountServiceAccountToken: false
-            Pod cannot discover cluster resources
-        👤 Non-root
-            runAsNonRoot: true
-            runAsUser: 1000
-            Matches platform policy
-        📁 Read-only FS
-            readOnlyRootFilesystem: true
-            Only /tmp writable via emptyDir
-            sizeLimit: 64Mi
-        ⬇️ No Escalation
-            allowPrivilegeEscalation: false
-            capabilities.drop: ALL
-        🛡️ Seccomp
-            seccompProfile: RuntimeDefault
-            OS-level syscall filtering
-        ⏱️ Time Capped
-            activeDeadlineSeconds: 60
-            Prevents indefinite execution
-        📦 Resource Capped
-            CPU/memory limits enforced
-            Prevents exhaustion
-        🔄 No Retries
-            backoffLimit: 0
-            Failed code fails once
+flowchart TB
+    subgraph security["Security Constraints"]
+        style security fill:#fee2e2,stroke:#ef4444,stroke-width:2px,color:#111
+
+        subgraph access["Access Control"]
+            style access fill:#fef2f2,stroke:#fca5a5,stroke-width:1px,color:#111
+            A1["No K8s API Access<br/><small>automountServiceAccountToken: false<br/>Pod cannot discover cluster resources</small>"]
+            A2["Non-root Execution<br/><small>runAsNonRoot: true<br/>runAsUser: 1000</small>"]
+            A3["No Privilege Escalation<br/><small>allowPrivilegeEscalation: false<br/>capabilities.drop: ALL</small>"]
+        end
+
+        subgraph filesystem["Filesystem"]
+            style filesystem fill:#fef2f2,stroke:#fca5a5,stroke-width:1px,color:#111
+            F1["Read-only Root FS<br/><small>readOnlyRootFilesystem: true<br/>Only /tmp writable via emptyDir</small>"]
+            F2["Temp Size Capped<br/><small>emptyDir.sizeLimit: 64Mi</small>"]
+        end
+
+        subgraph limits["Resource Limits"]
+            style limits fill:#fef2f2,stroke:#fca5a5,stroke-width:1px,color:#111
+            L1["CPU / Memory Limits<br/><small>resources.limits enforced<br/>Prevents exhaustion</small>"]
+            L2["Time Capped<br/><small>activeDeadlineSeconds: 60<br/>Prevents indefinite execution</small>"]
+            L3["No Retries<br/><small>backoffLimit: 0<br/>Failed code fails once</small>"]
+        end
+
+        subgraph os["OS Level"]
+            style os fill:#fef2f2,stroke:#fca5a5,stroke-width:1px,color:#111
+            O1["Seccomp Filtering<br/><small>seccompProfile: RuntimeDefault<br/>OS-level syscall filtering</small>"]
+        end
+    end
+
+    style A1 fill:#fecaca,stroke:#ef4444,color:#111
+    style A2 fill:#fecaca,stroke:#ef4444,color:#111
+    style A3 fill:#fecaca,stroke:#ef4444,color:#111
+    style F1 fill:#fecaca,stroke:#ef4444,color:#111
+    style F2 fill:#fecaca,stroke:#ef4444,color:#111
+    style L1 fill:#fecaca,stroke:#ef4444,color:#111
+    style L2 fill:#fecaca,stroke:#ef4444,color:#111
+    style L3 fill:#fecaca,stroke:#ef4444,color:#111
+    style O1 fill:#fecaca,stroke:#ef4444,color:#111
 ```
 
 ---
@@ -689,10 +700,10 @@ class CodeExecutionMiddleware(AgentMiddleware):
 ### 7.4 `k8s_job_runner.py` — K8s Job Lifecycle
 
 ```mermaid
-statediagram-v2
+stateDiagram-v2
     [*] --> Validate: execute_code called
     Validate --> CreateJob: Input valid
-    Validate --> ReturnError: Invalid language/code too long
+    Validate --> ReturnError: Invalid language or code too long
 
     CreateJob --> WaitForPod: Job submitted
     CreateJob --> ReturnError: K8s API error
@@ -704,15 +715,15 @@ statediagram-v2
     CollectLogs --> GetExitCode: Logs collected
     CollectLogs --> GetExitCode: Logs partially collected
 
-    GetExitCode --> Cleanup: exit_code + reason
+    GetExitCode --> Cleanup: exit_code and reason
     HandleTimeout --> Cleanup: timeout status
 
     Cleanup --> RecordMetrics: Job deleted
     RecordMetrics --> EmitAudit: Metrics recorded
     EmitAudit --> ReturnResult: Audit emitted
 
-    ReturnError --> [*]: ToolMessage (error)
-    ReturnResult --> [*]: ToolMessage (result)
+    ReturnError --> [*]: ToolMessage with error
+    ReturnResult --> [*]: ToolMessage with result
 ```
 
 ```python
@@ -1653,18 +1664,18 @@ sequenceDiagram
 ```mermaid
 gantt
     title Code Execution Roadmap
-    dateFormat  YYYY-MM
-    axisFormat  %b %Y
+    dateFormat YYYY-MM
+    axisFormat %b %Y
 
-    section Phase 1 (Done)
-    Core middleware + K8s Jobs          :done, p1, 2026-07, 2026-07
+    section Phase 1 - Done
+    Core middleware and K8s Jobs        :done, p1, 2026-07, 2026-07
 
-    section Phase 2 (Next)
+    section Phase 2 - Next
     Custom domain images                :active, p2a, 2026-08, 2026-08
     Network access control              :p2b, 2026-08, 2026-09
 
     section Phase 3
-    File I/O (ConfigMap + PVC)          :p3a, 2026-09, 2026-10
+    File IO with ConfigMap and PVC      :p3a, 2026-09, 2026-10
     Execution queuing                   :p3b, 2026-09, 2026-10
 
     section Phase 4
