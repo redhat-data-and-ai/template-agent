@@ -230,32 +230,31 @@ class K8sJobRunner:
         started = time.monotonic()
         configmap_name: str | None = None
         network_policy_name: str | None = None
-
-        if input_files:
-            configmap_name = await self._create_input_configmap(
-                execution_id, ns, input_files
-            )
-
-        if self._config.network_access != "deny" or allow_network:
-            should_allow = (
-                allow_network or self._config.network_access == "allow_internet"
-            )
-            network_policy_name = await self._create_network_policy(
-                execution_id, ns, allow_internet=should_allow
-            )
-
-        manifest = self.build_job_manifest(
-            language=language,
-            code=code,
-            timeout=timeout,
-            namespace=ns,
-            execution_id=execution_id,
-            allow_network=allow_network,
-            input_configmap_name=configmap_name,
-        )
-        job_name = manifest.metadata.name
+        job_name = f"code-exec-{execution_id[:8]}"
 
         try:
+            if input_files:
+                configmap_name = await self._create_input_configmap(
+                    execution_id, ns, input_files
+                )
+
+            should_allow_network = (
+                allow_network and self._config.network_access != "deny"
+            ) or self._config.network_access == "allow_internet"
+            network_policy_name = await self._create_network_policy(
+                execution_id, ns, allow_internet=should_allow_network
+            )
+
+            manifest = self.build_job_manifest(
+                language=language,
+                code=code,
+                timeout=timeout,
+                namespace=ns,
+                execution_id=execution_id,
+                allow_network=allow_network,
+                input_configmap_name=configmap_name,
+            )
+            job_name = manifest.metadata.name
             await asyncio.to_thread(
                 self._batch_api.create_namespaced_job,
                 namespace=ns,
@@ -418,22 +417,29 @@ class K8sJobRunner:
                 follow=True,
                 _preload_content=False,
             )
-            for chunk in response.stream(512):
-                text = (
-                    chunk.decode("utf-8", errors="replace")
-                    if isinstance(chunk, bytes)
-                    else str(chunk)
-                )
-                total_bytes += len(text)
-                if total_bytes <= self._config.max_output_bytes:
-                    accumulated.append(text)
-                    callback(text)
-                else:
-                    if not any("[truncated" in s for s in accumulated):
-                        accumulated.append("\n[truncated at 1MB]")
-                        callback("\n[truncated at 1MB]")
-                    break
-            response.release_conn()
+
+            def _read_stream() -> list[str]:
+                chunks: list[str] = []
+                nonlocal total_bytes
+                for chunk in response.stream(512):
+                    text = (
+                        chunk.decode("utf-8", errors="replace")
+                        if isinstance(chunk, bytes)
+                        else str(chunk)
+                    )
+                    total_bytes += len(text)
+                    if total_bytes <= self._config.max_output_bytes:
+                        chunks.append(text)
+                    else:
+                        chunks.append("\n[truncated at 1MB]")
+                        break
+                response.release_conn()
+                return chunks
+
+            stream_chunks = await asyncio.to_thread(_read_stream)
+            for text in stream_chunks:
+                accumulated.append(text)
+                callback(text)
             _log_json(
                 logging.INFO,
                 "code_execution_streaming_completed",
@@ -588,7 +594,7 @@ class K8sJobRunner:
             spec=client.V1NetworkPolicySpec(
                 pod_selector=client.V1LabelSelector(**selector),
                 policy_types=["Egress"],
-                egress=egress if egress else None,
+                egress=egress,
             ),
         )
 

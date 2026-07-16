@@ -107,6 +107,12 @@ class CodeExecutionMiddleware(AgentMiddleware):
         input_files = args.get("input_files")
         tool_call_id = tool_call.get("id", "")
 
+        if not code.strip():
+            return ToolMessage(
+                content="No code provided to execute",
+                tool_call_id=tool_call_id,
+            )
+
         if language not in self._config.supported_languages:
             return ToolMessage(
                 content=f"Unsupported language: {language}. "
@@ -139,11 +145,13 @@ class CodeExecutionMiddleware(AgentMiddleware):
 
         self._metrics.log_queued(org=org)
         queue_start = time.monotonic()
+        acquired = False
         try:
             await asyncio.wait_for(
                 semaphore.acquire(),
                 timeout=self._config.queue_timeout_seconds,
             )
+            acquired = True
         except asyncio.TimeoutError:
             self._metrics.record_rejected(org=org)
             return ToolMessage(
@@ -240,6 +248,7 @@ class CodeExecutionMiddleware(AgentMiddleware):
             self._metrics.log_failed(
                 error_type=type(exc).__name__,
                 error_message=str(exc),
+                duration_ms=round(duration * 1000, 2),
             )
             return ToolMessage(
                 content="Code execution service temporarily unavailable",
@@ -247,4 +256,5 @@ class CodeExecutionMiddleware(AgentMiddleware):
             )
         finally:
             self._metrics.decrement_active(org=org)
-            semaphore.release()
+            if acquired:
+                semaphore.release()
