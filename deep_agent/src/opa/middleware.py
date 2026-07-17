@@ -104,19 +104,65 @@ class OPAMiddleware(AgentMiddleware):
             ]
         )
 
+    def _extract_tool_content(self, result: ToolMessage | Command[Any]) -> str:
+        """Return tool output text from a ToolMessage or task Command."""
+        if isinstance(result, ToolMessage):
+            if isinstance(result.content, str):
+                return result.content
+            return str(result.content) if result.content else ""
+
+        if isinstance(result, Command):
+            update = result.update or {}
+            messages = update.get("messages") or []
+            for message in reversed(messages):
+                if not isinstance(message, ToolMessage):
+                    continue
+                if isinstance(message.content, str) and message.content.strip():
+                    return message.content
+                if message.content:
+                    return str(message.content)
+        return ""
+
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        """Async tool hook."""
+        """Async tool hook: run tool, then allow or block the result."""
         result = await handler(request)
 
-        print(f"[OPA] awrap_tool_call blocking", flush=True)
+        tool_call = request.tool_call
+        is_dict = isinstance(tool_call, dict)
+        tool_name = tool_call.get("name") if is_dict else tool_call.name
+        tool_id = tool_call.get("id") if is_dict else tool_call.id
 
-        # tool_call = request.tool_call
-        # tool_name = tool_call.get("name", "unknown")
-        # tool_call_id = tool_call.get("id", "")
-        # logger.info("OPA blocked tool call: %s", tool_name)
-        # return ToolMessage(content=_BLOCKED_TOOL_MESSAGE, tool_call_id=tool_call_id)
-        return result
+        tool_content = self._extract_tool_content(result)
+        if not tool_content.strip():
+            return result
+
+        opa = await evaluate_message("tool_response", result=tool_content)
+        print(f"[OPA] awrap_tool_call opa: {vars(opa)!r}", flush=True)
+        if opa.allowed:
+            return result
+
+        print(
+            f"[OPA] awrap_tool_call blocking tool output: {opa.denial_reasons!r}",
+            flush=True,
+        )
+        logger.info(
+            "OPA awrap_tool_call blocking tool=%s reasons=%s",
+            tool_name,
+            opa.denial_reasons,
+        )
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(
+                        content=_BLOCKED_TOOL_MESSAGE,
+                        tool_call_id=tool_id,
+                        name=tool_name,
+                        status="error",
+                    ),
+                ],
+            },
+        )
