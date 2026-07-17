@@ -159,6 +159,13 @@ class Settings(BaseSettings):
     # ── CLI ───────────────────────────────────────────────────────────
     ENABLE_CLI: bool = Field(default=True)
 
+    # ── OPA (Authorization) ───────────────────────────────────────────
+    # None = not set; agent.yaml opa: section is the source of truth.
+    # Set env var to override YAML for that field only.
+    OPA_ENABLED: Optional[bool] = Field(default=None)
+    OPA_URL: Optional[str] = Field(default=None)
+    OPA_TIMEOUT: Optional[float] = Field(default=None)
+
     # ── Platform ──────────────────────────────────────────────────────
     DEPLOYED_AGENT_NAME: str = Field(default="")
     DEPLOYED_AGENT_ORG: str = Field(default="")

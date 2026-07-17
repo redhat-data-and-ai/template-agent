@@ -44,6 +44,18 @@ def _mcp_tool_names_from_tools(tools: list[Any]) -> frozenset[str]:
     return frozenset(getattr(t, "name", "") for t in tools if getattr(t, "name", None))
 
 
+def build_opa_middleware() -> Any | None:
+    """Return OPAMiddleware when OPA authorization is enabled, else None."""
+    from deep_agent.src.opa.config import is_opa_enabled
+
+    if not is_opa_enabled():
+        return None
+
+    from deep_agent.src.opa.middleware import OPAMiddleware
+
+    return OPAMiddleware()
+
+
 def build_middleware_list(
     resolved: ResolvedMiddlewareConfig,
     *,
@@ -73,6 +85,10 @@ def build_middleware_list(
     audit_mw = build_audit_middleware(mcp_tool_names=mcp_tool_names)
     if audit_mw is not None:
         middlewares.append(audit_mw)
+
+    opa_mw = build_opa_middleware()
+    if opa_mw is not None:
+        middlewares.append(opa_mw)
 
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
