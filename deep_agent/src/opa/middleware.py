@@ -14,12 +14,14 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
     ToolCallRequest,
+    hook_config,
 )
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.constants import TAG_NOSTREAM
+from langgraph.runtime import Runtime
 from langgraph.types import Command
 
-from deep_agent.src.opa.service import evaluate_message
+from deep_agent.src.opa.service import evaluate_message, evaluate_trajectory
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
@@ -27,6 +29,7 @@ logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
 _BLOCKED_TOOL_MESSAGE = "Tool call blocked by OPA policy."
 _BLOCKED_MODEL_MESSAGE = "LLM call blocked by OPA policy."
+_BLOCKED_TRAJECTORY_MESSAGE = "Trajectory blocked by OPA policy."
 
 
 class _NoStreamModel:
@@ -68,6 +71,36 @@ class OPAMiddleware(AgentMiddleware):
             if text:
                 return text
         return ""
+
+    @hook_config(can_jump_to=["end"])
+    async def abefore_model(
+        self,
+        state: dict[str, Any],
+        runtime: Runtime[Any],
+    ) -> dict[str, Any] | None:
+        """Evaluate conversation trajectory before each model call."""
+        messages = state.get("messages") or []
+        if not messages:
+            return None
+
+        trajectory = [m for m in messages if isinstance(m, BaseMessage)]
+        opa = await evaluate_trajectory(trajectory)
+        print(f"[OPA] abefore_model opa: {vars(opa)!r}", flush=True)
+        if opa.allowed:
+            return None
+
+        print(
+            f"[OPA] abefore_model blocking trajectory: {opa.denial_reasons!r}",
+            flush=True,
+        )
+        logger.info(
+            "OPA abefore_model blocking trajectory: %s",
+            opa.denial_reasons,
+        )
+        return {
+            "messages": [AIMessage(content=_BLOCKED_TRAJECTORY_MESSAGE)],
+            "jump_to": "end",
+        }
 
     async def awrap_model_call(
         self,
