@@ -19,6 +19,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.constants import TAG_NOSTREAM
 from langgraph.types import Command
 
+from deep_agent.src.opa.service import evaluate_message
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
@@ -74,6 +75,7 @@ class OPAMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
         """Async model hook: generate silently, then allow or block."""
+        print(f"[OPA] awrap_model_call request: {vars(request)!r}", flush=True)
         result = await handler(
             request.override(model=_NoStreamModel(request.model))  # type: ignore[arg-type]
         )
@@ -81,19 +83,26 @@ class OPAMiddleware(AgentMiddleware):
 
         if not text.strip():
             return result
-        if "doctor" in text.lower():
-            print("OPA awrap_model_call blocking model output")
-            orig = result.result[-1]
-            return ModelResponse(
-                result=[
-                    AIMessage(
-                        content=_BLOCKED_MODEL_MESSAGE,
-                        id=orig.id,
-                        name=orig.name,
-                    )
-                ]
-            )
-        return result
+
+        opa = await evaluate_message("llm_response", agent_message=text)
+        print(f"[OPA] awrap_model_call opa: {vars(opa)!r}", flush=True)
+        if opa.allowed:
+            return result
+
+        print(
+            f"[OPA] awrap_model_call blocking model output: {opa.denial_reasons!r}",
+            flush=True,
+        )
+        orig = result.result[-1]
+        return ModelResponse(
+            result=[
+                AIMessage(
+                    content=_BLOCKED_MODEL_MESSAGE,
+                    id=orig.id,
+                    name=orig.name,
+                )
+            ]
+        )
 
     async def awrap_tool_call(
         self,
