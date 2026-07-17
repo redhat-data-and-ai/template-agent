@@ -165,6 +165,7 @@ class Settings(BaseSettings):
     OPA_ENABLED: Optional[bool] = Field(default=None)
     OPA_URL: Optional[str] = Field(default=None)
     OPA_TIMEOUT: Optional[float] = Field(default=None)
+    OPA_MAX_RETRIES: Optional[int] = Field(default=None)
 
     # ── Platform ──────────────────────────────────────────────────────
     DEPLOYED_AGENT_NAME: str = Field(default="")

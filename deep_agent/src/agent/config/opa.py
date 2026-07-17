@@ -16,3 +16,4 @@ class OpaFileConfig(BaseModel):
     enabled: bool = False
     url: str = "http://localhost:8181/v1/data/agent/authz"
     timeout: float = Field(default=2.0, gt=0)
+    max_retries: int = Field(default=0, ge=0)

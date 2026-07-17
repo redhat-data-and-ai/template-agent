@@ -16,11 +16,12 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
     hook_config,
 )
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.constants import TAG_NOSTREAM
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
+from deep_agent.src.opa.config import get_opa_max_retries
 from deep_agent.src.opa.service import evaluate_message, evaluate_trajectory
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -107,25 +108,44 @@ class OPAMiddleware(AgentMiddleware):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
-        """Async model hook: generate silently, then allow or block."""
-        print(f"[OPA] awrap_model_call request: {vars(request)!r}", flush=True)
-        result = await handler(
-            request.override(model=_NoStreamModel(request.model))  # type: ignore[arg-type]
-        )
-        text = self._extract_text(result)
+        """Async model hook: generate silently, then allow or block with retries."""
+        max_retries = get_opa_max_retries()
+        current_request = request
 
-        if not text.strip():
-            return result
+        for attempt in range(max_retries + 1):
+            print(f"[OPA] awrap_model_call attempt {attempt + 1}/{max_retries + 1}", flush=True)
+            result = await handler(
+                current_request.override(model=_NoStreamModel(current_request.model))  # type: ignore[arg-type]
+            )
+            print(f"[OPA] awrap_model_call result: {vars(result)!r}", flush=True)
+            text = self._extract_text(result)
 
-        opa = await evaluate_message("llm_response", agent_message=text)
-        print(f"[OPA] awrap_model_call opa: {vars(opa)!r}", flush=True)
-        if opa.allowed:
-            return result
+            if not text.strip():
+                return result
 
-        print(
-            f"[OPA] awrap_model_call blocking model output: {opa.denial_reasons!r}",
-            flush=True,
-        )
+            opa = await evaluate_message("llm_response", agent_message=text)
+            print(f"[OPA] awrap_model_call opa: {vars(opa)!r}", flush=True)
+            if opa.allowed:
+                return result
+
+            print(
+                f"[OPA] awrap_model_call blocking model output (attempt {attempt + 1}/{max_retries + 1}): {opa.denial_reasons!r}",
+                flush=True,
+            )
+
+            if attempt < max_retries:
+                denial_summary = "; ".join(opa.denial_reasons) if opa.denial_reasons else "policy violation"
+                feedback = HumanMessage(
+                    content=(
+                        f"Your previous response was blocked by security policy. "
+                        f"Reasons: {denial_summary}. "
+                        f"Please revise your response to comply with the policy."
+                    )
+                )
+                current_request = current_request.override(
+                    messages=current_request.messages + [feedback]
+                )
+
         orig = result.result[-1]
         return ModelResponse(
             result=[
@@ -182,16 +202,17 @@ class OPAMiddleware(AgentMiddleware):
             f"[OPA] awrap_tool_call blocking tool output: {opa.denial_reasons!r}",
             flush=True,
         )
-        logger.info(
-            "OPA awrap_tool_call blocking tool=%s reasons=%s",
-            tool_name,
-            opa.denial_reasons,
-        )
+
+        denial_summary = "; ".join(opa.denial_reasons) if opa.denial_reasons else "policy violation"
         return Command(
             update={
                 "messages": [
                     ToolMessage(
-                        content=_BLOCKED_TOOL_MESSAGE,
+                        content=(
+                            f"{_BLOCKED_TOOL_MESSAGE} "
+                            f"Reasons: {denial_summary}. "
+                            f"Please revise the tool call arguments to comply with the policy and try again."
+                        ),
                         tool_call_id=tool_id,
                         name=tool_name,
                         status="error",

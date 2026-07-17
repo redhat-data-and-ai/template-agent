@@ -1,7 +1,7 @@
 """OPA authorization configuration.
 
 Resolution order (highest wins):
-  1. Environment variables: OPA_ENABLED, OPA_URL, OPA_TIMEOUT
+  1. Environment variables: OPA_ENABLED, OPA_URL, OPA_TIMEOUT, OPA_MAX_RETRIES
   2. agent.yaml ``opa:`` section
   3. OpaFileConfig defaults (enabled: false)
 
@@ -9,6 +9,7 @@ YAML reference (agent.yaml):
     opa.enabled
     opa.url
     opa.timeout
+    opa.max_retries
 """
 
 from __future__ import annotations
@@ -43,3 +44,10 @@ def get_opa_timeout() -> float:
     if settings.OPA_TIMEOUT is not None:
         return settings.OPA_TIMEOUT
     return _yaml_config().timeout
+
+
+def get_opa_max_retries() -> int:
+    """Return the maximum number of OPA-blocked retries."""
+    if settings.OPA_MAX_RETRIES is not None:
+        return settings.OPA_MAX_RETRIES
+    return _yaml_config().max_retries
