@@ -123,6 +123,9 @@ def _append_guardrails(target: list[Any], resolved: ResolvedMiddlewareConfig) ->
     if resolved.tool_retry.enabled and resolved.tool_retry.tools:
         _append_if_built(target, _build_tool_retry(resolved.tool_retry))
 
+    if resolved.pii.enabled and resolved.pii.rules:
+        target.extend(_build_pii_middleware(resolved.pii))
+
 
 def build_excluded_middleware(
     resolved: ResolvedMiddlewareConfig,
@@ -249,6 +252,26 @@ def _build_tool_retry(config: Any) -> Any | None:
     except ImportError:
         logger.debug("ToolRetryMiddleware not available")
         return None
+
+
+def _build_pii_middleware(config: Any) -> list[Any]:
+    """Build PIIMiddleware instances for each PII rule."""
+    results: list[Any] = []
+    try:
+        from langchain.agents.middleware import PIIMiddleware
+
+        for rule in config.rules:
+            try:
+                results.append(
+                    PIIMiddleware(
+                        rule.type, strategy=rule.strategy, apply_to_input=True
+                    )
+                )
+            except (ValueError, TypeError) as e:
+                logger.warning("Skipping PII rule '%s': %s", rule.type, e)
+    except ImportError:
+        logger.debug("PIIMiddleware not available")
+    return results
 
 
 def _build_summarization_tool_middleware(
