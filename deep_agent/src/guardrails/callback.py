@@ -34,14 +34,14 @@ def _extract_messages_to_scan(
     which replaces unsafe content with a safe placeholder before it enters state.
     """
     to_scan: list[tuple[str, str]] = []
-    for batch in reversed(messages):
-        for msg in reversed(batch):
-            if getattr(msg, "type", "") == "human":
-                content = _extract_content(msg)
-                if content:
-                    to_scan.append((content, "input"))
-                break
-        break  # only the most recent batch
+    if not messages:
+        return to_scan
+    for msg in reversed(messages[-1]):
+        if getattr(msg, "type", "") == "human":
+            content = _extract_content(msg)
+            if content:
+                to_scan.append((content, "input"))
+            break
     return to_scan
 
 
@@ -62,21 +62,6 @@ def _extract_output_text(response: LLMResult) -> str:
             if text:
                 return text
     return ""
-
-
-_SENSITIVE_TOOL_ARGS = frozenset(
-    {
-        "password",
-        "secret",
-        "token",
-        "api_key",
-        "apikey",
-        "credential",
-        "private_key",
-        "access_key",
-        "auth",
-    }
-)
 
 
 class GraniteGuardianCallbackHandler(AsyncCallbackHandler):
@@ -118,34 +103,16 @@ class GraniteGuardianCallbackHandler(AsyncCallbackHandler):
     ) -> None:
         """Audit-log the tool invocation and pre-screen inputs through Granite Guardian."""
         tool_name = serialized.get("name", "unknown")
-        safe_inputs: dict[str, Any] = {}
-        for k, v in (inputs or {}).items():
-            safe_inputs[k] = (
-                "***REDACTED***" if k.lower() in _SENSITIVE_TOOL_ARGS else v
-            )
         logger.info(
-            "tool_call_start", tool=tool_name, run_id=str(run_id), inputs=safe_inputs
+            "tool_call_start",
+            tool=tool_name,
+            run_id=str(run_id),
+            input_keys=sorted((inputs or {}).keys()),
         )
-
-        scannable = (
-            " ".join(
-                str(v)
-                for k, v in (inputs or {}).items()
-                if k.lower() not in _SENSITIVE_TOOL_ARGS
-            )
-            or input_str
-        )
-        if scannable:
-            from deep_agent.src.guardrails.client import check_safety
-
-            is_safe, verdict = await check_safety(scannable, context="tool_input")
-            if not is_safe:
-                logger.warning(
-                    "guardian_blocked_tool_input", tool=tool_name, verdict=verdict
-                )
-                raise ToolContentSafetyError(
-                    f"Tool call to '{tool_name}' blocked by content safety policy."
-                )
+        # Arg safety is handled by GuardianToolProxy Phase 1, which returns a
+        # BLOCKED_INPUT ToolMessage instead of raising — preserving parallel batch
+        # isolation. Scanning here would duplicate that call and raise an exception
+        # that cancels other in-flight tools in the same batch.
 
     async def on_tool_end(
         self,
@@ -158,8 +125,7 @@ class GraniteGuardianCallbackHandler(AsyncCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """Audit-log the tool result; result safety is handled by GuardianToolProxy."""
-        content = str(output)[:200] if output else ""
-        logger.info("tool_call_end", run_id=str(run_id), output_preview=content)
+        logger.info("tool_call_end", run_id=str(run_id))
         # Result safety is handled by GuardianToolProxy, which replaces unsafe
         # content with a safe placeholder before it becomes a ToolMessage.
         # This callback is kept for audit logging only.
@@ -226,9 +192,8 @@ class GraniteGuardianCallbackHandler(AsyncCallbackHandler):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Screen LLM output through Guardian, optionally blocking the response."""
+        """Screen LLM output through Guardian, blocking unsafe responses."""
         from deep_agent.src.guardrails.client import check_safety
-        from deep_agent.src.settings import settings
 
         content = _extract_output_text(response)
         if not content:
@@ -237,7 +202,4 @@ class GraniteGuardianCallbackHandler(AsyncCallbackHandler):
         is_safe, verdict = await check_safety(content, context="output")
         if not is_safe:
             logger.warning("guardian_flagged_output", verdict=verdict)
-            if settings.GUARDIAN_BLOCK_OUTPUT:
-                raise ToolContentSafetyError(
-                    "Response blocked by content safety policy."
-                )
+            raise ToolContentSafetyError("Response blocked by content safety policy.")

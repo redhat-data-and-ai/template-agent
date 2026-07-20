@@ -11,6 +11,9 @@ from __future__ import annotations
 from typing import Any
 
 from deep_agent.src.guardrails import (
+    TOOL_SAFETY_REFUSAL as _TOOL_SAFETY_REFUSAL,
+)
+from deep_agent.src.guardrails import (
     ContentSafetyError,
     InputContentSafetyError,
     ToolContentSafetyError,
@@ -20,9 +23,6 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 _INPUT_SAFETY_REFUSAL = "I can't help with that request due to content safety policy."
-_TOOL_SAFETY_REFUSAL = (
-    "I wasn't able to complete this task due to a content safety policy issue."
-)
 
 
 def safety_refusal(exc: BaseException) -> str | None:
@@ -54,6 +54,18 @@ def safety_refusal(exc: BaseException) -> str | None:
         seen.add(id(current))
         current = current.__cause__ or current.__context__
     return None
+
+
+def _build_merged_config(config: Any) -> tuple[dict, dict]:
+    """Inject a shared _safety_ctx into config so GuardianToolProxy can signal blocks."""
+    safety_ctx: dict = {"blocked": False}
+    base = config or {}
+    merged = {
+        **base,
+        "_safety_ctx": safety_ctx,
+        "metadata": {**(base.get("metadata") or {}), "_safety_ctx": safety_ctx},
+    }
+    return merged, safety_ctx
 
 
 class SafetyAwareRunnable:
@@ -100,28 +112,12 @@ class SafetyAwareRunnable:
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
         """Invoke the runnable, converting safety errors to a refusal message at the boundary."""
-        logger.warning(
+        logger.debug(
             "safety_aware_runnable ainvoke called outermost=%s", self._outermost
         )
         try:
-            safety_ctx = {"blocked": False}
-            _base = config or {}
-            merged_config = {
-                **_base,
-                "_safety_ctx": safety_ctx,
-                "metadata": {
-                    **(_base.get("metadata") or {}),
-                    "_safety_ctx": safety_ctx,
-                },
-            }
+            merged_config, safety_ctx = _build_merged_config(config)
             result = await self._runnable.ainvoke(input, merged_config, **kwargs)
-            if isinstance(result, dict) and "messages" in result:
-                from langchain_core.messages import AIMessage
-
-                new_msgs = []
-                for m in result["messages"]:
-                    new_msgs.append(m)
-                result = {**result, "messages": new_msgs}
             # Override LLM output with consistent refusal if any tool was safety-blocked.
             # Run at every level (not just outermost) so that inner SafetyAwareRunnables
             # (e.g. analyst subagent, outermost=False) also override their final AIMessage.
@@ -173,20 +169,11 @@ class SafetyAwareRunnable:
         self, input: Any, config: Any = None, **kwargs: Any
     ) -> Any:
         """Stream events, suppressing buffered AI output when a safety block is detected."""
-        logger.warning(
+        logger.debug(
             "safety_aware_runnable astream_events called outermost=%s", self._outermost
         )
         try:
-            safety_ctx = {"blocked": False}
-            _base = config or {}
-            merged_config = {
-                **_base,
-                "_safety_ctx": safety_ctx,
-                "metadata": {
-                    **(_base.get("metadata") or {}),
-                    "_safety_ctx": safety_ctx,
-                },
-            }
+            merged_config, safety_ctx = _build_merged_config(config)
             # Buffer AI output chunks so we can replace them with the refusal if blocked.
             # Non-AI events (tool calls, tool results, metadata) stream through immediately.
             ai_chunks: list[Any] = []
@@ -229,7 +216,6 @@ class SafetyAwareRunnable:
                     "data": {"chunk": AIMessage(content=_TOOL_SAFETY_REFUSAL)},
                 }
             else:
-                # Pass buffered AI chunks through unchanged.
                 # Pass buffered AI chunks through unchanged.
                 for chunk in ai_chunks:
                     yield chunk

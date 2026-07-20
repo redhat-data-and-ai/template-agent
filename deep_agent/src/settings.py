@@ -123,12 +123,11 @@ class Settings(BaseSettings):
     VLLM_API_KEY: str = Field(default="EMPTY")
 
     # ── Granite Guardian guardrails ───────────────────────────────────
-    GUARDIAN_ENABLED: bool = Field(default=False)
+    # Guardrails are active when GUARDIAN_API_BASE is set.
+    # Model and behavior config live in config/agent/runtime/guardrails.yaml.
     GUARDIAN_API_BASE: Optional[str] = Field(default=None)
     GUARDIAN_API_KEY: str = Field(default="EMPTY")
-    GUARDIAN_MODEL: str = Field(default="ibm-granite/granite-guardian-3.2-5b")
     GUARDIAN_SSL_VERIFY: bool = Field(default=True)
-    GUARDIAN_BLOCK_OUTPUT: bool = Field(default=False)
 
     # ── Cache ─────────────────────────────────────────────────────────
     CACHE_ENABLED: bool = Field(default=True)

@@ -104,7 +104,7 @@ class PersonalizationRepository:
         """Insert a new memory and return the created model."""
         from deep_agent.src.settings import settings
 
-        if settings.GUARDIAN_ENABLED:
+        if settings.GUARDIAN_API_BASE:
             from deep_agent.src.guardrails.client import check_safety
 
             is_safe, verdict = await check_safety(content, context="memory")
@@ -162,7 +162,7 @@ class PersonalizationRepository:
         """Create or update a rule and return the model."""
         from deep_agent.src.settings import settings
 
-        if settings.GUARDIAN_ENABLED:
+        if settings.GUARDIAN_API_BASE:
             from deep_agent.src.guardrails.client import check_safety
 
             is_safe, verdict = await check_safety(content, context="rule")

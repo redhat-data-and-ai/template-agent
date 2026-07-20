@@ -11,7 +11,7 @@ LLM call in the process, including in-process subagents.
 | `on_chat_model_start` | Last human message — safety + injection | Blocks if unsafe (raises `InputContentSafetyError`) |
 | `on_tool_start` | Tool call arguments (sensitive keys redacted) | Blocks if unsafe (raises `ToolContentSafetyError`) |
 | `on_tool_end` | Tool result | Audit log only — result safety is handled by `GuardianToolProxy` |
-| `on_llm_end` | LLM response | Logs always; blocks if `GUARDIAN_BLOCK_OUTPUT=true` |
+| `on_llm_end` | LLM response | Logs always; always blocks unsafe output |
 | `on_tool_error` | Tool execution errors | Logs only |
 
 Content deduplication: the handler SHA-256 hashes each scanned string and skips
@@ -19,7 +19,7 @@ re-scanning the same human message on repeat LLM rounds within an agentic loop.
 
 ### GuardianToolProxy — per-tool async proxy
 `wrap_tools()` in `deep_agent/src/guardrails/tool_proxy.py` replaces every tool
-in the agent's tool list with a `GuardianToolProxy` when `GUARDIAN_ENABLED=true`.
+in the agent's tool list with a `GuardianToolProxy` when `GUARDIAN_API_BASE` is set.
 The proxy runs three phases on every `ainvoke`:
 
 1. **Pre-check args** — `check_safety(arg_text[:500])` before the inner tool executes.
@@ -95,9 +95,9 @@ instruction payload before dispatch. `AuditMiddleware` emits a `subagent_delegat
 event for every `task` tool call.
 
 **Residual gap:** The remote pod's own LLM calls and tool calls are only
-protected if that pod is deployed with `GUARDIAN_ENABLED=true`.
+protected if that pod is deployed with `GUARDIAN_API_BASE` set.
 
-**Required action:** Enforce `GUARDIAN_ENABLED=true` + Guardian env vars on
+**Required action:** Enforce `GUARDIAN_API_BASE` + Guardian env vars on
 every deployed agent pod. Treat this as a deployment standard, not optional.
 
 ---
@@ -166,7 +166,29 @@ unicode overrides) before passing content to `check_safety()`.
 
 ---
 
-### 6. Audit log integrity — Low
+### 6. Guardian API fail-open on outage — Medium
+**Threat:** If the Guardian endpoint is unreachable (network partition, pod crash,
+misconfiguration), every `check_safety` and `check_injection` call catches the
+exception, logs a warning, and returns `(is_safe=True, "error")`. All guardrail
+checks — user input, tool args, tool results, LLM output, and memory writes — silently
+pass through for the duration of the outage.
+
+**Mitigation in place:** Each failed check emits a `guardian_check_failed` warning
+log with `exc_info=True`. The agent remains available and functional.
+
+**Residual gap:** This is a deliberate availability-over-security tradeoff. A Guardian
+outage is operationally invisible to users and produces only per-check warning logs.
+There is no alerting, no circuit breaker, and no `GUARDIAN_FAIL_OPEN=false` mode
+for deployments that require guardrails to be enforced even at the cost of availability.
+
+**Required action:** Add a `GUARDIAN_FAIL_OPEN` setting (default `true` to preserve
+current behaviour). When `false`, failed Guardian checks return `(is_safe=False)`
+so requests are blocked during an outage. Add a monitoring alert on the
+`guardian_check_failed` log event to detect outages promptly.
+
+---
+
+### 7. Audit log integrity — Low
 **Threat:** Audit events are emitted to stdout only. A compromised container
 runtime or log-scraping pipeline could drop or tamper with audit records without
 detection.

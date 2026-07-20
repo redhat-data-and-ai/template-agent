@@ -23,6 +23,7 @@ from typing import Any, cast
 import yaml
 
 from deep_agent.src.exceptions import AppException, ErrorCodes
+from deep_agent.src.guardrails.config import GuardrailsConfig
 from deep_agent.src.settings import settings
 from deep_agent.src.token_budget.config import TokenBudgetConfig
 from deep_agent.utils.pylogger import get_python_logger
@@ -115,6 +116,7 @@ class AgentConfig:
     _cache_config: CacheFileConfig
     _otel_config: OtelFileConfig
     _token_budget_config: TokenBudgetConfig
+    _guardrails_config: GuardrailsConfig
     _name: str
 
     def __new__(cls, base_dir: Path | None = None) -> "AgentConfig":
@@ -163,6 +165,26 @@ class AgentConfig:
         except Exception as e:
             logger.warning("Failed to parse runtime/agent.yaml, using defaults: %s", e)
             return {}
+
+    def _load_guardrails_config(self) -> GuardrailsConfig:
+        """Load guardrails configuration from runtime/guardrails.yaml.
+
+        Returns GuardrailsConfig with defaults if the file does not exist —
+        absence of the file is fine; guardrails activate only when GUARDIAN_API_BASE is set.
+        """
+        guardrails_yaml = self._base_dir / "runtime" / "guardrails.yaml"
+        if not guardrails_yaml.is_file():
+            logger.info("No guardrails.yaml found — using default Guardian model")
+            return GuardrailsConfig()
+
+        try:
+            raw = yaml.safe_load(guardrails_yaml.read_text()) or {}
+            config: GuardrailsConfig = GuardrailsConfig.model_validate(raw)
+            logger.info("Loaded guardrails config (model=%s)", config.model)
+            return config
+        except Exception as e:
+            logger.warning("Failed to parse guardrails.yaml, using defaults: %s", e)
+            return GuardrailsConfig()
 
     def _load_otel_config(self) -> OtelFileConfig:
         """Load OpenTelemetry configuration from observability.yaml.
@@ -230,6 +252,9 @@ class AgentConfig:
 
         # Load OTEL config from observability.yaml
         self._otel_config = self._load_otel_config()
+
+        # Load guardrails config from guardrails.yaml
+        self._guardrails_config = self._load_guardrails_config()
 
         # Extract token budget section
         self._token_budget_config = TokenBudgetConfig.model_validate(
@@ -581,6 +606,15 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return self._otel_config
+
+    def get_guardrails_config(self) -> GuardrailsConfig:
+        """Get the pre-loaded guardrails configuration.
+
+        Returns:
+            The parsed GuardrailsConfig from guardrails.yaml (defaults if absent).
+        """
+        self._ensure_loaded()
+        return self._guardrails_config
 
     def get_pyproject_path(self) -> Path:
         """Get the skill sandbox pyproject.toml path.

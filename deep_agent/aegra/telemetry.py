@@ -243,13 +243,15 @@ def setup_guardian_guardrails() -> None:
 
     from deep_agent.src.settings import settings
 
-    if not settings.GUARDIAN_ENABLED:
-        logger.info("Granite Guardian disabled — set GUARDIAN_ENABLED=true to enable")
+    if not settings.GUARDIAN_API_BASE:
+        logger.info("Granite Guardian disabled — set GUARDIAN_API_BASE to enable")
         return
 
-    if not settings.GUARDIAN_API_BASE:
-        logger.warning("GUARDIAN_API_BASE not set — Guardian guardrails disabled")
-        return
+    from deep_agent.src.agent.config import agent_config
+    from deep_agent.src.guardrails import init_guardrails
+
+    guardian_cfg = agent_config.get_guardrails_config()
+    init_guardrails(guardian_cfg)
 
     try:
         from langchain_core.tracers.context import register_configure_hook
@@ -259,17 +261,16 @@ def setup_guardian_guardrails() -> None:
         _guardian_ctx_var: contextvars.ContextVar = contextvars.ContextVar(
             "guardian_handler", default=None
         )
-        os.environ.setdefault("GUARDIAN_ENABLED", "true")
+        os.environ.setdefault("GUARDIAN_ACTIVE", "true")
         register_configure_hook(
             _guardian_ctx_var,
             True,
             GraniteGuardianCallbackHandler,
-            env_var="GUARDIAN_ENABLED",
+            env_var="GUARDIAN_ACTIVE",
         )
         logger.info(
-            "Granite Guardian callback registered (model=%s, block_output=%s)",
-            settings.GUARDIAN_MODEL,
-            settings.GUARDIAN_BLOCK_OUTPUT,
+            "Granite Guardian callback registered (model=%s)",
+            guardian_cfg.model,
         )
     except ImportError:
         logger.warning("langchain_core not available — Guardian callback disabled")

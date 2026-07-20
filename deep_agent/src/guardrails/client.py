@@ -53,13 +53,20 @@ def _build_guardian_block(criteria: str) -> str:
     )
 
 
+def _guardian_model() -> str:
+    from deep_agent.src.guardrails import get_guardrails_config
+
+    cfg = get_guardrails_config()
+    return cfg.model if cfg else "ibm-granite/granite-guardian-3.2-5b"
+
+
 async def _call_guardian(
     messages: list[dict], context: str, max_tokens: int = 20
 ) -> tuple[bool, str]:
     """Shared Guardian API call. Returns (is_safe, verdict)."""
     try:
         response = await litellm.acompletion(
-            model=f"openai/{settings.GUARDIAN_MODEL}",
+            model=f"openai/{_guardian_model()}",
             messages=messages,
             max_tokens=max_tokens,
             temperature=0,
@@ -81,8 +88,6 @@ async def check_safety(content: str, context: str = "input") -> tuple[bool, str]
     Granite Guardian's built-in template is used (no custom criteria). The model
     responds with 'Yes' (unsafe) or 'No' (safe).
     """
-    if not settings.GUARDIAN_ENABLED:
-        return True, "disabled"
     return await _call_guardian(
         messages=[{"role": "user", "content": content}],
         context=context,
@@ -96,8 +101,6 @@ async def check_injection(content: str, context: str = "input") -> tuple[bool, s
     does not detect instruction-manipulation attacks. Extra tokens are needed
     because the model reasons step-by-step before emitting the final verdict.
     """
-    if not settings.GUARDIAN_ENABLED:
-        return True, "disabled"
     return await _call_guardian(
         messages=[
             {"role": "user", "content": content},

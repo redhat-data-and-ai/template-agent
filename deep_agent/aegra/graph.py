@@ -278,10 +278,6 @@ async def agent(runtime: ServerRuntime) -> Any:
     subagents = load_subagents(tools=mcp_tools)
     backend = get_configured_backend()
 
-    middleware_overrides = orchestrator_cfg.get("middleware")
-    resolved_mw = agent_config.resolve_agent_middleware(
-        model_name, middleware_overrides
-    )
     middleware = build_middleware_list(
         resolved_mw,
         model=model,
@@ -302,7 +298,7 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     from deep_agent.src.settings import settings as app_settings
 
-    if app_settings.GUARDIAN_ENABLED:
+    if app_settings.GUARDIAN_API_BASE:
         from deep_agent.src.guardrails.tool_proxy import wrap_tools
 
         tools = wrap_tools(tools)
@@ -353,7 +349,7 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     _inner_graph = create_deep_agent(**create_kwargs)
 
-    if app_settings.GUARDIAN_ENABLED:
+    if app_settings.GUARDIAN_API_BASE:
         from deep_agent.aegra.safety import SafetyAwareRunnable
 
         _inner_graph = SafetyAwareRunnable(_inner_graph, outermost=True)

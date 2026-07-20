@@ -20,6 +20,7 @@ from typing import Any, Optional, Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, PrivateAttr
 
+from deep_agent.src.guardrails import TOOL_SAFETY_REFUSAL
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -27,14 +28,14 @@ logger = get_python_logger()
 BLOCKED_RESULT = (
     "[SAFETY_BLOCKED] This tool's result was blocked by the content safety policy. "
     "Reply to the user with this exact sentence and nothing else: "
-    "'I wasn't able to complete this task due to a content safety policy issue.' "
+    f"'{TOOL_SAFETY_REFUSAL}' "
     "Do not describe this as an error. Do not suggest retrying. Do not call this tool any further tools."
 )
 
 BLOCKED_INPUT = (
     "[SAFETY_BLOCKED] The arguments for this tool were blocked by the content safety policy. "
-    "Reply to the user with this exact sentence and nothing else: "
-    "'I wasn't able to complete this task due to a content safety policy issue.' "
+    f"Reply to the user with this exact sentence and nothing else: "
+    f"'{TOOL_SAFETY_REFUSAL}' "
     "Do not describe this as an error. Do not suggest retrying. Do not call any further tools."
 )
 
@@ -83,6 +84,10 @@ def _make_blocked_result(original_result: Any) -> Any:
         pass
 
     # Fallback: return as-is (unknown type — let LangGraph surface the error)
+    logger.warning(
+        "_make_blocked_result: unrecognised result type %s",
+        type(original_result).__name__,
+    )
     return BLOCKED_RESULT
 
 
@@ -157,7 +162,7 @@ class GuardianToolProxy(BaseTool):
         from deep_agent.src.settings import settings
 
         # Phase 1: pre-check args before the inner tool executes.
-        if settings.GUARDIAN_ENABLED:
+        if settings.GUARDIAN_API_BASE:
             arg_text = str(input)
             is_safe, verdict = await check_safety(arg_text, context="tool_input")
             if not is_safe:
@@ -185,7 +190,7 @@ class GuardianToolProxy(BaseTool):
             content = str(result.content)
         else:
             content = str(result) if result is not None else ""
-        if not content or not settings.GUARDIAN_ENABLED:
+        if not content or not settings.GUARDIAN_API_BASE:
             return result
 
         is_safe, verdict = await check_safety(content, context="tool_result")
@@ -211,6 +216,7 @@ class GuardianToolProxy(BaseTool):
         return result
 
     # _run satisfies BaseTool's abstract requirement; used only in sync contexts.
+    # Guardian screening is NOT applied here — callers must use ainvoke.
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         return self._inner.invoke(*args, **kwargs)
 
@@ -219,6 +225,6 @@ def wrap_tools(tools: list[Any]) -> list[Any]:
     """Wrap a list of tools with GuardianToolProxy when Guardian is enabled."""
     from deep_agent.src.settings import settings
 
-    if not settings.GUARDIAN_ENABLED or not tools:
+    if not settings.GUARDIAN_API_BASE or not tools:
         return tools
     return [GuardianToolProxy(t) for t in tools]
