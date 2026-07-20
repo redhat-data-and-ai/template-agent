@@ -258,7 +258,7 @@ platform:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 opa:
   enabled: true
-  url: http://localhost:8181/v1/data/agent/authz
+  url: http://opa:8181/v1/data/agent/authz
   timeout: 2.0
   max_retries: 3
 # Env: OPA_ENABLED, OPA_URL, OPA_TIMEOUT, OPA_MAX_RETRIES
