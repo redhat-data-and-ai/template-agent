@@ -1,0 +1,21 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: agent-headless
+  labels:
+    app: agent
+    component: agent-headless
+spec:
+  scaleTargetRef:
+    name: agent-headless
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  cooldownPeriod: 300
+  pollingInterval: 15
+  triggers:
+    - type: redis-streams
+      metadata:
+        addressFromEnv: REDIS_URL
+        stream: agent-tasks
+        consumerGroup: agent-workers
+        pendingEntriesCount: "10"

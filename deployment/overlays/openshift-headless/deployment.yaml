@@ -1,0 +1,155 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-headless
+  labels:
+    app: agent
+    component: agent-headless
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: agent
+      component: agent-headless
+  template:
+    metadata:
+      labels:
+        app: agent
+        component: agent-headless
+    spec:
+      serviceAccountName: agent
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: agent-headless
+          image: agent:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "deep_agent.headless"]
+          ports:
+            - containerPort: 8080
+              name: health
+              protocol: TCP
+          env:
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: ENVIRONMENT
+                  optional: true
+            - name: PYTHON_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: PYTHON_LOG_LEVEL
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REDIS_URL
+            - name: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+                  optional: true
+            - name: VLLM_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: VLLM_BASE_URL
+                  optional: true
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: VLLM_API_KEY
+                  optional: true
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+            - name: LANGFUSE_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_BASE_URL
+                  optional: true
+            - name: LANGFUSE_TRACING_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: LANGFUSE_TRACING_ENVIRONMENT
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+      restartPolicy: Always

@@ -189,6 +189,7 @@ async def check_and_record(
     output_tokens: int,
     *,
     user_id: str | None = None,
+    trace_id: str | None = None,
 ) -> None:
     """Increment thread usage, roll up daily user totals, and emit OTEL when enabled."""
     config = agent_config.get_token_budget_config()
@@ -243,6 +244,7 @@ async def check_and_record(
         cumulative_input=int(row["input_tokens"]),
         cumulative_output=int(row["output_tokens"]),
         timestamp=row.get("updated_at"),
+        trace_id=trace_id,
     )
 
     if daily_row is not None:

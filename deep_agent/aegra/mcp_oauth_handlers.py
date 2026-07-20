@@ -35,9 +35,14 @@ _OAUTH_STATE_TTL_SECONDS = 300
 
 
 def _callback_redirect_uri(request: Request) -> str:
-    """Reconstruct the OAuth callback URL (scheme + host + path, no query)."""
-    url = request.url
-    return f"{url.scheme}://{url.netloc}{url.path}"
+    """Reconstruct the OAuth callback URL using the canonical public base URL.
+
+    Behind a reverse proxy (e.g. MCP ingress with nginx rewrite-target),
+    request.url.path is the rewritten pod-local path, not the original
+    public path.  Use AGENT_PUBLIC_BASE_URL so the URI matches what was
+    registered during DCR / authorization.
+    """
+    return settings.oauth_callback_url
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -133,7 +138,7 @@ async def handle_mcp_connect(user_id: str, mcp_name: str) -> dict[str, str]:
             )
 
     redirect_uri = settings.oauth_callback_url
-    current_agent_name = agent_config.get_name()
+    current_agent_name = settings.agent_deployment_id
 
     store = McpTokenStore(settings.database_uri)
     if auth_mode == "dcr":
@@ -230,7 +235,7 @@ async def handle_mcp_oauth_callback(
 
     store = McpTokenStore(settings.database_uri)
     auth_mode = server_cfg.get("auth_mode", "sso")
-    current_agent_name = agent_config.get_name()
+    current_agent_name = settings.agent_deployment_id
     if auth_mode == "oauth":
         client_id = oauth_cfg.get("client_id")
         client_secret = resolve_oauth_client_secret(oauth_cfg, mcp_name)
@@ -290,6 +295,7 @@ async def handle_mcp_oauth_callback(
         )
 
     await store.upsert_token(
+        agent_name=current_agent_name,
         user_id=user_id,
         mcp_name=mcp_name,
         access_token=access_token,

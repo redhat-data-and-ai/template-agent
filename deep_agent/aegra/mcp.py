@@ -225,8 +225,25 @@ async def refresh_access_token(
 
 
 def mcp_httpx_verify(server_cfg: dict[str, Any]) -> bool:
-    """Return the httpx ``verify`` flag for an MCP server config (default True)."""
-    return bool(server_cfg.get("ssl_verify", True))
+    """Return the httpx ``verify`` flag for an MCP server config (default True).
+
+    In production, SSL verification cannot be disabled.
+    """
+    from deep_agent.src.settings import settings
+
+    ssl_verify = bool(server_cfg.get("ssl_verify", True))
+
+    # Enforce SSL verification in production
+    if settings.is_production and not ssl_verify:
+        server_name = server_cfg.get("name", "unknown")
+        logger.error(
+            "MCP server '%s' has ssl_verify=false, which is not permitted in production. "
+            "SSL verification will be enforced.",
+            server_name,
+        )
+        return True
+
+    return ssl_verify
 
 
 def _get_server_configs() -> dict[str, dict[str, Any]]:
@@ -299,10 +316,20 @@ def _build_server_config(
         "headers": headers,
     }
 
+    # mcp_httpx_verify enforces True in production
     if not mcp_httpx_verify(entry):
-        config["httpx_client_factory"] = lambda **kw: httpx.AsyncClient(
-            verify=False, **kw
-        )  # nosec B501
+        from deep_agent.src.settings import settings
+
+        if settings.is_production:
+            logger.warning(
+                "MCP server '%s': ssl_verify forced to True in production",
+                entry.get("name", entry.get("url", "unknown")),
+            )
+        else:
+            # Only disable SSL verification in development environments
+            config["httpx_client_factory"] = lambda **kw: httpx.AsyncClient(
+                verify=False, **kw
+            )  # nosec B501 - only in development
 
     return config
 

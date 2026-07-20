@@ -86,6 +86,8 @@ services:
       - POSTGRES_PASSWORD=postgres
       - REDIS_URL=redis://redis:6379/0
       - REDIS_BROKER_ENABLED=true
+      # Custom CA — mount a PEM at ./certs/ca.pem to trust corporate CAs
+      - CUSTOM_CA_PATH=${CUSTOM_CA_PATH:-/etc/custom-ca/ca.pem}
       # OTEL (enable via env — make container sets these when Jaeger profile is active)
       - ENABLE_OTEL=${ENABLE_OTEL:-false}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
@@ -106,6 +108,7 @@ services:
     volumes:
       - ./deep_agent:/app/deep_agent:ro
       - ./config:/app/config:ro
+      - ${CUSTOM_CA_FILE:-/dev/null}:/etc/custom-ca/ca.pem:ro
     networks:
       - agent-network
 
