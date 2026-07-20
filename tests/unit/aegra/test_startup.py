@@ -1,8 +1,178 @@
 """Unit tests for startup orchestrator."""
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from deep_agent.aegra import startup
+from deep_agent.src.exceptions import ConfigurationError
+from deep_agent.src.settings import Environment
+
+
+class TestCheckPrerequisites:
+    """Tests for environment-aware startup prerequisite checks."""
+
+    def _make_settings(self, env=Environment.LOCAL, **overrides):
+        """Build a mock settings object with sane defaults."""
+        defaults = {
+            "ENVIRONMENT": env,
+            "database_uri": "postgresql://u:p@localhost:5432/db",
+            "REDIS_URL": "redis://localhost:6379/0",
+            "GOOGLE_APPLICATION_CREDENTIALS_CONTENT": "fake-creds",
+            "VLLM_BASE_URL": None,
+            "SSO_ISSUER_URL": "https://sso.example.com",
+            "SSO_CLIENT_ID": "client-id",
+            "SSO_CLIENT_SECRET": "client-secret",
+            "LANGFUSE_PUBLIC_KEY": "pk",
+            "LANGFUSE_SECRET_KEY": "sk",
+        }
+        defaults.update(overrides)
+        mock = MagicMock()
+        for k, v in defaults.items():
+            setattr(mock, k, v)
+        return mock
+
+    def test_local_warns_on_missing_db(self, caplog):
+        mock_settings = self._make_settings(env=Environment.LOCAL)
+        with (
+            patch("deep_agent.aegra.startup.settings", mock_settings),
+            patch(
+                "deep_agent.aegra.startup._check_db", side_effect=Exception("refused")
+            ),
+            patch("deep_agent.aegra.startup._check_redis"),
+            patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
+        ):
+            result = startup.check_prerequisites()
+        assert "warn" in result
+        assert "db" in caplog.text.lower() or "database" in caplog.text.lower()
+
+    def test_demo_fails_on_missing_db(self):
+        mock_settings = self._make_settings(env=Environment.DEMO)
+        with (
+            patch("deep_agent.aegra.startup.settings", mock_settings),
+            patch(
+                "deep_agent.aegra.startup._check_db", side_effect=Exception("refused")
+            ),
+            patch("deep_agent.aegra.startup._check_redis"),
+            patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
+        ):
+            with pytest.raises(ConfigurationError, match="database"):
+                startup.check_prerequisites()
+
+    def test_production_fails_on_missing_db(self):
+        mock_settings = self._make_settings(env=Environment.PRODUCTION)
+        with (
+            patch("deep_agent.aegra.startup.settings", mock_settings),
+            patch(
+                "deep_agent.aegra.startup._check_db", side_effect=Exception("refused")
+            ),
+            patch("deep_agent.aegra.startup._check_redis"),
+            patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
+        ):
+            with pytest.raises(ConfigurationError, match="database"):
+                startup.check_prerequisites()
+
+    def test_local_warns_on_missing_redis(self, caplog):
+        mock_settings = self._make_settings(env=Environment.LOCAL)
+        with (
+            patch("deep_agent.aegra.startup.settings", mock_settings),
+            patch("deep_agent.aegra.startup._check_db"),
+            patch(
+                "deep_agent.aegra.startup._check_redis",
+                side_effect=Exception("refused"),
+            ),
+            patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
+        ):
+            result = startup.check_prerequisites()
+        assert "warn" in result
+
+    def test_demo_fails_on_missing_redis(self):
+        mock_settings = self._make_settings(env=Environment.DEMO)
+        with (
+            patch("deep_agent.aegra.startup.settings", mock_settings),
+            patch("deep_agent.aegra.startup._check_db"),
+            patch(
+                "deep_agent.aegra.startup._check_redis",
+                side_effect=Exception("refused"),
+            ),
+            patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
+        ):
+            with pytest.raises(ConfigurationError, match="[Rr]edis"):
+                startup.check_prerequisites()
+
+    def test_all_envs_fail_on_missing_model_config(self):
+        for env in Environment:
+            mock_settings = self._make_settings(
+                env=env,
+                GOOGLE_APPLICATION_CREDENTIALS_CONTENT=None,
+                VLLM_BASE_URL=None,
+            )
+            with (
+                patch("deep_agent.aegra.startup.settings", mock_settings),
+                patch("deep_agent.aegra.startup._check_db"),
+                patch("deep_agent.aegra.startup._check_redis"),
+                patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
+                patch.dict(os.environ, {}, clear=False),
+            ):
+                os.environ.pop("OPENAI_API_KEY", None)
+                with pytest.raises(ConfigurationError, match="[Mm]odel"):
+                    startup.check_prerequisites()
+
+    def test_all_envs_fail_on_missing_prompt_md(self):
+        for env in Environment:
+            mock_settings = self._make_settings(env=env)
+            with (
+                patch("deep_agent.aegra.startup.settings", mock_settings),
+                patch("deep_agent.aegra.startup._check_db"),
+                patch("deep_agent.aegra.startup._check_redis"),
+                patch("deep_agent.aegra.startup._prompt_md_exists", return_value=False),
+            ):
+                with pytest.raises(ConfigurationError, match="PROMPT.md"):
+                    startup.check_prerequisites()
+
+    def test_staging_fails_on_missing_sso(self):
+        mock_settings = self._make_settings(
+            env=Environment.STAGING,
+            SSO_ISSUER_URL=None,
+            SSO_CLIENT_ID=None,
+            SSO_CLIENT_SECRET=None,
+        )
+        with (
+            patch("deep_agent.aegra.startup.settings", mock_settings),
+            patch("deep_agent.aegra.startup._check_db"),
+            patch("deep_agent.aegra.startup._check_redis"),
+            patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
+        ):
+            with pytest.raises(ConfigurationError, match="SSO"):
+                startup.check_prerequisites()
+
+    def test_local_skips_sso_check(self):
+        mock_settings = self._make_settings(
+            env=Environment.LOCAL,
+            SSO_ISSUER_URL=None,
+            SSO_CLIENT_ID=None,
+            SSO_CLIENT_SECRET=None,
+        )
+        with (
+            patch("deep_agent.aegra.startup.settings", mock_settings),
+            patch("deep_agent.aegra.startup._check_db"),
+            patch("deep_agent.aegra.startup._check_redis"),
+            patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
+        ):
+            result = startup.check_prerequisites()
+        assert result == "ok"
+
+    def test_happy_path_all_checks_pass(self):
+        mock_settings = self._make_settings(env=Environment.PRODUCTION)
+        with (
+            patch("deep_agent.aegra.startup.settings", mock_settings),
+            patch("deep_agent.aegra.startup._check_db"),
+            patch("deep_agent.aegra.startup._check_redis"),
+            patch("deep_agent.aegra.startup._prompt_md_exists", return_value=True),
+        ):
+            result = startup.check_prerequisites()
+        assert result == "ok"
 
 
 class TestRunStartup:
@@ -55,8 +225,8 @@ class TestValidateConfig:
             "deep_agent.src.settings.validate_config",
             side_effect=ValueError("bad port"),
         ):
-            result = await startup._validate_config()
-        assert "warning" in result
+            with pytest.raises(ValueError, match="bad port"):
+                await startup._validate_config()
 
 
 class TestEnsureDatabase:
