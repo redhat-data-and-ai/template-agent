@@ -113,6 +113,7 @@ Configuration is split between **secrets/endpoints** (`.env`) and **operational 
 | `MCP_TOKEN_ENCRYPTION_KEY` | — | Fernet key for OAuth/DCR token encryption |
 | `MCP_TOKEN_ENCRYPTION_KEY_PREVIOUS` | — | Previous key during rotation (decrypt-only) |
 | `AGENT_PUBLIC_BASE_URL` | `http://localhost:5002` | Public agent URL for OAuth callbacks |
+| `CUSTOM_CA_FILE` | — | Host path to a PEM file with custom CA certs (compose only) |
 | `SSL_KEYFILE` | — | TLS private key path (optional) |
 | `SSL_CERTFILE` | — | TLS certificate path (optional) |
 
@@ -204,6 +205,41 @@ Skills evals auto-discover from `config/agent/skills/*/evals/evals.json`. See [`
 ruff check . && ruff format .
 pre-commit run --all-files
 ```
+
+## Custom CA Certificates
+
+If your environment uses a corporate or internal certificate authority, the container can trust it at startup without rebuilding the image.
+
+**Compose** — set `CUSTOM_CA_FILE` in `.env` to the host path of your PEM bundle:
+
+```bash
+# .env
+CUSTOM_CA_FILE=./certs/ca.pem
+```
+
+**Kubernetes** — create a Secret and mount it, then set `CUSTOM_CA_PATH`:
+
+```yaml
+env:
+  - name: CUSTOM_CA_PATH
+    value: /etc/custom-ca/ca.pem
+volumeMounts:
+  - name: custom-ca
+    mountPath: /etc/custom-ca
+    readOnly: true
+volumes:
+  - name: custom-ca
+    secret:
+      secretName: custom-ca
+```
+
+**Fallback URL** — for non-orchestrated environments (e.g. `podman run`), set `CUSTOM_CA_URL` to download the PEM at startup:
+
+```bash
+podman run -e CUSTOM_CA_URL=https://certs.example.com/ca.pem ...
+```
+
+If neither variable is set, or the download fails, the container starts normally with default system certs.
 
 ## Deployment
 

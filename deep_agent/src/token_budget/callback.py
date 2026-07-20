@@ -20,6 +20,7 @@ logger = get_python_logger()
 
 THREAD_ID_METADATA_KEY = "token_budget_thread_id"
 USER_ID_METADATA_KEY = "token_budget_user_id"
+TRACE_ID_METADATA_KEY = "token_budget_trace_id"
 
 # Emit an ERROR-level alert after this many consecutive failures so ops
 # teams can detect a persistently degraded token-tracking feature.
@@ -81,6 +82,11 @@ def user_id_from_metadata(metadata: dict[str, Any] | None) -> str | None:
     return _extract_from_metadata(metadata, USER_ID_METADATA_KEY)
 
 
+def trace_id_from_metadata(metadata: dict[str, Any] | None) -> str | None:
+    """Resolve trace_id from RunnableConfig metadata."""
+    return _extract_from_metadata(metadata, TRACE_ID_METADATA_KEY)
+
+
 class TokenBudgetCallbackHandler(AsyncCallbackHandler):
     """Increment per-thread token usage after each LLM call."""
 
@@ -97,6 +103,7 @@ class TokenBudgetCallbackHandler(AsyncCallbackHandler):
             return
 
         user_id = user_id_from_metadata(metadata) or resolve_user_id()
+        trace_id = trace_id_from_metadata(metadata)
 
         input_tokens, output_tokens = extraction_fn(response)
         if input_tokens <= 0 and output_tokens <= 0:
@@ -108,6 +115,7 @@ class TokenBudgetCallbackHandler(AsyncCallbackHandler):
                 input_tokens,
                 output_tokens,
                 user_id=user_id,
+                trace_id=trace_id,
             )
             _on_tracking_success()
         except Exception:
@@ -127,7 +135,7 @@ class TokenBudgetCallbackHandler(AsyncCallbackHandler):
         metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Record token usage from a completed LLM call."""
+        """Record token usage when an LLM call completes."""
         await self._record_tokens(response, metadata, extract_tokens_from_llm_result)
 
 

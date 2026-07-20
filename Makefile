@@ -1,4 +1,4 @@
-.PHONY: local dev test clean deploy undeploy kind kind-down container container-down local-down
+.PHONY: local dev test clean deploy deploy-headless undeploy undeploy-headless kind kind-down container container-down local-down test-triggers test-integration test-headless headless
 
 # OpenShift namespace (can be overridden: make deploy openshift NAMESPACE=my-project)
 NAMESPACE ?= $(shell oc project -q 2>/dev/null)
@@ -129,6 +129,20 @@ local:
 local-down:
 	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml stop pgvector redis
 
+headless: ## Start agent in headless mode (background worker with event triggers)
+	@echo "Setting up headless environment..."
+	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
+	@echo "Starting infrastructure (Postgres + Redis)..."
+	@podman-compose -f compose.yaml up -d pgvector redis
+	@echo "Waiting for Postgres to be ready..."
+	@until podman exec demo-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
+	@podman exec demo-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
+		|| podman exec demo-pgvector psql -U postgres -c "CREATE DATABASE aegra;"
+	@echo "Starting headless agent worker..."
+	@echo "Set mode: headless in config/agent/runtime/agent.yaml"
+	@echo "Press Ctrl+C to stop the worker"
+	@. .venv/bin/activate && ENVIRONMENT=local REDIS_URL=redis://localhost:6379/0 python -m deep_agent.headless
+
 container:
 	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
 	@echo "Starting stack: pgvector, redis, template-agent, jaeger"
@@ -222,6 +236,36 @@ openshift:
 	echo "  View logs: oc logs -l app=agent --tail=100"; \
 	echo "  Get route: oc get route agent"; \
 	echo "  Check status: oc get pods,svc,route -l app=agent"
+
+deploy-headless: ## Deploy headless worker to OpenShift (requires: NAMESPACE)
+	@echo "Deploying headless worker to OpenShift..."
+	@which oc > /dev/null || (echo "Error: oc CLI not found. Please install OpenShift CLI." && exit 1)
+	@if [ -z "$(NAMESPACE)" ]; then \
+		echo "Error: NAMESPACE not set. Usage: make deploy-headless NAMESPACE=your-project"; \
+		exit 1; \
+	fi; \
+	echo "Using namespace: $(NAMESPACE)"; \
+	oc project $(NAMESPACE) || (echo "Error: Cannot switch to namespace '$(NAMESPACE)'. Check permissions." && exit 1); \
+	echo "Updating namespace references..."; \
+	sed -i.bak "s|NAMESPACE_PLACEHOLDER|$(NAMESPACE)|g" deployment/overlays/openshift-headless/kustomization.yaml; \
+	echo "Deploying headless worker resources..."; \
+	oc apply -k deployment/overlays/openshift-headless/ || (mv deployment/overlays/openshift-headless/kustomization.yaml.bak deployment/overlays/openshift-headless/kustomization.yaml 2>/dev/null; exit 1); \
+	rm -f deployment/overlays/openshift-headless/kustomization.yaml.bak; \
+	echo "Headless worker deployment complete!"; \
+	echo "Checking deployment status..."; \
+	oc get pods -l component=agent-headless; \
+	echo ""; \
+	echo "Useful commands:"; \
+	echo "  View logs:    oc logs -l component=agent-headless --tail=100"; \
+	echo "  Check status: oc get pods,svc -l component=agent-headless"; \
+	echo "  Scale:        oc scale deployment agent-headless --replicas=N"
+
+undeploy-headless: ## Remove headless worker from OpenShift
+	@which oc > /dev/null || (echo "Error: oc CLI not found." && exit 1)
+	@oc project $(NAMESPACE) || (echo "Error: Cannot switch to namespace '$(NAMESPACE)'" && exit 1)
+	@echo "Removing headless worker deployment..."
+	@oc delete deployment,service,hpa,pdb,scaledobject -l component=agent-headless 2>/dev/null || true
+	@echo "Headless worker undeployed"
 
 mpp:
 	@echo "Error: MPP deployment is not yet implemented."
@@ -351,6 +395,32 @@ undeploy:
 		echo "Available undeployment targets: openshift, mpp"; \
 		exit 1; \
 	fi
+
+# ---------------------------------------------------------------------------
+# Headless / Trigger tests
+# ---------------------------------------------------------------------------
+
+test-triggers: ## Unit tests for triggers only
+	@if [ ! -d ".venv" ]; then \
+		echo "Error: Virtual environment not found. Run 'make install' first to set up the environment."; \
+		exit 1; \
+	fi
+	.venv/bin/python -m pytest tests/unit/triggers -v
+
+test-integration: ## Integration tests (requires Redis + DB)
+	@if [ ! -d ".venv" ]; then \
+		echo "Error: Virtual environment not found. Run 'make install' first to set up the environment."; \
+		exit 1; \
+	fi
+	@echo "Running integration tests..."
+	.venv/bin/python -m pytest tests/integration -m integration -v
+
+test-headless: ## Full headless startup test
+	@if [ ! -d ".venv" ]; then \
+		echo "Error: Virtual environment not found. Run 'make install' first to set up the environment."; \
+		exit 1; \
+	fi
+	.venv/bin/python -m pytest tests/integration/triggers/test_headless_startup.py -v
 
 %:
 	@:

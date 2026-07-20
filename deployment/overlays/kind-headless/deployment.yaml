@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-headless
+  labels:
+    app: agent
+    component: agent-headless
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent
+      component: agent-headless
+  template:
+    metadata:
+      labels:
+        app: agent
+        component: agent-headless
+    spec:
+      containers:
+        - name: agent-headless
+          image: agent:local
+          imagePullPolicy: Never
+          command: ["python", "-m", "deep_agent.headless"]
+          ports:
+            - containerPort: 8080
+              name: health
+              protocol: TCP
+          env:
+            - name: ENVIRONMENT
+              value: "local"
+            - name: PYTHON_LOG_LEVEL
+              value: "INFO"
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REDIS_URL
+            - name: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+                  optional: true
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+            - name: LANGFUSE_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_BASE_URL
+                  optional: true
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      restartPolicy: Always

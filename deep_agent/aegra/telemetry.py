@@ -124,6 +124,7 @@ def setup_langfuse_tracing() -> None:
         from langfuse.langchain import CallbackHandler
 
         from deep_agent.src.pii import get_scrubber as _get_scrubber
+
         if _get_scrubber() is not None:
             try:
                 from langfuse import Langfuse
@@ -144,13 +145,19 @@ def setup_langfuse_tracing() -> None:
                                 if scrubbed != value:
                                     replacements[key] = scrubbed
                         if replacements:
-                            patches[identifier] = OtelSpanPatch(set_attributes=replacements)
+                            patches[identifier] = OtelSpanPatch(
+                                set_attributes=replacements
+                            )
                     return MaskOtelSpansResult(span_patches=patches)
 
                 Langfuse(mask_otel_spans=_mask_otel_spans)
-                logger.info("Langfuse: PII mask_otel_spans registered — all span attributes scrubbed before export")
+                logger.info(
+                    "Langfuse: PII mask_otel_spans registered — all span attributes scrubbed before export"
+                )
             except Exception:
-                logger.warning("Failed to register Langfuse mask_otel_spans", exc_info=True)
+                logger.warning(
+                    "Failed to register Langfuse mask_otel_spans", exc_info=True
+                )
 
         _langfuse_ctx_var: contextvars.ContextVar = contextvars.ContextVar(
             "langfuse_handler", default=None
@@ -205,6 +212,8 @@ class LangfuseObservabilityProvider:
         self, run_id: str, thread_id: str, user_identity: str | None = None
     ) -> dict[str, Any]:
         """Return Langfuse metadata keys for RunnableConfig injection."""
+        from deep_agent.utils.pylogger import _trace_id_var
+
         metadata: dict[str, Any] = {
             "langfuse_trace_name": _get_trace_name(),
         }
@@ -212,6 +221,9 @@ class LangfuseObservabilityProvider:
             metadata["langfuse_user_id"] = user_identity
         if thread_id:
             metadata["langfuse_session_id"] = thread_id
+        trace_id = _trace_id_var.get()
+        if trace_id:
+            metadata["langfuse_tags"] = [f"trace_id:{trace_id}"]
         return metadata
 
     def is_enabled(self) -> bool:
@@ -225,7 +237,7 @@ class LangfuseObservabilityProvider:
 
 
 class TokenBudgetObservabilityProvider:
-    """Inject thread_id into RunnableConfig metadata for the token budget callback."""
+    """Inject thread_id and trace_id into RunnableConfig metadata for the token budget callback."""
 
     def get_callbacks(self) -> list[Any]:
         """Return empty list — callbacks are handled by register_configure_hook."""
@@ -234,21 +246,26 @@ class TokenBudgetObservabilityProvider:
     def get_metadata(
         self, run_id: str, thread_id: str, user_identity: str | None = None
     ) -> dict[str, Any]:
-        """Return RunnableConfig metadata keys for token budget tracking."""
+        """Return token budget metadata keys for RunnableConfig injection."""
         from deep_agent.src.token_budget.callback import (
             THREAD_ID_METADATA_KEY,
+            TRACE_ID_METADATA_KEY,
             USER_ID_METADATA_KEY,
         )
+        from deep_agent.utils.pylogger import _trace_id_var
 
         metadata: dict[str, Any] = {}
         if thread_id:
             metadata[THREAD_ID_METADATA_KEY] = thread_id
         if user_identity:
             metadata[USER_ID_METADATA_KEY] = user_identity
+        trace_id = _trace_id_var.get()
+        if trace_id:
+            metadata[TRACE_ID_METADATA_KEY] = trace_id
         return metadata
 
     def is_enabled(self) -> bool:
-        """Return True when per-thread token budget tracking is configured."""
+        """Return True if token budget tracking is active."""
         try:
             from deep_agent.src.agent.config import agent_config
 

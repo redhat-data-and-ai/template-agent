@@ -80,8 +80,8 @@ async def _validate_config() -> str:
         validate_config(settings)
         return "ok"
     except Exception as exc:
-        logger.warning("Config validation warning: %s", exc)
-        return f"warning: {exc}"
+        logger.error("Config validation failed: %s", exc)
+        raise  # Re-raise to fail startup
 
 
 def _check_mcp_encryption_key() -> None:
@@ -203,7 +203,7 @@ def _setup_telemetry() -> str:
             setup_token_budget_tracking,
         )
 
-        setup_pii_middleware()        # must be first — Langfuse handler depends on the scrubber
+        setup_pii_middleware()  # must be first — Langfuse handler depends on the scrubber
         setup_langfuse_tracing()
         setup_token_budget_tracking()
         return "ok"

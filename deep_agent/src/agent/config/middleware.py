@@ -37,7 +37,7 @@ class HumanApprovalConfig(BaseModel):
     Backed by deepagents HumanInTheLoopMiddleware via interrupt_on.
     """
 
-    enabled: bool = False
+    enabled: bool = True
     mode: Literal["all", "none"] = "all"
     exclude: list[str] = Field(default_factory=list)
 

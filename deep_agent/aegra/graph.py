@@ -111,9 +111,6 @@ async def agent(runtime: ServerRuntime) -> Any:
     """
     await _ensure_startup()
 
-    # Start timing graph build for OTEL metrics
-    build_start_mono = time.monotonic()
-
     from deepagents import create_deep_agent
 
     from deep_agent.aegra.mcp import (
@@ -220,7 +217,13 @@ async def agent(runtime: ServerRuntime) -> Any:
         user_id=user_identity,
     )
     mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
-    tools = agent_config.resolve_tools(tool_names, mcp_tools, agent_name=agent_name)
+
+    from deep_agent.src.triggers.tools import get_builtin_tools
+
+    all_available_tools = list(mcp_tools) + get_builtin_tools()
+    tools = agent_config.resolve_tools(
+        tool_names, all_available_tools, agent_name=agent_name
+    )
     if not tools and not tool_names and mcp_server_names and mcp_tools:
         logger.info(
             "Agent '%s' declared MCP servers %s but no explicit tools; exposing all %d MCP tool(s)",
@@ -330,8 +333,10 @@ async def agent(runtime: ServerRuntime) -> Any:
     _inner_graph = create_deep_agent(**create_kwargs)
 
     from deep_agent.src.pii import get_scrubber
+
     if get_scrubber() is not None:
         from deep_agent.src.pii.runnable import PIIAwareRunnable
+
         compiled = PIIAwareRunnable(_inner_graph)
         logger.info("graph_pii_enabled: wrapped with PIIAwareRunnable")
     else:

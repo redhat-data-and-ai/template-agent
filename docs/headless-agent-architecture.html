@@ -1,0 +1,1430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Headless Agent — Architecture Guide</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface2: #243044;
+      --border: #2d3f56;
+      --text: #e6edf3;
+      --muted: #8b9cb3;
+      --accent: #ee0000;
+      --accent2: #ff6b6b;
+      --green: #3fb950;
+      --blue: #58a6ff;
+      --purple: #a371f7;
+      --orange: #d29922;
+      --sidebar-w: 280px;
+      --font: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+    }
+    [data-theme="light"] {
+      --bg: #f6f8fa; --surface: #ffffff; --surface2: #f0f3f6;
+      --border: #d0d7de; --text: #1f2328; --muted: #656d76;
+      --accent: #c40000; --accent2: #ee0000;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.6; display: flex; min-height: 100vh; }
+    #sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: var(--sidebar-w); background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; z-index: 100; padding: 1rem 0; }
+    #sidebar h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 0.5rem 1.25rem; margin-top: 0.5rem; }
+    #sidebar a { display: block; padding: 0.4rem 1.25rem; color: var(--text); text-decoration: none; font-size: 0.9rem; border-left: 3px solid transparent; }
+    #sidebar a:hover, #sidebar a.active { background: var(--surface2); border-left-color: var(--accent); }
+    #main { margin-left: var(--sidebar-w); flex: 1; max-width: 1200px; padding: 2rem 2.5rem 4rem; }
+    .hero { margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+    .hero h1 { font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .hero h1 span { color: var(--accent); }
+    .hero p { color: var(--muted); max-width: 720px; }
+    .toolbar { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 1rem 0 1.5rem; align-items: center; }
+    .btn { padding: 0.5rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); cursor: pointer; font-size: 0.85rem; }
+    .btn:hover { border-color: var(--accent); }
+    section { margin-bottom: 3rem; scroll-margin-top: 1rem; }
+    section h2 { font-size: 1.5rem; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--accent); display: inline-block; }
+    section h3 { font-size: 1.1rem; margin: 1.25rem 0 0.6rem; color: var(--blue); }
+    section h4 { font-size: 0.95rem; margin: 1rem 0 0.5rem; color: var(--purple); font-weight: 600; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+    .badge { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 999px; margin-right: 0.35rem; font-weight: 600; text-transform: uppercase; }
+    .badge.core { background: #23863633; color: var(--green); }
+    .badge.trigger { background: #1f6feb33; color: var(--blue); }
+    .badge.sink { background: #8957e533; color: var(--purple); }
+    .badge.infra { background: #d2992233; color: var(--orange); }
+    .mermaid-wrap { background: var(--surface2); border-radius: 12px; padding: 1.5rem; margin: 1rem 0; overflow-x: auto; }
+    .callout { border-left: 3px solid var(--blue); padding: 0.75rem 1rem; margin: 1rem 0; background: var(--surface2); border-radius: 0 8px 8px 0; font-size: 0.9rem; }
+    .callout.warning { border-left-color: var(--orange); }
+    .callout.success { border-left-color: var(--green); }
+    .callout.danger { border-left-color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin: 0.75rem 0; }
+    th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
+    tr:hover td { background: var(--surface2); }
+    code, .mono { font-family: var(--mono); font-size: 0.85em; }
+    code { background: var(--surface2); padding: 0.1rem 0.4rem; border-radius: 4px; }
+    pre { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; overflow-x: auto; font-family: var(--mono); font-size: 0.82rem; margin: 0.75rem 0; }
+    .comparison-table { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .comparison-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+    .comparison-card h4 { margin-top: 0; }
+    .key-insight { background: var(--surface2); border-left: 3px solid var(--accent); padding: 1rem 1.25rem; margin: 1.5rem 0; border-radius: 0 8px 8px 0; }
+    .key-insight h4 { color: var(--accent2); margin-top: 0; margin-bottom: 0.5rem; }
+    @media (max-width: 900px) {
+      #sidebar { transform: translateX(-100%); transition: transform 0.2s; }
+      #sidebar.open { transform: translateX(0); }
+      #main { margin-left: 0; padding: 1.25rem; }
+      .menu-toggle { display: block !important; }
+      .comparison-table { grid-template-columns: 1fr; }
+    }
+    .menu-toggle { display: none; position: fixed; bottom: 1rem; right: 1rem; z-index: 200; background: var(--accent); color: #fff; border: none; padding: 0.75rem 1rem; border-radius: 999px; cursor: pointer; }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <nav id="sidebar">
+    <h2>Overview</h2>
+    <a href="#overview">Platform overview</a>
+    <a href="#dual-mode">Dual-mode architecture</a>
+    <a href="#when-to-use">When to use which mode</a>
+
+    <h2>Architecture</h2>
+    <a href="#c4-context">C4 Context diagram</a>
+    <a href="#c4-container">C4 Container diagram</a>
+    <a href="#component-map">Component map</a>
+
+    <h2>Data Flows</h2>
+    <a href="#flow-server">Server mode flow</a>
+    <a href="#flow-headless">Headless mode flow</a>
+    <a href="#flow-delegation">Server → Headless delegation</a>
+    <a href="#flow-status">Task status tracking</a>
+
+    <h2>Triggers</h2>
+    <a href="#trigger-webhook">Webhook</a>
+    <a href="#trigger-cron">Cron</a>
+    <a href="#trigger-queue">Queue (Redis Streams)</a>
+
+    <h2>Output Sinks</h2>
+    <a href="#sink-stdout">Stdout</a>
+    <a href="#sink-file">File (JSONL)</a>
+    <a href="#sink-webhook">Webhook callback</a>
+    <a href="#sink-redis">Redis Stream</a>
+
+    <h2>Configuration</h2>
+    <a href="#config-agent-yaml">agent.yaml reference</a>
+    <a href="#config-prompts">Agent prompts</a>
+    <a href="#config-tools">Tools registry</a>
+
+    <h2>Deployment</h2>
+    <a href="#deploy-local">Local development</a>
+    <a href="#deploy-openshift">OpenShift</a>
+    <a href="#deploy-scaling">Scaling & HA</a>
+
+    <h2>Skills & Processing</h2>
+    <a href="#skills-driven">How skills drive processing</a>
+
+    <h2>Audit & Data</h2>
+    <a href="#audit-trail">Audit trail (Postgres)</a>
+    <a href="#data-stores">Data stores</a>
+
+    <h2>Roadmap</h2>
+    <a href="#roadmap">Open items & TODOs</a>
+
+    <h2>Testing</h2>
+    <a href="#test-guide">Test guide</a>
+    <a href="#test-scenarios">Test scenarios</a>
+    <a href="#test-verification">Verify results</a>
+  </nav>
+
+  <button class="menu-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')">Menu</button>
+
+  <main id="main">
+    <!-- HERO -->
+    <header class="hero" id="overview">
+      <h1>Template Agent — <span>Headless Mode</span></h1>
+      <p>Architecture guide for the event-driven headless agent mode. Covers dual-mode operation (server + headless), trigger sources, output sinks, task status tracking, and production deployment.</p>
+      <div class="toolbar">
+        <button class="btn" id="themeBtn" title="Toggle theme">Theme</button>
+      </div>
+    </header>
+
+    <!-- DUAL MODE -->
+    <section id="dual-mode">
+      <h2>Dual-Mode Architecture</h2>
+      <p>The template agent runs in two independent modes from the same codebase and container image. Both share Redis, PostgreSQL, and the same model provider.</p>
+
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+graph TB
+    subgraph "Same Container Image"
+        direction TB
+        S["<b>Server Mode</b><br/>make local / aegra dev<br/>Port 5002"]
+        H["<b>Headless Mode</b><br/>make headless<br/>python -m deep_agent.headless"]
+    end
+
+    U["👤 User / UI"] -->|HTTP / SSE| S
+    S -->|queue_task| R["Redis Streams"]
+    R -->|consume| H
+
+    EXT["🌐 External System"] -->|POST /trigger| H
+    CRON["⏰ Cron Schedule"] -->|fires| H
+
+    S --> PG["PostgreSQL"]
+    H --> PG
+    S --> RD["Redis"]
+    H --> RD
+
+    H -->|results| SINKS["Output Sinks"]
+
+    style S fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style H fill:#238636,stroke:#3fb950,color:#fff
+    style R fill:#d29922,stroke:#e3b341,color:#000
+    style SINKS fill:#8957e5,stroke:#a371f7,color:#fff
+        </pre>
+      </div>
+
+      <div class="comparison-table">
+        <div class="comparison-card">
+          <h4 style="color: var(--blue);">Server Mode</h4>
+          <ul>
+            <li>Full Aegra HTTP API</li>
+            <li>Interactive conversations via UI</li>
+            <li>SSE streaming responses</li>
+            <li>SSO authentication</li>
+            <li>Orchestrator prompt (PROMPT.md)</li>
+            <li><code>make local</code> to start</li>
+          </ul>
+        </div>
+        <div class="comparison-card">
+          <h4 style="color: var(--green);">Headless Mode</h4>
+          <ul>
+            <li>No HTTP API (except health check)</li>
+            <li>Event-driven background worker</li>
+            <li>Webhook, cron, queue triggers</li>
+            <li>No auth (service account identity)</li>
+            <li>Worker prompt (HEADLESS_PROMPT.md)</li>
+            <li><code>make headless</code> to start</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- WHEN TO USE -->
+    <section id="when-to-use">
+      <h2>When to Use Which Mode</h2>
+      <table>
+        <thead><tr><th>Use Case</th><th>Mode</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Interactive chat assistant</td><td><code>server</code></td><td>User expects immediate responses</td></tr>
+          <tr><td>Background batch processing</td><td><code>headless</code></td><td>Long-running, no user waiting</td></tr>
+          <tr><td>Chat + async delegation</td><td><code>both</code></td><td>Server queues work, headless processes</td></tr>
+          <tr><td>Event-driven pipeline</td><td><code>headless</code></td><td>External triggers, no UI needed</td></tr>
+          <tr><td>Scheduled reports</td><td><code>headless</code></td><td>Cron trigger fires on schedule</td></tr>
+          <tr><td>Webhook responder</td><td><code>headless</code></td><td>External system POSTs, agent processes</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- C4 CONTEXT -->
+    <section id="c4-context">
+      <h2>C4 Context Diagram</h2>
+      <p>System context showing how the template agent interacts with external actors and systems.</p>
+
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+graph TB
+    USER["👤 Employee<br/><i>Uses the fitness assistant<br/>via web UI</i>"]
+    ADMIN["🔧 Platform Team<br/><i>Deploys and monitors<br/>the agent system</i>"]
+    EXT["🌐 External System<br/><i>Sends webhooks or<br/>pushes to queue</i>"]
+
+    subgraph SYSTEM["Template Agent System"]
+        direction LR
+        SA["Server Agent<br/><i>Interactive conversations</i>"]
+        HA["Headless Agent<br/><i>Background processing</i>"]
+    end
+
+    MCP["MCP Server<br/><i>Tools: calculate_bmi,<br/>send_email, etc.</i>"]
+    LLM["Google Gemini<br/><i>LLM inference</i>"]
+    SSO["SSO Provider<br/><i>OIDC authentication</i>"]
+
+    USER -->|"chat via UI"| SA
+    ADMIN -->|"deploy, monitor"| SYSTEM
+    EXT -->|"webhook / queue"| HA
+    SA -->|"queue_task()"| HA
+    SA --> MCP
+    HA --> MCP
+    SA --> LLM
+    HA --> LLM
+    SA --> SSO
+
+    style SA fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style HA fill:#238636,stroke:#3fb950,color:#fff
+    style SYSTEM fill:#1a2332,stroke:#2d3f56,color:#e6edf3
+        </pre>
+      </div>
+    </section>
+
+    <!-- C4 CONTAINER -->
+    <section id="c4-container">
+      <h2>C4 Container Diagram</h2>
+      <p>Internal containers showing how server and headless agents are structured.</p>
+
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+graph TB
+    subgraph SERVER["Server Agent (Aegra)"]
+        direction TB
+        GF["Graph Factory<br/><code>graph.py:agent()</code>"]
+        ORCH["Orchestrator<br/><code>PROMPT.md</code>"]
+        SUB["Subagents<br/><i>analyst, publisher</i>"]
+        TOOLS_S["Tools<br/><i>validate_email,<br/>queue_task,<br/>check_task_status,<br/>get_pending_results</i>"]
+    end
+
+    subgraph HEADLESS["Headless Agent"]
+        direction TB
+        ETM["EventTriggerMiddleware<br/><i>Lifecycle orchestrator</i>"]
+        HG["Headless Graph<br/><code>HEADLESS_PROMPT.md</code>"]
+
+        subgraph TRIGGERS["Trigger Sources"]
+            WH["Webhook<br/><i>HTTP listener</i>"]
+            CR["Cron<br/><i>APScheduler</i>"]
+            QU["Queue<br/><i>Redis Streams</i>"]
+        end
+
+        subgraph SINKS["Output Sinks"]
+            SO["Stdout"]
+            FI["File JSONL"]
+            WS["Webhook POST"]
+            RS["Redis Stream"]
+        end
+    end
+
+    REDIS["Redis<br/><i>Streams + Task Store</i>"]
+    PG["PostgreSQL<br/><i>Conversations +<br/>Checkpoints</i>"]
+    GEMINI["Gemini 2.5 Pro"]
+    HC["Health Check<br/><code>/healthz /readyz</code><br/>Port 8080"]
+
+    GF --> ORCH --> SUB
+    TOOLS_S --> REDIS
+    ORCH --> TOOLS_S
+    ETM --> HG
+    WH --> ETM
+    CR --> ETM
+    QU --> ETM
+    ETM --> SO
+    ETM --> FI
+    ETM --> WS
+    ETM --> RS
+    ETM --> REDIS
+    HEADLESS --> HC
+
+    SERVER --> PG
+    HEADLESS --> PG
+    SERVER --> GEMINI
+    HEADLESS --> GEMINI
+    QU --> REDIS
+    RS --> REDIS
+
+    style SERVER fill:#0d1b2a,stroke:#1f6feb,color:#e6edf3
+    style HEADLESS fill:#0d2818,stroke:#238636,color:#e6edf3
+    style TRIGGERS fill:#1a2332,stroke:#58a6ff,color:#e6edf3
+    style SINKS fill:#1a2332,stroke:#a371f7,color:#e6edf3
+        </pre>
+      </div>
+    </section>
+
+    <!-- COMPONENT MAP -->
+    <section id="component-map">
+      <h2>Component Map</h2>
+
+      <div class="card">
+        <h3>File Structure</h3>
+        <pre>
+deep_agent/
+├── headless.py                     # Entry point: python -m deep_agent.headless
+├── aegra/
+│   ├── graph.py                    # Graph factory (server + built-in tools)
+│   └── startup.py                  # Startup orchestrator
+└── src/triggers/
+    ├── config.py                   # Pydantic models (HeadlessConfig, TriggerConfig, etc.)
+    ├── middleware.py                # EventTriggerMiddleware (lifecycle orchestrator)
+    ├── runtime.py                  # HeadlessRuntime (ServerRuntime adapter)
+    ├── task_store.py               # Redis-backed task status tracking
+    ├── tools.py                    # queue_task, check_task_status, get_pending_results
+    ├── health.py                   # /healthz and /readyz endpoints
+    ├── sources/
+    │   ├── protocol.py             # TriggerSource protocol + TriggerEvent dataclass
+    │   ├── webhook.py              # HTTP listener trigger
+    │   ├── cron.py                 # APScheduler cron trigger
+    │   └── queue.py                # QueueConsumer protocol + RedisStreamsConsumer
+    └── sinks/
+        ├── protocol.py             # OutputSink protocol + TriggerResult dataclass
+        ├── stdout.py               # Print to stdout
+        ├── file.py                 # Append JSONL to file
+        ├── webhook.py              # POST to URL with retry
+        └── redis.py                # XADD to Redis Stream
+
+config/agent/
+├── PROMPT.md                       # Server orchestrator prompt
+├── HEADLESS_PROMPT.md              # Headless worker prompt
+└── runtime/agent.yaml              # Unified config (triggers, sinks, health_check)</pre>
+      </div>
+    </section>
+
+    <!-- FLOW: SERVER -->
+    <section id="flow-server">
+      <h2>Server Mode Flow</h2>
+      <p>User interacts via UI → Aegra API → Graph factory → Orchestrator → Subagents.</p>
+
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+sequenceDiagram
+    participant U as User (UI)
+    participant API as Aegra API<br/>Port 5002
+    participant GF as Graph Factory
+    participant O as Orchestrator
+    participant A as Analyst Subagent
+    participant MCP as MCP Server
+
+    U->>API: POST /threads/{id}/runs
+    API->>GF: agent(runtime)
+    GF->>O: compiled graph
+    O->>O: Create TODO list
+    O->>A: Delegate BMI analysis
+    A->>MCP: calculate_bmi(height, weight)
+    MCP-->>A: BMI result
+    A-->>O: Analysis report
+    O-->>API: Response
+    API-->>U: SSE stream
+        </pre>
+      </div>
+    </section>
+
+    <!-- FLOW: HEADLESS -->
+    <section id="flow-headless">
+      <h2>Headless Mode Flow</h2>
+      <p>Events arrive via triggers → EventTriggerMiddleware invokes the graph → results fan out to sinks.</p>
+
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+sequenceDiagram
+    participant T as Trigger Source
+    participant ETM as EventTriggerMiddleware
+    participant G as Headless Graph
+    participant LLM as Gemini 2.5 Pro
+    participant TS as Task Store (Redis)
+    participant S as Output Sinks
+
+    T->>ETM: TriggerEvent
+    ETM->>TS: status → "processing"
+    ETM->>G: graph.ainvoke(payload)
+    G->>LLM: Generate response
+    LLM-->>G: AI response
+    G-->>ETM: Output
+    ETM->>TS: status → "completed" + result
+    ETM->>S: TriggerResult (fan-out to all sinks)
+
+    Note over S: stdout + file + webhook + redis<br/>all receive every result
+        </pre>
+      </div>
+    </section>
+
+    <!-- FLOW: DELEGATION -->
+    <section id="flow-delegation">
+      <h2>Server → Headless Delegation</h2>
+      <p>The orchestrator delegates long-running work to the headless worker via Redis Streams with task status tracking.</p>
+
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant O as Orchestrator
+    participant TS as Task Store
+    participant RS as Redis Stream
+    participant HW as Headless Worker
+    participant LLM as Gemini
+
+    U->>O: "Generate BMI reports for 500 employees"
+    O->>TS: create_task(status=queued)
+    O->>RS: XADD agent-tasks
+    O-->>U: "Queued! Task ID: abc123"
+
+    Note over U,O: User can ask status anytime
+
+    U->>O: "What's the status of abc123?"
+    O->>TS: get_task(abc123)
+    TS-->>O: status=queued
+    O-->>U: "Still queued"
+
+    RS->>HW: XREADGROUP (consume)
+    HW->>TS: status → processing
+    HW->>LLM: Process task
+    LLM-->>HW: Result
+    HW->>TS: status → completed + result
+
+    Note over U,O: Next conversation
+
+    U->>O: "Hi, any updates?"
+    O->>TS: get_pending_results(user_id)
+    TS-->>O: abc123 completed!
+    O-->>U: "Your report is done!<br/>498/500 reports generated"
+    O->>TS: mark_delivered(abc123)
+        </pre>
+      </div>
+
+      <div class="key-insight">
+        <h4>Key Insight: Proactive Result Delivery</h4>
+        <p>The orchestrator calls <code>get_pending_results(user_id)</code> at the start of every conversation. Completed tasks are delivered automatically — the user doesn't have to ask. Results are marked as delivered so they're not repeated.</p>
+      </div>
+    </section>
+
+    <!-- FLOW: STATUS -->
+    <section id="flow-status">
+      <h2>Task Status Tracking</h2>
+
+      <div class="mermaid-wrap">
+        <pre class="mermaid">
+stateDiagram-v2
+    [*] --> queued: queue_task()
+    queued --> processing: Headless worker picks up
+    processing --> completed: Graph invocation succeeds
+    processing --> failed: Graph invocation fails
+    completed --> delivered: get_pending_results() / check_task_status()
+    failed --> delivered: get_pending_results()
+    delivered --> [*]: TTL expires (24h)
+        </pre>
+      </div>
+
+      <div class="card">
+        <h3>Redis Key Structure</h3>
+        <table>
+          <thead><tr><th>Key</th><th>Type</th><th>TTL</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>task:{task_id}</code></td><td>String (JSON)</td><td>24h</td><td>Full task record with status, payload, result</td></tr>
+            <tr><td><code>user_tasks:{user_id}</code></td><td>Sorted Set</td><td>24h</td><td>Index of task IDs per user, sorted by created_at</td></tr>
+            <tr><td><code>agent-tasks</code></td><td>Stream</td><td>Persistent</td><td>Queue for headless worker consumption</td></tr>
+            <tr><td><code>agent-results</code></td><td>Stream</td><td>Persistent</td><td>Output from Redis sink (if enabled)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3>Tools</h3>
+        <table>
+          <thead><tr><th>Tool</th><th>Used By</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>queue_task</code></td><td>Server agent</td><td>Queue work for headless worker, returns task_id</td></tr>
+            <tr><td><code>check_task_status</code></td><td>Server agent</td><td>Look up task status by ID</td></tr>
+            <tr><td><code>get_pending_results</code></td><td>Server agent</td><td>Fetch all completed-but-undelivered results for a user</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TRIGGERS -->
+    <section id="trigger-webhook">
+      <h2>Webhook Trigger</h2>
+      <span class="badge trigger">trigger</span>
+
+      <div class="card">
+        <h3>How It Works</h3>
+        <p>A minimal HTTP server (built on <code>asyncio.start_server</code>) listens for POST requests. JSON body is parsed into a <code>TriggerEvent</code> and queued for processing. No framework dependency — pure Python asyncio.</p>
+
+        <h4>Configuration</h4>
+<pre>triggers:
+  webhook:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8888
+    path: "/trigger"</pre>
+
+        <h4>Example Request</h4>
+<pre>curl -X POST http://localhost:8888/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"event": "bmi-calc", "task": "Calculate BMI for Alice, 65kg 170cm"}'</pre>
+
+        <h4>Response Codes</h4>
+        <table>
+          <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td>200</td><td>Event accepted and queued</td></tr>
+            <tr><td>400</td><td>Invalid JSON body</td></tr>
+            <tr><td>404</td><td>Wrong path</td></tr>
+            <tr><td>405</td><td>Method not allowed (only POST)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="trigger-cron">
+      <h2>Cron Trigger</h2>
+      <span class="badge trigger">trigger</span>
+
+      <div class="card">
+        <h3>How It Works</h3>
+        <p>Uses APScheduler v4 <code>CronTrigger</code> to parse standard 5-field crontab expressions. Each job runs as a background asyncio task that sleeps until the next fire time, then emits a <code>TriggerEvent</code>.</p>
+
+        <h4>Configuration</h4>
+<pre>triggers:
+  cron:
+    enabled: true
+    jobs:
+      - name: "daily-report"
+        schedule: "0 9 * * *"       # 9 AM daily
+        payload:
+          task: "Generate daily health digest"
+      - name: "weekly-cleanup"
+        schedule: "0 0 * * 0"       # Midnight Sunday
+        payload:
+          task: "Clean up expired records"</pre>
+
+        <h4>Crontab Format</h4>
+        <pre>┌───────── minute (0-59)
+│ ┌─────── hour (0-23)
+│ │ ┌───── day of month (1-31)
+│ │ │ ┌─── month (1-12)
+│ │ │ │ ┌─ day of week (0-6, Sun=0)
+│ │ │ │ │
+* * * * *</pre>
+      </div>
+    </section>
+
+    <section id="trigger-queue">
+      <h2>Queue Trigger (Redis Streams)</h2>
+      <span class="badge trigger">trigger</span>
+
+      <div class="card">
+        <h3>How It Works</h3>
+        <p>Implements the <code>QueueConsumer</code> protocol with a Redis Streams backend. Uses consumer groups for multi-replica support — each pod gets unique messages, no duplicates.</p>
+
+        <h4>Configuration</h4>
+<pre>triggers:
+  queue:
+    enabled: true
+    backend: "redis_streams"
+    stream: "agent-tasks"
+    consumer_group: "agent-workers"
+    consumer_name: ""              # defaults to $HOSTNAME for K8s</pre>
+
+        <h4>Consumer Group Behavior</h4>
+        <table>
+          <thead><tr><th>Scenario</th><th>Behavior</th></tr></thead>
+          <tbody>
+            <tr><td>First consumer joins</td><td>Group created automatically (XGROUP CREATE MKSTREAM)</td></tr>
+            <tr><td>Multiple replicas</td><td>Each gets unique messages (round-robin)</td></tr>
+            <tr><td>Consumer crashes</td><td>Unacked messages re-delivered to other consumers</td></tr>
+            <tr><td>Scale up</td><td>New pod joins group immediately</td></tr>
+            <tr><td>Connection lost</td><td>Reconnect with exponential backoff (max 60s)</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout success">
+          <strong>Extensible:</strong> The <code>QueueConsumer</code> protocol is abstract. Implement it for Kafka, RabbitMQ, or SQS — just provide <code>consume()</code>, <code>ack()</code>, and <code>close()</code>.
+        </div>
+      </div>
+    </section>
+
+    <!-- SINKS -->
+    <section id="sink-stdout">
+      <h2>Stdout Sink</h2>
+      <span class="badge sink">sink</span>
+      <div class="card">
+        <p>Writes <code>TriggerResult</code> as JSON to stdout. Useful for development and log aggregation.</p>
+<pre>output_sinks:
+  - type: stdout</pre>
+      </div>
+    </section>
+
+    <section id="sink-file">
+      <h2>File Sink (JSONL)</h2>
+      <span class="badge sink">sink</span>
+      <div class="card">
+        <p>Appends each result as a JSON line to a file. Creates parent directories if needed. Flushes after each write.</p>
+<pre>output_sinks:
+  - type: file
+    path: "/var/log/agent/results.jsonl"</pre>
+        <p>Read results: <code>cat /var/log/agent/results.jsonl | jq .</code></p>
+      </div>
+    </section>
+
+    <section id="sink-webhook">
+      <h2>Webhook Sink</h2>
+      <span class="badge sink">sink</span>
+      <div class="card">
+        <p>POSTs results to a URL. Retries on 5xx errors (3 attempts, exponential backoff). Custom headers supported.</p>
+<pre>output_sinks:
+  - type: webhook
+    url: "https://downstream.example.com/results"
+    headers:
+      Authorization: "Bearer ${WEBHOOK_TOKEN}"</pre>
+      </div>
+    </section>
+
+    <section id="sink-redis">
+      <h2>Redis Stream Sink</h2>
+      <span class="badge sink">sink</span>
+      <div class="card">
+        <p>Publishes results to a Redis Stream via XADD. Downstream services can consume from this stream.</p>
+<pre>output_sinks:
+  - type: redis
+    stream: "agent-results"</pre>
+        <p>Viewable in Redis Commander or via <code>XRANGE agent-results - +</code>.</p>
+      </div>
+    </section>
+
+    <!-- CONFIGURATION -->
+    <section id="config-agent-yaml">
+      <h2>agent.yaml Reference</h2>
+      <p>All headless configuration lives in <code>config/agent/runtime/agent.yaml</code> alongside server config.</p>
+
+      <div class="card">
+        <h3>Full Headless Configuration</h3>
+<pre># Mode is determined by entry point, not this field
+mode: server
+
+# Trigger sources (used by headless worker)
+triggers:
+  webhook:
+    enabled: false
+    host: "0.0.0.0"
+    port: 8888
+    path: "/trigger"
+  cron:
+    enabled: false
+    jobs: []
+  queue:
+    enabled: false
+    backend: "redis_streams"
+    stream: "agent-tasks"
+    consumer_group: "agent-workers"
+    consumer_name: ""          # defaults to $HOSTNAME
+
+# Output sinks (fan-out — all enabled sinks receive every result)
+output_sinks: []               # defaults to stdout if empty
+# Examples:
+#  - type: stdout
+#  - type: file
+#    path: "/var/log/agent/results.jsonl"
+#  - type: webhook
+#    url: "https://example.com/callback"
+#    headers:
+#      Authorization: "Bearer token"
+#  - type: redis
+#    stream: "agent-results"
+
+# Health check for K8s probes
+health_check:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080</pre>
+      </div>
+
+      <div class="callout">
+        <strong>Note:</strong> The <code>mode</code> field is informational. The actual mode is determined by how the agent is launched: <code>make local</code> = server, <code>make headless</code> = headless.
+      </div>
+    </section>
+
+    <section id="config-prompts">
+      <h2>Agent Prompts</h2>
+
+      <div class="comparison-table">
+        <div class="comparison-card">
+          <h4 style="color: var(--blue);">PROMPT.md (Server / Orchestrator)</h4>
+          <ul>
+            <li>Conversational, user-facing</li>
+            <li>Creates TODO lists</li>
+            <li>Delegates to analyst/publisher subagents</li>
+            <li>Tools: validate_email, queue_task, check_task_status, get_pending_results</li>
+            <li>Knows how to delegate to headless worker</li>
+          </ul>
+        </div>
+        <div class="comparison-card">
+          <h4 style="color: var(--green);">HEADLESS_PROMPT.md (Worker)</h4>
+          <ul>
+            <li>Silent, no user interaction</li>
+            <li>No TODO lists, no greetings</li>
+            <li>Processes payloads directly</li>
+            <li>Tools: calculate_bmi, search_web</li>
+            <li>Returns structured JSON results</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="config-tools">
+      <h2>Tools Registry</h2>
+      <table>
+        <thead><tr><th>Tool</th><th>Type</th><th>Available In</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>validate_email</code></td><td>MCP</td><td>Server</td><td>Validate email addresses</td></tr>
+          <tr><td><code>calculate_bmi</code></td><td>MCP</td><td>Headless</td><td>Calculate BMI from height/weight</td></tr>
+          <tr><td><code>search_web</code></td><td>MCP</td><td>Headless</td><td>Search for health information</td></tr>
+          <tr><td><code>send_email</code></td><td>MCP</td><td>Server (publisher)</td><td>Send email via MCP server</td></tr>
+          <tr><td><code>queue_task</code></td><td>Built-in</td><td>Server</td><td>Queue work for headless worker</td></tr>
+          <tr><td><code>check_task_status</code></td><td>Built-in</td><td>Server</td><td>Check background task status</td></tr>
+          <tr><td><code>get_pending_results</code></td><td>Built-in</td><td>Server</td><td>Fetch undelivered completed results</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- DEPLOYMENT -->
+    <section id="deploy-local">
+      <h2>Local Development</h2>
+
+      <div class="card">
+        <h3>Commands</h3>
+        <table>
+          <thead><tr><th>Command</th><th>What It Does</th></tr></thead>
+          <tbody>
+            <tr><td><code>make local</code></td><td>Start server agent (Aegra) + Postgres + Redis</td></tr>
+            <tr><td><code>make headless</code></td><td>Start headless worker + Postgres + Redis</td></tr>
+            <tr><td><code>make test</code></td><td>Run unit tests</td></tr>
+            <tr><td><code>make test-triggers</code></td><td>Run trigger unit tests only</td></tr>
+            <tr><td><code>make test-integration</code></td><td>Run integration tests (requires Redis)</td></tr>
+            <tr><td><code>make test-headless</code></td><td>Run headless startup tests</td></tr>
+          </tbody>
+        </table>
+
+        <h4>Running Both Together</h4>
+<pre># Terminal 1: Server agent
+make local
+
+# Terminal 2: Headless worker
+make headless
+
+# Terminal 3: Watch results
+tail -f /tmp/headless-results.jsonl
+
+# Terminal 4: Send test events
+curl -X POST http://localhost:8888/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"event":"test","task":"Calculate BMI for Alice, 65kg 170cm"}'</pre>
+      </div>
+    </section>
+
+    <section id="deploy-openshift">
+      <h2>OpenShift Deployment</h2>
+
+      <div class="card">
+        <h3>Architecture</h3>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+graph TB
+    subgraph NS["OpenShift Namespace"]
+        subgraph SERVER_D["Deployment: agent"]
+            S1["Pod 1"]
+            S2["Pod 2"]
+        end
+        subgraph HEADLESS_D["Deployment: agent-headless"]
+            H1["Pod 1"]
+            H2["Pod 2"]
+            H3["Pod 3"]
+        end
+        SVC_S["Service: agent<br/>Port 5002"]
+        SVC_H["Service: agent-headless<br/>Port 8080 (health)"]
+        ROUTE["Route: agent<br/><i>External HTTPS</i>"]
+        RD["Redis"]
+        PG["PostgreSQL"]
+        HPA_S["HPA: agent<br/><i>2-10 replicas</i>"]
+        HPA_H["HPA: agent-headless<br/><i>2-8 replicas</i>"]
+        KEDA["KEDA ScaledObject<br/><i>Scale on queue depth</i>"]
+    end
+
+    S1 & S2 --> SVC_S --> ROUTE
+    H1 & H2 & H3 --> SVC_H
+    HPA_S --> SERVER_D
+    HPA_H --> HEADLESS_D
+    KEDA --> HEADLESS_D
+    SERVER_D --> RD & PG
+    HEADLESS_D --> RD & PG
+
+    style SERVER_D fill:#1f6feb22,stroke:#1f6feb
+    style HEADLESS_D fill:#23863622,stroke:#238636
+          </pre>
+        </div>
+
+        <h4>Deploy Commands</h4>
+<pre># Deploy server agent
+make deploy openshift NAMESPACE=my-project
+
+# Deploy headless worker
+make deploy-headless NAMESPACE=my-project
+
+# Undeploy
+make undeploy openshift NAMESPACE=my-project
+make undeploy-headless NAMESPACE=my-project</pre>
+
+        <div class="callout success">
+          <strong>Same image:</strong> Both deployments use the same container image. Only the <code>command</code> differs — <code>aegra dev</code> vs <code>python -m deep_agent.headless</code>.
+        </div>
+      </div>
+    </section>
+
+    <section id="deploy-scaling">
+      <h2>Scaling & High Availability</h2>
+
+      <div class="card">
+        <h3>How Scaling Works</h3>
+        <table>
+          <thead><tr><th>Concern</th><th>Mechanism</th></tr></thead>
+          <tbody>
+            <tr><td>Multiple workers</td><td>Redis consumer groups — each pod gets unique messages</td></tr>
+            <tr><td>Scale up</td><td>New pod joins consumer group, starts receiving immediately</td></tr>
+            <tr><td>Scale down</td><td>SIGTERM → drain in-flight → exit. Unacked messages re-delivered</td></tr>
+            <tr><td>Pod crash</td><td>Unacked messages go to other consumers</td></tr>
+            <tr><td>Autoscaling</td><td>KEDA watches Redis Stream pending count</td></tr>
+            <tr><td>Consumer identity</td><td>Each pod uses <code>$HOSTNAME</code> as consumer name</td></tr>
+          </tbody>
+        </table>
+
+        <h4>KEDA ScaledObject</h4>
+<pre>apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+spec:
+  scaleTargetRef:
+    name: agent-headless
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  triggers:
+    - type: redis-streams
+      metadata:
+        stream: agent-tasks
+        consumerGroup: agent-workers
+        pendingEntriesCount: "10"    # Scale up when >10 pending per replica</pre>
+      </div>
+
+      <div class="card">
+        <h3>Health Probes</h3>
+        <table>
+          <thead><tr><th>Endpoint</th><th>Purpose</th><th>Returns</th></tr></thead>
+          <tbody>
+            <tr><td><code>GET /healthz</code></td><td>Liveness probe</td><td><code>{"status": "ok"}</code></td></tr>
+            <tr><td><code>GET /readyz</code></td><td>Readiness probe</td><td><code>{"status": "ready", "sources": N, "sinks": N, "loop_running": true}</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SKILLS -->
+    <section id="skills-driven">
+      <h2>How Skills Drive Processing</h2>
+      <p>The headless agent is not one generic worker — it's specific to the agent it was created with. <strong>Skills</strong> define what the worker knows how to do.</p>
+
+      <div class="card">
+        <h3>The Three Layers</h3>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+graph TB
+    subgraph GENERIC["Layer 1: Generic Scaffolding"]
+        HP["HEADLESS_PROMPT.md<br/><i>'Process tasks silently.<br/>Use your skills. Return JSON.'</i>"]
+    end
+
+    subgraph DOMAIN["Layer 2: Domain Knowledge (Skills)"]
+        S1["bmi-report/<br/>README.md"]
+        S2["order-fulfillment/<br/>README.md"]
+        S3["data-transform/<br/>README.md"]
+    end
+
+    subgraph CAPS["Layer 3: Capabilities (Tools / MCP)"]
+        T1["calculate_bmi"]
+        T2["check_inventory<br/>process_payment"]
+        T3["query_warehouse<br/>write_report"]
+    end
+
+    HP --> S1 & S2 & S3
+    S1 --> T1
+    S2 --> T2
+    S3 --> T3
+
+    style GENERIC fill:#1a2332,stroke:#58a6ff,color:#e6edf3
+    style DOMAIN fill:#1a2332,stroke:#3fb950,color:#e6edf3
+    style CAPS fill:#1a2332,stroke:#d29922,color:#e6edf3
+          </pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Each Agent Gets Its Own Headless Worker</h3>
+        <table>
+          <thead><tr><th>Agent</th><th>Skills</th><th>Tools</th><th>What Headless Can Do</th></tr></thead>
+          <tbody>
+            <tr><td>Health Assistant</td><td>bmi-report</td><td>calculate_bmi, search_web</td><td>BMI calculations, health reports</td></tr>
+            <tr><td>Order Processor</td><td>order-fulfillment</td><td>check_inventory, process_payment</td><td>Validate, process, confirm orders</td></tr>
+            <tr><td>Data Pipeline</td><td>data-transform, quality-check</td><td>query_warehouse, write_report</td><td>ETL, quality checks, reports</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3>What a Skill Document Contains</h3>
+        <p>The skill README is where all domain-specific processing logic lives:</p>
+<pre># Order Fulfillment Skill
+
+## Processing Steps
+1. Validate items exist in catalog (use check_inventory tool)
+2. Verify stock availability for each item
+3. Calculate total price including tax
+4. Process payment (use process_payment tool)
+5. Update order status (use update_order tool)
+
+## Output Format
+{
+  "status": "success",
+  "order_id": "ORD-1234",
+  "total": 149.99,
+  "estimated_delivery": "2026-06-28"
+}
+
+## Error Handling
+- Out of stock → status "partial", list unavailable items
+- Payment failed → status "error", include error code</pre>
+      </div>
+
+      <div class="card">
+        <h3>Runtime Flow</h3>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+sequenceDiagram
+    participant EXT as External System
+    participant Q as Kafka / Redis / Webhook
+    participant HW as Headless Worker
+    participant LLM as Gemini + Skill
+    participant TOOL as MCP Tools
+    participant SINK as Output Sinks
+
+    EXT->>Q: {"task": "Process order ORD-1234"}
+    Q->>HW: TriggerEvent
+    HW->>LLM: payload + HEADLESS_PROMPT + order-fulfillment skill
+    LLM->>TOOL: check_inventory(sku)
+    TOOL-->>LLM: in stock
+    LLM->>TOOL: process_payment(149.99)
+    TOOL-->>LLM: payment confirmed
+    LLM-->>HW: {"status": "success", "order_id": "ORD-1234"}
+    HW->>SINK: Result → stdout + file + Redis
+          </pre>
+        </div>
+      </div>
+
+      <div class="key-insight">
+        <h4>Key Insight: No Custom Code Per Use Case</h4>
+        <p>The headless worker is generic infrastructure. Domain knowledge lives in <strong>skill documents</strong> (markdown). Capabilities come from <strong>tools and MCP servers</strong>. To support a new use case, create a skill README and attach the right tools — no Python code needed.</p>
+      </div>
+    </section>
+
+    <!-- AUDIT -->
+    <section id="audit-trail">
+      <h2>Audit Trail (PostgreSQL)</h2>
+      <p>Every task is persisted to PostgreSQL for permanent audit. Redis provides speed (24h TTL); Postgres provides durability.</p>
+
+      <div class="card">
+        <h3>Tasks Table Schema</h3>
+<pre>CREATE TABLE tasks (
+    task_id      TEXT PRIMARY KEY,
+    task_name    TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'queued',
+    payload      JSONB NOT NULL DEFAULT '{}',
+    result       TEXT,
+    error        TEXT,
+    thread_id    TEXT,
+    user_id      TEXT,
+    delivered    BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ
+);</pre>
+        <h4>Indexes</h4>
+        <ul>
+          <li><code>idx_tasks_user_id</code> — query tasks by user</li>
+          <li><code>idx_tasks_status</code> — filter by status</li>
+          <li><code>idx_tasks_created_at</code> — order by recency</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Dual-Write Architecture</h3>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+sequenceDiagram
+    participant QT as queue_task()
+    participant Redis as Redis (speed)
+    participant PG as PostgreSQL (audit)
+
+    QT->>Redis: SET task:{id} (TTL 24h)
+    QT->>PG: INSERT INTO tasks
+
+    Note over Redis,PG: Both writes happen on every<br/>create, update, and deliver
+
+    QT->>Redis: status → processing
+    QT->>PG: UPDATE tasks SET status
+
+    QT->>Redis: status → completed
+    QT->>PG: UPDATE tasks SET status, completed_at
+          </pre>
+        </div>
+        <div class="callout success">
+          <strong>Graceful degradation:</strong> If Postgres is unavailable, Redis still works. Audit writes fail silently (logged as warnings). The headless worker never blocks on audit failures.
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Useful Queries</h3>
+<pre>-- All tasks for a user
+SELECT * FROM tasks WHERE user_id = 'naveen' ORDER BY created_at DESC;
+
+-- Failed tasks in the last 24 hours
+SELECT * FROM tasks WHERE status = 'failed'
+  AND created_at > now() - interval '24 hours';
+
+-- Average processing time
+SELECT task_name, AVG(EXTRACT(EPOCH FROM (completed_at - created_at))) as avg_seconds
+  FROM tasks WHERE completed_at IS NOT NULL
+  GROUP BY task_name;
+
+-- Tasks pending delivery
+SELECT * FROM tasks WHERE status = 'completed' AND delivered = FALSE;</pre>
+      </div>
+    </section>
+
+    <section id="data-stores">
+      <h2>Data Stores</h2>
+      <table>
+        <thead><tr><th>Store</th><th>Data</th><th>Retention</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Redis</strong> <code>task:{id}</code></td><td>Task status, payload, result</td><td>24h TTL</td><td>Fast lookup for status checks</td></tr>
+          <tr><td><strong>Redis</strong> <code>user_tasks:{id}</code></td><td>Sorted set of task IDs</td><td>24h TTL</td><td>Per-user task index</td></tr>
+          <tr><td><strong>Redis</strong> <code>agent-tasks</code></td><td>Stream of queued tasks</td><td>Persistent</td><td>Queue for headless consumption</td></tr>
+          <tr><td><strong>Redis</strong> <code>agent-results</code></td><td>Stream of results</td><td>Persistent</td><td>Redis sink output</td></tr>
+          <tr><td><strong>PostgreSQL</strong> <code>tasks</code></td><td>Full task lifecycle</td><td>Permanent</td><td>Audit trail, analytics</td></tr>
+          <tr><td><strong>File</strong> <code>results.jsonl</code></td><td>JSONL results</td><td>Permanent</td><td>File sink output</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ROADMAP -->
+    <section id="roadmap">
+      <h2>Open Items & TODOs</h2>
+
+      <div class="card">
+        <h3>Authentication for Headless Worker</h3>
+        <span class="badge" style="background:#d2992233;color:var(--orange);">TODO</span>
+
+        <p>Currently the headless worker has <strong>no authentication</strong> — it runs as a static service account (<code>headless-worker</code>) with no SSO token. MCP tools that require user auth will fail.</p>
+
+        <h4>Current State</h4>
+        <table>
+          <thead><tr><th>Component</th><th>Server Agent</th><th>Headless Agent</th></tr></thead>
+          <tbody>
+            <tr><td>User identity</td><td>From SSO token (JWT)</td><td>Static: "headless-worker"</td></tr>
+            <tr><td>MCP tools</td><td>User's SSO token forwarded</td><td>No token — auth MCP calls fail</td></tr>
+            <tr><td>Redis / Postgres</td><td>Connection string from env</td><td>Same — works</td></tr>
+            <tr><td>LLM (Gemini)</td><td>Service account creds</td><td>Same — works</td></tr>
+          </tbody>
+        </table>
+
+        <h4>Proposed Solutions</h4>
+
+        <div class="comparison-table">
+          <div class="comparison-card">
+            <h4 style="color:var(--green);">Option A: Service Account Token (Recommended)</h4>
+            <p>Headless worker gets its own token via OAuth2 client credentials flow.</p>
+<pre>headless_auth:
+  type: "client_credentials"
+  client_id: "headless-worker"
+  client_secret: "${HEADLESS_CLIENT_SECRET}"
+  token_url: "${SSO_ISSUER_URL}/.../token"</pre>
+            <p>HeadlessRuntime requests a token at startup, refreshes periodically. MCP tools see a valid token. <strong>Best for production.</strong></p>
+          </div>
+          <div class="comparison-card">
+            <h4 style="color:var(--blue);">Option B: Token Passthrough from Queue</h4>
+            <p>Server agent includes the user's SSO token in the task payload.</p>
+<pre>await client.xadd(stream, {
+    "name": task_name,
+    "task_id": task_id,
+    "auth_token": user_sso_token,
+})</pre>
+            <p>Headless worker extracts and uses it. <strong>Only works for short-lived tasks</strong> (tokens expire).</p>
+          </div>
+        </div>
+
+        <div class="comparison-table">
+          <div class="comparison-card">
+            <h4 style="color:var(--purple);">Option C: No Auth for Internal MCP</h4>
+            <p>MCP servers expose a trusted internal endpoint without auth.</p>
+<pre>// mcp.json for headless
+{
+  "template-mcp-server": {
+    "url": "http://mcp-server:5001/mcp",
+    "auth": false
+  }
+}</pre>
+            <p><strong>Simplest for local dev.</strong> Requires MCP server to support unauthenticated calls on internal network.</p>
+          </div>
+          <div class="comparison-card">
+            <h4>Recommendation</h4>
+            <p><strong>Option A</strong> for production (proper service identity).<br/><strong>Option C</strong> for local development (zero setup).</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Other Open Items</h3>
+        <table>
+          <thead><tr><th>Item</th><th>Priority</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>Real-time push notifications</td><td><span class="badge" style="background:#8957e533;color:var(--purple);">P2</span></td><td>Option C: Redis pub/sub → UI WebSocket. User gets notified instantly when task completes, without polling.</td></tr>
+            <tr><td>Auto user_id from runtime</td><td><span class="badge" style="background:#23863633;color:var(--green);">P1</span></td><td>Populate <code>user_id</code> from SSO token automatically instead of requiring user to type it.</td></tr>
+            <tr><td>Auto queue_task routing</td><td><span class="badge" style="background:#23863633;color:var(--green);">P1</span></td><td>Orchestrator should auto-detect bulk/long-running requests and queue them without user saying "queue a background task".</td></tr>
+            <tr><td>Ack after processing</td><td><span class="badge" style="background:#23863633;color:var(--green);">P1</span></td><td>Currently messages are acked before processing. If worker crashes mid-processing, message is lost. Move ack to after completion.</td></tr>
+            <tr><td>Pending message claiming</td><td><span class="badge" style="background:#1f6feb33;color:var(--blue);">P2</span></td><td>On restart, claim unacked messages from the pending entries list (PEL) so crashed tasks are retried.</td></tr>
+            <tr><td>Dead letter queue</td><td><span class="badge" style="background:#8957e533;color:var(--purple);">P3</span></td><td>Tasks that fail N times should go to a dead letter queue instead of being retried forever.</td></tr>
+            <tr><td>Task TTL in Postgres</td><td><span class="badge" style="background:#8957e533;color:var(--purple);">P3</span></td><td>Auto-archive or delete old audit records after configurable retention period.</td></tr>
+            <tr><td>Kafka producer in queue_task</td><td><span class="badge" style="background:#8957e533;color:var(--purple);">P3</span></td><td>Allow <code>queue_task</code> to produce to Kafka (not just Redis) for environments where Kafka is the primary queue.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TESTING -->
+    <section id="test-guide">
+      <h2>Test Guide</h2>
+
+      <div class="card">
+        <h3>Test Matrix</h3>
+        <table>
+          <thead><tr><th>Test</th><th>Command</th><th>Count</th><th>Requirements</th></tr></thead>
+          <tbody>
+            <tr><td>Unit tests (triggers)</td><td><code>make test-triggers</code></td><td>124</td><td>None</td></tr>
+            <tr><td>Integration tests</td><td><code>make test-integration</code></td><td>21</td><td>Redis</td></tr>
+            <tr><td>All unit tests</td><td><code>make test</code></td><td>700+</td><td>None</td></tr>
+            <tr><td>Manual: webhook</td><td><code>curl POST :8888/trigger</code></td><td>—</td><td>Headless running</td></tr>
+            <tr><td>Manual: queue</td><td><code>XADD agent-tasks</code></td><td>—</td><td>Headless + Redis</td></tr>
+            <tr><td>Manual: cron</td><td>Wait for schedule</td><td>—</td><td>Headless + cron enabled</td></tr>
+            <tr><td>E2E: UI → queue → headless</td><td>Chat in UI</td><td>—</td><td>Server + headless + UI</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3>Quick Smoke Test</h3>
+<pre># 1. Start both agents
+make local          # Terminal 1
+make headless       # Terminal 2
+
+# 2. Send a webhook event
+curl -X POST http://localhost:8888/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"event":"smoke-test","task":"Calculate BMI for Alice, 65kg 170cm"}'
+
+# 3. Check results
+cat /tmp/headless-results.jsonl | python3 -c "
+import sys, json
+for line in sys.stdin:
+    d = json.loads(line)
+    e = d['event']
+    print(f'{e[\"name\"]} ({e[\"source\"]}): success={d[\"success\"]}')"
+
+# 4. Check Redis
+redis-cli XRANGE agent-results - +</pre>
+      </div>
+    </section>
+
+    <section id="test-scenarios">
+      <h2>Test Scenarios</h2>
+
+      <div class="card">
+        <h3>Scenario 1: Webhook Trigger</h3>
+        <p>External system sends HTTP POST → headless processes → result in all sinks</p>
+<pre># Send webhook
+curl -X POST http://localhost:8888/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"event":"bmi-calc","task":"Calculate BMI for Alice, 65kg 170cm"}'
+
+# Expected: {"status": "accepted"}
+# Wait ~20s, then check results:
+tail -1 /tmp/headless-results.jsonl | python3 -m json.tool</pre>
+      </div>
+
+      <div class="card">
+        <h3>Scenario 2: Queue Trigger (Server → Headless)</h3>
+        <p>Server agent queues task → headless consumes from Redis Stream → status tracked</p>
+<pre># In UI (http://localhost:3000), type:
+# "Queue a background task to calculate BMI for Bob (90kg 180cm). My user_id is naveen."
+
+# Agent responds with task ID, e.g. abc123def456
+
+# Check status in another chat:
+# "Check the status of task abc123def456"
+
+# Or check Redis directly:
+redis-cli GET task:abc123def456 | python3 -m json.tool</pre>
+      </div>
+
+      <div class="card">
+        <h3>Scenario 3: Cron Trigger</h3>
+        <p>Scheduled job fires automatically → headless processes → result in sinks</p>
+<pre># Enable cron in agent.yaml:
+# triggers.cron.enabled: true
+# triggers.cron.jobs:
+#   - name: "health-tip"
+#     schedule: "* * * * *"
+#     payload: {"task": "Generate a health tip"}
+
+# Restart headless worker
+# Wait 60 seconds — result appears automatically in:
+tail -f /tmp/headless-results.jsonl</pre>
+      </div>
+
+      <div class="card">
+        <h3>Scenario 4: Error Handling</h3>
+<pre># Invalid JSON → 400
+curl -X POST http://localhost:8888/trigger \
+  -H "Content-Type: application/json" -d "not json"
+
+# Wrong path → 404
+curl -X POST http://localhost:8888/wrong \
+  -H "Content-Type: application/json" -d '{"test":1}'
+
+# GET method → 405
+curl http://localhost:8888/trigger</pre>
+      </div>
+
+      <div class="card">
+        <h3>Scenario 5: Full E2E with Status Tracking</h3>
+        <p>Complete lifecycle: queue → track → process → deliver results</p>
+<pre># Step 1: Queue task via UI
+#   "Queue a BMI report for 3 employees. My user_id is naveen."
+#   → Agent returns task ID
+
+# Step 2: Check status (same chat)
+#   "What's the status of my task?"
+#   → Agent shows QUEUED or PROCESSING
+
+# Step 3: Wait for completion (~20s)
+
+# Step 4: Check status again
+#   "Check the status of task {id}"
+#   → Agent shows COMPLETED with BMI results
+
+# Step 5: New chat — proactive delivery
+#   "Do I have any pending results? My user_id is naveen."
+#   → Agent delivers undelivered results</pre>
+      </div>
+
+      <div class="card">
+        <h3>Scenario 6: Multiple Sinks Verification</h3>
+        <p>Single event → all 4 sinks receive the result simultaneously</p>
+<pre># Send one event
+curl -X POST http://localhost:8888/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"event":"multi-sink","task":"Calculate BMI for Dave, 95kg 185cm"}'
+
+# Check all 4 sinks:
+
+# 1. Stdout — visible in headless terminal
+# 2. File
+tail -1 /tmp/headless-results.jsonl
+
+# 3. Redis Stream
+redis-cli XRANGE agent-results - + COUNT 1
+
+# 4. Redis Commander — http://localhost:8083
+#    Browse "agent-results" stream</pre>
+      </div>
+    </section>
+
+    <section id="test-verification">
+      <h2>Verify Results</h2>
+
+      <div class="card">
+        <h3>Where to Check</h3>
+        <table>
+          <thead><tr><th>What</th><th>Where</th><th>Command / URL</th></tr></thead>
+          <tbody>
+            <tr><td>Headless worker logs</td><td>Terminal</td><td><code>tail -f /tmp/headless-agent.log</code></td></tr>
+            <tr><td>Task results (file sink)</td><td>Terminal</td><td><code>tail -f /tmp/headless-results.jsonl</code></td></tr>
+            <tr><td>Redis tasks</td><td>Redis Commander</td><td><a href="http://localhost:8083">http://localhost:8083</a> → <code>task:*</code> keys</td></tr>
+            <tr><td>Redis streams</td><td>Redis Commander</td><td><a href="http://localhost:8083">http://localhost:8083</a> → <code>agent-tasks</code>, <code>agent-results</code></td></tr>
+            <tr><td>Postgres audit</td><td>DBeaver</td><td><code>SELECT * FROM tasks ORDER BY created_at DESC;</code></td></tr>
+            <tr><td>Health check</td><td>Browser/curl</td><td><code>curl http://localhost:8082/readyz</code></td></tr>
+            <tr><td>Server agent health</td><td>Browser/curl</td><td><code>curl http://localhost:5002/health</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3>Quick Verification Script</h3>
+<pre>#!/bin/bash
+# Save as verify.sh and run after testing
+
+echo "=== Services ==="
+echo "Server:   $(curl -s -o /dev/null -w '%{http_code}' http://localhost:5002/health)"
+echo "Headless: $(curl -s http://localhost:8082/readyz 2>/dev/null)"
+
+echo ""
+echo "=== Redis Tasks ==="
+cd /path/to/template-agent
+.venv/bin/python -c "
+import redis, json
+r = redis.from_url('redis://localhost:6379/0', decode_responses=True)
+for k in sorted(r.keys('task:*'), key=lambda k: json.loads(r.get(k)).get('created_at',''), reverse=True)[:5]:
+    d = json.loads(r.get(k))
+    icon = {'queued':'⏳','processing':'🔄','completed':'✅','failed':'❌'}.get(d['status'],'?')
+    print(f'  {icon} {d[\"task_id\"]}: {d[\"task_name\"]} [{d[\"status\"]}]')
+r.close()
+"
+
+echo ""
+echo "=== Postgres Audit ==="
+.venv/bin/python -c "
+import asyncio, psycopg
+from psycopg.rows import dict_row
+async def go():
+    async with await psycopg.AsyncConnection.connect(
+        'postgresql://postgres:postgres@localhost:5432/template_agent',
+        row_factory=dict_row
+    ) as conn:
+        rows = await conn.execute(
+            'SELECT task_id, task_name, status, user_id, completed_at FROM tasks ORDER BY created_at DESC LIMIT 5'
+        )
+        for r in await rows.fetchall():
+            print(f'  {r[\"task_id\"]}: {r[\"task_name\"]} [{r[\"status\"]}] user={r.get(\"user_id\",\"-\")}')
+asyncio.run(go())
+"
+
+echo ""
+echo "=== Results File ==="
+wc -l /tmp/headless-results.jsonl 2>/dev/null
+</pre>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    mermaid.initialize({ theme: 'dark', startOnLoad: true, securityLevel: 'loose' });
+
+    document.getElementById('themeBtn').addEventListener('click', () => {
+      const t = document.documentElement.dataset.theme === 'light' ? '' : 'light';
+      document.documentElement.dataset.theme = t;
+      mermaid.initialize({ theme: t === 'light' ? 'default' : 'dark', startOnLoad: false });
+      document.querySelectorAll('.mermaid-wrap pre.mermaid').forEach(el => {
+        el.removeAttribute('data-processed');
+      });
+      mermaid.run();
+    });
+
+    // Active sidebar link
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (e.isIntersecting) {
+          document.querySelectorAll('#sidebar a').forEach(a => a.classList.remove('active'));
+          const link = document.querySelector(`#sidebar a[href="#${e.target.id}"]`);
+          if (link) link.classList.add('active');
+        }
+      });
+    }, { threshold: 0.3 });
+    document.querySelectorAll('section[id]').forEach(s => observer.observe(s));
+  </script>
+</body>
+</html>
