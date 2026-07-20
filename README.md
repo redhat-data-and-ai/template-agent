@@ -134,6 +134,14 @@ See [`.env.example`](./.env.example) for the full list including OpenTelemetry a
 
 Runtime settings (cache, memory, providers, middleware, agent identity) live in [`config/agent/runtime/agent.yaml`](./config/agent/runtime/agent.yaml).
 
+## OPA (Authorization)
+
+An [Open Policy Agent](https://www.openpolicyagent.org/) sidecar enforces authorization policies on every LLM response, tool result, and conversation trajectory. It starts automatically with `make local` and is included in the default `compose.yaml`.
+
+The `opa:` section in `agent.yaml` and the `OPA_*` environment variables above configure the agent-side client. Local policies live in `config/agent/compliance/policies/` and can be augmented from a remote git repository with automatic hot-reload.
+
+See **[`opa/README.md`](./opa/README.md)** for a full explanation of how the middleware, service, config, and OPA container work together.
+
 ## MCP Server Configuration
 
 MCP servers are defined in [`config/agent/mcp.json`](./config/agent/mcp.json) and attached to agents via the `mcps` frontmatter field in [`config/agent/PROMPT.md`](./config/agent/PROMPT.md) (orchestrator) or [`config/agent/subagents/*.md`](./config/agent/subagents/).
