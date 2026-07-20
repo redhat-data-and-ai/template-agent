@@ -247,3 +247,6 @@ docker-compose.override.yml
 # Aegra-generated scaffolding (conflicts with existing compose.yaml + k8s deployment)
 Dockerfile
 docker-compose.yml
+scripts/
+docs/superpowers/plans/
+docs/superpowers/specs/2026-07-13-*

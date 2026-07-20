@@ -10,10 +10,11 @@ LLM_CALL: Final = "llm_call"
 MCP_TOOL_CALL: Final = "mcp_tool_call"
 MEMORY_WRITE: Final = "memory_write"
 SUBAGENT_DELEGATION: Final = "subagent_delegation"
+CODE_EXECUTION: Final = "code_execution"
 
 # Event types audited via AuditMiddleware (orchestrator + in-process subagents).
 AUDITED_MIDDLEWARE_EVENTS: frozenset[str] = frozenset(
-    {LLM_CALL, MCP_TOOL_CALL, MEMORY_WRITE, SUBAGENT_DELEGATION}
+    {LLM_CALL, MCP_TOOL_CALL, MEMORY_WRITE, SUBAGENT_DELEGATION, CODE_EXECUTION}
 )
 
 
@@ -24,3 +25,4 @@ class AuditEventType:
     MCP_TOOL_CALL = MCP_TOOL_CALL
     MEMORY_WRITE = MEMORY_WRITE
     SUBAGENT_DELEGATION = SUBAGENT_DELEGATION
+    CODE_EXECUTION = CODE_EXECUTION

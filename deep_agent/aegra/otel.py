@@ -221,6 +221,63 @@ class MetricsContainer:
         )
         self.graph_build_duration_seconds.record(0)
 
+        # Code execution metrics
+        self.code_execution_duration_seconds = meter.create_histogram(
+            name=f"{self._prefix}_code_execution_duration_seconds",
+            description="End-to-end code execution duration",
+            unit="s",
+        )
+        self.code_executions_total = meter.create_counter(
+            name=f"{self._prefix}_code_executions_total",
+            description="Total code executions by outcome",
+            unit="1",
+        )
+        self.code_execution_errors_total = meter.create_counter(
+            name=f"{self._prefix}_code_execution_errors_total",
+            description="Code execution errors by type",
+            unit="1",
+        )
+        self.code_execution_scheduling_seconds = meter.create_histogram(
+            name=f"{self._prefix}_code_execution_scheduling_seconds",
+            description="K8s pod scheduling latency",
+            unit="s",
+        )
+        self.code_execution_active = meter.create_up_down_counter(
+            name=f"{self._prefix}_code_execution_active",
+            description="Currently running code executions",
+            unit="1",
+        )
+        self.code_execution_queue_wait_seconds = meter.create_histogram(
+            name=f"{self._prefix}_code_execution_queue_wait_seconds",
+            description="Time waiting in execution queue",
+            unit="s",
+        )
+        self.code_execution_rejected_total = meter.create_counter(
+            name=f"{self._prefix}_code_execution_rejected_total",
+            description="Executions rejected due to queue full",
+            unit="1",
+        )
+        self.code_execution_cpu_seconds = meter.create_histogram(
+            name=f"{self._prefix}_code_execution_cpu_seconds",
+            description="CPU seconds consumed per execution",
+            unit="s",
+        )
+        self.code_execution_memory_mb_seconds = meter.create_histogram(
+            name=f"{self._prefix}_code_execution_memory_mb_seconds",
+            description="Memory MB-seconds consumed per execution",
+            unit="MB.s",
+        )
+        # Seed code execution instruments
+        self.code_execution_duration_seconds.record(0)
+        self.code_executions_total.add(0)
+        self.code_execution_errors_total.add(0)
+        self.code_execution_scheduling_seconds.record(0)
+        self.code_execution_active.add(0)
+        self.code_execution_queue_wait_seconds.record(0)
+        self.code_execution_rejected_total.add(0)
+        self.code_execution_cpu_seconds.record(0)
+        self.code_execution_memory_mb_seconds.record(0)
+
 
 def _normalize_metric_prefix(service_name: str) -> str:
     """Convert a service display name to a valid OTEL metric name prefix."""
@@ -418,6 +475,14 @@ def _create_histogram_views(prefix: Optional[str] = None) -> list[View]:
         ),
         View(
             instrument_name=f"{prefix}_graph_build_duration_seconds",
+            aggregation=ExplicitBucketHistogramAggregation(boundaries=DURATION_BUCKETS),
+        ),
+        View(
+            instrument_name=f"{prefix}_code_execution_duration_seconds",
+            aggregation=ExplicitBucketHistogramAggregation(boundaries=DURATION_BUCKETS),
+        ),
+        View(
+            instrument_name=f"{prefix}_code_execution_scheduling_seconds",
             aggregation=ExplicitBucketHistogramAggregation(boundaries=DURATION_BUCKETS),
         ),
     ]

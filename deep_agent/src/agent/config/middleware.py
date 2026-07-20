@@ -18,6 +18,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from deep_agent.src.code_execution.config import CodeExecutionConfig
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -130,6 +131,7 @@ class MiddlewareDefaults(BaseModel):
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
     pii: PIIConfig = Field(default_factory=PIIConfig)
     extra: list[str] = Field(default_factory=list)
+    code_execution: CodeExecutionConfig = Field(default_factory=CodeExecutionConfig)
 
 
 class ProfileConfig(BaseModel):
@@ -165,6 +167,7 @@ class ResolvedMiddlewareConfig(BaseModel):
     pii: PIIConfig = Field(default_factory=PIIConfig)
     extra_middleware: list[str] = Field(default_factory=list)
     excluded_middleware: list[str] = Field(default_factory=list)
+    code_execution: CodeExecutionConfig = Field(default_factory=CodeExecutionConfig)
 
 
 def load_middleware_config(config_path: Path) -> MiddlewareFileConfig:
@@ -245,6 +248,10 @@ def resolve_middleware(
     elif isinstance(overrides.get("human_approval"), bool):
         human_approval = HumanApprovalConfig(enabled=overrides["human_approval"])
 
+    code_execution = defaults.code_execution
+    if isinstance(overrides.get("code_execution"), dict):
+        code_execution = CodeExecutionConfig.model_validate(overrides["code_execution"])
+
     return ResolvedMiddlewareConfig(
         summarization_tool_enabled=summarization_enabled,
         human_approval=human_approval,
@@ -260,6 +267,7 @@ def resolve_middleware(
         pii=defaults.pii,
         extra_middleware=extra,
         excluded_middleware=profile.excluded_middleware,
+        code_execution=code_execution,
     )
 
 

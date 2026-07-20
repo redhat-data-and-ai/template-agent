@@ -287,6 +287,10 @@ class AgentConfig:
             if "body" in config:
                 config["body"] = inject_runtime_values(config["body"])
 
+            from deep_agent.src.infrastructure.tool_access import migrate_tools_field
+
+            migrate_tools_field(config, config.get("name", "orchestrator"))
+
             if "mcps" in config:
                 self._validate_mcps_field(
                     config["mcps"], config.get("name", "orchestrator")
@@ -332,6 +336,12 @@ class AgentConfig:
                     config["body"] = inject_runtime_values(config["body"])
 
                 name = config.get("name", agent_file.stem)
+
+                from deep_agent.src.infrastructure.tool_access import (
+                    migrate_tools_field,
+                )
+
+                migrate_tools_field(config, name)
 
                 if "mcps" in config:
                     self._validate_mcps_field(config["mcps"], name)

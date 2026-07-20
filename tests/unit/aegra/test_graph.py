@@ -34,7 +34,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
@@ -101,7 +101,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
@@ -181,7 +181,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
             "mcps": ["dataverse-mcp-prod1"],
         }
         mock_config.resolve_tools.return_value = []
@@ -262,7 +262,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
 
@@ -348,7 +348,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
 
