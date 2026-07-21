@@ -483,7 +483,6 @@ def _build_compiled_subagent(
 
     if get_scrubber() is not None:
         from deep_agent.src.pii.runnable import PIIAwareRunnable
-
         runnable = PIIAwareRunnable(_inner)
     else:
         runnable = _inner

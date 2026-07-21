@@ -107,7 +107,7 @@ class PresidioDetector:
                 PIIMatch(
                     start=result.start,
                     end=result.end,
-                    value=text[result.start : result.end],
+                    value=text[result.start:result.end],
                     rule_name=rule.name,
                     label=rule.effective_label(),
                     action=rule.action.value,
