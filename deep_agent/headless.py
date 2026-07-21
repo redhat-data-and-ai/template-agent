@@ -109,7 +109,7 @@ async def _build_headless_graph() -> Any:
 
     from deepagents import create_deep_agent
 
-    compiled = create_deep_agent(
+    _inner = create_deep_agent(
         name="headless-worker",
         model=model,
         system_prompt=system_prompt,
@@ -119,6 +119,16 @@ async def _build_headless_graph() -> Any:
         middleware=middleware,
         memory=memory,
     )
+
+    from deep_agent.src.pii import get_scrubber
+
+    if get_scrubber() is not None:
+        from deep_agent.src.pii.runnable import PIIAwareRunnable
+
+        compiled = PIIAwareRunnable(_inner)
+        logger.info("headless_pii_enabled: wrapped with PIIAwareRunnable")
+    else:
+        compiled = _inner
 
     logger.info(
         "Headless graph built: %d tool(s), prompt=%s",

@@ -1,5 +1,4 @@
-"""PIIAwareRunnable — outermost graph wrapper for PII token-map sharing and
-SSE stream restoration.
+"""Outermost graph wrapper for PII token-map sharing and SSE stream restoration.
 
 Controlled by PII_MIDDLEWARE_ENABLED.  When active it:
 
@@ -64,7 +63,9 @@ def _restore_content(content: Any, container: dict[str, str]) -> Any:
         result = []
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
-                result.append({**block, "text": _restore_text(block.get("text", ""), container)})
+                result.append(
+                    {**block, "text": _restore_text(block.get("text", ""), container)}
+                )
             else:
                 result.append(block)
         return result
@@ -102,7 +103,9 @@ def _restore_message_stream_data(data: Any, container: dict[str, str]) -> Any:
                     {**tc, "args": _restore_args(tc.get("args", {}), container)}
                     for tc in tool_calls
                 ]
-                chunk = chunk.model_copy(update={"content": restored_content, "tool_calls": restored_tcs})
+                chunk = chunk.model_copy(
+                    update={"content": restored_content, "tool_calls": restored_tcs}
+                )
             elif restored_content != chunk.content:
                 chunk = chunk.model_copy(update={"content": restored_content})
         result = [chunk, metadata]
@@ -116,12 +119,15 @@ class PIIAwareRunnable:
     """Outermost graph wrapper that manages the PII token map across requests."""
 
     def __init__(self, runnable: Any) -> None:
+        """Wrap *runnable* with PII token-map management."""
         self._runnable = runnable
 
     def __getattr__(self, name: str) -> Any:
+        """Delegate unknown attributes to the wrapped runnable."""
         return getattr(self._runnable, name)
 
     def copy(self, **kwargs: Any) -> "PIIAwareRunnable":
+        """Return a re-wrapped copy of the inner runnable."""
         return PIIAwareRunnable(self._runnable.copy(**kwargs))
 
     def with_config(self, config: Any = None, **kwargs: Any) -> "PIIAwareRunnable":
@@ -154,9 +160,12 @@ class PIIAwareRunnable:
         """
         try:
             from deep_agent.src.pii import get_scrubber
+
             s = get_scrubber()
             if not s:
-                logger.debug("pii_aware_runnable scrubber_not_found — PII middleware inactive")
+                logger.debug(
+                    "pii_aware_runnable scrubber_not_found — PII middleware inactive"
+                )
                 return {}, False
             existing = s._get_shared_container()
             if existing is not None:
@@ -181,6 +190,7 @@ class PIIAwareRunnable:
             return
         try:
             from deep_agent.src.pii import get_scrubber
+
             s = get_scrubber()
             if s and getattr(s, "_instance_container", None) is not None:
                 s._instance_container = None
@@ -234,12 +244,10 @@ class PIIAwareRunnable:
                 yield e
             return
         restored = self._restore_chunk(assembled, container)
-        logger.warning(
-            "pii_aware_runnable sse_restore run_id=%s chunks=%d raw=%r restored=%r tool_calls=%d",
+        logger.debug(
+            "pii_aware_runnable sse_restore run_id=%s chunks=%d tool_calls=%d",
             run_id,
             len(events),
-            _preview(getattr(assembled, "content", None)),
-            _preview(restored.content),
             len(restored.tool_calls or []),
         )
         yield {**last, "data": {"chunk": restored}}
@@ -251,13 +259,21 @@ class PIIAwareRunnable:
         data = event.get("data", {})
         tool_input = data.get("input")
         if isinstance(tool_input, dict) and "args" in tool_input:
-            restored_input = {**tool_input, "args": _restore_args(tool_input["args"], container)}
+            restored_input = {
+                **tool_input,
+                "args": _restore_args(tool_input["args"], container),
+            }
             return {**event, "data": {**data, "input": restored_input}}
         if isinstance(tool_input, dict):
-            return {**event, "data": {**data, "input": _restore_args(tool_input, container)}}
+            return {
+                **event,
+                "data": {**data, "input": _restore_args(tool_input, container)},
+            }
         return event
 
-    def _restore_tool_event_output(self, event: dict, container: dict[str, str]) -> dict:
+    def _restore_tool_event_output(
+        self, event: dict, container: dict[str, str]
+    ) -> dict:
         """Restore tokens in an on_tool_end event's output before it reaches the client.
 
         The tool result content — including nested dicts and list-of-block content
@@ -276,6 +292,7 @@ class PIIAwareRunnable:
     # ── Core async interface ─────────────────────────────────────────────
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        """Invoke the wrapped runnable with PII container management."""
         _container, owned = self._setup_container()
         try:
             return await self._runnable.ainvoke(input, config, **kwargs)
@@ -283,6 +300,7 @@ class PIIAwareRunnable:
             self._clear_container(owned)
 
     async def astream(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        """Stream chunks from the wrapped runnable, restoring PII tokens in message events."""
         container, owned = self._setup_container()
         thread_id: str | None = (config or {}).get("configurable", {}).get("thread_id")
 
@@ -290,6 +308,7 @@ class PIIAwareRunnable:
             if thread_id:
                 try:
                     from deep_agent.src.pii.scrubber import _thread_token_maps
+
                     merged = dict(container)
                     merged.update(_thread_token_maps.get(thread_id, {}))
                     return merged
@@ -310,7 +329,10 @@ class PIIAwareRunnable:
 
         self._clear_container(owned)
 
-    async def astream_events(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+    async def astream_events(
+        self, input: Any, config: Any = None, **kwargs: Any
+    ) -> Any:
+        """Stream events from the wrapped runnable, restoring PII tokens before emission."""
         container, owned = self._setup_container()
 
         # Thread-store is the primary source of truth, not the shared container.
@@ -333,6 +355,7 @@ class PIIAwareRunnable:
             if thread_id:
                 try:
                     from deep_agent.src.pii.scrubber import _thread_token_maps
+
                     merged = dict(container)
                     merged.update(_thread_token_maps.get(thread_id, {}))
                     return merged
@@ -355,7 +378,9 @@ class PIIAwareRunnable:
                 continue
 
             if event_type in ("on_chat_model_end", "on_llm_end") and run_id in buffers:
-                async for restored_event in self._flush_run(run_id, buffers.pop(run_id), _token_map()):
+                async for restored_event in self._flush_run(
+                    run_id, buffers.pop(run_id), _token_map()
+                ):
                     yield restored_event
                 yield event
                 continue

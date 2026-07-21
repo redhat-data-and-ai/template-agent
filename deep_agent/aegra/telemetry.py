@@ -16,6 +16,7 @@ import contextvars
 import os
 from typing import Any
 
+from deep_agent.aegra.auth import encrypt_user_id
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -218,7 +219,7 @@ class LangfuseObservabilityProvider:
             "langfuse_trace_name": _get_trace_name(),
         }
         if user_identity:
-            metadata["langfuse_user_id"] = user_identity
+            metadata["langfuse_user_id"] = encrypt_user_id(user_identity)
         if thread_id:
             metadata["langfuse_session_id"] = thread_id
         trace_id = _trace_id_var.get()

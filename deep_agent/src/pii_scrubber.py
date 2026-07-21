@@ -1,4 +1,4 @@
-"""PII scrubbing utilities for production error responses.
+"""PII scrubbing utilities for error responses.
 
 Removes personally identifiable information from error messages, stack traces,
 and other sensitive data before sending to clients.
@@ -7,7 +7,6 @@ and other sensitive data before sending to clients.
 import re
 from typing import Any
 
-from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -52,9 +51,6 @@ def scrub_pii(text: str) -> str:
     Returns:
         Text with PII replaced by [REDACTED]
     """
-    if not settings.is_production:
-        return text
-
     # Redact emails
     text = EMAIL_PATTERN.sub("[EMAIL_REDACTED]", text)
 
@@ -95,9 +91,6 @@ def scrub_dict(data: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Dictionary with PII scrubbed
     """
-    if not settings.is_production:
-        return data
-
     scrubbed: dict[str, Any] = {}
     for key, value in data.items():
         key_lower = key.lower()
@@ -125,15 +118,10 @@ def scrub_dict(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def scrub_error_response(detail: str, exc: Exception | None = None) -> dict[str, Any]:
-    """Create a scrubbed error response for production.
+    """Create a scrubbed error response.
 
-    In production:
-    - Scrubs PII from detail message
-    - Omits stack traces
-    - Removes internal paths
-
-    In development:
-    - Returns full error details for debugging
+    Scrubs PII from the detail message and omits exception message content
+    (which may contain user data). Only the exception type is included.
 
     Args:
         detail: Error message detail
@@ -142,15 +130,6 @@ def scrub_error_response(detail: str, exc: Exception | None = None) -> dict[str,
     Returns:
         Scrubbed error response dictionary
     """
-    if not settings.is_production:
-        # Development: return full details
-        response = {"detail": detail}
-        if exc:
-            response["exception_type"] = type(exc).__name__
-            response["exception_message"] = str(exc)
-        return response
-
-    # Production: scrub PII and limit information
     scrubbed_detail = scrub_pii(detail)
 
     response = {

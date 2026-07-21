@@ -26,6 +26,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 
+from deep_agent.src.pii.scrubber import _ID_LIKE_KEYS
 from deep_agent.utils.pylogger import get_python_logger
 
 if TYPE_CHECKING:
@@ -123,6 +124,12 @@ class PIIMiddleware(AgentMiddleware):
             if isinstance(human_msg, dict)
             else getattr(human_msg, "content", "")
         )
+        if isinstance(content, list):
+            content = " ".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
         if not isinstance(content, str) or not content:
             return None
 
@@ -188,22 +195,48 @@ class PIIMiddleware(AgentMiddleware):
         if isinstance(content, str):
             return self._scrubber.scrub(content)
         if isinstance(content, list):
-            result = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    result.append(
-                        {**block, "text": self._scrubber.scrub(block["text"])}
-                    )
-                else:
-                    result.append(block)
-            return result
+            return [self._scrub_content_block(block) for block in content]
         return content
+
+    def _scrub_content_block(self, block: Any) -> Any:
+        if not isinstance(block, dict):
+            return block
+        block_type = block.get("type")
+        if block_type == "text":
+            return {**block, "text": self._scrubber.scrub(block.get("text", ""))}
+        if block_type == "image_url":
+            image_url = block.get("image_url")
+            if isinstance(image_url, dict) and "url" in image_url:
+                return {
+                    **block,
+                    "image_url": {
+                        **image_url,
+                        "url": self._scrubber.scrub(image_url["url"]),
+                    },
+                }
+        # For any other block type, scrub all top-level string values
+        return {
+            k: self._scrubber.scrub(v) if isinstance(v, str) else v
+            for k, v in block.items()
+        }
 
     def _scrub_tool_args(self, args: dict[str, Any]) -> dict[str, Any]:
         return {
-            k: self._scrubber.scrub(v) if isinstance(v, str) else v
+            k: self._scrub_value(v) if k not in _ID_LIKE_KEYS else v
             for k, v in args.items()
         }
+
+    def _scrub_value(self, v: Any) -> Any:
+        if isinstance(v, str):
+            return self._scrubber.scrub(v)
+        if isinstance(v, dict):
+            return {
+                k: self._scrub_value(val) if k not in _ID_LIKE_KEYS else val
+                for k, val in v.items()
+            }
+        if isinstance(v, list):
+            return [self._scrub_value(item) for item in v]
+        return v
 
     def _scrub_message(self, msg: BaseMessage) -> BaseMessage:
         content = self._scrub_content(msg.content)
@@ -290,10 +323,8 @@ class PIIMiddleware(AgentMiddleware):
             if synced is not None:
                 kwargs["additional_kwargs"] = synced
         logger.debug(
-            "pii_middleware restore content_changed=%s raw=%r restored=%r",
+            "pii_middleware restore content_changed=%s",
             content != raw_content,
-            _extract_text(raw_content),
-            _extract_text(content),
         )
         return msg.model_copy(update=kwargs)
 

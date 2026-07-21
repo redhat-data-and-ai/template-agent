@@ -41,6 +41,9 @@ dependencies = [
     "redis>=5.0.0,<7",
     "cachetools>=5.5.0,<6",
     "apscheduler>=4.0.0a5",
+    "presidio-analyzer>=2.2.0",
+    "spacy>=3.7.0,<4",
+    "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
     "opentelemetry-api>=1.33.1,<2.0.0",
     "opentelemetry-sdk>=1.33.1,<2.0.0",
     "opentelemetry-exporter-otlp>=1.33.1,<2.0.0",
@@ -49,11 +52,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-presidio = [
-    "presidio-analyzer>=2.2.0",
-    "spacy>=3.7.0,<4",
-    "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
-]
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",

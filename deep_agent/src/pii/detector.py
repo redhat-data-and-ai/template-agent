@@ -13,19 +13,22 @@ from deep_agent.src.pii.config import PIIRule
 # to avoid partial digit matches being claimed by phone first.
 BUILTIN_PATTERNS: dict[str, str] = {
     "credit_card": (
-        r"\b(?:4[0-9]{12}(?:[0-9]{3})?|"           # Visa
-        r"5[1-5][0-9]{14}|"                          # Mastercard
-        r"3[47][0-9]{13}|"                           # Amex
-        r"3(?:0[0-5]|[68][0-9])[0-9]{11}|"          # Diners
-        r"6(?:011|5[0-9]{2})[0-9]{12}|"             # Discover
-        r"(?:2131|1800|35\d{3})\d{11})\b"           # JCB
+        r"\b(?:"
+        r"4\d{3}(?:[-\s]?\d{4}){3}"  # Visa 16-digit
+        r"|5[1-5]\d{2}(?:[-\s]?\d{4}){3}"  # Mastercard
+        r"|3[47]\d{2}[-\s]?\d{6}[-\s]?\d{5}"  # Amex (4-6-5)
+        r"|3(?:0[0-5]|[68]\d)\d[-\s]?\d{6}[-\s]?\d{4}"  # Diners (4-6-4)
+        r"|6(?:011|5\d{2})(?:[-\s]?\d{4}){3}"  # Discover 16-digit
+        r"|(?:2131|1800)[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{3}"  # JCB 15-digit
+        r"|35\d{2}(?:[-\s]?\d{4}){3}"  # JCB 16-digit
+        r")\b"
     ),
     "ssn": r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b",
     "email": r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b",
     "phone": (
         r"(?<!\d)"
-        r"(?:\+?1[-.\s]?)?"                          # optional US country code
-        r"(?:\(?\d{3}\)?[-.\s]?)?"                   # optional area code
+        r"(?:\+?1[-.\s]?)?"  # optional US country code
+        r"(?:\(?\d{3}\)?[-.\s]?)?"  # optional area code
         r"\d{3}[-.\s]?\d{4}"
         r"(?!\d)"
     ),
@@ -49,6 +52,8 @@ BUILTIN_PATTERNS: dict[str, str] = {
 
 @dataclass
 class PIIMatch:
+    """A single detected PII span with position, value, and rule metadata."""
+
     start: int
     end: int
     value: str
@@ -69,6 +74,7 @@ class PIIDetector:
     """
 
     def __init__(self, rules: list[PIIRule]) -> None:
+        """Compile regex patterns for each rule."""
         self._patterns: list[tuple[re.Pattern[str], PIIRule, str]] = []
         for rule in rules:
             if rule.pattern_type == "builtin":

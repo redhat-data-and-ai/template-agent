@@ -15,10 +15,17 @@ from typing import Any
 
 from deep_agent.src.pii.config import PIIConfig
 from deep_agent.src.pii.detector import PIIDetector, PIIMatch
+from deep_agent.utils.pylogger import get_python_logger
+
+logger = get_python_logger()
 
 # Per-request state stored in ContextVars.
-_token_map: ContextVar[dict[str, str] | None] = ContextVar("pii_token_map", default=None)
-_value_map: ContextVar[dict[str, str] | None] = ContextVar("pii_value_map", default=None)  # reverse: value→token
+_token_map: ContextVar[dict[str, str] | None] = ContextVar(
+    "pii_token_map", default=None
+)
+_value_map: ContextVar[dict[str, str] | None] = ContextVar(
+    "pii_value_map", default=None
+)  # reverse: value→token
 _label_counters: ContextVar[dict[str, int] | None] = ContextVar(
     "pii_label_counters", default=None
 )
@@ -38,6 +45,7 @@ _shared_token_map_ref: ContextVar[dict[str, str] | None] = ContextVar(
 # Each entry is ~500 bytes, so worst-case memory footprint is ~5 MB.
 try:
     from cachetools import TTLCache
+
     _thread_token_maps: TTLCache = TTLCache(maxsize=10_000, ttl=7 * 86_400)
 except ImportError:
     _thread_token_maps: dict = {}  # type: ignore[no-redef]
@@ -49,11 +57,23 @@ _TOKEN_RE = re.compile(r"\[([A-Z_]+)_(\d+)\]")
 # regularly produces false positives (e.g. a UUID substring matching a phone
 # number pattern), corrupting values that must remain byte-for-byte stable
 # for correlation (message ids, run ids, tool_call_id, thread/checkpoint ids).
-_ID_LIKE_KEYS = frozenset({
-    "id", "run_id", "parent_run_id", "tool_call_id", "thread_id",
-    "checkpoint_id", "checkpoint_ns", "trace_id", "span_id", "session_id",
-    "request_id", "correlation_id", "call_id",
-})
+_ID_LIKE_KEYS = frozenset(
+    {
+        "id",
+        "run_id",
+        "parent_run_id",
+        "tool_call_id",
+        "thread_id",
+        "checkpoint_id",
+        "checkpoint_ns",
+        "trace_id",
+        "span_id",
+        "session_id",
+        "request_id",
+        "correlation_id",
+        "call_id",
+    }
+)
 
 
 class PerRuleDetector:
@@ -66,17 +86,20 @@ class PerRuleDetector:
     """
 
     def __init__(self, rules: list) -> None:
+        """Build regex and/or Presidio sub-detectors from the rule list."""
         regex_rules = [r for r in rules if r.detector in ("regex", "custom")]
         presidio_rules = [r for r in rules if r.detector == "presidio"]
 
         self._regex = PIIDetector(regex_rules) if regex_rules else None
         if presidio_rules:
             from deep_agent.src.pii.presidio_detector import PresidioDetector
+
             self._presidio: Any = PresidioDetector(presidio_rules)
         else:
             self._presidio = None
 
     def find_all(self, text: str) -> list[PIIMatch]:
+        """Return all non-overlapping PII matches ordered by position."""
         combined: list[PIIMatch] = []
         if self._regex:
             combined.extend(self._regex.find_all(text))
@@ -95,6 +118,10 @@ class PerRuleDetector:
 def _build_detector(config: PIIConfig) -> Any:
     """Build a PerRuleDetector from the config rules."""
     if not config.rules:
+        if config.enabled:
+            logger.warning(
+                "pii_enabled_no_rules: PII is enabled but no rules are defined — scrubbing is inactive"
+            )
         return None
     return PerRuleDetector(config.rules)
 
@@ -109,6 +136,7 @@ class PIIScrubber:
     """
 
     def __init__(self, config: PIIConfig, hash_key: bytes = b"") -> None:
+        """Build the scrubber and its per-strategy detectors from config."""
         self._config = config
         self._detector = _build_detector(config)
         self._hash_key = hash_key or os.urandom(32)
@@ -116,9 +144,11 @@ class PIIScrubber:
         # _check_input_blocked uses this instead of running all rules then filtering.
         block_rules = [r for r in config.rules if r.action.value == "block"]
         self._block_rule_names: frozenset[str] = frozenset(r.name for r in block_rules)
-        self._block_detector = _build_detector(
-            PIIConfig(enabled=True, rules=block_rules)
-        ) if block_rules else None
+        self._block_detector = (
+            _build_detector(PIIConfig(enabled=True, rules=block_rules))
+            if block_rules
+            else None
+        )
 
     # ------------------------------------------------------------------
     # ContextVar helpers
@@ -177,7 +207,9 @@ class PIIScrubber:
         return "*" * (len(value) - 4) + value[-4:]
 
     def _hash_value(self, value: str) -> str:
-        digest = hmac.new(self._hash_key, value.encode(), hashlib.sha256).hexdigest()[:12]
+        digest = hmac.new(self._hash_key, value.encode(), hashlib.sha256).hexdigest()[
+            :12
+        ]
         return f"[HASH:{digest}]"
 
     # ------------------------------------------------------------------
@@ -242,7 +274,7 @@ class PIIScrubber:
         parts: list[str] = []
         cursor = 0
         for m in matches:
-            parts.append(text[cursor:m.start])
+            parts.append(text[cursor : m.start])
             parts.append(self._hash_value(m.value))
             cursor = m.end
         parts.append(text[cursor:])
