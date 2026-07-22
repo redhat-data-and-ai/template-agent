@@ -1,0 +1,7 @@
+# Default owners for everything
+* @redhat-data-and-ai/template-agent-maintainers
+
+# CI and infrastructure
+.github/ @redhat-data-and-ai/template-agent-maintainers
+Containerfile @redhat-data-and-ai/template-agent-maintainers
+deployment/ @redhat-data-and-ai/template-agent-maintainers

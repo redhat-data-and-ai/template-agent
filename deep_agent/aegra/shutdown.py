@@ -102,7 +102,7 @@ def register_atexit() -> None:
 
 
 def run_shutdown_sync() -> None:
-    """Synchronous shutdown — runs at process exit via atexit.
+    """Run shutdown synchronously at process exit via atexit.
 
     Handles cleanup that doesn't need an event loop: Langfuse flush,
     Redis close, graph cache clear. Skips drain and async scheduler

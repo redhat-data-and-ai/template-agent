@@ -229,9 +229,13 @@ class McpTokenStore:
             registration_data=registration_data,
         )
 
-    async def get_token(self, agent_name: str, user_id: str, mcp_name: str) -> McpOAuthToken | None:
+    async def get_token(
+        self, agent_name: str, user_id: str, mcp_name: str
+    ) -> McpOAuthToken | None:
         """Return stored OAuth tokens for *(agent_name, user_id, mcp_name)* from Redis."""
-        raw = await asyncio.to_thread(cache_get, self._token_key(agent_name, user_id, mcp_name))
+        raw = await asyncio.to_thread(
+            cache_get, self._token_key(agent_name, user_id, mcp_name)
+        )
         if raw is None:
             return None
         try:
@@ -287,7 +291,9 @@ class McpTokenStore:
 
     async def delete_token(self, agent_name: str, user_id: str, mcp_name: str) -> bool:
         """Delete stored OAuth tokens for *(agent_name, user_id, mcp_name)* from Redis."""
-        return await asyncio.to_thread(cache_delete, self._token_key(agent_name, user_id, mcp_name))
+        return await asyncio.to_thread(
+            cache_delete, self._token_key(agent_name, user_id, mcp_name)
+        )
 
     @staticmethod
     def expires_at_from_token_response(data: dict[str, Any]) -> datetime | None:

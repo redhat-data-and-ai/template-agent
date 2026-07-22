@@ -1,0 +1,26 @@
+name: Setup Python with uv
+description: Install uv, create a virtual environment, and install project dependencies
+
+inputs:
+  python-version:
+    description: Python version to use
+    required: false
+    default: "3.14"
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+      with:
+        version: "latest"
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
+    - name: Set up virtual env
+      shell: bash
+      run: uv venv --python ${{ inputs.python-version }}
+
+    - name: Install dependencies
+      shell: bash
+      run: uv pip install -e ".[dev]"

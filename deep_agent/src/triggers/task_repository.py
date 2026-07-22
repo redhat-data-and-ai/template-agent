@@ -80,11 +80,19 @@ class TaskRepository:
                     """INSERT INTO tasks (task_id, task_name, status, payload, thread_id, user_id)
                        VALUES (%s, %s, 'queued', %s, %s, %s)
                        ON CONFLICT (task_id) DO NOTHING""",
-                    (task_id, task_name, json.dumps(payload, default=str), thread_id, user_id),
+                    (
+                        task_id,
+                        task_name,
+                        json.dumps(payload, default=str),
+                        thread_id,
+                        user_id,
+                    ),
                 )
                 await conn.commit()
         except Exception:
-            logger.warning("failed to insert task audit record", task_id=task_id, exc_info=True)
+            logger.warning(
+                "failed to insert task audit record", task_id=task_id, exc_info=True
+            )
 
     async def update_status(
         self,
@@ -114,7 +122,9 @@ class TaskRepository:
                     )
                 await conn.commit()
         except Exception:
-            logger.warning("failed to update task audit record", task_id=task_id, exc_info=True)
+            logger.warning(
+                "failed to update task audit record", task_id=task_id, exc_info=True
+            )
 
     async def mark_delivered(self, task_id: str) -> None:
         """Mark task as delivered in the audit table."""
@@ -128,7 +138,9 @@ class TaskRepository:
                 )
                 await conn.commit()
         except Exception:
-            logger.warning("failed to mark task delivered", task_id=task_id, exc_info=True)
+            logger.warning(
+                "failed to mark task delivered", task_id=task_id, exc_info=True
+            )
 
     async def get_task_history(
         self,

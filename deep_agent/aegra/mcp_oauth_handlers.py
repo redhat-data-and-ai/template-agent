@@ -144,7 +144,9 @@ async def handle_mcp_connect(user_id: str, mcp_name: str) -> dict[str, str]:
     if auth_mode == "dcr":
         client = await store.get_client(current_agent_name, mcp_name)
         if client is None:
-            await _register_dcr_client(current_agent_name, mcp_name, oauth_cfg, server_cfg)
+            await _register_dcr_client(
+                current_agent_name, mcp_name, oauth_cfg, server_cfg
+            )
             client = await store.get_client(current_agent_name, mcp_name)
         client_id = client.client_id if client else None
     else:

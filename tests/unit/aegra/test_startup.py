@@ -2,6 +2,8 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from deep_agent.aegra import startup
 
 
@@ -55,8 +57,8 @@ class TestValidateConfig:
             "deep_agent.src.settings.validate_config",
             side_effect=ValueError("bad port"),
         ):
-            result = await startup._validate_config()
-        assert "warning" in result
+            with pytest.raises(ValueError, match="bad port"):
+                await startup._validate_config()
 
 
 class TestEnsureDatabase:

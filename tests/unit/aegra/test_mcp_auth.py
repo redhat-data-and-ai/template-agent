@@ -175,6 +175,7 @@ class TestMcpCredentialResolver:
         store = AsyncMock()
         store.get_token = AsyncMock(
             return_value=McpOAuthToken(
+                agent_name="test-agent",
                 user_id="user-1",
                 mcp_name="oauth-mcp",
                 access_token="stored-access",
@@ -194,6 +195,7 @@ class TestMcpCredentialResolver:
         store = AsyncMock()
         store.get_token = AsyncMock(
             return_value=McpOAuthToken(
+                agent_name="test-agent",
                 user_id="user-1",
                 mcp_name="oauth-mcp",
                 access_token="expired-access",
@@ -228,6 +230,7 @@ class TestMcpCredentialResolver:
         store = AsyncMock()
         store.get_token = AsyncMock(
             return_value=McpOAuthToken(
+                agent_name="test-agent",
                 user_id="user-1",
                 mcp_name="oauth-mcp",
                 access_token="stored-access",

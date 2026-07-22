@@ -202,7 +202,9 @@ class TaskStore:
             try:
                 await audit.mark_delivered(task_id)
             except Exception:
-                logger.debug("audit mark_delivered failed", task_id=task_id, exc_info=True)
+                logger.debug(
+                    "audit mark_delivered failed", task_id=task_id, exc_info=True
+                )
 
     async def close(self) -> None:
         """Close the Redis client connection."""

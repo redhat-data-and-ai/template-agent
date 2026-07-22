@@ -343,7 +343,8 @@ def _create_auth_placeholder_tool(mcp_name: str) -> Any:
     connect button.
     """
     from langchain_core.tools import StructuredTool
-    from pydantic import BaseModel, Field as PydanticField
+    from pydantic import BaseModel
+    from pydantic import Field as PydanticField
 
     class _Input(BaseModel):
         query: str = PydanticField(default="", description="Your request for this tool")
@@ -456,7 +457,9 @@ async def _connect_single_server(
                     )
             elif _is_connection_error(exc) and not required:
                 breaker.record_failure()
-                logger.warning(f"[{name}] not reachable ({config.get('url')}) — skipped")
+                logger.warning(
+                    f"[{name}] not reachable ({config.get('url')}) — skipped"
+                )
             else:
                 breaker.record_failure()
                 logger.error(

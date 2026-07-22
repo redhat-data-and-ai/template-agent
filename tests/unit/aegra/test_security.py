@@ -170,74 +170,54 @@ class TestPIIScrubbing:
     def test_scrubs_email_addresses(self):
         """Test that email addresses are redacted."""
         from deep_agent.src.pii_scrubber import scrub_pii
-        from deep_agent.src.settings import Settings
 
-        with patch(
-            "deep_agent.src.pii_scrubber.settings", Settings(ENVIRONMENT="production")
-        ):
-            text = "Error: user john.doe@example.com not found"
-            scrubbed = scrub_pii(text)
-            assert "john.doe@example.com" not in scrubbed
-            assert "[EMAIL_REDACTED]" in scrubbed
+        text = "Error: user john.doe@example.com not found"
+        scrubbed = scrub_pii(text)
+        assert "john.doe@example.com" not in scrubbed
+        assert "[EMAIL_REDACTED]" in scrubbed
 
     def test_scrubs_file_paths(self):
         """Test that file paths are redacted."""
         from deep_agent.src.pii_scrubber import scrub_pii
-        from deep_agent.src.settings import Settings
 
-        with patch(
-            "deep_agent.src.pii_scrubber.settings", Settings(ENVIRONMENT="production")
-        ):
-            text = "File not found: /home/user/secrets/config.yaml"
-            scrubbed = scrub_pii(text)
-            assert "/home/user/secrets" not in scrubbed
-            assert "[PATH]" in scrubbed
+        text = "File not found: /home/user/secrets/config.yaml"
+        scrubbed = scrub_pii(text)
+        assert "/home/user/secrets" not in scrubbed
+        assert "[PATH]" in scrubbed
 
     def test_scrubs_jwt_tokens(self):
         """Test that JWT tokens are redacted."""
         from deep_agent.src.pii_scrubber import scrub_pii
-        from deep_agent.src.settings import Settings
 
-        with patch(
-            "deep_agent.src.pii_scrubber.settings", Settings(ENVIRONMENT="production")
-        ):
-            text = "Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
-            scrubbed = scrub_pii(text)
-            assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in scrubbed
-            assert "[TOKEN_REDACTED]" in scrubbed
+        text = "Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        scrubbed = scrub_pii(text)
+        assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in scrubbed
+        assert "[TOKEN_REDACTED]" in scrubbed
 
     def test_scrubs_sensitive_dict_keys(self):
         """Test that sensitive dictionary keys are redacted."""
         from deep_agent.src.pii_scrubber import scrub_dict
-        from deep_agent.src.settings import Settings
 
-        with patch(
-            "deep_agent.src.pii_scrubber.settings", Settings(ENVIRONMENT="production")
-        ):
-            data = {
-                "username": "alice",
-                "password": "secret123",
-                "api_key": "sk-1234567890",
-                "message": "hello",
-            }
-            scrubbed = scrub_dict(data)
-            assert scrubbed["password"] == "[REDACTED]"
-            assert scrubbed["api_key"] == "[REDACTED]"
-            assert scrubbed["username"] == "alice"  # not sensitive
-            assert scrubbed["message"] == "hello"
+        data = {
+            "username": "alice",
+            "password": "secret123",
+            "api_key": "sk-1234567890",
+            "message": "hello",
+        }
+        scrubbed = scrub_dict(data)
+        assert scrubbed["password"] == "[REDACTED]"
+        assert scrubbed["api_key"] == "[REDACTED]"
+        assert scrubbed["username"] == "alice"  # not sensitive
+        assert scrubbed["message"] == "hello"
 
-    def test_development_mode_preserves_pii(self):
-        """Test that PII is preserved in development mode."""
+    def test_scrubs_pii_regardless_of_environment(self):
+        """Test that PII is always scrubbed regardless of environment."""
         from deep_agent.src.pii_scrubber import scrub_pii
-        from deep_agent.src.settings import Settings
 
-        with patch(
-            "deep_agent.src.pii_scrubber.settings", Settings(ENVIRONMENT="development")
-        ):
-            text = "Error: user john@example.com at /home/user/file.txt"
-            scrubbed = scrub_pii(text)
-            # In development, nothing should be scrubbed
-            assert scrubbed == text
+        text = "Error: user john@example.com at /home/user/file.txt"
+        scrubbed = scrub_pii(text)
+        assert "john@example.com" not in scrubbed
+        assert "[EMAIL_REDACTED]" in scrubbed
 
 
 class TestConfigValidation:
@@ -265,35 +245,27 @@ class TestConfigValidation:
 class TestErrorResponseScrubbing:
     """Tests for global exception handler PII scrubbing."""
 
-    def test_error_response_scrubbed_in_production(self):
-        """Test that unhandled exceptions are scrubbed in production."""
+    def test_error_response_scrubbed(self):
+        """Test that unhandled exceptions are scrubbed."""
         from deep_agent.src.pii_scrubber import scrub_error_response
-        from deep_agent.src.settings import Settings
 
-        with patch(
-            "deep_agent.src.pii_scrubber.settings", Settings(ENVIRONMENT="production")
-        ):
-            exc = ValueError("Invalid email: user@example.com")
-            response = scrub_error_response("Error occurred", exc)
+        exc = ValueError("Invalid email: user@example.com")
+        response = scrub_error_response("Error occurred", exc)
 
-            # Should not contain PII
-            assert "user@example.com" not in str(response)
-            # Should contain exception type but not message
-            assert response["exception_type"] == "ValueError"
-            assert "exception_message" not in response
+        # Should not contain PII
+        assert "user@example.com" not in str(response)
+        # Should contain exception type but not message
+        assert response["exception_type"] == "ValueError"
+        assert "exception_message" not in response
 
-    def test_error_response_verbose_in_development(self):
-        """Test that full error details are shown in development."""
+    def test_error_response_always_scrubs(self):
+        """Test that error responses are always scrubbed regardless of environment."""
         from deep_agent.src.pii_scrubber import scrub_error_response
-        from deep_agent.src.settings import Settings
 
-        with patch(
-            "deep_agent.src.pii_scrubber.settings", Settings(ENVIRONMENT="development")
-        ):
-            exc = ValueError("Invalid email: user@example.com")
-            response = scrub_error_response("Error occurred", exc)
+        exc = ValueError("Invalid email: user@example.com")
+        response = scrub_error_response("Error occurred", exc)
 
-            # Should contain full details in dev mode
-            assert response["detail"] == "Error occurred"
-            assert response["exception_type"] == "ValueError"
-            assert "user@example.com" in response["exception_message"]
+        # Should always scrub - no exception_message field exposed
+        assert response["detail"] == "Error occurred"
+        assert response["exception_type"] == "ValueError"
+        assert "exception_message" not in response

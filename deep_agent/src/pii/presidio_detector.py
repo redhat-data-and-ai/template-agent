@@ -42,6 +42,7 @@ class PresidioDetector:
     """
 
     def __init__(self, rules: list[PIIRule]) -> None:
+        """Build analyzer with entity mappings for the given rules."""
         from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 
         self._entities: list[str] = []
@@ -106,7 +107,7 @@ class PresidioDetector:
                 PIIMatch(
                     start=result.start,
                     end=result.end,
-                    value=text[result.start:result.end],
+                    value=text[result.start : result.end],
                     rule_name=rule.name,
                     label=rule.effective_label(),
                     action=rule.action.value,

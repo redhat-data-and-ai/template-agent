@@ -393,7 +393,7 @@ def with_fallback(
     on: tuple[type[Exception], ...] = (Exception,),
     log_level: int = _logging.WARNING,
 ) -> Callable[[F], F]:
-    """Decorator that returns a fallback value instead of raising.
+    """Return a fallback value instead of raising.
 
     Use for non-critical paths where a degraded response is better than
     a failure. The original exception is logged.

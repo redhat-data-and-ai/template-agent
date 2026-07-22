@@ -232,8 +232,8 @@ class TestQueueTriggerSource:
         event_b = source._queue.get_nowait()
         assert event_b.name == "task-b"
 
-        # Each message should have been acknowledged.
-        assert mock_consumer.ack.await_count == 2
+        # Messages are NOT acknowledged here — middleware acks after processing.
+        assert mock_consumer.ack.await_count == 0
 
         await source.stop()
 
