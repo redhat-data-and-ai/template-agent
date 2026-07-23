@@ -1,0 +1,17 @@
+{
+  "short": [
+    "What is 2 + 2?",
+    "Say hello.",
+    "What time is it?"
+  ],
+  "medium": [
+    "Explain the difference between a list and a tuple in Python.",
+    "What are the benefits of using Docker containers?",
+    "Describe how HTTP caching works."
+  ],
+  "long": [
+    "Write a detailed comparison of REST and GraphQL APIs, covering use cases, performance characteristics, and developer experience trade-offs.",
+    "Explain the CAP theorem and how it applies to distributed database design. Give examples of systems that prioritize different combinations.",
+    "Describe the complete lifecycle of an HTTP request from browser to server and back, including DNS resolution, TCP handshake, TLS, and response rendering."
+  ]
+}
