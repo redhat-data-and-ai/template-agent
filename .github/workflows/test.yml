@@ -19,9 +19,6 @@ jobs:
     name: Test Suite
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      matrix:
-        python-version: ["3.14"]
 
     steps:
     - name: Checkout code
@@ -30,7 +27,7 @@ jobs:
     - name: Setup Python with uv
       uses: ./.github/actions/setup-python-uv
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: "3.14"
 
     - name: Run unit tests with coverage
       env:
@@ -43,7 +40,7 @@ jobs:
       continue-on-error: true
       run: |
         if [ -f test-results.xml ]; then
-          echo "### Test Results (Python ${{ matrix.python-version }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Results (Python 3.14)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           TESTS=$(grep -oP 'tests="\K[^"]+' test-results.xml | head -1)
           FAILURES=$(grep -oP 'failures="\K[^"]+' test-results.xml | head -1)
@@ -56,7 +53,7 @@ jobs:
         fi
 
     - name: Upload coverage reports to Codecov
-      if: matrix.python-version == '3.14'
+      if: always()
       continue-on-error: true
       uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
       with:
