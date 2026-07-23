@@ -9,12 +9,12 @@ from pydantic import BaseModel, Field, model_validator
 class ActionType(str, Enum):
     """PII handling strategy."""
 
-    scrub = "scrub"        # reversible: replace with [LABEL_N], restore in LLM output
+    scrub = "scrub"  # reversible: replace with [LABEL_N], restore in LLM output
     tokenize = "tokenize"  # alias for scrub (backwards compat)
-    hash = "hash"          # one-way: HMAC-SHA256, deterministic for log correlation
-    redact = "redact"      # one-way: replace with ***REDACTED***
-    mask = "mask"          # one-way: partially mask (e.g. ****-****-****-1234 for credit card)
-    block = "block"        # reject the entire request if this PII type appears in user input
+    hash = "hash"  # one-way: HMAC-SHA256, deterministic for log correlation
+    redact = "redact"  # one-way: replace with ***REDACTED***
+    mask = "mask"  # one-way: partially mask (e.g. ****-****-****-1234 for credit card)
+    block = "block"  # reject the entire request if this PII type appears in user input
 
 
 class PIIRule(BaseModel):
@@ -23,7 +23,9 @@ class PIIRule(BaseModel):
     name: str
     regex: Optional[str] = None  # custom regex; absent = look up BUILTIN_PATTERNS[name]
     strategy: ActionType = ActionType.scrub  # scrub/mask/hash/redact/block
-    provider: Literal["regex", "presidio", "custom", "default"] = "regex"  # provider backend
+    provider: Literal["regex", "presidio", "custom", "default"] = (
+        "regex"  # provider backend
+    )
     label: Optional[str] = None  # token prefix; defaults to name.upper()
 
     @model_validator(mode="before")
@@ -60,5 +62,7 @@ class PIIConfig(BaseModel):
     """Top-level PII middleware configuration."""
 
     enabled: bool = False
-    trace_strategy: Literal["redact", "hash"] = "hash"  # how PII appears in Langfuse traces
+    trace_strategy: Literal["redact", "hash"] = (
+        "hash"  # how PII appears in Langfuse traces
+    )
     rules: list[PIIRule] = Field(default_factory=list)

@@ -132,14 +132,27 @@ async def _query(opa_input: dict[str, Any]) -> OpaResult:
             logger.debug("OPA response: status=%d body=%s", response.status_code, data)
             return _parse_result(data)
     except httpx.TimeoutException:
-        logger.warning("OPA request timed out after %.1fs — allowing by default", timeout)
-        return OpaResult(allowed=True, denial_reasons=["OPA timeout — allowed by default"])
+        logger.warning(
+            "OPA request timed out after %.1fs — allowing by default", timeout
+        )
+        return OpaResult(
+            allowed=True, denial_reasons=["OPA timeout — allowed by default"]
+        )
     except httpx.HTTPStatusError as exc:
-        logger.warning("OPA returned HTTP %d — allowing by default", exc.response.status_code)
-        return OpaResult(allowed=True, denial_reasons=[f"OPA HTTP {exc.response.status_code} — allowed by default"])
+        logger.warning(
+            "OPA returned HTTP %d — allowing by default", exc.response.status_code
+        )
+        return OpaResult(
+            allowed=True,
+            denial_reasons=[
+                f"OPA HTTP {exc.response.status_code} — allowed by default"
+            ],
+        )
     except Exception as exc:
         logger.warning("OPA unreachable (%s) — allowing by default", exc)
-        return OpaResult(allowed=True, denial_reasons=["OPA unreachable — allowed by default"])
+        return OpaResult(
+            allowed=True, denial_reasons=["OPA unreachable — allowed by default"]
+        )
 
 
 def _query_sync(opa_input: dict[str, Any]) -> OpaResult:
@@ -152,17 +165,32 @@ def _query_sync(opa_input: dict[str, Any]) -> OpaResult:
             response = client.post(url, json={"input": opa_input})
             response.raise_for_status()
             data = response.json()
-            logger.debug("OPA response (sync): status=%d body=%s", response.status_code, data)
+            logger.debug(
+                "OPA response (sync): status=%d body=%s", response.status_code, data
+            )
             return _parse_result(data)
     except httpx.TimeoutException:
-        logger.warning("OPA request timed out after %.1fs — allowing by default", timeout)
-        return OpaResult(allowed=True, denial_reasons=["OPA timeout — allowed by default"])
+        logger.warning(
+            "OPA request timed out after %.1fs — allowing by default", timeout
+        )
+        return OpaResult(
+            allowed=True, denial_reasons=["OPA timeout — allowed by default"]
+        )
     except httpx.HTTPStatusError as exc:
-        logger.warning("OPA returned HTTP %d — allowing by default", exc.response.status_code)
-        return OpaResult(allowed=True, denial_reasons=[f"OPA HTTP {exc.response.status_code} — allowed by default"])
+        logger.warning(
+            "OPA returned HTTP %d — allowing by default", exc.response.status_code
+        )
+        return OpaResult(
+            allowed=True,
+            denial_reasons=[
+                f"OPA HTTP {exc.response.status_code} — allowed by default"
+            ],
+        )
     except Exception as exc:
         logger.warning("OPA unreachable (%s) — allowing by default", exc)
-        return OpaResult(allowed=True, denial_reasons=["OPA unreachable — allowed by default"])
+        return OpaResult(
+            allowed=True, denial_reasons=["OPA unreachable — allowed by default"]
+        )
 
 
 def evaluate_message_sync(

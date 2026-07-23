@@ -29,12 +29,8 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
 _BLOCKED_TOOL_MESSAGE = "Tool call blocked by OPA policy."
-_BLOCKED_MODEL_MESSAGE = (
-    "I'm unable to respond to that request. Please try rephrasing."
-)
-_BLOCKED_TRAJECTORY_MESSAGE = (
-    "This thread has been terminated due to policy violation. Please start a new chat thread."
-)
+_BLOCKED_MODEL_MESSAGE = "I'm unable to respond to that request. Please try rephrasing."
+_BLOCKED_TRAJECTORY_MESSAGE = "This thread has been terminated due to policy violation. Please start a new chat thread."
 
 
 class _NoStreamModel:
@@ -49,9 +45,7 @@ class _NoStreamModel:
         object.__setattr__(self, "_model", model)
 
     def bind_tools(self, *args: Any, **kwargs: Any) -> Any:
-        return self._model.bind_tools(*args, **kwargs).with_config(
-            tags=[TAG_NOSTREAM]
-        )
+        return self._model.bind_tools(*args, **kwargs).with_config(tags=[TAG_NOSTREAM])
 
     def bind(self, *args: Any, **kwargs: Any) -> Any:
         return self._model.bind(*args, **kwargs).with_config(tags=[TAG_NOSTREAM])
@@ -89,7 +83,8 @@ class OPAMiddleware(AgentMiddleware):
             return None
 
         trajectory = [
-            m for m in messages
+            m
+            for m in messages
             if isinstance(m, BaseMessage) and not m.additional_kwargs.get("opa_retry")
         ]
         opa = await evaluate_trajectory(trajectory)
@@ -120,7 +115,10 @@ class OPAMiddleware(AgentMiddleware):
         current_request = request
 
         for attempt in range(max_retries + 1):
-            print(f"[OPA] awrap_model_call attempt {attempt + 1}/{max_retries + 1}", flush=True)
+            print(
+                f"[OPA] awrap_model_call attempt {attempt + 1}/{max_retries + 1}",
+                flush=True,
+            )
             result = await handler(
                 current_request.override(model=_NoStreamModel(current_request.model))
             )
@@ -141,7 +139,11 @@ class OPAMiddleware(AgentMiddleware):
             )
 
             if attempt < max_retries:
-                denial_summary = "; ".join(opa.denial_reasons) if opa.denial_reasons else "policy violation"
+                denial_summary = (
+                    "; ".join(opa.denial_reasons)
+                    if opa.denial_reasons
+                    else "policy violation"
+                )
                 feedback = HumanMessage(
                     content=(
                         f"Your previous response was blocked by security policy. "
@@ -211,7 +213,9 @@ class OPAMiddleware(AgentMiddleware):
             flush=True,
         )
 
-        denial_summary = "; ".join(opa.denial_reasons) if opa.denial_reasons else "policy violation"
+        denial_summary = (
+            "; ".join(opa.denial_reasons) if opa.denial_reasons else "policy violation"
+        )
         return Command(
             update={
                 "messages": [

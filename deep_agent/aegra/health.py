@@ -149,7 +149,11 @@ def check_otel() -> dict[str, Any]:
 async def check_opa() -> dict[str, Any]:
     """Check OPA connectivity via its /health endpoint."""
     try:
-        from deep_agent.src.opa.config import get_opa_timeout, get_opa_url, is_opa_enabled
+        from deep_agent.src.opa.config import (
+            get_opa_timeout,
+            get_opa_url,
+            is_opa_enabled,
+        )
 
         if not is_opa_enabled():
             return {"status": "disabled"}
