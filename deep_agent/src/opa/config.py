@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def _yaml_config() -> OpaFileConfig:
     from deep_agent.src.agent.config import agent_config
 
-    return agent_config.get_opa_config()  # type: ignore[return-value]
+    return agent_config.get_opa_config()
 
 
 def is_opa_enabled() -> bool:
