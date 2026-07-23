@@ -14,12 +14,19 @@ YAML reference (agent.yaml):
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
+
 from deep_agent.src.settings import settings
 
+if TYPE_CHECKING:
+    from deep_agent.src.agent.config.opa import OpaFileConfig
 
-def _yaml_config():
+
+def _yaml_config() -> OpaFileConfig:
     from deep_agent.src.agent.config import agent_config
-    return agent_config.get_opa_config()
+    from deep_agent.src.agent.config.opa import OpaFileConfig
+
+    return cast(OpaFileConfig, agent_config.get_opa_config())
 
 
 def is_opa_enabled() -> bool:

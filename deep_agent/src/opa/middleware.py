@@ -74,7 +74,7 @@ class OPAMiddleware(AgentMiddleware):
                 continue
             text = message.text
             if text:
-                return text
+                return str(text)
         return ""
 
     @hook_config(can_jump_to=["end"])
@@ -122,7 +122,7 @@ class OPAMiddleware(AgentMiddleware):
         for attempt in range(max_retries + 1):
             print(f"[OPA] awrap_model_call attempt {attempt + 1}/{max_retries + 1}", flush=True)
             result = await handler(
-                current_request.override(model=_NoStreamModel(current_request.model))  # type: ignore[arg-type]
+                current_request.override(model=_NoStreamModel(current_request.model))
             )
             print(f"[OPA] awrap_model_call result: {vars(result)!r}", flush=True)
             text = self._extract_text(result)
