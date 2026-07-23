@@ -1,0 +1,36 @@
+name: PR Title Lint
+
+on:
+  pull_request:
+    branches: [main, deep-agent]
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint-title:
+    name: Conventional Commit Title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate PR title
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          PATTERN='^(feat|fix|docs|chore|refactor|test|ci|perf|build|style|revert)(\(.+\))?\!?: .+'
+          if echo "$TITLE" | grep -qE "$PATTERN"; then
+            echo "PR title is valid: $TITLE"
+          else
+            echo "::error::PR title does not follow Conventional Commits format."
+            echo ""
+            echo "Expected: <type>(<optional scope>): <description>"
+            echo "Got:      $TITLE"
+            echo ""
+            echo "Valid types: feat, fix, docs, chore, refactor, test, ci, perf, build, style, revert"
+            echo "Examples:"
+            echo "  feat: add new skill for data validation"
+            echo "  fix(auth): correct token refresh logic"
+            echo "  docs: update MCP configuration section"
+            echo "  feat!: redesign config format (breaking change)"
+            exit 1
+          fi

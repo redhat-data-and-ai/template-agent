@@ -355,15 +355,23 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     _inner_graph = create_deep_agent(**create_kwargs)
 
+    compiled = _inner_graph
+
+    from deep_agent.src.pii import get_scrubber
+
+    if get_scrubber() is not None:
+        from deep_agent.src.pii.runnable import PIIAwareRunnable
+
+        compiled = PIIAwareRunnable(compiled)
+        logger.info("graph_pii_enabled: wrapped with PIIAwareRunnable")
+
     if app_settings.GUARDIAN_API_BASE:
         from deep_agent.aegra.safety import SafetyAwareRunnable
 
-        _inner_graph = SafetyAwareRunnable(_inner_graph, outermost=True)
+        compiled = SafetyAwareRunnable(compiled, outermost=True)
         logger.info(
             "graph_guardian_enabled: wrapped with SafetyAwareRunnable and GuardianToolProxy"
         )
-
-    compiled = _inner_graph
 
     _graph_cache[cache_key] = compiled
     _graph_cache_ts[cache_key] = time.time()

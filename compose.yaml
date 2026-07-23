@@ -66,7 +66,7 @@ services:
       - agent-network
 
   template-agent:
-    profiles: [container]
+    profiles: [container, observability]
     build:
       context: .
       dockerfile: Containerfile
@@ -125,7 +125,7 @@ services:
       - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
     networks:
-      - demo-network
+      - agent-network
 
 volumes:
   agent_pgvector_data:

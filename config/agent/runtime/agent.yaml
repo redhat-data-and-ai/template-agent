@@ -142,15 +142,6 @@ middleware:
     enabled: true
     max_retries: 2
     tools: ["calculate_bmi", "search_web", "send_email"]
-  pii:
-    enabled: true
-    rules:
-      - type: credit_card
-        strategy: mask
-      - type: ip
-        strategy: redact
-      - type: url
-        strategy: redact
   extra: []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]

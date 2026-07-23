@@ -19,7 +19,7 @@ logger = get_python_logger()
 
 
 def _tokenize(text: str) -> list[str]:
-    """Simple whitespace tokeniser with lowercasing."""
+    """Tokenize text by splitting on whitespace and lowercasing."""
     return text.lower().split()
 
 

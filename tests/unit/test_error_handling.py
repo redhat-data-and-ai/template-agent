@@ -72,7 +72,7 @@ class TestClassifyError:
         result = classify_error(RuntimeError("something unexpected"))
         assert result["recoverable"] is False
         assert result["error_type"] == "unknown"
-        assert result["message"] == "Internal server error"
+        assert result["message"] == "Internal server error: something unexpected"
 
     def test_base_exception_treated_as_unknown(self):
         result = classify_error(TypeError("bad type"))

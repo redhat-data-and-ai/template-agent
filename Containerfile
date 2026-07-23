@@ -18,7 +18,8 @@ RUN pip install --no-cache-dir uv && \
     uv venv /app/.venv && \
     uv pip install --python /app/.venv/bin/python -r pyproject.toml && \
     mkdir -p /app/.cache /app/config/agent && \
-    chown -R 65532:root /app/.cache /app/config
+    chown -R 65532:root /app/.cache /app/config && \
+    chown 65532:0 /app && chmod g+w /app
 
 USER 65532
 

@@ -5,6 +5,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["deep_agent"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [project]
 name = "template-agent"
 version = "0.2.0"
@@ -22,7 +25,7 @@ dependencies = [
     "langchain-openai>=0.3.0",
     "langchain-mcp-adapters==0.2.2",
     "mcp>=1.28.1",
-    "langfuse==4.6.1",
+    "langfuse>=4.9.0",
     "langgraph-checkpoint-postgres==3.0.5",
     "langgraph-sdk>=0.1.51",
     "aegra-cli",
@@ -38,6 +41,9 @@ dependencies = [
     "redis>=5.0.0,<7",
     "cachetools>=5.5.0,<6",
     "apscheduler>=4.0.0a5",
+    "presidio-analyzer>=2.2.0",
+    "spacy>=3.7.0,<4",
+    "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
     "opentelemetry-api>=1.33.1,<2.0.0",
     "opentelemetry-sdk>=1.33.1,<2.0.0",
     "opentelemetry-exporter-otlp>=1.33.1,<2.0.0",

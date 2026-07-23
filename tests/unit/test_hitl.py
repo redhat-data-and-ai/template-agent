@@ -83,8 +83,11 @@ class TestBuildInterruptOn:
         result = build_interrupt_on(config, tools)
         assert result == {}
 
-    def test_default_config_disabled(self):
-        """Default HumanApprovalConfig should produce no interrupts."""
+    def test_default_config_enabled(self):
+        """Default HumanApprovalConfig (enabled=True, mode=all) should interrupt all tools."""
         config = HumanApprovalConfig()
         result = build_interrupt_on(config, [_tool("send_email")])
-        assert result == {}
+        assert result["send_email"] is True
+        # Built-in tools should also be included
+        for builtin in _DEEPAGENTS_BUILTIN_TOOLS:
+            assert builtin in result

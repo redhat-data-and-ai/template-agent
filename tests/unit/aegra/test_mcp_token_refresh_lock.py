@@ -24,6 +24,7 @@ async def _timeout_lock(*_args, **_kwargs):
 
 def _expired_token() -> McpOAuthToken:
     return McpOAuthToken(
+        agent_name="test-agent",
         user_id="user-1",
         mcp_name="oauth-mcp",
         access_token="expired-access",
@@ -34,6 +35,7 @@ def _expired_token() -> McpOAuthToken:
 
 def _fresh_token() -> McpOAuthToken:
     return McpOAuthToken(
+        agent_name="test-agent",
         user_id="user-1",
         mcp_name="oauth-mcp",
         access_token="fresh-access",

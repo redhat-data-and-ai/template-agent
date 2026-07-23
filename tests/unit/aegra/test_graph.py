@@ -56,7 +56,11 @@ class TestAgentFactory:
                 return_value=None,
             ),
             patch(
-                "deep_agent.src.infrastructure.providers.resolve_model_from_config",
+                "deep_agent.src.agent.config.model.parse_model_config",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.cache.model_cache.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
             patch(
@@ -128,7 +132,11 @@ class TestAgentFactory:
                 return_value=None,
             ),
             patch(
-                "deep_agent.src.infrastructure.providers.resolve_model_from_config",
+                "deep_agent.src.agent.config.model.parse_model_config",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.cache.model_cache.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
             patch(
@@ -207,7 +215,11 @@ class TestAgentFactory:
                 return_value=None,
             ),
             patch(
-                "deep_agent.src.infrastructure.providers.resolve_model_from_config",
+                "deep_agent.src.agent.config.model.parse_model_config",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.cache.model_cache.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
             patch(
@@ -290,7 +302,11 @@ class TestAgentFactory:
                 return_value=None,
             ),
             patch(
-                "deep_agent.src.infrastructure.providers.resolve_model_from_config",
+                "deep_agent.src.agent.config.model.parse_model_config",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.cache.model_cache.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
             patch(
@@ -374,7 +390,11 @@ class TestAgentFactory:
                 return_value=None,
             ),
             patch(
-                "deep_agent.src.infrastructure.providers.resolve_model_from_config",
+                "deep_agent.src.agent.config.model.parse_model_config",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.cache.model_cache.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
             patch(

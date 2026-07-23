@@ -52,7 +52,7 @@ class FileSink(OutputSink):
             logger.exception("Failed to write to file sink: %s", self._path)
 
     def _write_sync(self, line: str) -> None:
-        """Synchronous write executed in a thread pool to avoid blocking the event loop."""
+        """Write synchronously in a thread pool to avoid blocking the event loop."""
         handle = self._ensure_handle()
         handle.write(line + "\n")
         handle.flush()

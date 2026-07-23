@@ -1,7 +1,9 @@
 # Template Agent
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12,3.13-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13,3.14-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://github.com/redhat-data-and-ai/template-agent/actions/workflows/test.yml/badge.svg)](https://github.com/redhat-data-and-ai/template-agent/actions/workflows/test.yml)
+[![CodeQL](https://github.com/redhat-data-and-ai/template-agent/actions/workflows/codeql.yml/badge.svg)](https://github.com/redhat-data-and-ai/template-agent/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/redhat-data-and-ai/template-agent/badge)](https://securityscorecards.dev/viewer/?uri=github.com/redhat-data-and-ai/template-agent)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 A template for building [Deep Agents](https://github.com/langchain-ai/deepagents) with the [LangGraph](https://langchain-ai.github.io/langgraph/) framework via the Aegra CLI. Includes orchestrator + subagents, MCP tool integration, conversation persistence, Langfuse tracing, and OpenTelemetry metrics.
@@ -21,7 +23,7 @@ A template for building [Deep Agents](https://github.com/langchain-ai/deepagents
 
 ## Quick Start
 
-**Prerequisites:** Python 3.12+, [uv](https://docs.astral.sh/uv/), [Podman](https://podman.io/), Google Vertex AI credentials
+**Prerequisites:** Python 3.13+, [uv](https://docs.astral.sh/uv/), [Podman](https://podman.io/), Google Vertex AI credentials
 
 ```bash
 git clone https://github.com/redhat-data-and-ai/template-agent.git

@@ -44,7 +44,7 @@ def _log_node_retry(retry_state: RetryCallState) -> None:
 
 
 def with_error_handling(node_name: str) -> Callable[..., Any]:
-    """Decorator that adds structured error handling to a graph node.
+    """Add structured error handling to a graph node.
 
     Catches exceptions, logs them with the node name for traceability,
     and re-raises after recording the failure. Used during graph
@@ -83,7 +83,7 @@ def with_retry(
     delay: float = RETRY_DELAY_SECONDS,
     retry_on: tuple[type[Exception], ...] = (Exception,),
 ) -> Callable[..., Any]:
-    """Decorator that retries a node function on failure using tenacity.
+    """Retry a node function on failure using tenacity.
 
     Supports both sync and async functions with exponential backoff.
     Intended for nodes that call external services (MCP tools, LLM APIs)
@@ -123,7 +123,7 @@ def with_retry(
 
 
 def timed_node(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Decorator that logs execution duration of a node function.
+    """Log execution duration of a node function.
 
     Supports both sync and async functions.
     """

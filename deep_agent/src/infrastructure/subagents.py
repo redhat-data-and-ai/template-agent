@@ -489,13 +489,21 @@ def _build_compiled_subagent(
 
     _inner = create_deep_agent(**create_kwargs)
 
+    runnable = _inner
+
+    from deep_agent.src.pii import get_scrubber
+
+    if get_scrubber() is not None:
+        from deep_agent.src.pii.runnable import PIIAwareRunnable
+
+        runnable = PIIAwareRunnable(runnable)
+        logger.info("subagent '%s' [compiled] wrapped with PIIAwareRunnable", name)
+
     if app_settings.GUARDIAN_API_BASE:
         from deep_agent.aegra.safety import SafetyAwareRunnable
 
-        _inner = SafetyAwareRunnable(_inner)
+        runnable = SafetyAwareRunnable(runnable)
         logger.info("subagent '%s' [compiled] wrapped with SafetyAwareRunnable", name)
-
-    runnable = _inner
 
     return CompiledSubAgent(
         name=name,

@@ -52,15 +52,15 @@ class NullCache:
         return "null"
 
     def get(self, key: str) -> str | None:
-        """Always return None."""
+        """Return None unconditionally."""
         return None
 
     def set(self, key: str, value: str, ttl: int | None = None) -> bool:
-        """Always return False (nothing stored)."""
+        """Return False unconditionally (nothing stored)."""
         return False
 
     def delete(self, key: str) -> bool:
-        """Always return False (nothing to delete)."""
+        """Return False unconditionally (nothing to delete)."""
         return False
 
     def clear(self) -> None:

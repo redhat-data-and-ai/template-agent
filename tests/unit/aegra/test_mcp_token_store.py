@@ -56,6 +56,7 @@ class TestMcpTokenStoreRedis:
             patch("deep_agent.aegra.mcp_token_store.cache_get", fake_get),
         ):
             saved = await store.upsert_token(
+                agent_name="default",
                 user_id="user-1",
                 mcp_name="oauth-mcp",
                 access_token="access-secret",
@@ -63,7 +64,7 @@ class TestMcpTokenStoreRedis:
                 expires_at=expires_at,
                 scopes=["read", "write"],
             )
-            loaded = await store.get_token("user-1", "oauth-mcp")
+            loaded = await store.get_token("default", "user-1", "oauth-mcp")
 
         assert saved.access_token == "access-secret"
         assert saved.refresh_token == "refresh-secret"
@@ -80,7 +81,7 @@ class TestMcpTokenStoreRedis:
 
     async def test_get_token_returns_none_on_miss(self, store):
         with patch("deep_agent.aegra.mcp_token_store.cache_get", return_value=None):
-            assert await store.get_token("user-1", "oauth-mcp") is None
+            assert await store.get_token("default", "user-1", "oauth-mcp") is None
 
     async def test_upsert_token_raises_when_redis_unavailable(self, store, fernet_key):
         with patch(
@@ -88,6 +89,7 @@ class TestMcpTokenStoreRedis:
         ):
             with pytest.raises(RuntimeError, match="Failed to persist MCP OAuth token"):
                 await store.upsert_token(
+                    agent_name="default",
                     user_id="user-1",
                     mcp_name="oauth-mcp",
                     access_token="access-secret",
@@ -101,6 +103,6 @@ class TestMcpTokenStoreRedis:
             return True
 
         with patch("deep_agent.aegra.mcp_token_store.cache_delete", fake_delete):
-            assert await store.delete_token("user-1", "oauth-mcp") is True
+            assert await store.delete_token("default", "user-1", "oauth-mcp") is True
 
         assert deleted_keys == ["mcp_oauth_token:default:user-1:oauth-mcp"]

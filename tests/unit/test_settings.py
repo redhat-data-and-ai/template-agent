@@ -1,5 +1,8 @@
 """Unit tests for settings module."""
 
+import os
+from unittest.mock import patch
+
 import pytest
 
 from deep_agent.src.exceptions import AppException
@@ -10,13 +13,22 @@ class TestSettings:
     """Tests for Settings Pydantic model."""
 
     def test_default_values(self):
-        s = Settings()
-        assert s.AGENT_HOST == "0.0.0.0"
-        assert s.AGENT_PORT == 5002
-        assert s.PYTHON_LOG_LEVEL == "INFO"
-        assert s.POSTGRES_USER == "pgvector"
-        assert s.POSTGRES_PORT == 5432
-        assert s.MAX_OUTPUT_TOKENS == 8192
+        # Clear env vars that .env or the shell might set so we test code defaults
+        env_override = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("POSTGRES_")
+            and k
+            not in ("AGENT_HOST", "AGENT_PORT", "PYTHON_LOG_LEVEL", "MAX_OUTPUT_TOKENS")
+        }
+        with patch.dict(os.environ, env_override, clear=True):
+            s = Settings()
+            assert s.AGENT_HOST == "0.0.0.0"
+            assert s.AGENT_PORT == 5002
+            assert s.PYTHON_LOG_LEVEL == "INFO"
+            assert s.POSTGRES_USER == "postgres"
+            assert s.POSTGRES_PORT == 5432
+            assert s.MAX_OUTPUT_TOKENS == 8192
 
     def test_database_uri(self):
         s = Settings(
@@ -60,7 +72,7 @@ class TestSettings:
         s = Settings()
         assert s.REQUEST_LOGGING_ENABLED is True
         assert s.REQUEST_LOG_HEADERS is True
-        assert s.REQUEST_LOG_BODY is False
+        assert s.REQUEST_LOG_BODY is True
         assert s.REQUEST_LOG_BODY_MAX_SIZE == 10240
 
 

@@ -110,7 +110,7 @@ class TestRefreshAccessToken:
     async def test_returns_original_if_no_token_endpoint(self):
         token = self._make_jwt(time.time() - 60)
         with patch(
-            "deep_agent.src.infrastructure.mcp._get_token_endpoint",
+            "deep_agent.aegra.mcp._get_token_endpoint",
             return_value="",
         ):
             result = await refresh_access_token(token, "refresh_tok")

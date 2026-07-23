@@ -124,8 +124,9 @@ class TestBuildPermissions:
 
         mock_perm = MagicMock()
         with patch(
-            "deep_agent.src.infrastructure.permissions.FilesystemPermission",
+            "deepagents.middleware.filesystem.FilesystemPermission",
             return_value=mock_perm,
+            create=True,
         ) as mock_cls:
             result = build_permissions(config)
 
@@ -146,8 +147,9 @@ class TestBuildPermissions:
         )
 
         with patch(
-            "deep_agent.src.infrastructure.permissions.FilesystemPermission",
+            "deepagents.middleware.filesystem.FilesystemPermission",
             side_effect=ValueError("bad rule"),
+            create=True,
         ):
             result = build_permissions(config)
 

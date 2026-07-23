@@ -200,9 +200,11 @@ def _setup_telemetry() -> str:
         from deep_agent.aegra.telemetry import (
             setup_guardian_guardrails,
             setup_langfuse_tracing,
+            setup_pii_middleware,
             setup_token_budget_tracking,
         )
 
+        setup_pii_middleware()  # must be first — Langfuse handler depends on the scrubber
         setup_langfuse_tracing()
         setup_token_budget_tracking()
         setup_guardian_guardrails()

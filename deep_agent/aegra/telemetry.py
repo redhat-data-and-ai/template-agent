@@ -16,6 +16,7 @@ import contextvars
 import os
 from typing import Any
 
+from deep_agent.aegra.auth import encrypt_user_id
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -28,6 +29,7 @@ logger = get_python_logger()
 _langfuse_tracing_initialized = False
 _token_budget_tracing_initialized = False
 _guardian_initialized = False
+_pii_initialized = False
 
 
 def _get_trace_name() -> str:
@@ -45,6 +47,54 @@ def _langfuse_configured() -> bool:
     return bool(
         os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
     )
+
+
+def setup_pii_middleware() -> None:
+    """Initialise the PII scrubber from agent.yaml (custom_pii section).
+
+    Must be called before setup_langfuse_tracing() so that the global
+    scrubber is available when the Langfuse handler activates.
+    No-op when pii.enabled is false in agent.yaml or already initialised.
+    """
+    global _pii_initialized  # noqa: PLW0603
+    if _pii_initialized:
+        return
+    _pii_initialized = True
+
+    try:
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.pii import init_pii_middleware
+        from deep_agent.src.pii.config import ActionType, PIIConfig, PIIRule
+        from deep_agent.src.settings import settings
+
+        pii_cfg = agent_config.get_custom_pii_config()
+        if not pii_cfg.enabled or not pii_cfg.rules:
+            logger.info("PII middleware: no rules defined in agent.yaml pii section")
+            return
+
+        # Only non-default rules go to the token-map scrubber;
+        # provider: default rules are handled by the stock PIIMiddleware.
+        rules = [
+            PIIRule(
+                name=r.name,
+                regex=r.regex,
+                strategy=ActionType(r.strategy),
+                provider=r.provider,
+                label=r.label,
+            )
+            for r in pii_cfg.rules
+            if r.provider != "default"
+        ]
+        config = PIIConfig(
+            enabled=True,
+            trace_strategy=pii_cfg.trace_strategy,
+            rules=rules,
+        )
+        hash_key = settings.PII_HASH_KEY.encode() if settings.PII_HASH_KEY else b""
+        init_pii_middleware(config, hash_key)
+        logger.info("PII middleware initialised (%d rules from agent.yaml)", len(rules))
+    except Exception:
+        logger.warning("Failed to initialise PII middleware", exc_info=True)
 
 
 def setup_langfuse_tracing() -> None:
@@ -74,6 +124,42 @@ def setup_langfuse_tracing() -> None:
     try:
         from langchain_core.tracers.context import register_configure_hook
         from langfuse.langchain import CallbackHandler
+
+        from deep_agent.src.pii import get_scrubber as _get_scrubber
+
+        if _get_scrubber() is not None:
+            try:
+                from langfuse import Langfuse
+                from langfuse.types import MaskOtelSpansResult, OtelSpanPatch
+
+                def _mask_otel_spans(*, params: Any) -> Any:
+                    s = _get_scrubber()
+                    if s is None:
+                        return None
+                    use_hash = getattr(s._config, "trace_strategy", "redact") == "hash"
+                    scrub_fn = s.scrub_for_trace_hash if use_hash else s.scrub_one_way
+                    patches: dict = {}
+                    for identifier, span in params.spans.items():
+                        replacements: dict = {}
+                        for key, value in span.attributes.items():
+                            if isinstance(value, str):
+                                scrubbed = scrub_fn(value)
+                                if scrubbed != value:
+                                    replacements[key] = scrubbed
+                        if replacements:
+                            patches[identifier] = OtelSpanPatch(
+                                set_attributes=replacements
+                            )
+                    return MaskOtelSpansResult(span_patches=patches)
+
+                Langfuse(mask_otel_spans=_mask_otel_spans)
+                logger.info(
+                    "Langfuse: PII mask_otel_spans registered — all span attributes scrubbed before export"
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to register Langfuse mask_otel_spans", exc_info=True
+                )
 
         _langfuse_ctx_var: contextvars.ContextVar = contextvars.ContextVar(
             "langfuse_handler", default=None
@@ -134,7 +220,7 @@ class LangfuseObservabilityProvider:
             "langfuse_trace_name": _get_trace_name(),
         }
         if user_identity:
-            metadata["langfuse_user_id"] = user_identity
+            metadata["langfuse_user_id"] = encrypt_user_id(user_identity)
         if thread_id:
             metadata["langfuse_session_id"] = thread_id
         trace_id = _trace_id_var.get()

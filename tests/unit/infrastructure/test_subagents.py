@@ -73,6 +73,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -119,6 +123,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -165,6 +173,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -186,7 +198,7 @@ class TestLoadSubagents:
                 model=mock_model,
                 description="Analyst",
                 system_prompt="Prompt",
-                skills=["/path/to/bmi-report"],
+                skills=["/skills/bmi-report"],
             )
 
     def test_load_multiple_subagents(self):
@@ -252,6 +264,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -294,6 +310,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -576,7 +596,7 @@ class TestSubagentProviderConfig:
             assert mock_middleware.called
             call_kwargs = mock_sa.call_args[1]
             assert "middleware" in call_kwargs
-            assert len(call_kwargs["middleware"]) == 1
+            assert mock_middleware.return_value in call_kwargs["middleware"]
 
     def test_orchestrator_as_fallback_when_subagent_has_dict_model_no_fallback(self):
         """Subagent with dict model and no fallback → orchestrator becomes fallback."""
@@ -617,7 +637,7 @@ class TestSubagentProviderConfig:
             assert mock_middleware.called
             call_kwargs = mock_sa.call_args[1]
             assert "middleware" in call_kwargs
-            assert len(call_kwargs["middleware"]) == 1
+            assert mock_middleware.return_value in call_kwargs["middleware"]
 
     def test_keeps_explicit_fallback_when_provided(self):
         """Subagent with explicit fallback → keep as-is (don't override)."""
@@ -662,7 +682,7 @@ class TestSubagentProviderConfig:
             assert mock_middleware.called
             call_kwargs = mock_sa.call_args[1]
             assert "middleware" in call_kwargs
-            assert len(call_kwargs["middleware"]) == 1
+            assert mock_middleware.return_value in call_kwargs["middleware"]
 
     def test_no_fallback_when_no_orchestrator_model(self):
         """Subagent with model but orchestrator has no model → no fallback added."""
@@ -746,4 +766,4 @@ class TestSubagentProviderConfig:
             assert mock_middleware.called
             call_kwargs = mock_sa.call_args[1]
             assert "middleware" in call_kwargs
-            assert len(call_kwargs["middleware"]) == 1
+            assert mock_middleware.return_value in call_kwargs["middleware"]

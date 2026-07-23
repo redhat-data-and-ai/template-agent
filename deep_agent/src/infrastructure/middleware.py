@@ -78,6 +78,13 @@ def build_middleware_list(
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
         return middlewares
 
+    from deep_agent.src.agent.config import agent_config
+
+    pii_cfg = agent_config.get_custom_pii_config()
+
+    if pii_cfg.enabled:
+        _append_if_built(middlewares, _build_custom_pii_middleware())
+
     if resolved.summarization_tool_enabled:
         _append_if_built(
             middlewares,
@@ -123,8 +130,11 @@ def _append_guardrails(target: list[Any], resolved: ResolvedMiddlewareConfig) ->
     if resolved.tool_retry.enabled and resolved.tool_retry.tools:
         _append_if_built(target, _build_tool_retry(resolved.tool_retry))
 
-    if resolved.pii.enabled and resolved.pii.rules:
-        target.extend(_build_pii_middleware(resolved.pii))
+    from deep_agent.src.agent.config import agent_config
+
+    pii_cfg = agent_config.get_custom_pii_config()
+    if pii_cfg.enabled and pii_cfg.rules:
+        target.extend(_build_pii_middleware(pii_cfg))
 
 
 def build_excluded_middleware(
@@ -254,24 +264,85 @@ def _build_tool_retry(config: Any) -> Any | None:
         return None
 
 
-def _build_pii_middleware(config: Any) -> list[Any]:
-    """Build PIIMiddleware instances for each PII rule."""
-    results: list[Any] = []
+def _build_custom_pii_middleware() -> Any | None:
+    """Build the custom token-map PIIMiddleware from the global scrubber."""
     try:
-        from langchain.agents.middleware import PIIMiddleware
+        from deep_agent.src.pii.middleware import build_pii_middleware
 
+        return build_pii_middleware()
+    except ImportError:
+        logger.debug("Custom PIIMiddleware not available")
+        return None
+
+
+def _build_pii_middleware(config: Any) -> list[Any]:
+    """Route rules by provider.
+
+    - provider: default → ParallelPIIMiddleware (stock langchain, one-way)
+    - others            → handled by custom PIIMiddleware via global scrubber
+    """
+    try:
+        from langchain.agents.middleware import AgentMiddleware, PIIMiddleware
+
+        # Only default-provider rules go to the stock parallel middleware
+        instances = []
         for rule in config.rules:
+            if getattr(rule, "provider", "default") != "default":
+                continue
             try:
-                results.append(
+                instances.append(
                     PIIMiddleware(
-                        rule.type, strategy=rule.strategy, apply_to_input=True
+                        rule.name, strategy=rule.strategy, apply_to_input=True
                     )
                 )
             except (ValueError, TypeError) as e:
-                logger.warning("Skipping PII rule '%s': %s", rule.type, e)
+                logger.warning("Skipping PII rule '%s': %s", rule.name, e)
+
+        if not instances:
+            return []
+
+        class ParallelPIIMiddleware(AgentMiddleware):
+            """Runs all stock PII type checks concurrently instead of as a sequential chain."""
+
+            async def abefore_model(self, state: Any, runtime: Any) -> Any:
+                import asyncio
+
+                results = await asyncio.gather(
+                    *(inst.abefore_model(state, runtime) for inst in instances),
+                    return_exceptions=True,
+                )
+                for r in results:
+                    if isinstance(r, BaseException):
+                        raise r
+                merged: dict = {}
+                for r in results:
+                    if isinstance(r, dict):
+                        merged.update(r)
+                return merged or None
+
+            def before_model(self, state: Any, runtime: Any) -> Any:
+                from concurrent.futures import ThreadPoolExecutor
+
+                with ThreadPoolExecutor() as pool:
+                    futures = [
+                        pool.submit(inst.before_model, state, runtime)
+                        for inst in instances
+                    ]
+                    results = [f.result() for f in futures]
+                for r in results:
+                    if isinstance(r, BaseException):
+                        raise r
+                merged: dict = {}
+                for r in results:
+                    if isinstance(r, dict):
+                        merged.update(r)
+                return merged or None
+
+        return [ParallelPIIMiddleware()]
+
     except ImportError:
         logger.debug("PIIMiddleware not available")
-    return results
+        return []
 
 
 def _build_summarization_tool_middleware(
