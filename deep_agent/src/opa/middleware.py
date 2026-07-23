@@ -29,8 +29,12 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
 _BLOCKED_TOOL_MESSAGE = "Tool call blocked by OPA policy."
-_BLOCKED_MODEL_MESSAGE = "LLM call blocked by OPA policy."
-_BLOCKED_TRAJECTORY_MESSAGE = "Trajectory blocked by OPA policy."
+_BLOCKED_MODEL_MESSAGE = (
+    "I'm unable to respond to that request. Please try rephrasing."
+)
+_BLOCKED_TRAJECTORY_MESSAGE = (
+    "This thread has been terminated due to policy violation. Please start a new chat thread."
+)
 
 
 class _NoStreamModel:
@@ -84,7 +88,10 @@ class OPAMiddleware(AgentMiddleware):
         if not messages:
             return None
 
-        trajectory = [m for m in messages if isinstance(m, BaseMessage)]
+        trajectory = [
+            m for m in messages
+            if isinstance(m, BaseMessage) and not m.additional_kwargs.get("opa_retry")
+        ]
         opa = await evaluate_trajectory(trajectory)
         print(f"[OPA] abefore_model opa: {vars(opa)!r}", flush=True)
         if opa.allowed:
@@ -140,7 +147,8 @@ class OPAMiddleware(AgentMiddleware):
                         f"Your previous response was blocked by security policy. "
                         f"Reasons: {denial_summary}. "
                         f"Please revise your response to comply with the policy."
-                    )
+                    ),
+                    additional_kwargs={"opa_retry": True},
                 )
                 current_request = current_request.override(
                     messages=current_request.messages + [feedback]
@@ -216,6 +224,7 @@ class OPAMiddleware(AgentMiddleware):
                         tool_call_id=tool_id,
                         name=tool_name,
                         status="error",
+                        additional_kwargs={"opa_retry": True},
                     ),
                 ],
             },

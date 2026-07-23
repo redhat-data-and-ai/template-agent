@@ -7,12 +7,7 @@ import rego.v1
 # different local cap via local_max_trajectory_length to avoid OPA complete-rule
 # conflict when both policy sources are loaded.
 
-local_max_trajectory_length := 10
-
-allow if {
-	input.current_intent.action == "trajectory_validation"
-	count(input.trajectory) <= local_max_trajectory_length
-}
+local_max_trajectory_length := 20
 
 deny_reasons contains msg if {
 	input.current_intent.action == "trajectory_validation"

@@ -21,7 +21,9 @@ OPA input shapes (defined by agent.authz policies):
      "trajectory": [{"type": "...", "content": "..."}, ...]}
 
 OPA response shape:
-  {"result": {"allow": true|false, "deny_reasons": ["..."]}}
+  {"result": {"deny_reasons": ["..."]}}
+
+Allowed is derived from deny_reasons being empty — the allow flag is not read.
 """
 
 from __future__ import annotations
@@ -51,9 +53,8 @@ class OpaResult:
 
 def _parse_result(data: dict[str, Any]) -> OpaResult:
     result = data.get("result", {})
-    allowed = bool(result.get("allow", False))
     reasons = list(result.get("deny_reasons", []))
-    return OpaResult(allowed=allowed, denial_reasons=reasons)
+    return OpaResult(allowed=len(reasons) == 0, denial_reasons=reasons)
 
 
 def _serialize_message(msg: BaseMessage) -> dict[str, str]:
