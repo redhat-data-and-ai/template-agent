@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   unit-tests:
-    name: Unit Tests
+    name: Test Suite
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
