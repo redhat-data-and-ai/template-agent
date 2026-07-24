@@ -27,6 +27,7 @@ def _patch_all_checks(**overrides):
         "cache": {"status": "ok"},
         "mcp_servers": {"status": "ok", "servers": {}, "healthy": 0, "total": 0},
         "llm_provider": {"status": "ok", "provider": "vllm"},
+        "opa": {"status": "disabled"},
     }
     defaults.update(overrides)
 
@@ -71,6 +72,13 @@ def _patch_all_checks(**overrides):
             "deep_agent.aegra.mcp_health.check_llm_provider",
             new_callable=AsyncMock,
             return_value=defaults["llm_provider"],
+        )
+    )
+    stack.enter_context(
+        patch(
+            "deep_agent.aegra.health.check_opa",
+            new_callable=AsyncMock,
+            return_value=defaults["opa"],
         )
     )
     return stack

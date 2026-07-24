@@ -65,6 +65,33 @@ services:
     networks:
       - agent-network
 
+  opa:
+    build:
+      context: ./opa
+      dockerfile: Containerfile
+    container_name: template-agent-opa
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./config/agent/compliance/policies:/policies
+    environment:
+      - OPA_POLICY_GIT_REPO=${OPA_POLICY_GIT_REPO:-}
+      - OPA_POLICY_GIT_BRANCH=${OPA_POLICY_GIT_BRANCH:-main}
+      - OPA_POLICY_GIT_SUBDIR=${OPA_POLICY_GIT_SUBDIR:-}
+      - OPA_POLICY_GIT_AUTH_USER=${OPA_POLICY_GIT_AUTH_USER:-}
+      - OPA_POLICY_GIT_AUTH_TOKEN=${OPA_POLICY_GIT_AUTH_TOKEN:-}
+      - OPA_POLICY_GIT_SSL_VERIFY=${OPA_POLICY_GIT_SSL_VERIFY:-true}
+      - OPA_POLL_INTERVAL=${OPA_POLL_INTERVAL:-2}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/opa", "eval", "true"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - agent-network
+
   template-agent:
     profiles: [container, observability]
     build:
@@ -97,6 +124,8 @@ services:
       pgvector:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      opa:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:

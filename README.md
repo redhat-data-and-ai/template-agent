@@ -118,10 +118,29 @@ Configuration is split between **secrets/endpoints** (`.env`) and **operational 
 | `CUSTOM_CA_FILE` | — | Host path to a PEM file with custom CA certs (compose only) |
 | `SSL_KEYFILE` | — | TLS private key path (optional) |
 | `SSL_CERTFILE` | — | TLS certificate path (optional) |
+| `OPA_ENABLED` | `true` (agent.yaml) | Enable/disable OPA authorization middleware |
+| `OPA_URL` | `http://opa:8181/v1/data/agent/authz` | OPA policy decision endpoint |
+| `OPA_TIMEOUT` | `2.0` | OPA request timeout in seconds (fails open on timeout) |
+| `OPA_MAX_RETRIES` | `3` | Max model retries when output is blocked by OPA |
+| `OPA_POLICY_GIT_REPO` | — | Git repo URL for remote policy hot-reload |
+| `OPA_POLICY_GIT_BRANCH` | `main` | Git branch for remote policies |
+| `OPA_POLICY_GIT_SUBDIR` | — | Subdirectory within the policy repo (sparse checkout) |
+| `OPA_POLICY_GIT_AUTH_USER` | — | Git username for private policy repos |
+| `OPA_POLICY_GIT_AUTH_TOKEN` | — | Git token/password for private policy repos |
+| `OPA_POLICY_GIT_SSL_VERIFY` | `true` | Verify SSL certificates during git operations |
+| `OPA_POLL_INTERVAL` | `2` | Seconds between policy hot-reload polls |
 
 See [`.env.example`](./.env.example) for the full list including OpenTelemetry and MongoDB token-usage settings.
 
 Runtime settings (cache, memory, providers, middleware, agent identity) live in [`config/agent/runtime/agent.yaml`](./config/agent/runtime/agent.yaml).
+
+## OPA (Authorization)
+
+An [Open Policy Agent](https://www.openpolicyagent.org/) sidecar enforces authorization policies on every LLM response, tool result, and conversation trajectory. It starts automatically with `make local` and is included in the default `compose.yaml`.
+
+The `opa:` section in `agent.yaml` and the `OPA_*` environment variables above configure the agent-side client. Local policies live in `config/agent/compliance/policies/` and can be augmented from a remote git repository with automatic hot-reload.
+
+See **[`opa/README.md`](./opa/README.md)** for a full explanation of how the middleware, service, config, and OPA container work together.
 
 ## MCP Server Configuration
 

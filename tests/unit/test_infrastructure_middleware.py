@@ -19,10 +19,16 @@ class TestBuildMiddlewareList:
     """Test middleware instance construction from resolved config."""
 
     @pytest.fixture(autouse=True)
-    def _disable_audit(self):
-        with patch(
-            "deep_agent.src.audit.config.is_audit_enabled",
-            return_value=False,
+    def _disable_audit_and_opa(self):
+        with (
+            patch(
+                "deep_agent.src.audit.config.is_audit_enabled",
+                return_value=False,
+            ),
+            patch(
+                "deep_agent.src.opa.config.is_opa_enabled",
+                return_value=False,
+            ),
         ):
             yield
 

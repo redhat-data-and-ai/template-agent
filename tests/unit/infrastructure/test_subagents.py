@@ -77,6 +77,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.build_audit_middleware",
                 return_value=None,
             ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -130,6 +134,10 @@ class TestLoadSubagents:
                 return_value=None,
             ),
             patch("deep_agent.src.settings.settings", mock_settings),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -178,6 +186,10 @@ class TestLoadSubagents:
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
             patch(
                 "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
                 return_value=None,
             ),
         ):
@@ -271,6 +283,10 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.build_audit_middleware",
                 return_value=None,
             ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -315,6 +331,10 @@ class TestLoadSubagents:
             patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
             patch(
                 "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
                 return_value=None,
             ),
         ):
