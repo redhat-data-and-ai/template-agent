@@ -35,6 +35,7 @@ from .middleware import (
     ResolvedMiddlewareConfig,
     resolve_middleware,
 )
+from .opa import OpaFileConfig
 from .otel import OtelFileConfig
 from .parser import inject_runtime_values, parse_frontmatter
 from .providers import ProvidersFileConfig
@@ -114,6 +115,7 @@ class AgentConfig:
     _filesystem_config: FilesystemFileConfig
     _providers_config: ProvidersFileConfig
     _cache_config: CacheFileConfig
+    _opa_config: OpaFileConfig
     _otel_config: OtelFileConfig
     _token_budget_config: TokenBudgetConfig
     _pii_config: PIIConfig
@@ -249,6 +251,9 @@ class AgentConfig:
 
         # Extract cache section
         self._cache_config = CacheFileConfig.model_validate(raw.get("cache", {}))
+
+        # Extract OPA section
+        self._opa_config = OpaFileConfig.model_validate(raw.get("opa", {}))
 
         # Load OTEL config from observability.yaml
         self._otel_config = self._load_otel_config()
@@ -555,6 +560,11 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return self._cache_config
+
+    def get_opa_config(self) -> OpaFileConfig:
+        """Get the pre-loaded OPA authorization configuration."""
+        self._ensure_loaded()
+        return self._opa_config
 
     def get_token_budget_config(self) -> TokenBudgetConfig:
         """Get the pre-loaded per-thread token budget configuration."""
