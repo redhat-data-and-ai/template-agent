@@ -614,19 +614,20 @@ async def get_mcp_tools(
         connect_jobs = []
         placeholder_tools: list[list[Any]] = []
         for name, entry in enabled.items():
+            mcp_prefix_name = entry.get("tool_prefix") or name
             bearer = await _resolve_connection_token(name, entry, sso_token, user_id)
             auth_mode = entry.get("auth_mode", "sso")
             if auth_mode in ("oauth", "dcr") and bearer is None:
                 logger.info(
                     "[%s] No OAuth token for %s server — using auth placeholder",
-                    name,
+                    mcp_prefix_name,
                     auth_mode,
                 )
                 placeholder_tools.append([_create_auth_placeholder_tool(name)])
                 continue
             connect_jobs.append(
                 _connect_single_server(
-                    name=name,
+                    name=mcp_prefix_name,
                     config=_build_server_config(entry, bearer),
                     server_cfg=entry,
                     timeout=entry.get("timeout", 30),

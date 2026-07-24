@@ -167,6 +167,26 @@ tools:
 
 See `config/agent/mcp.json` for working SSO and DCR examples.
 
+### Tool name prefix
+
+When multiple MCP servers are configured, tool names are prefixed with the
+server key (e.g. `search_mcp_prod_search_web`). Add `tool_prefix` to use a
+shorter prefix:
+
+```json
+{
+    "mcpServers": {
+        "search-mcp-prod": {
+            "url": "http://search:9090/mcp",
+            "transport": "streamable_http",
+            "enabled": true,
+            "auth": true,
+            "tool_prefix": "search"
+        }
+    }
+}
+```
+
 ## Project Structure
 
 ```

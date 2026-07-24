@@ -441,3 +441,98 @@ class TestGetMCPTools:
             mock_connect.assert_called_once()
             assert len(tools) == 1
             assert tools[0].name == "wanted_tool"
+
+    @pytest.mark.asyncio
+    async def test_tool_prefix_as_connection_name(self):
+        """Test that tool_prefix overrides server key for MultiServerMCPClient."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "jira-mcp-prod": {
+                "url": "http://jira:9090/mcp",
+                "enabled": True,
+                "auth": False,
+                "timeout": 5,
+                "tool_prefix": "jira",
+            }
+        }
+
+        mock_tool = MagicMock()
+        mock_tool.name = "jira_search_issues"
+        mock_tool.description = "Search for JIRA issues"
+        mock_tool.parameters = {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The search query"},
+            },
+            "required": ["query"],
+        }
+
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_connect,
+        ):
+            mock_get_configs.return_value = mock_servers
+            mock_connect.return_value = [mock_tool]
+
+            tools = await get_mcp_tools()
+
+            assert len(tools) == 1
+            assert tools[0].name == "jira_search_issues"
+            call_kwargs = mock_connect.call_args
+            assert call_kwargs[1]["name"] == "jira"
+
+    @pytest.mark.asyncio
+    async def test_no_tool_prefix_uses_server_key(self):
+        """Test that without tool_prefix, server key is used as name."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "gitlab-mcp": {
+                "url": "http://gitlab:8080/mcp",
+                "enabled": True,
+                "auth": False,
+                "timeout": 5,
+            }
+        }
+        mock_tool = MagicMock()
+        mock_tool.name = "create_issue"
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_connect,
+        ):
+            mock_get_configs.return_value = mock_servers
+            mock_connect.return_value = [mock_tool]
+
+            await get_mcp_tools()
+
+            call_kwargs = mock_connect.call_args
+            assert call_kwargs[1]["name"] == "gitlab-mcp"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_mode", ["oauth", "dcr"])
+    async def test_auth_placeholder_uses_server_key_not_prefix(self, auth_mode):
+        """OAuth/DCR server with tool_prefix should use original server key for auth."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "jira-mcp-prod": {
+                "url": "http://jira:9090/mcp",
+                "enabled": True,
+                "auth": True,
+                "auth_mode": auth_mode,
+                "timeout": 5,
+                "tool_prefix": "jira",
+            }
+        }
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._resolve_connection_token") as mock_resolve,
+            patch(
+                "deep_agent.aegra.mcp._create_auth_placeholder_tool"
+            ) as mock_placeholder,
+        ):
+            mock_get_configs.return_value = mock_servers
+            mock_resolve.return_value = None  # no token — triggers placeholder path
+            mock_tool = MagicMock()
+            mock_tool.name = "mcp__jira_mcp_prod"
+            mock_placeholder.return_value = mock_tool
+            await get_mcp_tools()
+            mock_placeholder.assert_called_once_with("jira-mcp-prod")
