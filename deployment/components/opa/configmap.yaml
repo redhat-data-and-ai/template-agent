@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-config
+data:
+  OPA_POLICY_GIT_REPO: ""
+  OPA_POLICY_GIT_BRANCH: "main"
+  OPA_POLICY_GIT_SUBDIR: ""
+  OPA_POLICY_GIT_SSL_VERIFY: "true"
+  OPA_POLL_INTERVAL: "30"
