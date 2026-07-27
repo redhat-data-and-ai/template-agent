@@ -103,6 +103,7 @@ def _create_vertex_model(
                 temperature=temperature,
                 max_tokens=max_output_tokens,
                 max_retries=2,
+                streaming=True,
             )
         else:
             return ChatGoogleGenerativeAI(
@@ -112,6 +113,7 @@ def _create_vertex_model(
                 project=project,
                 max_output_tokens=max_output_tokens,
                 max_retries=2,
+                streaming=True,
             )
 
     except (ValueError, LLMError):
@@ -163,6 +165,7 @@ def _create_vllm_model(
             temperature=temperature,
             max_tokens=max_output_tokens,
             max_retries=2,
+            streaming=True,
         )
 
     except ImportError:
