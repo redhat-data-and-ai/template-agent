@@ -63,10 +63,15 @@ class TestCreateModel:
     def test_unknown_model_raises_error_with_supported_list(self):
         """Test that unknown model raises error listing supported models."""
         mock_creds = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.VLLM_BASE_URL = ""
 
-        with patch(
-            "deep_agent.src.agent.llm.get_service_account_credentials"
-        ) as mock_get_creds:
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.settings", mock_settings),
+        ):
             mock_get_creds.return_value = (mock_creds, "test-project")
 
             with pytest.raises(ValueError) as exc_info:

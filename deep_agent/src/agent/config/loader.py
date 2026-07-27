@@ -168,25 +168,30 @@ class AgentConfig:
             logger.warning("Failed to parse runtime/agent.yaml, using defaults: %s", e)
             return {}
 
-    def _load_guardrails_config(self) -> GuardrailsConfig:
-        """Load guardrails configuration from runtime/guardrails.yaml.
+    def _load_guardrails_config(
+        self, agent_yaml_guardrail: dict | None
+    ) -> GuardrailsConfig:
+        """Load guardrails configuration from the ``guardrail`` section of agent.yaml.
 
-        Returns GuardrailsConfig with defaults if the file does not exist —
-        absence of the file is fine; guardrails activate only when GUARDIAN_API_BASE is set.
+        Returns a disabled GuardrailsConfig when the section is absent, ``enabled``
+        is not true, or the section fails to parse — guardrails never silently activate.
         """
-        guardrails_yaml = self._base_dir / "runtime" / "guardrails.yaml"
-        if not guardrails_yaml.is_file():
-            logger.info("No guardrails.yaml found — using default Guardian model")
-            return GuardrailsConfig()
+        section = agent_yaml_guardrail or {}
+        if not section.get("enabled", False):
+            logger.info("Guardrail disabled in agent.yaml — skipping guardrail setup")
+            return GuardrailsConfig(enabled=False)
 
         try:
-            raw = yaml.safe_load(guardrails_yaml.read_text()) or {}
-            config: GuardrailsConfig = GuardrailsConfig.model_validate(raw)
-            logger.info("Loaded guardrails config (model=%s)", config.model)
+            config: GuardrailsConfig = GuardrailsConfig.model_validate(section)
+            logger.info(
+                "Loaded guardrail config from agent.yaml (model=%s)", config.model
+            )
             return config
         except Exception as e:
-            logger.warning("Failed to parse guardrails.yaml, using defaults: %s", e)
-            return GuardrailsConfig()
+            logger.warning(
+                "Failed to parse guardrail section — disabling guardrails: %s", e
+            )
+            return GuardrailsConfig(enabled=False)
 
     def _load_pii_config(self) -> PIIConfig:
         """Load PII configuration from runtime/pii.yaml.
@@ -275,8 +280,8 @@ class AgentConfig:
         # Load OTEL config from observability.yaml
         self._otel_config = self._load_otel_config()
 
-        # Load guardrails config from guardrails.yaml
-        self._guardrails_config = self._load_guardrails_config()
+        # Load guardrails config from agent.yaml guardrail section
+        self._guardrails_config = self._load_guardrails_config(raw.get("guardrail"))
 
         # Load PII config from pii.yaml (absent file = disabled)
         self._pii_config = self._load_pii_config()

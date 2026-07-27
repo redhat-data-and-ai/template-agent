@@ -1,6 +1,7 @@
 """Unit tests for agent_config skill path resolution."""
 
 import pytest
+from unittest.mock import patch
 
 from deep_agent.src.agent.config import AgentConfig
 from deep_agent.src.exceptions import AppException
@@ -179,3 +180,58 @@ Bad agent.
         subs = cfg.get_all_subagent_configs()
         assert "bad-agent" not in subs
         assert "must be a list of strings" in caplog.text
+
+
+class TestLoadGuardrailsConfig:
+    """Tests for _load_guardrails_config taking agent_yaml_guardrail dict."""
+
+    def setup_method(self):
+        """Reset the singleton before each test."""
+        AgentConfig._instance = None
+
+    def _make_config_dir(self, tmp_path):
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+        (config_dir / "PROMPT.md").write_text("""---
+name: test-agent
+model: gemini-2.5-flash
+---
+
+Test prompt.
+""")
+        return config_dir
+
+    def test_disabled_when_section_absent(self, tmp_path):
+        """Passing None disables guardrails."""
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+        result = cfg._load_guardrails_config(None)
+        assert result.enabled is False
+
+    def test_disabled_when_enabled_false(self, tmp_path):
+        """Passing enabled=False disables guardrails."""
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+        result = cfg._load_guardrails_config({"enabled": False})
+        assert result.enabled is False
+
+    def test_enabled_when_enabled_true(self, tmp_path):
+        """Passing enabled=True with a model enables guardrails."""
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+        result = cfg._load_guardrails_config(
+            {"enabled": True, "model": "ibm-granite/granite-guardian-3.2-5b"}
+        )
+        assert result.enabled is True
+        assert result.model == "ibm-granite/granite-guardian-3.2-5b"
+
+    def test_disabled_on_parse_failure(self, tmp_path):
+        """A parse failure disables guardrails rather than crashing."""
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+        with patch(
+            "deep_agent.src.guardrails.config.GuardrailsConfig.model_validate",
+            side_effect=Exception("bad"),
+        ):
+            result = cfg._load_guardrails_config({"enabled": True, "model": "x"})
+        assert result.enabled is False

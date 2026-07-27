@@ -337,16 +337,21 @@ def setup_guardian_guardrails() -> None:
         return
     _guardian_initialized = True
 
+    from deep_agent.src.agent.config import agent_config
+    from deep_agent.src.guardrails import init_guardrails
     from deep_agent.src.settings import settings
+
+    guardian_cfg = agent_config.get_guardrails_config()
+    if not guardian_cfg.enabled:
+        logger.info(
+            "Granite Guardian disabled in agent.yaml — skipping callback registration"
+        )
+        return
 
     if not settings.GUARDIAN_API_BASE:
         logger.info("Granite Guardian disabled — set GUARDIAN_API_BASE to enable")
         return
 
-    from deep_agent.src.agent.config import agent_config
-    from deep_agent.src.guardrails import init_guardrails
-
-    guardian_cfg = agent_config.get_guardrails_config()
     init_guardrails(guardian_cfg)
 
     try:
