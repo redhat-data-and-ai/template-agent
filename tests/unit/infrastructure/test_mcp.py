@@ -159,6 +159,44 @@ class TestConnectSingleServer:
             assert tools[0].name == "test_tool"
 
     @pytest.mark.asyncio
+    async def test_tool_prefix_enables_name_prefix(self):
+        """Test that tool_prefix in server_cfg sets tool_name_prefix=True."""
+        mock_client = MagicMock()
+        mock_client.get_tools = AsyncMock(return_value=[])
+
+        config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
+        server_cfg = {"tool_prefix": "myprefix"}
+
+        with patch(
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
+            return_value=mock_client,
+        ) as mock_cls:
+            await _connect_single_server("myprefix", config, server_cfg, timeout=5)
+
+            mock_cls.assert_called_once()
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["tool_name_prefix"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_tool_prefix_falls_back_to_name(self):
+        """Test that without tool_prefix, name is used as fallback and prefixing is enabled."""
+        mock_client = MagicMock()
+        mock_client.get_tools = AsyncMock(return_value=[])
+
+        config = {"url": "http://localhost:8000/mcp/", "transport": "streamable_http"}
+        server_cfg = {}  # no tool_prefix
+
+        with patch(
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
+            return_value=mock_client,
+        ) as mock_cls:
+            await _connect_single_server("server-key", config, server_cfg, timeout=5)
+
+            mock_cls.assert_called_once()
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs["tool_name_prefix"] is True
+
+    @pytest.mark.asyncio
     async def test_connection_timeout_returns_empty_list(self):
         """Test that connection timeout returns empty list."""
         mock_client = MagicMock()
