@@ -71,7 +71,8 @@ jobs:
           elif [[ "${{ github.ref }}" == refs/pull/* ]]; then
             VERSION="pr-${{ github.event.pull_request.number }}-${GITHUB_SHA::7}"
           else
-            VERSION="${GITHUB_REF#refs/heads/}-${GITHUB_SHA::7}"
+            BRANCH="${GITHUB_REF#refs/heads/}"
+            VERSION="${BRANCH//\//-}-${GITHUB_SHA::7}"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "package_name=deployment.zip" >> $GITHUB_OUTPUT
