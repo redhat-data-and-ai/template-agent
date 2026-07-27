@@ -10,12 +10,15 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
+_SASL_USERNAME_ALIASES = ("sasl_username", "sasl_plain_username")
+_SASL_PASSWORD_ALIASES = ("sasl_password", "sasl_plain_password")
+
 
 class KafkaQueueConsumer:
     """Consumes messages from a Kafka topic using aiokafka.
 
-    Implements the ``QueueConsumer`` protocol so it can be used
-    as a drop-in replacement for ``RedisStreamsConsumer``.
+    Accepts any aiokafka consumer configuration via ``extra_config``.
+    Keys from the YAML advanced config editor are passed through directly.
     """
 
     def __init__(
@@ -23,21 +26,13 @@ class KafkaQueueConsumer:
         topic: str,
         bootstrap_servers: str = "localhost:9092",
         consumer_group: str = "agent-workers",
-        security_protocol: str = "PLAINTEXT",
-        sasl_mechanism: str | None = None,
-        sasl_username: str | None = None,
-        sasl_password: str | None = None,
-        auto_offset_reset: str = "latest",
+        **extra_config: Any,
     ) -> None:
-        """Initialize with Kafka connection settings."""
+        """Initialize with Kafka connection settings and any extra aiokafka config."""
         self._topic = topic
         self._servers = bootstrap_servers
         self._group = consumer_group
-        self._security_protocol = security_protocol
-        self._sasl_mechanism = sasl_mechanism
-        self._sasl_username = sasl_username
-        self._sasl_password = sasl_password
-        self._auto_offset_reset = auto_offset_reset
+        self._extra = extra_config
         self._consumer: Any = None
         self._running = True
 
@@ -49,16 +44,21 @@ class KafkaQueueConsumer:
             "bootstrap_servers": self._servers,
             "group_id": self._group,
             "value_deserializer": lambda v: json.loads(v.decode("utf-8")),
-            "auto_offset_reset": self._auto_offset_reset,
             "enable_auto_commit": False,
-            "security_protocol": self._security_protocol,
         }
-        if self._sasl_mechanism:
-            kwargs["sasl_mechanism"] = self._sasl_mechanism
-        if self._sasl_username:
-            kwargs["sasl_plain_username"] = self._sasl_username
-        if self._sasl_password:
-            kwargs["sasl_plain_password"] = self._sasl_password
+
+        for key, val in self._extra.items():
+            if val is None:
+                continue
+            if key in _SASL_USERNAME_ALIASES:
+                kwargs["sasl_plain_username"] = val
+            elif key in _SASL_PASSWORD_ALIASES:
+                kwargs["sasl_plain_password"] = val
+            else:
+                kwargs[key] = val
+
+        kwargs.setdefault("security_protocol", "PLAINTEXT")
+        kwargs.setdefault("auto_offset_reset", "latest")
 
         self._consumer = AIOKafkaConsumer(self._topic, **kwargs)
         await self._consumer.start()

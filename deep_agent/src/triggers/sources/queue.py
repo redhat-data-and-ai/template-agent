@@ -227,17 +227,26 @@ class QueueTriggerSource:
                 KafkaQueueConsumer,
             )
 
+            extra = {
+                k: v
+                for k, v in self._config.model_dump().items()
+                if k
+                not in (
+                    "enabled",
+                    "backend",
+                    "stream",
+                    "consumer_name",
+                    "topic",
+                    "bootstrap_servers",
+                    "consumer_group",
+                )
+                and v is not None
+            }
             self._consumer = KafkaQueueConsumer(
                 topic=self._config.topic,
                 bootstrap_servers=self._config.bootstrap_servers,
                 consumer_group=self._config.consumer_group,
-                security_protocol=getattr(
-                    self._config, "security_protocol", "PLAINTEXT"
-                ),
-                sasl_mechanism=getattr(self._config, "sasl_mechanism", None),
-                sasl_username=getattr(self._config, "sasl_username", None),
-                sasl_password=getattr(self._config, "sasl_password", None),
-                auto_offset_reset=getattr(self._config, "auto_offset_reset", "latest"),
+                **extra,
             )
         else:
             raise ValueError(f"unsupported queue backend: {self._config.backend}")
