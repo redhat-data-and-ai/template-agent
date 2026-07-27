@@ -201,7 +201,10 @@ class Settings(BaseSettings):
     def is_dev_public_url(self) -> bool:
         """True when the public base URL is an allowed local HTTP dev endpoint."""
         parsed = urlparse(self.agent_public_base_url)
-        return parsed.scheme == "http" and parsed.hostname in _DEV_PUBLIC_HOSTS
+        hostname = parsed.hostname or ""
+        return parsed.scheme == "http" and (
+            hostname in _DEV_PUBLIC_HOSTS or hostname.endswith(".localhost")
+        )
 
     @property
     def oauth_callback_url(self) -> str:
