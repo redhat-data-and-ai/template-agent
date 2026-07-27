@@ -49,6 +49,11 @@ class QueueTriggerConfig(BaseModel):
     consumer_name: str = ""
     bootstrap_servers: str = "localhost:9092"
     topic: str = "agent-tasks"
+    security_protocol: str = "PLAINTEXT"
+    sasl_mechanism: str | None = None
+    sasl_username: str | None = None
+    sasl_password: str | None = None
+    auto_offset_reset: str = "latest"
 
     def get_consumer_name(self) -> str:
         """Return consumer_name, defaulting to HOSTNAME for multi-replica support."""

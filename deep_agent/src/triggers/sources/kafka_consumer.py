@@ -23,11 +23,21 @@ class KafkaQueueConsumer:
         topic: str,
         bootstrap_servers: str = "localhost:9092",
         consumer_group: str = "agent-workers",
+        security_protocol: str = "PLAINTEXT",
+        sasl_mechanism: str | None = None,
+        sasl_username: str | None = None,
+        sasl_password: str | None = None,
+        auto_offset_reset: str = "latest",
     ) -> None:
         """Initialize with Kafka connection settings."""
         self._topic = topic
         self._servers = bootstrap_servers
         self._group = consumer_group
+        self._security_protocol = security_protocol
+        self._sasl_mechanism = sasl_mechanism
+        self._sasl_username = sasl_username
+        self._sasl_password = sasl_password
+        self._auto_offset_reset = auto_offset_reset
         self._consumer: Any = None
         self._running = True
 
@@ -35,14 +45,22 @@ class KafkaQueueConsumer:
         """Consume messages from the Kafka topic."""
         from aiokafka import AIOKafkaConsumer
 
-        self._consumer = AIOKafkaConsumer(
-            self._topic,
-            bootstrap_servers=self._servers,
-            group_id=self._group,
-            value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-            auto_offset_reset="earliest",
-            enable_auto_commit=False,
-        )
+        kwargs: dict[str, Any] = {
+            "bootstrap_servers": self._servers,
+            "group_id": self._group,
+            "value_deserializer": lambda v: json.loads(v.decode("utf-8")),
+            "auto_offset_reset": self._auto_offset_reset,
+            "enable_auto_commit": False,
+            "security_protocol": self._security_protocol,
+        }
+        if self._sasl_mechanism:
+            kwargs["sasl_mechanism"] = self._sasl_mechanism
+        if self._sasl_username:
+            kwargs["sasl_plain_username"] = self._sasl_username
+        if self._sasl_password:
+            kwargs["sasl_plain_password"] = self._sasl_password
+
+        self._consumer = AIOKafkaConsumer(self._topic, **kwargs)
         await self._consumer.start()
         logger.info(
             "kafka consumer started",
