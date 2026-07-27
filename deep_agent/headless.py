@@ -27,7 +27,7 @@ _CONFIG_PATH = (
     / "agent.yaml"
 )
 _HEADLESS_PROMPT_PATH = (
-    Path(__file__).resolve().parent.parent / "config" / "agent" / "HEADLESS_PROMPT.md"
+    Path(__file__).resolve().parent.parent / "config" / "agent" / "PROMPT.md"
 )
 
 
@@ -51,7 +51,7 @@ def _load_headless_config() -> HeadlessConfig:
 
 
 async def _build_headless_graph() -> Any:
-    """Build a dedicated graph from HEADLESS_PROMPT.md.
+    """Build a dedicated graph from PROMPT.md.
 
     Uses a simpler prompt than the orchestrator — no user interaction,
     no TODO lists, just task processing.

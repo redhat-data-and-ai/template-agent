@@ -5,14 +5,7 @@ kind: Component
 # Usage: add "../../components/headless" to the overlay's components list.
 
 patches:
-  # Deployment: set headless command
-  - target:
-      kind: Deployment
-      name: agent
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/command
-        value: ["python", "-m", "deep_agent.headless"]
+  # No command override needed — entrypoint reads mode from agent.yaml
 
   # Deployment: replace port to 8080/health
   - target:
