@@ -11,6 +11,8 @@ resources:
   - ingress.yaml
 
 # Include postgres and redis for local development
+# Include postgres and redis for local development
+# To deploy in headless mode, add: ../../components/headless
 components:
   - ../../components/postgres
   - ../../components/redis

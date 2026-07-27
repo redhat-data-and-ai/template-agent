@@ -1,4 +1,4 @@
-.PHONY: local dev test clean deploy deploy-headless undeploy undeploy-headless kind kind-down container container-down local-down test-triggers test-integration test-headless headless
+.PHONY: local dev test clean deploy deploy-headless undeploy undeploy-headless kind kind-headless kind-down container container-down local-down test-triggers test-integration test-headless headless
 
 # OpenShift namespace (can be overridden: make deploy openshift NAMESPACE=my-project)
 NAMESPACE ?= $(shell oc project -q 2>/dev/null)
@@ -247,24 +247,28 @@ deploy-headless: ## Deploy headless worker to OpenShift (requires: NAMESPACE)
 	echo "Using namespace: $(NAMESPACE)"; \
 	oc project $(NAMESPACE) || (echo "Error: Cannot switch to namespace '$(NAMESPACE)'. Check permissions." && exit 1); \
 	echo "Updating namespace references..."; \
-	sed -i.bak "s|NAMESPACE_PLACEHOLDER|$(NAMESPACE)|g" deployment/overlays/openshift-headless/kustomization.yaml; \
+	sed -i.bak "s|NAMESPACE_PLACEHOLDER|$(NAMESPACE)|g" deployment/overlays/openshift/kustomization.yaml; \
+	echo "Adding headless component..."; \
+	cd deployment/overlays/openshift && kustomize edit add component ../../components/headless; \
+	cd ../../..; \
 	echo "Deploying headless worker resources..."; \
-	oc apply -k deployment/overlays/openshift-headless/ || (mv deployment/overlays/openshift-headless/kustomization.yaml.bak deployment/overlays/openshift-headless/kustomization.yaml 2>/dev/null; exit 1); \
-	rm -f deployment/overlays/openshift-headless/kustomization.yaml.bak; \
+	oc apply -k deployment/overlays/openshift/ || (mv deployment/overlays/openshift/kustomization.yaml.bak deployment/overlays/openshift/kustomization.yaml 2>/dev/null; exit 1); \
+	echo "Restoring kustomization.yaml..."; \
+	mv deployment/overlays/openshift/kustomization.yaml.bak deployment/overlays/openshift/kustomization.yaml; \
 	echo "Headless worker deployment complete!"; \
 	echo "Checking deployment status..."; \
-	oc get pods -l component=agent-headless; \
+	oc get pods -l app=agent; \
 	echo ""; \
 	echo "Useful commands:"; \
-	echo "  View logs:    oc logs -l component=agent-headless --tail=100"; \
-	echo "  Check status: oc get pods,svc -l component=agent-headless"; \
-	echo "  Scale:        oc scale deployment agent-headless --replicas=N"
+	echo "  View logs:    oc logs -l app=agent --tail=100"; \
+	echo "  Check status: oc get pods,svc -l app=agent"; \
+	echo "  Scale:        oc scale deployment agent --replicas=N"
 
 undeploy-headless: ## Remove headless worker from OpenShift
 	@which oc > /dev/null || (echo "Error: oc CLI not found." && exit 1)
 	@oc project $(NAMESPACE) || (echo "Error: Cannot switch to namespace '$(NAMESPACE)'" && exit 1)
 	@echo "Removing headless worker deployment..."
-	@oc delete deployment,service,hpa,pdb,scaledobject -l component=agent-headless 2>/dev/null || true
+	@oc delete deployment,service,hpa,pdb -l app=agent 2>/dev/null || true
 	@echo "Headless worker undeployed"
 
 mpp:
@@ -359,6 +363,47 @@ kind: ## Deploy full stack (agent + MCP + UI) to a local Kind cluster
 	@echo "║  UI:         http://localhost:8080                             ║"
 	@echo "║  Agent:      http://localhost:5002                             ║"
 	@echo "║  MCP Server: http://localhost:5001                             ║"
+	@echo "╚════════════════════════════════════════════════════════════════╝"
+	@echo ""
+	@echo "Useful commands:"
+	@echo "  Pods:      $(KCTL) -n $(KIND_NS) get pods"
+	@echo "  Logs:      $(KCTL) -n $(KIND_NS) logs -l component=agent -f"
+	@echo "  Teardown:  make kind-down"
+
+kind-headless: ## Deploy headless worker to Kind cluster (builds agent image only, no UI/MCP)
+	@echo "╔════════════════════════════════════════════════════════════════╗"
+	@echo "║  Kind: Deploy headless worker to local Kubernetes cluster      ║"
+	@echo "║  Services: Headless Agent + Postgres + Redis                   ║"
+	@echo "╚════════════════════════════════════════════════════════════════╝"
+	@which kind > /dev/null || (echo "Error: kind not found. Install: https://kind.sigs.k8s.io" && exit 1)
+	@which kubectl > /dev/null || (echo "Error: kubectl not found." && exit 1)
+	@# --- Step 1: Create cluster if not exists ---
+	@if ! kind get clusters 2>/dev/null | grep -q "$(KIND_CLUSTER)"; then \
+		echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
+		kind create cluster --name $(KIND_CLUSTER) --config=- <<< '{"kind":"Cluster","apiVersion":"kind.x-k8s.io/v1alpha4","nodes":[{"role":"control-plane","kubeadmConfigPatches":["kind: InitConfiguration\nnodeRegistration:\n  kubeletExtraArgs:\n    node-labels: ingress-ready=true\n"],"extraPortMappings":[{"containerPort":80,"hostPort":80,"protocol":"TCP"},{"containerPort":443,"hostPort":443,"protocol":"TCP"}]}]}'; \
+	else \
+		echo "Kind cluster '$(KIND_CLUSTER)' already exists"; \
+	fi
+	@# --- Step 2: Build and load agent image ---
+	@echo "Building agent image..."
+	@podman build -t $(KIND_IMAGE) .
+	@echo "Loading image into Kind..."
+	@podman save $(KIND_IMAGE) -o /tmp/kind-agent.tar && kind load image-archive /tmp/kind-agent.tar --name $(KIND_CLUSTER) && rm -f /tmp/kind-agent.tar
+	@# --- Step 3: Deploy with headless component ---
+	@echo "Deploying headless worker to Kind..."
+	@$(KCTL) create namespace $(KIND_NS) 2>/dev/null || true
+	@cd deployment/overlays/kind && kustomize edit add component ../../components/headless
+	@$(KCTL) apply -k deployment/overlays/kind/
+	@cd deployment/overlays/kind && kustomize edit remove component ../../components/headless
+	@echo ""
+	@echo "Waiting for pods..."
+	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=database --timeout=60s 2>/dev/null || true
+	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=cache --timeout=60s 2>/dev/null || true
+	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=agent --timeout=120s 2>/dev/null || true
+	@echo ""
+	@echo "╔════════════════════════════════════════════════════════════════╗"
+	@echo "║  Kind headless worker ready!                                   ║"
+	@echo "║  Health: port 8080 (internal only)                            ║"
 	@echo "╚════════════════════════════════════════════════════════════════╝"
 	@echo ""
 	@echo "Useful commands:"

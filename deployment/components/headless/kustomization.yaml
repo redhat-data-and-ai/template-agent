@@ -1,0 +1,66 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Transforms a chat/server deployment into a headless (background worker) deployment.
+# Usage: add "../../components/headless" to the overlay's components list.
+
+patches:
+  # Deployment: set headless command
+  - target:
+      kind: Deployment
+      name: agent
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/command
+        value: ["python", "-m", "deep_agent.headless"]
+
+  # Deployment: replace port to 8080/health
+  - target:
+      kind: Deployment
+      name: agent
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/ports/0/containerPort
+        value: 8080
+      - op: replace
+        path: /spec/template/spec/containers/0/ports/0/name
+        value: health
+
+  # Deployment: replace probe paths and ports
+  - target:
+      kind: Deployment
+      name: agent
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/startupProbe/httpGet/path
+        value: /healthz
+      - op: replace
+        path: /spec/template/spec/containers/0/startupProbe/httpGet/port
+        value: 8080
+      - op: replace
+        path: /spec/template/spec/containers/0/livenessProbe/httpGet/path
+        value: /healthz
+      - op: replace
+        path: /spec/template/spec/containers/0/livenessProbe/httpGet/port
+        value: 8080
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe/httpGet/path
+        value: /readyz
+      - op: replace
+        path: /spec/template/spec/containers/0/readinessProbe/httpGet/port
+        value: 8080
+
+  # Service: replace port to 8080/health
+  - target:
+      kind: Service
+      name: agent
+    patch: |-
+      - op: replace
+        path: /spec/ports/0/port
+        value: 8080
+      - op: replace
+        path: /spec/ports/0/targetPort
+        value: 8080
+      - op: replace
+        path: /spec/ports/0/name
+        value: health
