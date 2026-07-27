@@ -214,8 +214,8 @@ class EventTriggerMiddleware:
             logger.exception("Graph invocation failed for event: %s", event.name)
 
         # Ack queue message after processing (B3 fix: ack-after-processing).
-        queue_msg = event.metadata.get("_queue_message")
-        queue_consumer = event.metadata.get("_consumer")
+        queue_msg = getattr(event, "_queue_message", None)
+        queue_consumer = getattr(event, "_consumer", None)
         if queue_msg and queue_consumer:
             try:
                 await queue_consumer.ack(queue_msg)

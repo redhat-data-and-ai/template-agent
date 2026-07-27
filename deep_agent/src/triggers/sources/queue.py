@@ -288,10 +288,10 @@ class QueueTriggerSource:
                     metadata={
                         "message_id": message.id,
                         "stream": self._config.stream,
-                        "_queue_message": message,
-                        "_consumer": self._consumer,
                     },
                 )
+                object.__setattr__(event, "_queue_message", message)
+                object.__setattr__(event, "_consumer", self._consumer)
                 await self._queue.put(event)
                 # Do NOT ack here — middleware will ack after processing.
                 logger.debug(
