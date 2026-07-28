@@ -13,18 +13,28 @@ reviews:
     - main
     - deep-agent
     - rc-.*
-  high_level_summary: true
-  high_level_summary_placeholder: "@coderabbitai summary"
-  auto_title_placeholder: "@coderabbitai"
+  high_level_summary: false
   poem: false
   review_status: false
-  collapse_walkthrough: true
+  collapse_walkthrough: false
+  estimate_code_review_effort: false
+  related_issues: false
   changed_files_summary: false
   sequence_diagrams: false
-  assess_linked_issues: true
+  assess_linked_issues: false
   abort_on_close: true
+  slop_detection:
+    enabled: true
+    label: "ai-generated"
   auto_review:
     enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
   path_filters:
     - "!**/*.md"
     - "!**/*.txt"
@@ -78,9 +88,53 @@ reviews:
       enabled: true
     gitleaks:
       enabled: true
+    ast-grep:
+      essential_rules: true
+      rule_dirs:
+        - ".coderabbit/rules"
+
+  post_merge_actions:
+    - name: "Update changelog"
+      enabled: true
+      prompt: |
+        Review the PR title, description, and full diff.
+        Append a new entry to CHANGELOG.md at the top of the "Unreleased" section.
+
+        Format: `- <type>(<scope>): <short description> (#<PR number>)`
+        - Derive type from the changes: feat, fix, refactor, docs, chore
+        - Derive scope from the primary directory or package touched
+        - Keep the description under 80 characters in plain language
+
+        Only proceed if the PR is a notable user-facing or API change.
+        Skip for dependency bumps, typo fixes, and CI-only changes.
+        Do not modify anything else in the file.
 
 chat:
   auto_reply: true
+
+issue_enrichment:
+  auto_enrich:
+    enabled: true
+  labeling:
+    auto_apply_labels: true
+    labeling_instructions:
+      - label: bug
+        instructions: >-
+          Issues reporting bugs, errors, crashes, incorrect behavior, or
+          unexpected results. This includes runtime errors, logic errors,
+          broken functionality, regressions, and any deviation from expected
+          or documented behavior.
+      - label: enhancement
+        instructions: >-
+          Feature requests, improvements to existing functionality, performance
+          optimizations, refactoring suggestions, UI/UX enhancements, and any
+          suggestions to make the project better or add new capabilities.
+      - label: documentation
+        instructions: >-
+          Documentation updates, additions, corrections, or clarifications
+          needed. This includes missing docs, outdated information, unclear
+          instructions, API documentation, code examples, README improvements,
+          and any requests for better explanations or guides.
 
 knowledge_base:
   learnings:
@@ -89,3 +143,14 @@ knowledge_base:
     scope: auto
   pull_requests:
     scope: auto
+  web_search:
+    enabled: true
+  linked_repositories:
+    - repository: "redhat-data-and-ai/template-mcp"
+      instructions: "MCP server template with tool definitions and protocol handlers"
+    - repository: "redhat-data-and-ai/template-ui"
+      instructions: "Frontend UI template that connects to this agent"
+  code_guidelines:
+    filePatterns:
+      - "**/CONTRIBUTING.md"
+      - "**/SECURITY.md"
