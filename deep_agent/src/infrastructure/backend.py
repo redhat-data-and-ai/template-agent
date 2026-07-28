@@ -302,18 +302,18 @@ def _get_assistant_id_from_config(ctx: Any) -> str:
     """
     cfg = getattr(ctx.runtime, "config", None) or {}
     if isinstance(cfg, dict):
-        assistant_id = cfg.get("metadata", {}).get("assistant_id")
+        assistant_id: Any = cfg.get("metadata", {}).get("assistant_id")
         if assistant_id:
-            return assistant_id
+            return str(assistant_id)
     return "default"
 
 
 def _safe_namespace_user(ctx: Any) -> tuple[str, ...]:
     """User-scoped namespace: (assistant_id, user_identity) on server, config fallback locally."""
-    si = getattr(ctx.runtime, "server_info", None)
-    if si is not None and getattr(si, "assistant_id", ""):
+    si: Any = getattr(ctx.runtime, "server_info", None)
+    if si is not None and getattr(si, "assistant_id", None):
         parts: list[str] = [si.assistant_id]
-        if si.user is not None and getattr(si.user, "identity", ""):
+        if si.user is not None and getattr(si.user, "identity", None):
             parts.append(si.user.identity)
         return tuple(parts)
     return (_get_assistant_id_from_config(ctx),)
@@ -321,8 +321,8 @@ def _safe_namespace_user(ctx: Any) -> tuple[str, ...]:
 
 def _safe_namespace_assistant(ctx: Any) -> tuple[str, ...]:
     """Assistant-scoped namespace: (assistant_id,) on server, config fallback locally."""
-    si = getattr(ctx.runtime, "server_info", None)
-    if si is not None and getattr(si, "assistant_id", ""):
+    si: Any = getattr(ctx.runtime, "server_info", None)
+    if si is not None and getattr(si, "assistant_id", None):
         return (si.assistant_id,)
     return (_get_assistant_id_from_config(ctx),)
 
