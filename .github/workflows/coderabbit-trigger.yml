@@ -58,6 +58,13 @@ jobs:
               core.setOutput('found', 'false');
               return;
             }
+            const base_ref = pr.base.ref;
+            const allowed = /^(main|deep-agent|rc-.*)$/;
+            if (!allowed.test(base_ref)) {
+              core.info(`PR #${pr.number} targets ${base_ref}, not a reviewed branch`);
+              core.setOutput('found', 'false');
+              return;
+            }
             core.setOutput('found', 'true');
             core.setOutput('pr_number', pr.number.toString());
 
