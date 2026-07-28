@@ -93,6 +93,7 @@ async def get_agent_info() -> dict[str, Any]:
         "orchestrator": {
             "name": orch_cfg.get("name", "orchestrator"),
             "allowed_tools": orch_cfg.get("allowed_tools", []),
+            "denied_tools": orch_cfg.get("denied_tools", []),
             "tool_approval": orch_cfg.get("tool_approval", []),
         },
         "subagents": [
@@ -100,6 +101,7 @@ async def get_agent_info() -> dict[str, Any]:
                 "name": cfg.get("name", name),
                 "type": cfg.get("type", "default"),
                 "allowed_tools": cfg.get("allowed_tools", []),
+                "denied_tools": cfg.get("denied_tools", []),
                 "tool_approval": cfg.get("tool_approval", []),
             }
             for name, cfg in subagent_cfgs.items()
