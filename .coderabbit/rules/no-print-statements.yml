@@ -1,0 +1,11 @@
+id: no-print-statements
+language: python
+message: "Use structlog/logging instead of print() for observability"
+severity: warning
+rule:
+  pattern: print($$$)
+  not:
+    inside:
+      kind: function_definition
+      regex: "^(async )?def test_"
+      stopBy: end
