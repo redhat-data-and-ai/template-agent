@@ -80,14 +80,15 @@ jobs:
             const maxAttempts = 50;
 
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-              const { data: checkRuns } = await github.rest.checks.listForRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: head_sha,
-                per_page: 100,
-              });
+              const allCheckRuns = [];
+              for await (const response of github.paginate.iterator(
+                github.rest.checks.listForRef,
+                { owner: context.repo.owner, repo: context.repo.repo, ref: head_sha, per_page: 100 }
+              )) {
+                allCheckRuns.push(...response.data);
+              }
 
-              const others = checkRuns.check_runs.filter(cr => !cr.name.includes(self));
+              const others = allCheckRuns.filter(cr => !cr.name.includes(self));
 
               const pending = others.filter(cr => cr.status !== 'completed');
               if (pending.length > 0) {
