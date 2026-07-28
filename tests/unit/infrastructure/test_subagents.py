@@ -1,6 +1,6 @@
 """Unit tests for subagent loading."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -1051,3 +1051,159 @@ class TestToolAccessControl:
             assert calls[0][1]["tools"] == [mock_tool_a]
             # Second subagent gets tool_b only
             assert calls[1][1]["tools"] == [mock_tool_b]
+
+    def _mock_tac_disabled(self):
+        """Return a mock middleware config with tool_access_control.enabled=False."""
+        mw_config = MagicMock()
+        mw_config.defaults.tool_access_control.enabled = False
+        return mw_config
+
+    def test_denied_tools_skipped_when_flag_disabled(self):
+        """When tool_access_control.enabled=False, denied_tools are not filtered."""
+        mock_tool_a = MagicMock()
+        mock_tool_a.name = "tool_a"
+        mock_tool_b = MagicMock()
+        mock_tool_b.name = "tool_b"
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_middleware_config",
+                return_value=self._mock_tac_disabled(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "agent1": {
+                    "name": "agent1",
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a", "tool_b"],
+                    "denied_tools": ["tool_b"],
+                }
+            }
+            mock_resolve.return_value = [mock_tool_a, mock_tool_b]
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool_a, mock_tool_b])
+
+            mock_filter.assert_not_called()
+            call_kwargs = mock_sa.call_args[1]
+            assert call_kwargs["tools"] == [mock_tool_a, mock_tool_b]
+
+    def test_tool_approval_skipped_when_flag_disabled(self):
+        """When tool_access_control.enabled=False, tool_approval does not raise for default subagent."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_middleware_config",
+                return_value=self._mock_tac_disabled(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+        ):
+            mock_get_configs.return_value = {
+                "agent1": {
+                    "name": "agent1",
+                    "type": "default",
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["sensitive_tool"],
+                    "tool_approval": ["sensitive_tool"],
+                }
+            }
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[])
+
+            mock_sa.assert_called_once()
+
+    def test_compiled_denied_tools_skipped_when_flag_disabled(self):
+        """When tool_access_control.enabled=False, compiled subagent skips denied_tools and interrupt_on."""
+        mock_tool = MagicMock()
+        mock_tool.name = "tool_a"
+        mock_model = MagicMock()
+        mock_graph = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_middleware_config",
+                return_value=self._mock_tac_disabled(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deepagents.create_deep_agent") as mock_create_agent,
+            patch(
+                "deep_agent.src.infrastructure.backend.get_configured_backend"
+            ) as mock_backend,
+            patch(
+                "deep_agent.src.infrastructure.subagents.CompiledSubAgent"
+            ) as mock_compiled,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "type": "compiled",
+                    "model": "gemini-2.5-pro",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a", "tool_b"],
+                    "denied_tools": ["tool_b"],
+                    "tool_approval": ["tool_a"],
+                }
+            }
+            mock_resolve.return_value = [mock_tool]
+            mock_create_agent.return_value = mock_graph
+            mock_backend.return_value = MagicMock()
+            mock_compiled.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool])
+
+            mock_filter.assert_not_called()
+            create_kwargs = mock_create_agent.call_args[1]
+            assert "interrupt_on" not in create_kwargs

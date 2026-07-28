@@ -234,7 +234,10 @@ async def agent(runtime: ServerRuntime) -> Any:
         )
         tools = mcp_tools
 
-    if denied_tool_names and tools:
+    tac_enabled = (
+        agent_config.get_middleware_config().defaults.tool_access_control.enabled
+    )
+    if denied_tool_names and tools and tac_enabled:
         from deep_agent.src.infrastructure.tool_access import filter_denied_tools
 
         tools = filter_denied_tools(tools, denied_tool_names, agent_name=agent_name)

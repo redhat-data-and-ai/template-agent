@@ -386,14 +386,17 @@ def _build_default_subagent(
     else:
         resolved_tools = []
 
-    # Step 2: Filter denied tools
+    # Step 2: Filter denied tools (gated by tool_access_control flag)
+    tac_enabled = (
+        agent_config.get_middleware_config().defaults.tool_access_control.enabled
+    )
     denied_names: list[str] = agent_cfg.get("denied_tools", [])
-    if denied_names:
+    if denied_names and tac_enabled:
         resolved_tools = filter_denied_tools(
             resolved_tools, denied_names, agent_name=name
         )
 
-    if agent_cfg.get("tool_approval"):
+    if agent_cfg.get("tool_approval") and tac_enabled:
         raise ValueError(
             f"Subagent '{name}' (default) does not support tool_approval — "
             "default subagents run inline and cannot handle interrupt resume. "
@@ -461,9 +464,12 @@ def _build_compiled_subagent(
     else:
         resolved_tools = []
 
-    # Step 2: Filter denied tools
+    # Step 2: Filter denied tools (gated by tool_access_control flag)
+    tac_enabled = (
+        agent_config.get_middleware_config().defaults.tool_access_control.enabled
+    )
     denied_names: list[str] = agent_cfg.get("denied_tools", [])
-    if denied_names:
+    if denied_names and tac_enabled:
         resolved_tools = filter_denied_tools(
             resolved_tools, denied_names, agent_name=name
         )
@@ -488,7 +494,7 @@ def _build_compiled_subagent(
 
     # tool_approval for compiled subagents: pass interrupt_on to their own graph
     approval_names: list[str] = agent_cfg.get("tool_approval", [])
-    if approval_names:
+    if approval_names and tac_enabled:
         import inspect as _inspect
 
         if "interrupt_on" in _inspect.signature(create_deep_agent).parameters:

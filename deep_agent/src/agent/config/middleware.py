@@ -99,6 +99,12 @@ class ToolRetryConfig(BaseModel):
     tools: list[str] = Field(default_factory=list)
 
 
+class ToolAccessControlConfig(BaseModel):
+    """Config for tool access control per subagent (denied_tools, tool_approval)."""
+
+    enabled: bool = True
+
+
 class PIIRule(BaseModel):
     """A single PII rule — provider determines which backend handles it."""
 
@@ -142,6 +148,9 @@ class MiddlewareDefaults(BaseModel):
     model_retry: ModelRetryConfig = Field(default_factory=ModelRetryConfig)
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
+    tool_access_control: ToolAccessControlConfig = Field(
+        default_factory=ToolAccessControlConfig
+    )
     extra: list[str] = Field(default_factory=list)
 
 
@@ -175,6 +184,7 @@ class ResolvedMiddlewareConfig(BaseModel):
     model_retry: ModelRetryConfig = Field(default_factory=ModelRetryConfig)
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
+    tool_access_control_enabled: bool = True
     extra_middleware: list[str] = Field(default_factory=list)
     excluded_middleware: list[str] = Field(default_factory=list)
 
@@ -257,6 +267,11 @@ def resolve_middleware(
     elif isinstance(overrides.get("human_approval"), bool):
         human_approval = HumanApprovalConfig(enabled=overrides["human_approval"])
 
+    tool_access_control_enabled = _resolve_bool(
+        defaults.tool_access_control.enabled,
+        overrides.get("tool_access_control"),
+    )
+
     return ResolvedMiddlewareConfig(
         summarization_tool_enabled=summarization_enabled,
         human_approval=human_approval,
@@ -269,6 +284,7 @@ def resolve_middleware(
         model_retry=defaults.model_retry,
         model_fallback=defaults.model_fallback,
         tool_retry=defaults.tool_retry,
+        tool_access_control_enabled=tool_access_control_enabled,
         extra_middleware=extra,
         excluded_middleware=profile.excluded_middleware,
     )
