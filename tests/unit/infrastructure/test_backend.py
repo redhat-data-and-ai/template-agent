@@ -98,6 +98,14 @@ class TestGetAssistantIdFromConfig:
         del ctx.runtime.config
         assert _get_assistant_id_from_config(ctx) == "default"
 
+    def test_returns_default_when_metadata_is_none(self):
+        ctx = _make_ctx(config={"metadata": None})
+        assert _get_assistant_id_from_config(ctx) == "default"
+
+    def test_returns_default_when_metadata_is_not_dict(self):
+        ctx = _make_ctx(config={"metadata": ["not", "a", "dict"]})
+        assert _get_assistant_id_from_config(ctx) == "default"
+
 
 class TestSafeNamespaceUser:
     """Tests for _safe_namespace_user."""
@@ -117,6 +125,12 @@ class TestSafeNamespaceUser:
         si.assistant_id = "asst-1"
         si.user = MagicMock()
         si.user.identity = ""
+        ctx = _make_ctx(server_info=si)
+        assert _safe_namespace_user(ctx) == ("asst-1",)
+
+    def test_returns_only_assistant_id_when_server_info_has_no_user_attr(self):
+        si = MagicMock(spec=[])
+        si.assistant_id = "asst-1"
         ctx = _make_ctx(server_info=si)
         assert _safe_namespace_user(ctx) == ("asst-1",)
 

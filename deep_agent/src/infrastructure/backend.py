@@ -302,7 +302,10 @@ def _get_assistant_id_from_config(ctx: Any) -> str:
     """
     cfg = getattr(ctx.runtime, "config", None) or {}
     if isinstance(cfg, dict):
-        assistant_id: Any = cfg.get("metadata", {}).get("assistant_id")
+        metadata = cfg.get("metadata")
+        assistant_id: Any = (
+            metadata.get("assistant_id") if isinstance(metadata, dict) else None
+        )
         if assistant_id:
             return str(assistant_id)
     return "default"
@@ -313,8 +316,9 @@ def _safe_namespace_user(ctx: Any) -> tuple[str, ...]:
     si: Any = getattr(ctx.runtime, "server_info", None)
     if si is not None and getattr(si, "assistant_id", None):
         parts: list[str] = [si.assistant_id]
-        if si.user is not None and getattr(si.user, "identity", None):
-            parts.append(si.user.identity)
+        user: Any = getattr(si, "user", None)
+        if getattr(user, "identity", None):
+            parts.append(user.identity)
         return tuple(parts)
     return (_get_assistant_id_from_config(ctx),)
 
