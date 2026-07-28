@@ -131,17 +131,27 @@ local-down:
 
 headless: ## Start agent in headless mode (background worker with event triggers)
 	@echo "Setting up headless environment..."
-	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
+	@test -f .env 2>/dev/null || (echo "Creating .env from .env.example..." && cp .env.example .env 2>/dev/null) || true
+	@lsof -ti :8080 | xargs kill -9 2>/dev/null || true
 	@echo "Starting infrastructure (Postgres + Redis)..."
-	@podman-compose -f compose.yaml up -d pgvector redis
+	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml up -d pgvector redis
 	@echo "Waiting for Postgres to be ready..."
-	@until podman exec demo-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
-	@podman exec demo-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
-		|| podman exec demo-pgvector psql -U postgres -c "CREATE DATABASE aegra;"
+	@until podman exec template-agent-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
+	@podman exec template-agent-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
+		|| podman exec template-agent-pgvector psql -U postgres -c "CREATE DATABASE aegra;"
 	@echo "Starting headless agent worker..."
-	@echo "Set mode: headless in config/agent/runtime/agent.yaml"
 	@echo "Press Ctrl+C to stop the worker"
-	@. .venv/bin/activate && ENVIRONMENT=local REDIS_URL=redis://localhost:6379/0 python -m deep_agent.headless
+	@trap 'lsof -ti :8080 | xargs kill -INT 2>/dev/null || true; sleep 2; lsof -ti :8080 | xargs kill -9 2>/dev/null || true; exit 130' INT TERM; \
+	REDIS_BROKER_ENABLED=true \
+		POSTGRES_HOST=localhost \
+		POSTGRES_PORT=5432 \
+		POSTGRES_DB=template_agent \
+		POSTGRES_USER=postgres \
+		POSTGRES_PASSWORD=postgres \
+		DATABASE_URL=postgresql://postgres:postgres@localhost:5432/template_agent \
+		REDIS_URL=redis://localhost:6379/0 \
+		ENVIRONMENT=local \
+		.venv/bin/python -m deep_agent.headless
 
 container:
 	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
