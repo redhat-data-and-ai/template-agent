@@ -1,0 +1,120 @@
+name: Trigger CodeRabbit
+
+on:
+  workflow_run:
+    workflows:
+      - "Tests"
+      - "Pre-commit"
+      - "Dependency Review"
+      - "Draft Check"
+      - "License Compliance"
+      - "PR Title Lint"
+      - "Require Linked Issue"
+      - "Build and Push Base Image"
+    types:
+      - completed
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  trigger-review:
+    name: Trigger CodeRabbit Review
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'pull_request'
+    timeout-minutes: 30
+
+    steps:
+      - name: Find associated pull request
+        id: find-pr
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            const head_branch = context.payload.workflow_run.head_branch;
+            const head_sha = context.payload.workflow_run.head_sha;
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${head_branch}`,
+              state: 'open',
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 1,
+            });
+            if (prs.length === 0) {
+              core.info('No open PR found for this branch');
+              core.setOutput('found', 'false');
+              return;
+            }
+            const pr = prs[0];
+            if (pr.head.sha !== head_sha) {
+              core.info(`PR head ${pr.head.sha} does not match run head ${head_sha}, skipping`);
+              core.setOutput('found', 'false');
+              return;
+            }
+            core.setOutput('found', 'true');
+            core.setOutput('pr_number', pr.number.toString());
+
+      - name: Check all CI workflows passed
+        id: check-all
+        if: steps.find-pr.outputs.found == 'true'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            const head_sha = context.payload.workflow_run.head_sha;
+            const self = 'Trigger CodeRabbit';
+            const pollInterval = 30000;
+            const maxAttempts = 50;
+
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+              const { data: checkRuns } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: head_sha,
+                per_page: 100,
+              });
+
+              const others = checkRuns.check_runs.filter(cr => !cr.name.includes(self));
+
+              const pending = others.filter(cr => cr.status !== 'completed');
+              if (pending.length > 0) {
+                const names = pending.map(cr => cr.name).join(', ');
+                core.info(`Attempt ${attempt}/${maxAttempts} - waiting on: ${names}`);
+                await new Promise(r => setTimeout(r, pollInterval));
+                continue;
+              }
+
+              const failed = others.filter(cr =>
+                cr.conclusion !== 'success' && cr.conclusion !== 'skipped'
+              );
+              if (failed.length > 0) {
+                const names = failed.map(cr => `${cr.name} (${cr.conclusion})`).join(', ');
+                core.info(`Failed checks: ${names}`);
+                core.setOutput('all_passed', 'false');
+                return;
+              }
+
+              core.info(`All ${others.length} checks passed`);
+              core.setOutput('all_passed', 'true');
+              return;
+            }
+
+            core.info('Timed out waiting for checks to complete');
+            core.setOutput('all_passed', 'false');
+
+      - name: Trigger CodeRabbit review
+        if: >-
+          steps.find-pr.outputs.found == 'true' &&
+          steps.check-all.outputs.all_passed == 'true'
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            const pr_number = parseInt('${{ steps.find-pr.outputs.pr_number }}');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr_number,
+              body: '@coderabbitai review',
+            });
+            core.info(`Triggered CodeRabbit review on PR #${pr_number}`);
