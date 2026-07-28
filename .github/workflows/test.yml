@@ -10,9 +10,6 @@ jobs:
   test:
     name: Test Suite
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
 
     steps:
     - name: Checkout code
@@ -24,7 +21,7 @@ jobs:
         version: "latest"
 
     - name: Set up virtual env
-      run: uv venv --python ${{ matrix.python-version }}
+      run: uv venv --python 3.12
 
     - name: Install dependencies
       run: |
