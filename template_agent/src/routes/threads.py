@@ -45,18 +45,13 @@ async def list_threads(user_id: str) -> List[str]:
     """
     # When using in-memory storage, get threads from thread registry
     if settings.USE_INMEMORY_SAVER:
-        app_logger.info(
-            f"Using in-memory storage - retrieving threads from registry for user_id: {user_id}"
-        )
+        app_logger.info("Retrieving threads from registry")
         try:
-            # Use the thread registry for fast lookup
             thread_ids = get_user_threads(user_id)
-            app_logger.info(
-                f"Found {len(thread_ids)} threads in registry for user_id: {user_id}: {thread_ids}"
-            )
+            app_logger.info("Found threads in registry", thread_count=len(thread_ids))
             return thread_ids
         except Exception as e:
-            app_logger.error(f"Error accessing thread registry for user {user_id}: {e}")
+            app_logger.error("Error accessing thread registry", error=str(e))
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to retrieve threads from registry: {str(e)}",
@@ -74,11 +69,9 @@ async def list_threads(user_id: str) -> List[str]:
             rows = cur.fetchall()
             thread_ids = [row[0] for row in rows]
 
-            app_logger.info(f"Found {len(thread_ids)} threads for user_id: {user_id}")
+            app_logger.info("Found threads in database", thread_count=len(thread_ids))
             return thread_ids
 
     except Exception as e:
-        app_logger.error(
-            f"Database error while fetching threads for user {user_id}: {e}"
-        )
+        app_logger.error("Database error while fetching threads", error=str(e))
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")

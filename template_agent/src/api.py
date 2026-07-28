@@ -23,9 +23,22 @@ from template_agent.src.routes.history import router as history_router
 from template_agent.src.routes.stream import router as stream_router
 from template_agent.src.routes.threads import router as threads_router
 from template_agent.src.settings import settings
+from template_agent.utils.log_sanitizer import (
+    sanitize_headers,
+    sanitize_log_data,
+    sanitize_request_body,
+)
 from template_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
+
+
+def _sanitize_kwargs() -> dict[str, bool]:
+    return {
+        "enabled": settings.LOG_SANITIZATION_ENABLED,
+        "redact_pii": settings.LOG_SANITIZE_PII,
+        "redact_tokens": settings.LOG_SANITIZE_TOKENS,
+    }
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -37,20 +50,25 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         start_time = time.time()
+        sanitize = _sanitize_kwargs()
 
         # Capture request details
         request_data = {
             "method": request.method,
             "path": request.url.path,
             "client_ip": request.client.host if request.client else None,
-            "query_params": dict(request.query_params)
-            if request.query_params
-            else None,
+            "query_params": sanitize_log_data(
+                dict(request.query_params) if request.query_params else None,
+                **sanitize,
+            ),
         }
 
         # Optionally log headers
         if settings.REQUEST_LOG_HEADERS:
-            request_data["headers"] = dict(request.headers)
+            headers = dict(request.headers)
+            if settings.LOG_SANITIZATION_ENABLED:
+                headers = sanitize_headers(headers)
+            request_data["headers"] = headers
 
         # Optionally log request body
         if settings.REQUEST_LOG_BODY:
@@ -66,7 +84,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     ):
                         try:
                             body_str = body_bytes.decode("utf-8")
-                            request_data["body"] = body_str
+                            request_data["body"] = sanitize_request_body(
+                                body_str, **sanitize
+                            )
                         except UnicodeDecodeError:
                             request_data["body"] = "<binary data>"
                     else:
@@ -78,9 +98,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
                 request = Request(request.scope, receive)
             except Exception as e:
-                logger.warning("Failed to read request body", error=str(e))
+                logger.warning(
+                    "Failed to read request body",
+                    error=sanitize_log_data(str(e), **sanitize),
+                )
 
-        logger.info("incoming_request", **request_data)
+        logger.info(
+            "incoming_request",
+            **sanitize_log_data(request_data, **sanitize),
+        )
 
         # Process request
         response = await call_next(request)
@@ -96,9 +122,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Optionally log response headers
         if settings.REQUEST_LOG_HEADERS:
-            response_data["headers"] = dict(response.headers)
+            headers = dict(response.headers)
+            if settings.LOG_SANITIZATION_ENABLED:
+                headers = sanitize_headers(headers)
+            response_data["headers"] = headers
 
-        logger.info("outgoing_response", **response_data)
+        logger.info(
+            "outgoing_response",
+            **sanitize_log_data(response_data, **sanitize),
+        )
 
         return response
 
@@ -167,7 +199,11 @@ async def generic_exception_handler(request: Request, exc: Exception):
     logger.exception(
         f"Unhandled exception occurred for request_method={request.method}, request_path={request.url.path}, error={exc}"
     )
-    logger.debug(f"Unhandled exception occurred for request={request}, error={exc}")
+    logger.debug(
+        "Unhandled exception details",
+        request_method=request.method,
+        request_path=request.url.path,
+    )
     return JSONResponse(
         status_code=AppExceptionCode.INTERNAL_SERVER_ERROR.response_code,
         content={
@@ -184,7 +220,11 @@ async def app_exception_handler(request: Request, exc: AppException):
     logger.warn(
         f"App exception occurred for request_method={request.method}, request_path={request.url.path}, error={exc}"
     )
-    logger.debug(f"App exception occurred for request={request}, error={exc}")
+    logger.debug(
+        "App exception details",
+        request_method=request.method,
+        request_path=request.url.path,
+    )
     return JSONResponse(
         status_code=exc.response_code,
         content={

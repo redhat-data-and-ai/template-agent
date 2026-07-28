@@ -58,6 +58,7 @@ class Settings(BaseSettings):
 
     # Local OpenAI-compatible LLM (RamaLama, Ollama, vLLM): set USE_OPENAI_COMPAT_LLM=true
     # and OPENAI_COMPAT_BASE_URL. Default false = Google Gemini + GOOGLE_APPLICATION_CREDENTIALS_CONTENT.
+    # i used thhis as a local llm for testing.
     USE_OPENAI_COMPAT_LLM: bool = Field(
         default=False,
         json_schema_extra={"env": "USE_OPENAI_COMPAT_LLM"},
@@ -168,6 +169,20 @@ class Settings(BaseSettings):
             "env": "REQUEST_LOG_BODY_MAX_SIZE",
             "description": "Maximum body size in bytes to log (0 for unlimited)",
         },
+    )
+
+    # Log Sanitization Configuration
+    LOG_SANITIZATION_ENABLED: bool = Field(
+        default=True,
+        json_schema_extra={"env": "LOG_SANITIZATION_ENABLED"},
+    )
+    LOG_SANITIZE_PII: bool = Field(
+        default=True,
+        json_schema_extra={"env": "LOG_SANITIZE_PII"},
+    )
+    LOG_SANITIZE_TOKENS: bool = Field(
+        default=True,
+        json_schema_extra={"env": "LOG_SANITIZE_TOKENS"},
     )
 
     @property
