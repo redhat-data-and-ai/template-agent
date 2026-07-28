@@ -750,6 +750,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.SubAgent",
                 return_value=MagicMock(),
             ) as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -849,34 +853,30 @@ class TestToolAccessControl:
             with pytest.raises(SubAgentError, match="does not support tool_approval"):
                 load_subagents(tools=[])
 
-    def test_tool_approval_names_from_default_subagents_in_config(self):
-        """tool_approval field is read from default subagent configs."""
-        with patch(
-            "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
-        ) as mock_get_configs:
-            configs = {
+    def test_default_subagent_with_tool_approval_is_rejected_by_loader(self):
+        """Default subagent with tool_approval is rejected by load_subagents."""
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+        ):
+            mock_get_configs.return_value = {
                 "default_agent": {
                     "name": "default_agent",
                     "type": "default",
-                    "tool_approval": ["send_email", "search_web"],
-                },
-                "compiled_agent": {
-                    "name": "compiled_agent",
-                    "type": "compiled",
-                    "tool_approval": ["delete_record"],
-                },
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["send_email"],
+                    "tool_approval": ["send_email"],
+                }
             }
-            mock_get_configs.return_value = configs
-            # Verify default subagent has tool_approval, compiled does not
-            default_approvals = [
-                t
-                for _, c in configs.items()
-                if c.get("type", "default") == "default"
-                for t in c.get("tool_approval", [])
-            ]
-            assert "send_email" in default_approvals
-            assert "search_web" in default_approvals
-            assert "delete_record" not in default_approvals
+            with pytest.raises(SubAgentError, match="does not support tool_approval"):
+                load_subagents(tools=[])
 
     def test_async_subagent_rejects_tool_approval(self):
         """Async subagent with tool_approval raises error."""

@@ -380,6 +380,8 @@ class AgentConfig:
 
                 subagents[name] = config
                 logger.info(f"Loaded subagent config: {name}")
+            except AppException:
+                raise
             except Exception as e:
                 logger.error(f"Failed to load subagent {agent_file}: {e}")
 

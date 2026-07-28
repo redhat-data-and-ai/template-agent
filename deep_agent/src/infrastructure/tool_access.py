@@ -7,7 +7,6 @@ declared in frontmatter config.
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
 from langgraph.types import interrupt
@@ -152,7 +151,9 @@ def _wrap_tool_with_approval(tool: Any, agent_name: str) -> Any:
     coroutine = getattr(tool, "coroutine", None)
     func = getattr(tool, "func", None)
 
-    if inspect.iscoroutinefunction(coroutine):
+    update: dict[str, Any] = {}
+
+    if coroutine is not None and callable(coroutine):
         original_coroutine = coroutine
 
         async def wrapped_coroutine(**kwargs: Any) -> Any:
@@ -161,13 +162,9 @@ def _wrap_tool_with_approval(tool: Any, agent_name: str) -> Any:
                 return await original_coroutine(**kwargs)
             return f"Tool '{tool.name}' was rejected by the user."
 
-        try:
-            return tool.model_copy(update={"coroutine": wrapped_coroutine})
-        except Exception:
-            tool.coroutine = wrapped_coroutine
-            return tool
+        update["coroutine"] = wrapped_coroutine
 
-    if func is not None and inspect.isfunction(func):
+    if func is not None and callable(func):
         original_func = func
 
         def wrapped_func(**kwargs: Any) -> Any:
@@ -176,14 +173,17 @@ def _wrap_tool_with_approval(tool: Any, agent_name: str) -> Any:
                 return original_func(**kwargs)
             return f"Tool '{tool.name}' was rejected by the user."
 
-        try:
-            return tool.model_copy(update={"func": wrapped_func})
-        except Exception:
-            tool.func = wrapped_func
-            return tool
+        update["func"] = wrapped_func
 
-    # Tool has neither coroutine nor func — return as-is.
-    return tool
+    if not update:
+        return tool
+
+    try:
+        return tool.model_copy(update=update)
+    except Exception:
+        for key, value in update.items():
+            setattr(tool, key, value)
+        return tool
 
 
 def migrate_tools_field(config: dict[str, Any], agent_name: str) -> dict[str, Any]:
