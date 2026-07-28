@@ -1,0 +1,16 @@
+id: no-requests-in-async
+language: python
+message: "requests.* blocks the event loop; use httpx or aiohttp instead"
+severity: error
+rule:
+  any:
+    - pattern: requests.get($$$)
+    - pattern: requests.post($$$)
+    - pattern: requests.put($$$)
+    - pattern: requests.patch($$$)
+    - pattern: requests.delete($$$)
+    - pattern: requests.head($$$)
+  inside:
+    kind: function_definition
+    regex: "^async "
+    stopBy: end

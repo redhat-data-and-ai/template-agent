@@ -1,0 +1,10 @@
+id: no-time-sleep-in-async
+language: python
+message: "time.sleep() blocks the event loop in async code; use await asyncio.sleep() instead"
+severity: error
+rule:
+  pattern: time.sleep($DURATION)
+  inside:
+    kind: function_definition
+    regex: "^async "
+    stopBy: end
