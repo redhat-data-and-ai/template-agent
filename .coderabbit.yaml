@@ -24,7 +24,7 @@ reviews:
   assess_linked_issues: true
   abort_on_close: true
   auto_review:
-    enabled: false
+    enabled: true
   path_filters:
     - "!**/*.md"
     - "!**/*.txt"
