@@ -7,5 +7,5 @@ rule:
   not:
     inside:
       kind: function_definition
-      regex: "^def test_"
+      regex: "^(async )?def test_"
       stopBy: end

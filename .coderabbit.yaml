@@ -7,7 +7,7 @@ tone_instructions: >-
 early_access: true
 
 reviews:
-  profile: followup
+  profile: assertive
   request_changes_workflow: false
   base_branches:
     - main
