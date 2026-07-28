@@ -240,7 +240,7 @@ def validate_config(settings: Settings) -> None:
         if parsed.scheme != "https":
             raise AppException(
                 "AGENT_PUBLIC_BASE_URL must use https:// in production "
-                "(http:// is permitted only for localhost, 127.0.0.1, or ::1)",
+                "(http:// is permitted only for localhost, *.localhost, 127.0.0.1, or ::1)",
                 ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
             )
 

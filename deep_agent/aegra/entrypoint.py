@@ -70,16 +70,40 @@ def validate_config_mount() -> None:
         print(f"WARNING: Could not read mcp.json: {e}", file=sys.stderr)
 
 
+_ALLOWED_MODES = {"server", "headless"}
+
+
 def _read_mode() -> str:
-    """Read agent mode from runtime/agent.yaml, defaulting to 'server'."""
+    """Read agent mode from AGENT_MODE env or runtime/agent.yaml, defaulting to 'server'."""
+    env_mode = os.environ.get("AGENT_MODE", "").strip().lower()
+    if env_mode:
+        if env_mode not in _ALLOWED_MODES:
+            print(
+                f"ERROR: invalid AGENT_MODE '{env_mode}' (allowed: {_ALLOWED_MODES})",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return env_mode
     agent_yaml = CONFIG_PATH / "runtime" / "agent.yaml"
     if not agent_yaml.is_file():
         return "server"
-    try:
-        data = yaml.safe_load(agent_yaml.read_text()) or {}
-        return str(data.get("mode", "server")).strip().lower()
-    except Exception:
+    data = yaml.safe_load(agent_yaml.read_text())
+    if data is None:
         return "server"
+    if not isinstance(data, dict):
+        print(
+            f"ERROR: runtime/agent.yaml must be a YAML mapping, got {type(data).__name__}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    mode = str(data.get("mode", "server")).strip().lower()
+    if mode not in _ALLOWED_MODES:
+        print(
+            f"ERROR: invalid mode '{mode}' in runtime/agent.yaml (allowed: {_ALLOWED_MODES})",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return mode
 
 
 def start_server() -> None:

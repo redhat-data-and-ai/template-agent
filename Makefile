@@ -402,9 +402,15 @@ kind-headless: ## Deploy headless worker to Kind cluster (builds agent image onl
 	@# --- Step 3: Deploy with headless component ---
 	@echo "Deploying headless worker to Kind..."
 	@$(KCTL) create namespace $(KIND_NS) 2>/dev/null || true
-	@cd deployment/overlays/kind && kustomize edit add component ../../components/headless
-	@$(KCTL) apply -k deployment/overlays/kind/
-	@cd deployment/overlays/kind && kustomize edit remove component ../../components/headless
+	@KUST=deployment/overlays/kind/kustomization.yaml; \
+	 BACKUP=$$(mktemp); \
+	 cp "$$KUST" "$$BACKUP"; \
+	 trap 'cp "$$BACKUP" "$$KUST"; rm -f "$$BACKUP"' EXIT INT TERM; \
+	 cd deployment/overlays/kind && kustomize edit add component ../../components/headless; \
+	 cd - > /dev/null; \
+	 $(KCTL) apply -k deployment/overlays/kind/; \
+	 cp "$$BACKUP" "$$KUST"; \
+	 rm -f "$$BACKUP"
 	@echo ""
 	@echo "Waiting for pods..."
 	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=database --timeout=60s 2>/dev/null || true

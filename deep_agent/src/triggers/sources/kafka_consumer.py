@@ -50,6 +50,8 @@ class KafkaQueueConsumer:
         for key, val in self._extra.items():
             if val is None:
                 continue
+            if key == "enable_auto_commit":
+                continue
             if key in _SASL_USERNAME_ALIASES:
                 kwargs["sasl_plain_username"] = val
             elif key in _SASL_PASSWORD_ALIASES:
@@ -58,7 +60,7 @@ class KafkaQueueConsumer:
                 kwargs[key] = val
 
         kwargs.setdefault("security_protocol", "PLAINTEXT")
-        kwargs.setdefault("auto_offset_reset", "latest")
+        kwargs.setdefault("auto_offset_reset", "earliest")
 
         self._consumer = AIOKafkaConsumer(self._topic, **kwargs)
         await self._consumer.start()

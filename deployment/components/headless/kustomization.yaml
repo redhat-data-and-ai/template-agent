@@ -5,7 +5,16 @@ kind: Component
 # Usage: add "../../components/headless" to the overlay's components list.
 
 patches:
-  # No command override needed — entrypoint reads mode from agent.yaml
+  # Set AGENT_MODE so the entrypoint starts in headless mode
+  - target:
+      kind: Deployment
+      name: agent
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: AGENT_MODE
+          value: headless
 
   # Deployment: replace port to 8080/health
   - target:

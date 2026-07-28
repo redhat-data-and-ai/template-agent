@@ -72,7 +72,8 @@ jobs:
             VERSION="pr-${{ github.event.pull_request.number }}-${GITHUB_SHA::7}"
           else
             BRANCH="${GITHUB_REF#refs/heads/}"
-            VERSION="${BRANCH//\//-}-${GITHUB_SHA::7}"
+            BRANCH_SAFE="$(echo "$BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g; s/^-//; s/-$//' | cut -c1-60)"
+            VERSION="${BRANCH_SAFE}-${GITHUB_SHA::7}"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "package_name=deployment.zip" >> $GITHUB_OUTPUT
