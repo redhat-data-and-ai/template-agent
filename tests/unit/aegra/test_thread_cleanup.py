@@ -1,8 +1,11 @@
 """Unit tests for thread deletion with full data cleanup."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.testclient import TestClient
+
+from deep_agent.aegra.http_app import app
 
 
 class TestDeleteCheckpoints:
@@ -86,16 +89,27 @@ class TestDeleteFeedback:
 
 
 class TestDeleteThreadWithCleanup:
-    @pytest.mark.asyncio
-    async def test_cleanup_deletes_all_associated_data(self):
-        """Thread delete must clean up checkpoints, feedback, and token usage."""
-        from deep_agent.aegra.thread_cleanup import (
-            _delete_checkpoints,
-            _delete_feedback,
-            _delete_token_usage,
-        )
+    def test_endpoint_calls_all_cleanup_helpers(self):
+        """DELETE /threads/{id} must invoke checkpoints, feedback, and token usage cleanup."""
+        thread_id = "00000000-0000-0000-0000-000000000001"
+
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        mock_cursor.fetchone = AsyncMock(return_value={"thread_id": thread_id})
+        mock_cursor.rowcount = 1
+        mock_conn.execute = AsyncMock(return_value=mock_cursor)
+        mock_conn.commit = AsyncMock()
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
 
         with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
+            patch("deep_agent.aegra.thread_cleanup.settings") as mock_settings,
+            patch(
+                "psycopg.AsyncConnection.connect",
+                new_callable=AsyncMock,
+                return_value=mock_conn,
+            ),
             patch(
                 "deep_agent.aegra.thread_cleanup._delete_checkpoints",
                 new_callable=AsyncMock,
@@ -112,38 +126,42 @@ class TestDeleteThreadWithCleanup:
                 return_value=True,
             ) as mock_tu,
         ):
-            await mock_cp("thread-123")
-            await mock_fb("thread-123")
-            await mock_tu("thread-123")
+            mock_settings.database_uri = "postgresql://test"
 
-            mock_cp.assert_awaited_once_with("thread-123")
-            mock_fb.assert_awaited_once_with("thread-123")
-            mock_tu.assert_awaited_once_with("thread-123")
+            client = TestClient(app)
+            res = client.delete(f"/threads/{thread_id}")
+
+            assert res.status_code == 200
+            assert res.json() == {"status": "deleted"}
+            mock_cp.assert_awaited_once_with(thread_id)
+            mock_fb.assert_awaited_once_with(thread_id)
+            mock_tu.assert_awaited_once_with(thread_id)
 
 
 class TestCleanupUserScoping:
-    @pytest.mark.asyncio
-    async def test_thread_ownership_checked_before_delete(self):
-        """Delete must verify the thread belongs to the authenticated user."""
-        from deep_agent.aegra.thread_cleanup import _delete_checkpoints
+    def test_thread_ownership_checked_before_delete(self):
+        """DELETE returns 404 when thread doesn't belong to the authenticated user."""
+        thread_id = "00000000-0000-0000-0000-000000000002"
 
         mock_conn = AsyncMock()
         mock_cursor = AsyncMock()
-        mock_cursor.rowcount = 0
+        mock_cursor.fetchone = AsyncMock(return_value=None)
         mock_conn.execute = AsyncMock(return_value=mock_cursor)
-        mock_conn.commit = AsyncMock()
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_conn.__aexit__ = AsyncMock(return_value=False)
 
         with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
+            patch("deep_agent.aegra.thread_cleanup.settings") as mock_settings,
             patch(
                 "psycopg.AsyncConnection.connect",
                 new_callable=AsyncMock,
                 return_value=mock_conn,
             ),
-            patch("deep_agent.aegra.thread_cleanup.settings") as mock_settings,
         ):
             mock_settings.database_uri = "postgresql://test"
 
-            count = await _delete_checkpoints("thread-123")
-            assert count == 0
+            client = TestClient(app)
+            res = client.delete(f"/threads/{thread_id}")
+
+            assert res.status_code == 404
