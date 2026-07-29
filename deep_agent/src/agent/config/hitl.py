@@ -3,14 +3,18 @@
 Converts the ``human_approval`` section of ``agent.yaml`` into the
 ``interrupt_on`` dict expected by ``create_deep_agent()``.
 
-The dict maps each tool name to ``True`` (use deepagents default
-decisions: approve / edit / reject / respond).  When the feature is
+The dict maps each tool name to ``True`` or an ``InterruptOnConfig``
+(which may include a ``when`` predicate).  When the feature is
 disabled the function returns an empty dict, which signals to
 ``graph.py`` not to pass ``interrupt_on`` at all.
 
 For ``mode: all``, both the caller-supplied tools (MCP / explicit) and
 the deepagents built-in tools are included so that every tool call —
 regardless of origin — pauses for human approval.
+
+File tools (``read_file``, ``write_file``, ``edit_file``) are
+auto-approved only when the target path is under ``/memories/``.
+All other paths still require human approval.
 
 Example YAML config::
 
@@ -20,7 +24,6 @@ Example YAML config::
         mode: all
         exclude:
           - ls
-          - read_file
           - glob
           - grep
 """
@@ -33,6 +36,10 @@ from deep_agent.src.agent.config.middleware import HumanApprovalConfig
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
+
+_MEMORY_PATH_PREFIX = "/memories/"
+
+_MEMORY_FILE_TOOLS: frozenset[str] = frozenset({"read_file", "write_file", "edit_file"})
 
 # Built-in tool names added by deepagents internally (FilesystemMiddleware,
 # TodoListMiddleware, SubAgentMiddleware).  These are never present in the
@@ -58,6 +65,13 @@ _DEEPAGENTS_BUILTIN_TOOLS: frozenset[str] = frozenset(
 )
 
 
+def _is_non_memory_path(req: Any) -> bool:
+    """Return True (interrupt) unless the file path is under /memories/."""
+    args = req.tool_call.get("args", {})
+    path = args.get("file_path") or args.get("path") or ""
+    return not path.startswith(_MEMORY_PATH_PREFIX)
+
+
 def build_interrupt_on(
     config: HumanApprovalConfig,
     tools: list[Any],
@@ -71,9 +85,10 @@ def build_interrupt_on(
             deepagents tools are added automatically when ``mode`` is ``"all"``.
 
     Returns:
-        Dict mapping tool name → ``True`` for every tool that should
-        trigger a human approval interrupt.  Returns ``{}`` when the
-        feature is disabled or ``mode`` is ``"none"``.
+        Dict mapping tool name → ``True`` or ``InterruptOnConfig`` for
+        every tool that should trigger a human approval interrupt.
+        Returns ``{}`` when the feature is disabled or ``mode`` is
+        ``"none"``.
     """
     if not config.enabled or config.mode == "none":
         logger.debug("HITL disabled (enabled=%s, mode=%s)", config.enabled, config.mode)
@@ -88,14 +103,26 @@ def build_interrupt_on(
     # filesystem and todo calls are intercepted even when no MCP tools exist.
     all_names = explicit_names | _DEEPAGENTS_BUILTIN_TOOLS
 
-    interrupt_on = {name: True for name in all_names if name not in exclude}
+    interrupt_on: dict[str, Any] = {}
+    for name in all_names:
+        if name in exclude:
+            continue
+        if name in _MEMORY_FILE_TOOLS:
+            interrupt_on[name] = {
+                "allowed_decisions": ["approve", "edit", "reject", "respond"],
+                "when": _is_non_memory_path,
+            }
+        else:
+            interrupt_on[name] = True
 
     if interrupt_on:
         excluded = (explicit_names | _DEEPAGENTS_BUILTIN_TOOLS) - set(interrupt_on)
+        memory_auto = sorted(_MEMORY_FILE_TOOLS - exclude)
         logger.info(
-            "HITL enabled: %d tool(s) will require approval%s",
+            "HITL enabled: %d tool(s) will require approval%s%s",
             len(interrupt_on),
             f" ({len(excluded)} excluded: {sorted(excluded)})" if excluded else "",
+            f" (memory-only auto-approve: {memory_auto})" if memory_auto else "",
         )
     else:
         logger.debug(

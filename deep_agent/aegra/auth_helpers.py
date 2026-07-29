@@ -41,3 +41,48 @@ async def authenticated_user_id(
 
     payload = await asyncio.to_thread(_decode_token, auth_header[7:])
     return str(payload["sub"])
+
+
+async def memory_user_id(request: Request) -> str:
+    """User id for LangGraph Store memories (preferred_username / X-User-ID).
+
+    Custom Rules and memories both use this id — the same value the BFF
+    puts on ``X-User-ID`` and run ``metadata.user_id``:
+
+    - Auth off (local): ``X-User-ID``, then ``DEV_USER_ID``.
+    - Auth on (prod): verified JWT ``preferred_username`` or ``sub``. A
+      present ``X-User-ID`` must match that claim (403 if it does not).
+    """
+    from deep_agent.aegra.auth import DEV_USER_ID, ENABLE_AUTH, _decode_token
+
+    header = (request.headers.get("x-user-id") or "").strip()
+
+    if not ENABLE_AUTH:
+        return header or DEV_USER_ID
+
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid Authorization header"
+        )
+
+    payload = await asyncio.to_thread(_decode_token, auth_header[7:])
+    token_uid = str(
+        payload.get("preferred_username") or payload.get("sub") or ""
+    ).strip()
+    if not token_uid:
+        raise HTTPException(
+            status_code=401, detail="Token missing preferred_username and sub"
+        )
+
+    if header and header != token_uid:
+        raise HTTPException(
+            status_code=403, detail="X-User-ID does not match authenticated user"
+        )
+
+    return token_uid
+
+
+async def rule_user_ids(request: Request) -> list[str]:
+    """Owner key for Custom Rules — same id as memories and the chat graph."""
+    return [await memory_user_id(request)]

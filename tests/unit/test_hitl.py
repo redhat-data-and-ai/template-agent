@@ -52,7 +52,16 @@ class TestBuildInterruptOn:
         config = HumanApprovalConfig(enabled=True, mode="all")
         result = build_interrupt_on(config, [])
         assert len(result) == len(_DEEPAGENTS_BUILTIN_TOOLS)
-        assert result == {name: True for name in _DEEPAGENTS_BUILTIN_TOOLS}
+        for name in _DEEPAGENTS_BUILTIN_TOOLS:
+            assert name in result
+        # Memory file tools have conditional approval (dict with 'when')
+        memory_tools = {"read_file", "write_file", "edit_file"}
+        for name in _DEEPAGENTS_BUILTIN_TOOLS:
+            if name in memory_tools:
+                assert isinstance(result[name], dict)
+                assert "when" in result[name]
+            else:
+                assert result[name] is True
 
     def test_exclude_removes_listed_tools(self):
         tools = [_tool("send_email"), _tool("search_web"), _tool("health_check")]
