@@ -469,14 +469,29 @@ class IsolatedUser(HttpUser):
                 resp.failure(f"Feedback get failed: {resp.status_code}")
                 return
             feedback_list = resp.json().get("feedback", [])
-            if not isinstance(feedback_list, list) or len(feedback_list) == 0:
+            if not isinstance(feedback_list, list):
+                resp.failure(
+                    f"Feedback response malformed: {type(feedback_list).__name__}"
+                )
+                return
+            matching = [
+                f
+                for f in feedback_list
+                if f.get("trace_id") == feedback_payload["trace_id"]
+            ]
+            if not matching:
                 resp.failure("Created feedback not returned in GET response")
                 return
-            matching = [f for f in feedback_list if f.get("message_id") == message_id]
-            if not matching:
-                resp.failure(
-                    f"Submitted feedback for message {message_id} not found in response"
+            foreign = [
+                f
+                for f in feedback_list
+                if self._marker not in str(f.get("thread_id", ""))
+            ]
+            if foreign:
+                self._fire_isolation_event(
+                    "violation:feedback", f"saw foreign feedback: {foreign[:1]}"
                 )
+                resp.failure("ISOLATION VIOLATION: saw foreign feedback")
             else:
                 resp.success()
 
