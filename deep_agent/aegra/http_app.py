@@ -21,6 +21,7 @@ from deep_agent.aegra.security_middleware import (
     RequestSizeLimitMiddleware,
     SecurityHeadersMiddleware,
 )
+from deep_agent.aegra.thread_cleanup import thread_cleanup_router
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import (
     bind_request_context,
@@ -153,6 +154,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     RequestSizeLimitMiddleware, max_size_bytes=settings.REQUEST_BODY_MAX_SIZE
 )
+app.include_router(thread_cleanup_router)
 app.include_router(mcp_router)
 app.include_router(feedback_router)
 
