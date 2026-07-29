@@ -8,6 +8,7 @@ claim, validated by the app through the real JWKS auth path.
 
 import base64
 import json
+import os
 import socket
 import threading
 import time
@@ -74,7 +75,7 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-JWKS_PORT = _find_free_port()
+JWKS_PORT = int(os.environ.get("LOCUST_JWKS_PORT", 0)) or _find_free_port()
 _server = HTTPServer(("127.0.0.1", JWKS_PORT), _JWKSHandler)
 _thread = threading.Thread(target=_server.serve_forever, daemon=True)
 _thread.start()
