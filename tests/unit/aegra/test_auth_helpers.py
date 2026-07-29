@@ -48,3 +48,18 @@ class TestAuthenticatedUserId:
         ):
             result = await authenticated_user_id(request)
         assert result == "user-123"
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_propagates_exception(self):
+        """An expired or malformed JWT causes _decode_token to raise; verify it propagates."""
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer expired-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=Exception("Token expired"),
+            ),
+            pytest.raises(Exception, match="Token expired"),
+        ):
+            await authenticated_user_id(request)
