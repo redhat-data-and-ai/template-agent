@@ -149,7 +149,11 @@ async def consolidate_user_memories(
 
                 await invalidate(user_id)
             except Exception:
-                pass
+                logger.warning(
+                    "Cache invalidation failed for user %s after consolidation",
+                    user_id[:8],
+                    exc_info=True,
+                )
             logger.info(
                 "Consolidated user %s: deleted %d duplicate(s) from %d group(s)",
                 user_id[:8],

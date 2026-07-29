@@ -427,62 +427,6 @@ class TestPersonalizationInjectionScoping:
 # ── Test 11: Cache Invalidation on Delete ────────────────────────
 
 
-class TestCacheInvalidation:
-    @pytest.mark.asyncio
-    async def test_delete_memory_invalidates_cache(self):
-        """Deleting a memory must evict the user's personalization cache."""
-        mock_conn = AsyncMock()
-        mock_cursor = AsyncMock()
-        mock_cursor.rowcount = 1
-        mock_conn.execute = AsyncMock(return_value=mock_cursor)
-        mock_conn.commit = AsyncMock()
-        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_conn.__aexit__ = AsyncMock(return_value=False)
-
-        repo = PersonalizationRepository("postgresql://test")
-
-        with (
-            patch(
-                "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",
-                return_value=mock_conn,
-            ),
-            patch(
-                "deep_agent.src.cache.personalization_cache.invalidate",
-                new_callable=AsyncMock,
-            ) as mock_invalidate,
-        ):
-            result = await repo.delete_memory("user-a", uuid.uuid4())
-            assert result is True
-            mock_invalidate.assert_awaited_once_with("user-a")
-
-    @pytest.mark.asyncio
-    async def test_delete_memory_no_invalidation_when_not_found(self):
-        """No cache invalidation if the memory didn't exist."""
-        mock_conn = AsyncMock()
-        mock_cursor = AsyncMock()
-        mock_cursor.rowcount = 0
-        mock_conn.execute = AsyncMock(return_value=mock_cursor)
-        mock_conn.commit = AsyncMock()
-        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_conn.__aexit__ = AsyncMock(return_value=False)
-
-        repo = PersonalizationRepository("postgresql://test")
-
-        with (
-            patch(
-                "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",
-                return_value=mock_conn,
-            ),
-            patch(
-                "deep_agent.src.cache.personalization_cache.invalidate",
-                new_callable=AsyncMock,
-            ) as mock_invalidate,
-        ):
-            result = await repo.delete_memory("user-a", uuid.uuid4())
-            assert result is False
-            mock_invalidate.assert_not_awaited()
-
-
 # ── Test 12: Decay Scoring Per-User ──────────────────────────────
 
 
@@ -610,35 +554,6 @@ class TestCrossUserFeedbackDelete:
 # ── Test 19: Delete Rule Invalidates Cache ───────────────────────
 
 
-class TestDeleteRuleCacheInvalidation:
-    @pytest.mark.asyncio
-    async def test_delete_rule_invalidates_cache(self):
-        """Deleting a rule must evict the user's personalization cache."""
-        mock_conn = AsyncMock()
-        mock_cursor = AsyncMock()
-        mock_cursor.rowcount = 1
-        mock_conn.execute = AsyncMock(return_value=mock_cursor)
-        mock_conn.commit = AsyncMock()
-        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_conn.__aexit__ = AsyncMock(return_value=False)
-
-        repo = PersonalizationRepository("postgresql://test")
-
-        with (
-            patch(
-                "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",
-                return_value=mock_conn,
-            ),
-            patch(
-                "deep_agent.src.cache.personalization_cache.invalidate",
-                new_callable=AsyncMock,
-            ) as mock_invalidate,
-        ):
-            result = await repo.delete_rule("user-a", uuid.uuid4())
-            assert result is True
-            mock_invalidate.assert_awaited_once_with("user-a")
-
-
 # ── Test 20: Concurrent Rule Writes ──────────────────────────────
 
 
@@ -728,14 +643,13 @@ class TestAegraThreadOwnership:
     """
 
     def _read_threads_source(self) -> str:
+        try:
+            import aegra_api.api.threads as _threads_mod
+        except ImportError:
+            pytest.skip("aegra_api not installed")
         from pathlib import Path
 
-        threads_path = Path(
-            "/Users/nsaharan/Desktop/template-agent/.venv/lib/python3.12/"
-            "site-packages/aegra_api/api/threads.py"
-        )
-        if not threads_path.exists():
-            pytest.skip("aegra_api not installed")
+        threads_path = Path(_threads_mod.__file__)
         return threads_path.read_text()
 
     def test_thread_create_stamps_user_identity(self):

@@ -180,7 +180,7 @@ class TestLoadSubagents:
             patch(
                 "deep_agent.src.infrastructure.subagents.to_virtual_skill_paths",
                 return_value=["/skills/bmi-report"],
-            ),
+            ) as mock_to_virtual,
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -197,6 +197,7 @@ class TestLoadSubagents:
             result = load_subagents(tools=[])
 
             assert result == [mock_subagent]
+            mock_to_virtual.assert_called_once_with(["/path/to/bmi-report"])
             mock_sa.assert_called_once_with(
                 name="analyst",
                 model=mock_model,

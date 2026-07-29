@@ -97,8 +97,10 @@ class TestMemoryIsolationLive:
         alice_top = await p_repo.list_top_memories(USER_A, limit=10)
         bob_top = await p_repo.list_top_memories(USER_B, limit=10)
 
+        assert len(alice_top) > 0, "alice_top must not be empty"
         for m in alice_top:
             assert m.user_id == USER_A
+        assert len(bob_top) > 0, "bob_top must not be empty"
         for m in bob_top:
             assert m.user_id == USER_B
 

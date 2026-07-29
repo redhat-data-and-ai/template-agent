@@ -61,7 +61,7 @@ dev = [
     "mypy==1.16.1",
     "pre-commit==4.2.0",
     "httpx==0.28.1",
-    "locust>=2.29.0",
+    "locust==2.29.0",
 ]
 
 [project.urls]

@@ -100,7 +100,10 @@ class IsolatedUser(HttpUser):
         ) as resp:
             if resp.status_code == 201:
                 self._canary_memory_id = resp.json().get("id")
-                resp.success()
+                if self._canary_memory_id is None:
+                    resp.failure("201 response for canary memory omits 'id'")
+                else:
+                    resp.success()
             else:
                 resp.failure(f"Canary memory creation failed: {resp.status_code}")
 
@@ -113,7 +116,10 @@ class IsolatedUser(HttpUser):
         ) as resp:
             if resp.status_code == 201:
                 self._canary_rule_id = resp.json().get("id")
-                resp.success()
+                if self._canary_rule_id is None:
+                    resp.failure("201 response for canary rule omits 'id'")
+                else:
+                    resp.success()
             else:
                 resp.failure(f"Canary rule creation failed: {resp.status_code}")
 
@@ -399,7 +405,9 @@ class IsolatedUser(HttpUser):
 
             threads = resp.json()
             if not isinstance(threads, list):
-                resp.success()
+                resp.failure(
+                    f"Thread search returned non-list: {type(threads).__name__}"
+                )
                 return
 
             returned_ids = set()
@@ -464,7 +472,7 @@ class IsolatedUser(HttpUser):
             if isinstance(feedback_list, list) and len(feedback_list) > 0:
                 resp.success()
             else:
-                resp.success()
+                resp.failure("Created feedback not returned in GET response")
 
     @task(1)
     def cross_user_delete(self) -> None:
@@ -493,10 +501,10 @@ class IsolatedUser(HttpUser):
             ) as resp:
                 if resp.status_code == 404:
                     resp.success()
-                elif resp.status_code == 200:
+                elif 200 <= resp.status_code < 300:
                     detail = (
                         f"User {self._user_id} DELETED {other_uid}'s "
-                        f"memory {other_memory_id}"
+                        f"memory {other_memory_id} (HTTP {resp.status_code})"
                     )
                     self._fire_isolation_event("cross_delete_succeeded", detail)
                     resp.failure(f"ISOLATION VIOLATION: {detail}")
@@ -514,10 +522,10 @@ class IsolatedUser(HttpUser):
             ) as resp:
                 if resp.status_code == 404:
                     resp.success()
-                elif resp.status_code == 200:
+                elif 200 <= resp.status_code < 300:
                     detail = (
                         f"User {self._user_id} DELETED {other_uid}'s "
-                        f"rule {other_rule_id}"
+                        f"rule {other_rule_id} (HTTP {resp.status_code})"
                     )
                     self._fire_isolation_event("cross_delete_succeeded", detail)
                     resp.failure(f"ISOLATION VIOLATION: {detail}")
