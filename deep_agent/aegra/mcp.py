@@ -423,6 +423,7 @@ async def _connect_single_server(
                     tool_interceptors=[
                         _TokenInjectorInterceptor(name, server_cfg),
                     ],
+                    tool_name_prefix=bool(server_cfg.get("tool_prefix", "")),
                 )
                 tools: list[Any] = await client.get_tools()
             logger.info(f"[{name}] loaded {len(tools)} tool(s)")
