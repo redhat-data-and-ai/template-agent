@@ -210,6 +210,50 @@ class TestConnectSingleServer:
 
             assert tools == []
 
+    @pytest.mark.asyncio
+    async def test_tool_name_prefix_enabled_when_tool_prefix_set(self):
+        """Test MultiServerMCPClient receives tool_name_prefix=True when tool_prefix is set."""
+        mock_tool = MagicMock()
+        mock_tool.name = "jira_search"
+
+        mock_client = MagicMock()
+        mock_client.get_tools = AsyncMock(return_value=[mock_tool])
+
+        config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
+        server_cfg = {"tool_prefix": "jira"}
+
+        with patch(
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
+            return_value=mock_client,
+        ) as mock_cls:
+            await _connect_single_server("jira", config, server_cfg, timeout=5)
+
+            mock_cls.assert_called_once()
+            call_kwargs = mock_cls.call_args
+            assert call_kwargs[1]["tool_name_prefix"] is True
+
+    @pytest.mark.asyncio
+    async def test_tool_name_prefix_disabled_when_no_tool_prefix(self):
+        """Test MultiServerMCPClient receives tool_name_prefix=False when tool_prefix is absent."""
+        mock_tool = MagicMock()
+        mock_tool.name = "search"
+
+        mock_client = MagicMock()
+        mock_client.get_tools = AsyncMock(return_value=[mock_tool])
+
+        config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
+        server_cfg = {}
+
+        with patch(
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
+            return_value=mock_client,
+        ) as mock_cls:
+            await _connect_single_server("server", config, server_cfg, timeout=5)
+
+            mock_cls.assert_called_once()
+            call_kwargs = mock_cls.call_args
+            assert call_kwargs[1]["tool_name_prefix"] is False
+
 
 def _reset_mcp_cache() -> None:
     """Clear MCP tool cache between tests."""
