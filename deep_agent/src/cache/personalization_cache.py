@@ -85,11 +85,15 @@ async def set_personalization(
     )
 
 
-async def invalidate(user_id: str | None = None, *, _retries: int = 2) -> None:
+_FALLBACK_EXPIRE_SECONDS = 5
+
+
+async def invalidate(user_id: str | None = None) -> None:
     """Evict cached personalization for a user.
 
-    Retries up to ``_retries`` times on failure so a transient Redis
-    hiccup doesn't leave stale data for the full TTL window.
+    Tries to delete the cache key. If delete fails (Redis hiccup),
+    falls back to setting a 5-second TTL so stale data expires almost
+    immediately instead of persisting for the full cache TTL.
 
     Args:
         user_id: Specific user to evict. ``None`` is a no-op
@@ -98,24 +102,20 @@ async def invalidate(user_id: str | None = None, *, _retries: int = 2) -> None:
     if user_id is None:
         return
     key = _cache_key(user_id)
-    for attempt in range(_retries + 1):
-        try:
-            _get_redis().delete(key)
-            metrics.record_delete("personalization")
-            return
-        except Exception:
-            if attempt < _retries:
-                logger.debug(
-                    "Cache invalidation retry %d/%d for user %s",
-                    attempt + 1,
-                    _retries,
-                    user_id[:8],
-                )
-            else:
-                logger.warning(
-                    "Cache invalidation failed after %d retries for user %s",
-                    _retries + 1,
-                    user_id[:8],
-                    exc_info=True,
-                )
-                raise
+    redis = _get_redis()
+    if redis.delete(key):
+        metrics.record_delete("personalization")
+        return
+    if redis.expire(key, _FALLBACK_EXPIRE_SECONDS):
+        logger.warning(
+            "Cache delete failed, set %ds expiry for user %s",
+            _FALLBACK_EXPIRE_SECONDS,
+            user_id[:8],
+        )
+        metrics.record_delete("personalization")
+        return
+    logger.warning(
+        "Cache invalidation fully failed for user %s — "
+        "stale data may persist until TTL expiry",
+        user_id[:8],
+    )
