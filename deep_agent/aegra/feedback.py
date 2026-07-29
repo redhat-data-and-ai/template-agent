@@ -209,7 +209,11 @@ async def feedback_handler(request: Request) -> JSONResponse:
             },
         )
 
-    jwt_user_id = await _authenticated_user_id(request)
+    try:
+        jwt_user_id = await _authenticated_user_id(request)
+    except Exception:
+        logger.warning("JWT decode failed in feedback handler", exc_info=True)
+        jwt_user_id = "anonymous"
     payload["user_id"] = jwt_user_id
 
     try:
@@ -260,7 +264,8 @@ async def get_thread_token_usage_endpoint(
 ) -> dict[str, Any]:
     """Return cumulative token usage for a thread (authenticated)."""
     thread_id = _validate_thread_id(thread_id)
-    await _authenticated_user_id(request)
+    user_id = await _authenticated_user_id(request)
+    logger.info("token_usage_requested", thread_id=thread_id, user_id=user_id[:8])
     from dataclasses import asdict
 
     from deep_agent.src.token_budget.service import (
