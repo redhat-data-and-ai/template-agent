@@ -196,7 +196,9 @@ class PersonalizationRepository:
 
                 await invalidate(user_id)
             except Exception:
-                logger.warning("Cache invalidation failed for user %s", user_id[:8])
+                logger.warning(
+                    "Cache invalidation failed for user %s", user_id[:8], exc_info=True
+                )
         return count
 
     async def delete_rule(self, user_id: str, rule_id: uuid.UUID) -> bool:
@@ -226,5 +228,7 @@ class PersonalizationRepository:
 
                 await invalidate(user_id)
             except Exception:
-                logger.warning("Cache invalidation failed for user %s", user_id[:8])
+                logger.warning(
+                    "Cache invalidation failed for user %s", user_id[:8], exc_info=True
+                )
         return count

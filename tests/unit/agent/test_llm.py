@@ -75,6 +75,10 @@ class TestCreateModel:
             error_msg = str(exc_info.value)
             assert "Model 'gpt-4' is not a known Vertex AI model" in error_msg
             assert "Known Vertex AI models:" in error_msg
+            for model in GEMINI_MODELS + CLAUDE_MODELS:
+                assert model in error_msg, (
+                    f"Supported model '{model}' missing from error"
+                )
 
     def test_model_creation_errors_are_raised(self):
         """Test that model creation errors are raised."""

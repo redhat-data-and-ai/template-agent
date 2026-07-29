@@ -469,10 +469,16 @@ class IsolatedUser(HttpUser):
                 resp.failure(f"Feedback get failed: {resp.status_code}")
                 return
             feedback_list = resp.json().get("feedback", [])
-            if isinstance(feedback_list, list) and len(feedback_list) > 0:
-                resp.success()
-            else:
+            if not isinstance(feedback_list, list) or len(feedback_list) == 0:
                 resp.failure("Created feedback not returned in GET response")
+                return
+            matching = [f for f in feedback_list if f.get("message_id") == message_id]
+            if not matching:
+                resp.failure(
+                    f"Submitted feedback for message {message_id} not found in response"
+                )
+            else:
+                resp.success()
 
     @task(1)
     def cross_user_delete(self) -> None:
@@ -571,4 +577,6 @@ class IsolatedUser(HttpUser):
                 else:
                     resp.success()
             else:
-                resp.success()
+                resp.failure(
+                    f"Thread search returned non-list: {type(threads).__name__}"
+                )
