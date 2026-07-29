@@ -14,28 +14,13 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from deep_agent.aegra.auth_helpers import authenticated_user_id
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
 thread_cleanup_router = APIRouter(tags=["threads"])
-
-
-async def _authenticated_user_id(request: Request) -> str:
-    from deep_agent.aegra.auth import DEV_USER_ID, ENABLE_AUTH, _decode_token
-
-    if not ENABLE_AUTH:
-        return DEV_USER_ID
-
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401, detail="Missing or invalid Authorization header"
-        )
-
-    payload = _decode_token(auth_header[7:])
-    return str(payload["sub"])
 
 
 async def _delete_checkpoints(thread_id: str) -> int:
@@ -112,7 +97,7 @@ async def delete_thread_with_cleanup(
             status_code=400, detail="Invalid thread_id format"
         ) from None
 
-    user_id = await _authenticated_user_id(request)
+    user_id = await authenticated_user_id(request)
 
     if not settings.database_uri:
         raise HTTPException(status_code=503, detail="Database unavailable")

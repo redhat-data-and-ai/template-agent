@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from deep_agent.aegra.auth_helpers import authenticated_user_id
 from deep_agent.aegra.telemetry import get_langfuse_client
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.feedback.repository import FeedbackRepository
@@ -31,21 +32,6 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 feedback_router = APIRouter(tags=["feedback"])
-
-
-async def _authenticated_user_id(request: Request) -> str:
-    """Return the SSO sub from the incoming Bearer token."""
-    from deep_agent.aegra.auth import DEV_USER_ID, ENABLE_AUTH, _decode_token
-
-    if not ENABLE_AUTH:
-        return DEV_USER_ID
-
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return "anonymous"
-
-    payload = _decode_token(auth_header[7:])
-    return str(payload["sub"])
 
 
 def _score_to_feedback_polarity(req: FeedbackRequest) -> Literal["up", "down"]:
@@ -210,7 +196,7 @@ async def feedback_handler(request: Request) -> JSONResponse:
         )
 
     try:
-        jwt_user_id = await _authenticated_user_id(request)
+        jwt_user_id = await authenticated_user_id(request)
     except Exception:
         logger.warning("JWT decode failed in feedback handler", exc_info=True)
         jwt_user_id = "anonymous"
@@ -250,7 +236,7 @@ def _validate_thread_id(thread_id: str) -> str:
 async def get_thread_feedback(thread_id: str, request: Request) -> dict[str, Any]:
     """Return all feedback for a thread, scoped to the authenticated user."""
     thread_id = _validate_thread_id(thread_id)
-    user_id = await _authenticated_user_id(request)
+    user_id = await authenticated_user_id(request)
     if not settings.database_uri:
         return {"feedback": []}
     repo = FeedbackRepository(settings.database_uri)
@@ -264,7 +250,7 @@ async def get_thread_token_usage_endpoint(
 ) -> dict[str, Any]:
     """Return cumulative token usage for a thread (authenticated)."""
     thread_id = _validate_thread_id(thread_id)
-    user_id = await _authenticated_user_id(request)
+    user_id = await authenticated_user_id(request)
     logger.info("token_usage_requested", thread_id=thread_id, user_id=user_id[:8])
     from dataclasses import asdict
 
