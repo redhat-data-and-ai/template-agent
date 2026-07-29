@@ -84,8 +84,9 @@ async def decay_user_memories(database_uri: str, user_id: str) -> int:
 
             if abs(new_score - old_score) > 0.001:
                 await conn.execute(
-                    "UPDATE user_memories SET score = %s WHERE id = %s",
-                    (new_score, str(row["id"])),
+                    "UPDATE user_memories SET score = %s "
+                    "WHERE id = %s AND user_id = %s",
+                    (new_score, str(row["id"]), user_id),
                 )
                 updated += 1
 

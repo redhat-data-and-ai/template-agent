@@ -77,9 +77,14 @@ async def create_memory(body: MemoryCreateRequest, request: Request) -> dict[str
     user_id = await _authenticated_user_id(request)
     repo = _get_repo()
     mem = await repo.create_memory(user_id, body.content)
-    from deep_agent.src.cache.personalization_cache import invalidate
+    try:
+        from deep_agent.src.cache.personalization_cache import invalidate
 
-    await invalidate(user_id)
+        await invalidate(user_id)
+    except Exception:
+        logger.warning(
+            "Cache invalidation failed after memory create for user %s", user_id[:8]
+        )
     return {"id": str(mem.id), "content": mem.content}
 
 
@@ -134,9 +139,14 @@ async def create_rule(body: RuleCreateRequest, request: Request) -> dict[str, An
     user_id = await _authenticated_user_id(request)
     repo = _get_repo()
     rule = await repo.upsert_rule(user_id, body.content, is_active=body.is_active)
-    from deep_agent.src.cache.personalization_cache import invalidate
+    try:
+        from deep_agent.src.cache.personalization_cache import invalidate
 
-    await invalidate(user_id)
+        await invalidate(user_id)
+    except Exception:
+        logger.warning(
+            "Cache invalidation failed after rule create for user %s", user_id[:8]
+        )
     return {"id": str(rule.id), "content": rule.content, "is_active": rule.is_active}
 
 
