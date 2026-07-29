@@ -1,4 +1,4 @@
-"""Unit tests for headless worker tools."""
+"""Unit tests for trigger worker tools."""
 
 from unittest.mock import AsyncMock, patch
 

@@ -1,4 +1,4 @@
-.PHONY: local dev test clean deploy deploy-headless undeploy undeploy-headless kind kind-headless kind-down container container-down local-down test-triggers test-integration test-headless headless
+.PHONY: local dev test clean deploy undeploy kind kind-down container container-down local-down test-triggers test-integration
 
 # OpenShift namespace (can be overridden: make deploy openshift NAMESPACE=my-project)
 NAMESPACE ?= $(shell oc project -q 2>/dev/null)
@@ -129,30 +129,6 @@ local:
 local-down:
 	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml stop pgvector redis
 
-headless: ## Start agent in headless mode (background worker with event triggers)
-	@echo "Setting up headless environment..."
-	@test -f .env 2>/dev/null || (echo "Creating .env from .env.example..." && cp .env.example .env 2>/dev/null) || true
-	@lsof -ti :8080 | xargs kill -9 2>/dev/null || true
-	@echo "Starting infrastructure (Postgres + Redis)..."
-	@export PODMAN_COMPOSE_SILENT=true && podman-compose -f compose.yaml up -d pgvector redis
-	@echo "Waiting for Postgres to be ready..."
-	@until podman exec template-agent-pgvector pg_isready -U postgres -q 2>/dev/null; do sleep 1; done
-	@podman exec template-agent-pgvector psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='aegra'" | grep -q 1 \
-		|| podman exec template-agent-pgvector psql -U postgres -c "CREATE DATABASE aegra;"
-	@echo "Starting headless agent worker..."
-	@echo "Press Ctrl+C to stop the worker"
-	@trap 'lsof -ti :8080 | xargs kill -INT 2>/dev/null || true; sleep 2; lsof -ti :8080 | xargs kill -9 2>/dev/null || true; exit 130' INT TERM; \
-	REDIS_BROKER_ENABLED=true \
-		POSTGRES_HOST=localhost \
-		POSTGRES_PORT=5432 \
-		POSTGRES_DB=template_agent \
-		POSTGRES_USER=postgres \
-		POSTGRES_PASSWORD=postgres \
-		DATABASE_URL=postgresql://postgres:postgres@localhost:5432/template_agent \
-		REDIS_URL=redis://localhost:6379/0 \
-		ENVIRONMENT=local \
-		.venv/bin/python -m deep_agent.headless
-
 container:
 	@test -f .env || (echo "Creating .env from .env.example..." && cp .env.example .env)
 	@echo "Starting stack: pgvector, redis, template-agent, jaeger"
@@ -246,40 +222,6 @@ openshift:
 	echo "  View logs: oc logs -l app=agent --tail=100"; \
 	echo "  Get route: oc get route agent"; \
 	echo "  Check status: oc get pods,svc,route -l app=agent"
-
-deploy-headless: ## Deploy headless worker to OpenShift (requires: NAMESPACE)
-	@echo "Deploying headless worker to OpenShift..."
-	@which oc > /dev/null || (echo "Error: oc CLI not found. Please install OpenShift CLI." && exit 1)
-	@if [ -z "$(NAMESPACE)" ]; then \
-		echo "Error: NAMESPACE not set. Usage: make deploy-headless NAMESPACE=your-project"; \
-		exit 1; \
-	fi; \
-	echo "Using namespace: $(NAMESPACE)"; \
-	oc project $(NAMESPACE) || (echo "Error: Cannot switch to namespace '$(NAMESPACE)'. Check permissions." && exit 1); \
-	echo "Updating namespace references..."; \
-	sed -i.bak "s|NAMESPACE_PLACEHOLDER|$(NAMESPACE)|g" deployment/overlays/openshift/kustomization.yaml; \
-	echo "Adding headless component..."; \
-	cd deployment/overlays/openshift && kustomize edit add component ../../components/headless; \
-	cd ../../..; \
-	echo "Deploying headless worker resources..."; \
-	oc apply -k deployment/overlays/openshift/ || (mv deployment/overlays/openshift/kustomization.yaml.bak deployment/overlays/openshift/kustomization.yaml 2>/dev/null; exit 1); \
-	echo "Restoring kustomization.yaml..."; \
-	mv deployment/overlays/openshift/kustomization.yaml.bak deployment/overlays/openshift/kustomization.yaml; \
-	echo "Headless worker deployment complete!"; \
-	echo "Checking deployment status..."; \
-	oc get pods -l app=agent; \
-	echo ""; \
-	echo "Useful commands:"; \
-	echo "  View logs:    oc logs -l app=agent --tail=100"; \
-	echo "  Check status: oc get pods,svc -l app=agent"; \
-	echo "  Scale:        oc scale deployment agent --replicas=N"
-
-undeploy-headless: ## Remove headless worker from OpenShift
-	@which oc > /dev/null || (echo "Error: oc CLI not found." && exit 1)
-	@oc project $(NAMESPACE) || (echo "Error: Cannot switch to namespace '$(NAMESPACE)'" && exit 1)
-	@echo "Removing headless worker deployment..."
-	@oc delete deployment,service,hpa,pdb -l app=agent 2>/dev/null || true
-	@echo "Headless worker undeployed"
 
 mpp:
 	@echo "Error: MPP deployment is not yet implemented."
@@ -380,53 +322,6 @@ kind: ## Deploy full stack (agent + MCP + UI) to a local Kind cluster
 	@echo "  Logs:      $(KCTL) -n $(KIND_NS) logs -l component=agent -f"
 	@echo "  Teardown:  make kind-down"
 
-kind-headless: ## Deploy headless worker to Kind cluster (builds agent image only, no UI/MCP)
-	@echo "╔════════════════════════════════════════════════════════════════╗"
-	@echo "║  Kind: Deploy headless worker to local Kubernetes cluster      ║"
-	@echo "║  Services: Headless Agent + Postgres + Redis                   ║"
-	@echo "╚════════════════════════════════════════════════════════════════╝"
-	@which kind > /dev/null || (echo "Error: kind not found. Install: https://kind.sigs.k8s.io" && exit 1)
-	@which kubectl > /dev/null || (echo "Error: kubectl not found." && exit 1)
-	@# --- Step 1: Create cluster if not exists ---
-	@if ! kind get clusters 2>/dev/null | grep -q "$(KIND_CLUSTER)"; then \
-		echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-		kind create cluster --name $(KIND_CLUSTER) --config=- <<< '{"kind":"Cluster","apiVersion":"kind.x-k8s.io/v1alpha4","nodes":[{"role":"control-plane","kubeadmConfigPatches":["kind: InitConfiguration\nnodeRegistration:\n  kubeletExtraArgs:\n    node-labels: ingress-ready=true\n"],"extraPortMappings":[{"containerPort":80,"hostPort":80,"protocol":"TCP"},{"containerPort":443,"hostPort":443,"protocol":"TCP"}]}]}'; \
-	else \
-		echo "Kind cluster '$(KIND_CLUSTER)' already exists"; \
-	fi
-	@# --- Step 2: Build and load agent image ---
-	@echo "Building agent image..."
-	@podman build -t $(KIND_IMAGE) .
-	@echo "Loading image into Kind..."
-	@podman save $(KIND_IMAGE) -o /tmp/kind-agent.tar && kind load image-archive /tmp/kind-agent.tar --name $(KIND_CLUSTER) && rm -f /tmp/kind-agent.tar
-	@# --- Step 3: Deploy with headless component ---
-	@echo "Deploying headless worker to Kind..."
-	@$(KCTL) create namespace $(KIND_NS) 2>/dev/null || true
-	@KUST=deployment/overlays/kind/kustomization.yaml; \
-	 BACKUP=$$(mktemp); \
-	 cp "$$KUST" "$$BACKUP"; \
-	 trap 'cp "$$BACKUP" "$$KUST"; rm -f "$$BACKUP"' EXIT INT TERM; \
-	 cd deployment/overlays/kind && kustomize edit add component ../../components/headless; \
-	 cd - > /dev/null; \
-	 $(KCTL) apply -k deployment/overlays/kind/; \
-	 cp "$$BACKUP" "$$KUST"; \
-	 rm -f "$$BACKUP"
-	@echo ""
-	@echo "Waiting for pods..."
-	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=database --timeout=60s 2>/dev/null || true
-	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=cache --timeout=60s 2>/dev/null || true
-	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=agent --timeout=120s 2>/dev/null || true
-	@echo ""
-	@echo "╔════════════════════════════════════════════════════════════════╗"
-	@echo "║  Kind headless worker ready!                                   ║"
-	@echo "║  Health: port 8080 (internal only)                            ║"
-	@echo "╚════════════════════════════════════════════════════════════════╝"
-	@echo ""
-	@echo "Useful commands:"
-	@echo "  Pods:      $(KCTL) -n $(KIND_NS) get pods"
-	@echo "  Logs:      $(KCTL) -n $(KIND_NS) logs -l component=agent -f"
-	@echo "  Teardown:  make kind-down"
-
 kind-down: ## Delete the Kind cluster and clean up cloned repos
 	@echo "Stopping port-forwards..."
 	@pkill -f "kubectl.*port-forward.*$(KIND_NS)" 2>/dev/null || true
@@ -458,7 +353,7 @@ undeploy:
 	fi
 
 # ---------------------------------------------------------------------------
-# Headless / Trigger tests
+# Trigger tests
 # ---------------------------------------------------------------------------
 
 test-triggers: ## Unit tests for triggers only
@@ -475,13 +370,6 @@ test-integration: ## Integration tests (requires Redis + DB)
 	fi
 	@echo "Running integration tests..."
 	.venv/bin/python -m pytest tests/integration -m integration -v
-
-test-headless: ## Full headless startup test
-	@if [ ! -d ".venv" ]; then \
-		echo "Error: Virtual environment not found. Run 'make install' first to set up the environment."; \
-		exit 1; \
-	fi
-	.venv/bin/python -m pytest tests/integration/triggers/test_headless_startup.py -v
 
 %:
 	@:

@@ -1,15 +1,12 @@
 """Container entrypoint — validates config mount and starts the agent.
 
-Reads ``mode`` from ``runtime/agent.yaml`` to decide the runtime:
-
-  - ``server`` (default): starts the HTTP API via uvicorn
-  - ``headless``: starts the event-driven worker (queue/webhook/cron triggers)
+Starts the HTTP API server via uvicorn.
 
 Expected directory structure at ``CONFIG_PATH`` (default ``/app/config/agent``):
 
   - PROMPT.md
   - mcp.json
-  - runtime/agent.yaml (optional — defaults to server mode)
+  - runtime/agent.yaml (optional)
   - skills/ (optional)
   - subagents/ (optional)
 """
@@ -20,8 +17,6 @@ import json
 import os
 import sys
 from pathlib import Path
-
-import yaml
 
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", "/app/config/agent"))
 REQUIRED_FILES = ["PROMPT.md", "mcp.json"]
@@ -70,42 +65,6 @@ def validate_config_mount() -> None:
         print(f"WARNING: Could not read mcp.json: {e}", file=sys.stderr)
 
 
-_ALLOWED_MODES = {"server", "headless"}
-
-
-def _read_mode() -> str:
-    """Read agent mode from AGENT_MODE env or runtime/agent.yaml, defaulting to 'server'."""
-    env_mode = os.environ.get("AGENT_MODE", "").strip().lower()
-    if env_mode:
-        if env_mode not in _ALLOWED_MODES:
-            print(
-                f"ERROR: invalid AGENT_MODE '{env_mode}' (allowed: {_ALLOWED_MODES})",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        return env_mode
-    agent_yaml = CONFIG_PATH / "runtime" / "agent.yaml"
-    if not agent_yaml.is_file():
-        return "server"
-    data = yaml.safe_load(agent_yaml.read_text())
-    if data is None:
-        return "server"
-    if not isinstance(data, dict):
-        print(
-            f"ERROR: runtime/agent.yaml must be a YAML mapping, got {type(data).__name__}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    mode = str(data.get("mode", "server")).strip().lower()
-    if mode not in _ALLOWED_MODES:
-        print(
-            f"ERROR: invalid mode '{mode}' in runtime/agent.yaml (allowed: {_ALLOWED_MODES})",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    return mode
-
-
 def start_server() -> None:
     """Start the HTTP API server."""
     import uvicorn
@@ -122,27 +81,10 @@ def start_server() -> None:
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
-def start_headless() -> None:
-    """Start the headless event-driven worker."""
-    import asyncio
-
-    from deep_agent.headless import main as headless_main
-
-    print("Starting headless agent worker...")
-    print(f"   Config: {CONFIG_PATH}")
-
-    asyncio.run(headless_main())
-
-
 def main() -> None:
-    """Validate config mount and start the appropriate runtime."""
-    mode = _read_mode()
-
-    if mode == "headless":
-        start_headless()
-    else:
-        validate_config_mount()
-        start_server()
+    """Validate config mount and start the server."""
+    validate_config_mount()
+    start_server()
 
 
 if __name__ == "__main__":

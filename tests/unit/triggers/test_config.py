@@ -6,7 +6,6 @@ from deep_agent.src.triggers.config import (
     AgentMode,
     CronJobConfig,
     CronTriggerConfig,
-    HeadlessConfig,
     OutputSinkConfig,
     QueueTriggerConfig,
     TriggerConfig,
@@ -20,18 +19,11 @@ class TestAgentMode:
     def test_server_value(self):
         assert AgentMode.SERVER == "server"
 
-    def test_headless_value(self):
-        assert AgentMode.HEADLESS == "headless"
-
     def test_server_is_str(self):
         assert isinstance(AgentMode.SERVER, str)
 
-    def test_headless_is_str(self):
-        assert isinstance(AgentMode.HEADLESS, str)
-
     def test_construct_from_string(self):
         assert AgentMode("server") is AgentMode.SERVER
-        assert AgentMode("headless") is AgentMode.HEADLESS
 
     def test_invalid_value_raises(self):
         with pytest.raises(ValueError):
@@ -198,50 +190,3 @@ class TestOutputSinkConfig:
         b = OutputSinkConfig(type="webhook")
         a.headers["X-Custom"] = "value"
         assert "X-Custom" not in b.headers
-
-
-class TestHeadlessConfig:
-    """Test HeadlessConfig full construction and defaults."""
-
-    def test_defaults(self):
-        cfg = HeadlessConfig()
-        assert cfg.mode is AgentMode.SERVER
-        assert isinstance(cfg.triggers, TriggerConfig)
-        assert cfg.output_sinks == []
-        assert cfg.drain_timeout == 30.0
-
-    def test_full_construction(self):
-        cfg = HeadlessConfig(
-            mode=AgentMode.HEADLESS,
-            triggers=TriggerConfig(
-                webhook=WebhookTriggerConfig(enabled=True, port=9000),
-                cron=CronTriggerConfig(
-                    enabled=True,
-                    jobs=[CronJobConfig(name="nightly", schedule="0 0 * * *")],
-                ),
-                queue=QueueTriggerConfig(enabled=True, stream="tasks"),
-            ),
-            output_sinks=[
-                OutputSinkConfig(type="stdout"),
-                OutputSinkConfig(type="file", path="/data/out.jsonl"),
-            ],
-            drain_timeout=60.0,
-        )
-        assert cfg.mode is AgentMode.HEADLESS
-        assert cfg.triggers.webhook.enabled is True
-        assert cfg.triggers.webhook.port == 9000
-        assert cfg.triggers.cron.enabled is True
-        assert len(cfg.triggers.cron.jobs) == 1
-        assert cfg.triggers.queue.stream == "tasks"
-        assert len(cfg.output_sinks) == 2
-        assert cfg.drain_timeout == 60.0
-
-    def test_output_sinks_default_factory_isolation(self):
-        a = HeadlessConfig()
-        b = HeadlessConfig()
-        a.output_sinks.append(OutputSinkConfig(type="stdout"))
-        assert len(b.output_sinks) == 0
-
-    def test_mode_from_string(self):
-        cfg = HeadlessConfig(mode="headless")
-        assert cfg.mode is AgentMode.HEADLESS
