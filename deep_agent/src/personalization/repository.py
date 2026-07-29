@@ -124,12 +124,9 @@ class PersonalizationRepository:
             await conn.commit()
             deleted = bool(cur.rowcount > 0)
         if deleted:
-            try:
-                from deep_agent.src.cache.personalization_cache import invalidate
+            from deep_agent.src.cache.personalization_cache import invalidate
 
-                await invalidate(user_id)
-            except Exception:
-                logger.warning("Cache invalidation failed for user %s", user_id[:8])
+            await invalidate(user_id)
         return deleted
 
     # ── Rules ─────────────────────────────────────────────────
@@ -199,10 +196,7 @@ class PersonalizationRepository:
             await conn.commit()
             deleted = bool(cur.rowcount > 0)
         if deleted:
-            try:
-                from deep_agent.src.cache.personalization_cache import invalidate
+            from deep_agent.src.cache.personalization_cache import invalidate
 
-                await invalidate(user_id)
-            except Exception:
-                logger.warning("Cache invalidation failed for user %s", user_id[:8])
+            await invalidate(user_id)
         return deleted
