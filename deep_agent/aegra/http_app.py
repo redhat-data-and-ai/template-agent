@@ -81,7 +81,37 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await run_startup()
     setup_otel_metrics(settings, logger)
     setup_otel_traces(_app, settings, logger)
+    _verify_custom_thread_delete(_app)
     yield
+
+
+def _verify_custom_thread_delete(application: FastAPI) -> None:
+    """Verify our custom DELETE /threads/{id} takes priority over Aegra's built-in.
+
+    Aegra's _include_core_routers adds a threads_router after our custom
+    app routes. FastAPI matches the first registered route, so ours wins.
+    This check fails loudly if that assumption ever breaks.
+    """
+    from deep_agent.aegra.thread_cleanup import delete_thread_with_cleanup
+
+    for route in application.routes:
+        if (
+            hasattr(route, "path")
+            and route.path == "/threads/{thread_id}"
+            and hasattr(route, "methods")
+            and "DELETE" in route.methods
+        ):
+            if route.endpoint is delete_thread_with_cleanup:
+                logger.info("custom_thread_delete_route_verified")
+                return
+            logger.error(
+                "custom_thread_delete_route_overridden: "
+                "Aegra's built-in DELETE /threads/{thread_id} is taking "
+                "priority over our custom cleanup handler. "
+                "Check router registration order in http_app.py."
+            )
+            return
+    logger.warning("thread_delete_route_not_found")
 
 
 app = FastAPI(title="template-agent-custom", lifespan=_lifespan)
