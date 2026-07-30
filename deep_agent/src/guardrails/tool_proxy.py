@@ -158,8 +158,13 @@ class GuardianToolProxy(BaseTool):
         """Pre-check args, execute inner tool, and post-check the result for safety."""
         from langchain_core.messages import ToolMessage as _TM
 
+        from deep_agent.src.guardrails import get_guardrails_config
         from deep_agent.src.guardrails.client import check_safety
         from deep_agent.src.settings import settings
+
+        # Pass through immediately if guardrails have been runtime-disabled.
+        if get_guardrails_config() is None:
+            return await self._inner.ainvoke(input, config, **kwargs)
 
         # Phase 1: pre-check args before the inner tool executes.
         if settings.GUARDIAN_API_BASE:
@@ -223,8 +228,12 @@ class GuardianToolProxy(BaseTool):
 
 def wrap_tools(tools: list[Any]) -> list[Any]:
     """Wrap a list of tools with GuardianToolProxy when Guardian is enabled."""
+    from deep_agent.src.guardrails import get_guardrails_config
     from deep_agent.src.settings import settings
 
     if not settings.GUARDIAN_API_BASE or not tools:
+        return tools
+    cfg = get_guardrails_config()
+    if cfg is None or not cfg.enabled:
         return tools
     return [GuardianToolProxy(t) for t in tools]

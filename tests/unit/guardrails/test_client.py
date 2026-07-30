@@ -10,6 +10,7 @@ from deep_agent.src.guardrails.client import (
     _call_guardian,
     _get_guardian_client,
     _guardian_model,
+    _is_config_error,
     check_injection,
     check_safety,
 )
@@ -71,11 +72,12 @@ class TestGuardianModel:
         with patch("deep_agent.src.guardrails.get_guardrails_config", return_value=cfg):
             assert _guardian_model() == "my-model"
 
-    def test_returns_default_when_no_config(self):
+    def test_raises_when_no_config(self):
         with patch(
             "deep_agent.src.guardrails.get_guardrails_config", return_value=None
         ):
-            assert "granite-guardian" in _guardian_model()
+            with pytest.raises(RuntimeError, match="not initialised"):
+                _guardian_model()
 
 
 class TestCallGuardian:
@@ -122,7 +124,8 @@ class TestCallGuardian:
             assert verdict == "Yes,"
 
     @pytest.mark.asyncio
-    async def test_returns_safe_on_exception(self):
+    async def test_transient_error_returns_safe_and_does_not_disable(self):
+        """Network errors are transient — flow must continue and guardrail stays enabled."""
         with (
             patch(
                 "deep_agent.src.guardrails.client._guardian_model", return_value="model"
@@ -130,14 +133,112 @@ class TestCallGuardian:
             patch("deep_agent.src.guardrails.client._get_guardian_client"),
             patch(
                 "deep_agent.src.guardrails.client.litellm.acompletion",
-                new=AsyncMock(side_effect=RuntimeError("network error")),
+                new=AsyncMock(side_effect=RuntimeError("connection reset by peer")),
             ),
+            patch(
+                "deep_agent.src.guardrails.disable_guardrails_runtime"
+            ) as mock_disable,
         ):
             is_safe, verdict = await _call_guardian(
                 [{"role": "user", "content": "hi"}], "input"
             )
             assert is_safe is True
             assert verdict == "error"
+            mock_disable.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_config_error_returns_safe_and_disables_guardrail(self):
+        """404/401/403 are permanent misconfigs — guardrail must self-disable after first hit."""
+
+        class _NotFound(Exception):
+            status_code = 404
+
+        with (
+            patch(
+                "deep_agent.src.guardrails.client._guardian_model", return_value="model"
+            ),
+            patch("deep_agent.src.guardrails.client._get_guardian_client"),
+            patch(
+                "deep_agent.src.guardrails.client.litellm.acompletion",
+                new=AsyncMock(side_effect=_NotFound("model does not exist")),
+            ),
+            patch(
+                "deep_agent.src.guardrails.disable_guardrails_runtime"
+            ) as mock_disable,
+        ):
+            is_safe, verdict = await _call_guardian(
+                [{"role": "user", "content": "hi"}], "input"
+            )
+            assert is_safe is True
+            assert verdict == "error"
+            mock_disable.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_auth_error_disables_guardrail(self):
+        """401 auth failure must self-disable so bad credentials don't spam logs."""
+
+        class _AuthError(Exception):
+            status_code = 401
+
+        with (
+            patch(
+                "deep_agent.src.guardrails.client._guardian_model", return_value="model"
+            ),
+            patch("deep_agent.src.guardrails.client._get_guardian_client"),
+            patch(
+                "deep_agent.src.guardrails.client.litellm.acompletion",
+                new=AsyncMock(side_effect=_AuthError("invalid api key")),
+            ),
+            patch(
+                "deep_agent.src.guardrails.disable_guardrails_runtime"
+            ) as mock_disable,
+        ):
+            is_safe, verdict = await _call_guardian(
+                [{"role": "user", "content": "hi"}], "input"
+            )
+            assert is_safe is True
+            mock_disable.assert_called_once()
+
+
+class TestIsConfigError:
+    def test_404_status_code_is_config_error(self):
+        exc = Exception("not found")
+        exc.status_code = 404
+        assert _is_config_error(exc) is True
+
+    def test_401_status_code_is_config_error(self):
+        exc = Exception("unauthorized")
+        exc.status_code = 401
+        assert _is_config_error(exc) is True
+
+    def test_403_status_code_is_config_error(self):
+        exc = Exception("forbidden")
+        exc.status_code = 403
+        assert _is_config_error(exc) is True
+
+    def test_503_is_not_config_error(self):
+        exc = Exception("service unavailable")
+        exc.status_code = 503
+        assert _is_config_error(exc) is False
+
+    def test_plain_runtime_error_is_not_config_error(self):
+        assert _is_config_error(RuntimeError("connection reset")) is False
+
+    def test_exception_without_status_code_is_not_config_error(self):
+        assert _is_config_error(ValueError("unexpected value")) is False
+
+    def test_litellm_not_found_error_is_config_error(self):
+        try:
+            import litellm.exceptions as _le
+
+            exc = _le.NotFoundError(
+                "model not found", model="granite", llm_provider="openai"
+            )
+            assert _is_config_error(exc) is True
+        except (ImportError, TypeError):
+            pytest.skip(
+                "litellm.exceptions.NotFoundError not constructable in this env"
+            )
 
 
 class TestCheckSafety:

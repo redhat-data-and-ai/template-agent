@@ -160,7 +160,11 @@ class GraniteGuardianCallbackHandler(AsyncCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """Screen the latest human message through Guardian before each LLM call."""
+        from deep_agent.src.guardrails import get_guardrails_config
         from deep_agent.src.guardrails.client import check_injection, check_safety
+
+        if get_guardrails_config() is None:
+            return
 
         for content, context in _extract_messages_to_scan(messages):
             if self._already_scanned(content):
@@ -193,7 +197,11 @@ class GraniteGuardianCallbackHandler(AsyncCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """Screen LLM output through Guardian, blocking unsafe responses."""
+        from deep_agent.src.guardrails import get_guardrails_config
         from deep_agent.src.guardrails.client import check_safety
+
+        if get_guardrails_config() is None:
+            return
 
         content = _extract_output_text(response)
         if not content:

@@ -28,6 +28,7 @@ class ToolContentSafetyError(ContentSafetyError):
 
 
 _config: Optional["GuardrailsConfig"] = None
+_runtime_disabled: bool = False
 
 
 def init_guardrails(config: "GuardrailsConfig") -> None:
@@ -37,5 +38,23 @@ def init_guardrails(config: "GuardrailsConfig") -> None:
 
 
 def get_guardrails_config() -> Optional["GuardrailsConfig"]:
-    """Return the global GuardrailsConfig, or None if not yet initialised."""
+    """Return the global GuardrailsConfig, or None if not yet initialised or runtime-disabled."""
+    if _runtime_disabled:
+        return None
     return _config
+
+
+def disable_guardrails_runtime(reason: str = "") -> None:
+    """Disable guardrails for the remainder of this process after a configuration error."""
+    global _runtime_disabled  # noqa: PLW0603
+    if _runtime_disabled:
+        return
+    _runtime_disabled = True
+    from deep_agent.utils.pylogger import get_python_logger
+
+    get_python_logger().error(
+        "guardian_runtime_disabled",
+        reason=reason,
+        message="Granite Guardian disabled for this session due to a configuration error — "
+        "fix GUARDIAN_API_BASE / GUARDIAN_API_KEY or the model name and restart.",
+    )

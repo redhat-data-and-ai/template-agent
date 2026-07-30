@@ -186,6 +186,13 @@ class TestGuardianToolProxyInit:
         assert proxy._inner is inner
 
 
+def _mock_enabled_config():
+    """Return a MagicMock GuardrailsConfig with enabled=True for active-guardrail tests."""
+    cfg = MagicMock()
+    cfg.enabled = True
+    return cfg
+
+
 class TestGuardianToolProxyAinvoke:
     def _make_proxy(self, name="tool"):
         inner = _make_inner_tool(name=name)
@@ -195,10 +202,33 @@ class TestGuardianToolProxyAinvoke:
         return GuardianToolProxy(inner), inner
 
     @pytest.mark.asyncio
+    async def test_passes_through_when_runtime_disabled(self):
+        """enabled=false / runtime-disabled: inner tool called directly, guardian never runs."""
+        proxy, inner = self._make_proxy()
+        safe_result = ToolMessage(content="ok", name="tool", tool_call_id="id-1")
+        inner.ainvoke = AsyncMock(return_value=safe_result)
+
+        with (
+            patch("deep_agent.src.guardrails.get_guardrails_config", return_value=None),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety", new=AsyncMock()
+            ) as mock_safety,
+        ):
+            result = await proxy.ainvoke({"id": "call-1"})
+
+        assert result is safe_result
+        inner.ainvoke.assert_called_once()
+        mock_safety.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_phase1_blocks_unsafe_args(self):
         proxy, inner = self._make_proxy()
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
             patch("deep_agent.src.settings.settings") as mock_settings,
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
@@ -213,12 +243,16 @@ class TestGuardianToolProxyAinvoke:
         inner.ainvoke.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_phase1_skipped_when_guardian_disabled(self):
+    async def test_phase1_skipped_when_api_base_not_set(self):
         proxy, inner = self._make_proxy()
         safe_result = ToolMessage(content="ok", name="tool", tool_call_id="id-1")
         inner.ainvoke = AsyncMock(return_value=safe_result)
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
             patch("deep_agent.src.settings.settings") as mock_settings,
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
@@ -241,6 +275,10 @@ class TestGuardianToolProxyAinvoke:
         inner.ainvoke = AsyncMock(side_effect=RuntimeError("inner tool crashed"))
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
             patch("deep_agent.src.settings.settings") as mock_settings,
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
@@ -263,6 +301,10 @@ class TestGuardianToolProxyAinvoke:
         inner.ainvoke = AsyncMock(return_value=safe_result)
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
             patch("deep_agent.src.settings.settings") as mock_settings,
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
@@ -287,12 +329,15 @@ class TestGuardianToolProxyAinvoke:
         inner.ainvoke = AsyncMock(return_value=unsafe_result)
 
         async def safety_by_context(content, context="input"):
-            # Phase 1 (tool_input) passes; phase 3 (tool_result) is flagged unsafe
             if context == "tool_result":
                 return (False, "Yes")
             return (True, "No")
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
             patch("deep_agent.src.settings.settings") as mock_settings,
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
@@ -314,6 +359,10 @@ class TestGuardianToolProxyAinvoke:
         inner.ainvoke = AsyncMock(return_value=inject_result)
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
             patch("deep_agent.src.settings.settings") as mock_settings,
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
@@ -336,6 +385,10 @@ class TestGuardianToolProxyAinvoke:
         inner.ainvoke = AsyncMock(return_value=None)
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
             patch("deep_agent.src.settings.settings") as mock_settings,
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
@@ -355,6 +408,10 @@ class TestGuardianToolProxyAinvoke:
         config = {"_safety_ctx": ctx}
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
             patch("deep_agent.src.settings.settings") as mock_settings,
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
@@ -387,15 +444,11 @@ class TestGuardianToolProxyAinvoke:
 
         import asyncio
 
-        def make_safety_side_effect(tool_name):
-            async def _check(content, context="input"):
-                if tool_name == "blocked_tool" and context == "tool_input":
-                    return (False, "Yes")
-                return (True, "No")
-
-            return _check
-
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
             patch("deep_agent.src.settings.settings") as mock_settings,
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
@@ -432,7 +485,7 @@ class TestGuardianToolProxyRun:
 
 
 class TestWrapTools:
-    def test_returns_unchanged_when_guardian_disabled(self):
+    def test_returns_unchanged_when_api_base_not_set(self):
         tools = [MagicMock(), MagicMock()]
         with patch("deep_agent.src.settings.settings") as mock_settings:
             mock_settings.GUARDIAN_API_BASE = None
@@ -440,15 +493,52 @@ class TestWrapTools:
         assert result is tools
 
     def test_returns_unchanged_when_tools_empty(self):
-        with patch("deep_agent.src.settings.settings") as mock_settings:
+        with (
+            patch("deep_agent.src.settings.settings") as mock_settings,
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
+        ):
             mock_settings.GUARDIAN_API_BASE = "http://guardian"
             result = wrap_tools([])
         assert result == []
 
-    def test_wraps_each_tool_in_proxy(self):
+    def test_returns_unchanged_when_enabled_false(self):
+        """enabled: false in agent.yaml → tools must not be wrapped even if API base set."""
+        tools = [MagicMock(), MagicMock()]
+        cfg = MagicMock()
+        cfg.enabled = False
+        with (
+            patch("deep_agent.src.settings.settings") as mock_settings,
+            patch("deep_agent.src.guardrails.get_guardrails_config", return_value=cfg),
+        ):
+            mock_settings.GUARDIAN_API_BASE = "http://guardian"
+            result = wrap_tools(tools)
+        assert result is tools
+
+    def test_returns_unchanged_when_runtime_disabled(self):
+        """After a config error disables guardrails at runtime, wrapping must stop."""
+        tools = [MagicMock(), MagicMock()]
+        with (
+            patch("deep_agent.src.settings.settings") as mock_settings,
+            patch("deep_agent.src.guardrails.get_guardrails_config", return_value=None),
+        ):
+            mock_settings.GUARDIAN_API_BASE = "http://guardian"
+            result = wrap_tools(tools)
+        assert result is tools
+
+    def test_wraps_each_tool_when_enabled_true(self):
+        """enabled: true with API base set → every tool gets a GuardianToolProxy."""
         t1 = _make_inner_tool(name="tool_a")
         t2 = _make_inner_tool(name="tool_b")
-        with patch("deep_agent.src.settings.settings") as mock_settings:
+        with (
+            patch("deep_agent.src.settings.settings") as mock_settings,
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
+        ):
             mock_settings.GUARDIAN_API_BASE = "http://guardian"
             result = wrap_tools([t1, t2])
         assert len(result) == 2

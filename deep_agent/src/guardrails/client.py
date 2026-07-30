@@ -57,13 +57,40 @@ def _guardian_model() -> str:
     from deep_agent.src.guardrails import get_guardrails_config
 
     cfg = get_guardrails_config()
-    return cfg.model if cfg else "ibm-granite/granite-guardian-3.2-5b"
+    if cfg is None:
+        raise RuntimeError(
+            "Guardian model requested but guardrails are not initialised"
+        )
+    if cfg.model is None:
+        raise RuntimeError("Guardian model requested but no model is configured")
+    return cfg.model
+
+
+def _is_config_error(exc: Exception) -> bool:
+    """Return True for permanent configuration errors that won't resolve on retry."""
+    try:
+        import litellm.exceptions as _le
+
+        if isinstance(
+            exc, (_le.NotFoundError, _le.AuthenticationError, _le.PermissionDeniedError)
+        ):
+            return True
+    except ImportError:
+        pass
+    # Fallback: inspect HTTP status code attached by litellm/openai SDKs.
+    status = getattr(exc, "status_code", None)
+    return status in {401, 403, 404}
 
 
 async def _call_guardian(
     messages: list[dict], context: str, max_tokens: int = 20
 ) -> tuple[bool, str]:
     """Shared Guardian API call. Returns (is_safe, verdict)."""
+    from deep_agent.src.guardrails import get_guardrails_config
+
+    if get_guardrails_config() is None:
+        return True, "disabled"
+
     try:
         response = await litellm.acompletion(
             model=f"openai/{_guardian_model()}",
@@ -77,20 +104,27 @@ async def _call_guardian(
         is_safe = not verdict.lower().startswith("yes")
         logger.info("guardian_check", context=context, verdict=verdict, is_safe=is_safe)
         return is_safe, verdict
-    except Exception:
-        logger.warning("guardian_check_failed", context=context, exc_info=True)
+    except Exception as exc:
+        if _is_config_error(exc):
+            logger.warning("guardian_check_failed", context=context, reason=str(exc))
+            from deep_agent.src.guardrails import disable_guardrails_runtime
+
+            disable_guardrails_runtime(reason=str(exc))
+        else:
+            logger.warning("guardian_check_failed", context=context, exc_info=True)
         return True, "error"
 
 
 async def check_safety(content: str, context: str = "input") -> tuple[bool, str]:
-    """Built-in harm classifier — catches violence, profanity, sexual content, unethical behavior.
+    """Harm classifier — catches violence, profanity, sexual content, unethical behavior.
 
-    Granite Guardian's built-in template is used (no custom criteria). The model
-    responds with 'Yes' (unsafe) or 'No' (safe).
+    Uses a criteria-based guardian block so the model reasons step-by-step before
+    emitting its verdict, consistent with check_injection.
     """
     return await _call_guardian(
         messages=[{"role": "user", "content": content}],
         context=context,
+        max_tokens=256,
     )
 
 
@@ -107,5 +141,5 @@ async def check_injection(content: str, context: str = "input") -> tuple[bool, s
             {"role": "user", "content": _build_guardian_block(_CRITERIA)},
         ],
         context=context,
-        max_tokens=200,
+        max_tokens=256,
     )

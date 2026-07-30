@@ -155,11 +155,49 @@ class TestGraniteGuardianCallbackHandler:
         )
 
     @pytest.mark.asyncio
+    async def test_on_chat_model_start_skips_when_runtime_disabled(self):
+        """enabled=false / runtime-disabled: callback must return immediately, no guardian call."""
+        handler = GraniteGuardianCallbackHandler()
+        human = HumanMessage(content="some input")
+
+        with (
+            patch("deep_agent.src.guardrails.get_guardrails_config", return_value=None),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety", new=AsyncMock()
+            ) as mock_safety,
+        ):
+            await handler.on_chat_model_start(
+                serialized={}, messages=[[human]], run_id=uuid4()
+            )
+        mock_safety.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_llm_end_skips_when_runtime_disabled(self):
+        """enabled=false / runtime-disabled: callback must return immediately, no guardian call."""
+        handler = GraniteGuardianCallbackHandler()
+        msg = AIMessage(content="some response")
+        gen = ChatGeneration(message=msg, text="")
+        response = LLMResult(generations=[[gen]])
+
+        with (
+            patch("deep_agent.src.guardrails.get_guardrails_config", return_value=None),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety", new=AsyncMock()
+            ) as mock_safety,
+        ):
+            await handler.on_llm_end(response=response, run_id=uuid4())
+        mock_safety.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_on_chat_model_start_safe_content_passes(self):
         handler = GraniteGuardianCallbackHandler()
         human = HumanMessage(content="safe input")
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=MagicMock(enabled=True),
+            ),
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
                 new=AsyncMock(return_value=(True, "No")),
@@ -180,9 +218,15 @@ class TestGraniteGuardianCallbackHandler:
         handler = GraniteGuardianCallbackHandler()
         human = HumanMessage(content="unsafe content")
 
-        with patch(
-            "deep_agent.src.guardrails.client.check_safety",
-            new=AsyncMock(return_value=(False, "Yes")),
+        with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=MagicMock(enabled=True),
+            ),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety",
+                new=AsyncMock(return_value=(False, "Yes")),
+            ),
         ):
             with pytest.raises(InputContentSafetyError):
                 await handler.on_chat_model_start(
@@ -197,6 +241,10 @@ class TestGraniteGuardianCallbackHandler:
         human = HumanMessage(content="inject me")
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=MagicMock(enabled=True),
+            ),
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
                 new=AsyncMock(return_value=(True, "No")),
@@ -219,6 +267,10 @@ class TestGraniteGuardianCallbackHandler:
         human = HumanMessage(content="already seen")
 
         with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=MagicMock(enabled=True),
+            ),
             patch(
                 "deep_agent.src.guardrails.client.check_safety",
                 new=AsyncMock(return_value=(True, "No")),
@@ -243,9 +295,15 @@ class TestGraniteGuardianCallbackHandler:
         gen = ChatGeneration(message=msg, text="")
         response = LLMResult(generations=[[gen]])
 
-        with patch(
-            "deep_agent.src.guardrails.client.check_safety",
-            new=AsyncMock(return_value=(True, "No")),
+        with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=MagicMock(enabled=True),
+            ),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety",
+                new=AsyncMock(return_value=(True, "No")),
+            ),
         ):
             await handler.on_llm_end(response=response, run_id=uuid4())
 
@@ -256,9 +314,15 @@ class TestGraniteGuardianCallbackHandler:
         gen = ChatGeneration(message=msg, text="")
         response = LLMResult(generations=[[gen]])
 
-        with patch(
-            "deep_agent.src.guardrails.client.check_safety",
-            new=AsyncMock(return_value=(False, "Yes")),
+        with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=MagicMock(enabled=True),
+            ),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety",
+                new=AsyncMock(return_value=(False, "Yes")),
+            ),
         ):
             with pytest.raises(ToolContentSafetyError):
                 await handler.on_llm_end(response=response, run_id=uuid4())
@@ -272,9 +336,15 @@ class TestGraniteGuardianCallbackHandler:
         response = MagicMock()
         response.generations = [[gen]]
 
-        with patch(
-            "deep_agent.src.guardrails.client.check_safety",
-            new=AsyncMock(return_value=(True, "No")),
-        ) as mock_safety:
+        with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=MagicMock(enabled=True),
+            ),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety",
+                new=AsyncMock(return_value=(True, "No")),
+            ) as mock_safety,
+        ):
             await handler.on_llm_end(response=response, run_id=uuid4())
             mock_safety.assert_not_called()
