@@ -81,6 +81,15 @@ class TestGuardianModel:
 
 
 class TestCallGuardian:
+    @pytest.fixture(autouse=True)
+    def guardrails_enabled(self):
+        """Ensure get_guardrails_config returns a non-None config so _call_guardian proceeds."""
+        with patch(
+            "deep_agent.src.guardrails.get_guardrails_config",
+            return_value=MagicMock(),
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_returns_safe_when_verdict_is_no(self):
         mock_response = MagicMock()
