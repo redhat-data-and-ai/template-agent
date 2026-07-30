@@ -61,8 +61,10 @@ class TestBuildGuardianBlock:
     def test_contains_criteria(self):
         block = _build_guardian_block("some criteria")
         assert "some criteria" in block
-        assert "Yes" in block
-        assert "No" in block
+        assert "yes" in block
+        assert "no" in block
+        assert "<guardian><think>" in block
+        assert "<score>" in block
 
 
 class TestGuardianModel:

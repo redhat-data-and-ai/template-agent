@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import httpx
 import litellm
 from openai import AsyncOpenAI
@@ -14,6 +16,12 @@ logger = get_python_logger()
 # Cached per-process client — carries the correct SSL and auth config.
 # Rebuilt if settings change (dev only); stable in production.
 _guardian_client: AsyncOpenAI | None = None
+
+# Criteria for harm classification (violence, profanity, sexual content, unethical behavior).
+_HARM_CRITERIA = (
+    "The last user message contains harmful, violent, or dangerous content that could cause "
+    "physical harm, promote violence, or include explicit, sexual, or unethical content."
+)
 
 # Criteria covering risks not caught by the built-in harm classifier:
 # prompt injection, jailbreaking, and social bias.
@@ -46,11 +54,21 @@ def _get_guardian_client() -> AsyncOpenAI:
 
 def _build_guardian_block(criteria: str) -> str:
     return (
-        f"Does the above content violate the following criteria?\n\n"
-        f"Criteria: {criteria}\n\n"
-        f"Think step by step before responding.\n\n"
-        f"Respond with Yes if violated, No otherwise."
+        "<guardian><think>As a judge agent, carefully analyze whether the provided text meets the "
+        "given judging criteria. Use all available information, including conversations, documents, "
+        "and tools. Reason through the evidence step by step before providing your score. Wrap your "
+        "reasoning in <think></think> tags, then provide your score in <score></score> tags.\n\n"
+        f"### Criteria: {criteria}\n\n"
+        "### Scoring Schema: If the last user message meets the criteria, return 'yes'; "
+        "otherwise, return 'no'."
     )
+
+
+def _extract_verdict(raw: str) -> str:
+    match = re.search(r"<score>\s*(yes|no)\s*</score>", raw, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return raw.split()[0]
 
 
 def _guardian_model() -> str:
@@ -100,7 +118,7 @@ async def _call_guardian(
             client=_get_guardian_client(),
         )
         raw = response.choices[0].message.content.strip()
-        verdict = raw.split()[0]
+        verdict = _extract_verdict(raw)
         is_safe = not verdict.lower().startswith("yes")
         logger.info("guardian_check", context=context, verdict=verdict, is_safe=is_safe)
         return is_safe, verdict
@@ -116,30 +134,24 @@ async def _call_guardian(
 
 
 async def check_safety(content: str, context: str = "input") -> tuple[bool, str]:
-    """Harm classifier — catches violence, profanity, sexual content, unethical behavior.
-
-    Uses a criteria-based guardian block so the model reasons step-by-step before
-    emitting its verdict, consistent with check_injection.
-    """
+    """Harm classifier — catches violence, profanity, sexual content, unethical behavior."""
     return await _call_guardian(
-        messages=[{"role": "user", "content": content}],
+        messages=[
+            {"role": "user", "content": content},
+            {"role": "user", "content": _build_guardian_block(_HARM_CRITERIA)},
+        ],
         context=context,
-        max_tokens=256,
+        max_tokens=1024,
     )
 
 
 async def check_injection(content: str, context: str = "input") -> tuple[bool, str]:
-    """Criteria-based check for prompt injection, jailbreaking, and social bias.
-
-    Uses a custom guardian block with think=True since the built-in classifier
-    does not detect instruction-manipulation attacks. Extra tokens are needed
-    because the model reasons step-by-step before emitting the final verdict.
-    """
+    """Criteria-based check for prompt injection, jailbreaking, and social bias."""
     return await _call_guardian(
         messages=[
             {"role": "user", "content": content},
             {"role": "user", "content": _build_guardian_block(_CRITERIA)},
         ],
         context=context,
-        max_tokens=256,
+        max_tokens=1024,
     )
