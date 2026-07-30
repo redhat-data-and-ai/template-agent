@@ -1,0 +1,9 @@
+id: no-os-environ-direct
+language: python
+message: "Use pydantic Settings or python-dotenv instead of direct os.environ access"
+severity: warning
+rule:
+  any:
+    - pattern: os.environ[$KEY]
+    - pattern: os.environ.get($$$)
+    - pattern: os.getenv($$$)
