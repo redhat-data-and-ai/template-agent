@@ -6,7 +6,7 @@ Expected directory structure at ``CONFIG_PATH`` (default ``/app/config/agent``):
 
   - PROMPT.md
   - mcp.json
-  - runtime/agent.yaml (optional)
+  - runtime/agent.yaml
   - skills/ (optional)
   - subagents/ (optional)
 """
