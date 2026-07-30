@@ -121,6 +121,7 @@ services:
     ports:
       - "16686:16686"  # Jaeger UI
       - "4317"         # OTLP gRPC receiver (internal only)
+      - "4318:4318"    # OTLP HTTP receiver (aegra uses proto.http)
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
