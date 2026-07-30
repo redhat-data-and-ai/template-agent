@@ -75,7 +75,6 @@ spec:
               mountPath: /docker-entrypoint-initdb.d
           securityContext:
             runAsNonRoot: true
-            runAsUser: 999
             allowPrivilegeEscalation: false
             capabilities:
               drop:

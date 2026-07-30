@@ -1,0 +1,9 @@
+id: no-bare-except
+language: python
+message: "Bare except clause silently swallows all exceptions including KeyboardInterrupt and SystemExit"
+severity: warning
+rule:
+  kind: except_clause
+  not:
+    has:
+      kind: identifier

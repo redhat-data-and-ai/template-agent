@@ -1,0 +1,11 @@
+id: no-mutable-default-args
+language: python
+message: "Mutable default argument is shared across calls; use None and assign inside the function"
+severity: error
+rule:
+  kind: default_parameter
+  has:
+    any:
+      - kind: list
+      - kind: dictionary
+      - kind: set
