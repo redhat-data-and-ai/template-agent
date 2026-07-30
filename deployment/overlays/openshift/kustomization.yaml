@@ -13,6 +13,10 @@ resources:
   - pdb.yaml
   - hpa.yaml
 
+components:
+  - ../../components/postgres
+  - ../../components/redis
+
 labels:
   - pairs:
       app: agent

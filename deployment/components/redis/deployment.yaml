@@ -59,7 +59,6 @@ spec:
               mountPath: /data
           securityContext:
             runAsNonRoot: true
-            runAsUser: 999
             allowPrivilegeEscalation: false
             capabilities:
               drop:
