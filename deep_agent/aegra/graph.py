@@ -218,9 +218,7 @@ async def agent(runtime: ServerRuntime) -> Any:
     )
     mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
 
-    from deep_agent.src.triggers.tools import get_builtin_tools
-
-    all_available_tools = list(mcp_tools) + get_builtin_tools()
+    all_available_tools = list(mcp_tools)
     tools = agent_config.resolve_tools(
         tool_names, all_available_tools, agent_name=agent_name
     )
