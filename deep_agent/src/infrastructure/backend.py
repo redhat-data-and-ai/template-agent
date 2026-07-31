@@ -294,6 +294,55 @@ def _build_state_backend() -> Any:
         return get_backend()
 
 
+def _get_assistant_id_from_config(ctx: Any) -> str:
+    """Extract assistant_id from runtime config metadata, falling back to 'default'.
+
+    Mirrors the fallback logic in StoreBackend._get_namespace_legacy:
+    check runtime.config → metadata → assistant_id.
+    """
+    cfg = getattr(ctx.runtime, "config", None) or {}
+    if isinstance(cfg, dict):
+        metadata = cfg.get("metadata")
+        assistant_id: Any = (
+            metadata.get("assistant_id") if isinstance(metadata, dict) else None
+        )
+        if assistant_id:
+            return str(assistant_id)
+    return "default"
+
+
+def _safe_namespace_user(ctx: Any) -> tuple[str, ...]:
+    """User-scoped namespace: (assistant_id, user_identity) on server, config fallback locally."""
+    si: Any = getattr(ctx.runtime, "server_info", None)
+    if si is not None and getattr(si, "assistant_id", None):
+        parts: list[str] = [si.assistant_id]
+        user: Any = getattr(si, "user", None)
+        if getattr(user, "identity", None):
+            parts.append(user.identity)
+        return tuple(parts)
+    return (_get_assistant_id_from_config(ctx),)
+
+
+def _safe_namespace_assistant(ctx: Any) -> tuple[str, ...]:
+    """Assistant-scoped namespace: (assistant_id,) on server, config fallback locally."""
+    si: Any = getattr(ctx.runtime, "server_info", None)
+    if si is not None and getattr(si, "assistant_id", None):
+        return (si.assistant_id,)
+    return (_get_assistant_id_from_config(ctx),)
+
+
+def _safe_namespace_org(ctx: Any) -> tuple[str, ...]:
+    """Org-scoped namespace: (org_id,)."""
+    return (ctx.runtime.context.org_id,)
+
+
+_STORE_NAMESPACE_FACTORIES: dict[str, Any] = {
+    "user": _safe_namespace_user,
+    "assistant": _safe_namespace_assistant,
+    "org": _safe_namespace_org,
+}
+
+
 def _build_store_backend(fs_config: Any) -> Any:
     """Build a StoreBackend (cross-thread persistent via LangGraph Store).
 
@@ -308,19 +357,10 @@ def _build_store_backend(fs_config: Any) -> Any:
         scope = getattr(fs_config.backend, "store", None)
         scope_name = scope.scope if scope else "user"
 
-        namespace_factories = {
-            "user": lambda rt: (
-                rt.server_info.assistant_id,
-                rt.server_info.user.identity,
-            ),
-            "assistant": lambda rt: (rt.server_info.assistant_id,),
-            "org": lambda rt: (rt.context.org_id,),
-        }
-
-        namespace = namespace_factories.get(scope_name)
+        namespace = _STORE_NAMESPACE_FACTORIES.get(scope_name)
         if namespace is None:
             logger.warning("Unknown store scope '%s', using 'user'", scope_name)
-            namespace = namespace_factories["user"]
+            namespace = _safe_namespace_user
 
         logger.info("Using StoreBackend (scope=%s)", scope_name)
         return StoreBackend(namespace=namespace)
@@ -392,16 +432,8 @@ def _build_composite_backend(fs_config: Any) -> Any:
             try:
                 from deepagents.backends.store import StoreBackend
 
-                namespace_factories = {
-                    "user": lambda rt: (
-                        rt.server_info.assistant_id,
-                        rt.server_info.user.identity,
-                    ),
-                    "assistant": lambda rt: (rt.server_info.assistant_id,),
-                    "org": lambda rt: (rt.context.org_id,),
-                }
-                ns = namespace_factories.get(
-                    store_scope or "user", namespace_factories["user"]
+                ns = _STORE_NAMESPACE_FACTORIES.get(
+                    store_scope or "user", _safe_namespace_user
                 )
                 store_backend = StoreBackend(runtime, namespace=ns)
                 for prefix in store_route_prefixes:
