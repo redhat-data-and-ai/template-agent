@@ -14,6 +14,7 @@ from deep_agent.src.agent.config.middleware import (
     ResolvedMiddlewareConfig,
     SkillsConfig,
     SummarizationToolConfig,
+    ToolAccessControlConfig,
     load_middleware_config,
     resolve_middleware,
 )
@@ -28,6 +29,7 @@ class TestMiddlewareModels:
         assert defaults.memory.enabled is True
         assert defaults.patch_tool_calls.enabled is True
         assert defaults.skills.enabled is True
+        assert defaults.tool_access_control.enabled is True
         assert defaults.extra == []
 
     def test_memory_default_namespaces(self):
@@ -145,3 +147,29 @@ class TestResolveMiddleware:
         resolved = resolve_middleware(config, "model")
         assert resolved.summarization_tool_enabled is False
         assert resolved.memory_enabled is False
+
+    def test_tool_access_control_default_enabled(self):
+        config = MiddlewareFileConfig()
+        resolved = resolve_middleware(config, "model")
+        assert resolved.tool_access_control_enabled is True
+
+    def test_tool_access_control_disabled_globally(self):
+        config = MiddlewareFileConfig(
+            defaults=MiddlewareDefaults(
+                tool_access_control=ToolAccessControlConfig(enabled=False)
+            )
+        )
+        resolved = resolve_middleware(config, "model")
+        assert resolved.tool_access_control_enabled is False
+
+    def test_tool_access_control_override_disables(self):
+        config = MiddlewareFileConfig()
+        resolved = resolve_middleware(config, "model", {"tool_access_control": False})
+        assert resolved.tool_access_control_enabled is False
+
+    def test_tool_access_control_override_dict(self):
+        config = MiddlewareFileConfig()
+        resolved = resolve_middleware(
+            config, "model", {"tool_access_control": {"enabled": False}}
+        )
+        assert resolved.tool_access_control_enabled is False

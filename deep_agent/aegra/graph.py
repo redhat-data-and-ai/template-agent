@@ -142,7 +142,8 @@ async def agent(runtime: ServerRuntime) -> Any:
     orch_model_raw = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
     system_prompt = orchestrator_cfg.get("body", "")
     skill_paths = orchestrator_cfg.get("skill_paths", [])
-    tool_names = orchestrator_cfg.get("tools", [])
+    tool_names = orchestrator_cfg.get("allowed_tools", [])
+    denied_tool_names = orchestrator_cfg.get("denied_tools", [])
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
     if user_identity:
@@ -232,6 +233,14 @@ async def agent(runtime: ServerRuntime) -> Any:
             len(mcp_tools),
         )
         tools = mcp_tools
+
+    tac_enabled = (
+        agent_config.get_middleware_config().defaults.tool_access_control.enabled
+    )
+    if denied_tool_names and tools and tac_enabled:
+        from deep_agent.src.infrastructure.tool_access import filter_denied_tools
+
+        tools = filter_denied_tools(tools, denied_tool_names, agent_name=agent_name)
 
     from deep_agent.src.infrastructure.middleware import (
         build_middleware_list,

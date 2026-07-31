@@ -6,8 +6,12 @@ description: >
   health tips for Red Hat employees. Use when the user provides height
   and weight for BMI analysis.
 model: gemini-2.5-pro
-tools:
+allowed_tools:
   - calculate_bmi
+  - search_web
+denied_tools:
+  - send_email
+tool_approval:
   - search_web
 skills:
   - bmi-report

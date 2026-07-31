@@ -106,7 +106,7 @@ harness_profiles:
 # Resolution order: defaults → profile (matched from model: field) → per-agent overrides
 middleware:
   human_approval:
-    enabled: true    # set to false to disable human-in-the-loop tool approval
+    enabled: true
     mode: all        # 'all' = every tool; 'none' = disabled
     exclude:
       - write_todos         # internal task tracking — no user approval needed
@@ -142,6 +142,8 @@ middleware:
     enabled: true
     max_retries: 2
     tools: ["calculate_bmi", "search_web", "send_email"]
+  tool_access_control:
+    enabled: true
   extra: []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]

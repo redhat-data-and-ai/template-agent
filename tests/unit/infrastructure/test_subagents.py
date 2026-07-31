@@ -1,6 +1,6 @@
 """Unit tests for subagent loading."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -134,7 +134,7 @@ class TestLoadSubagents:
                     "model": "gemini-2.5-flash",
                     "description": "Analyst",
                     "body": "Prompt",
-                    "tools": ["calculate_bmi", "search_web"],
+                    "allowed_tools": ["calculate_bmi", "search_web"],
                 }
             }
             mock_resolve_tools.return_value = [mock_tool1, mock_tool2]
@@ -275,7 +275,7 @@ class TestLoadSubagents:
                     "model": "gemini-2.5-flash",
                     "description": "Analyst",
                     "body": "Prompt",
-                    "tools": [],
+                    "allowed_tools": [],
                 }
             }
             mock_create_model.return_value = mock_model
@@ -750,6 +750,10 @@ class TestSubagentProviderConfig:
                 "deep_agent.src.infrastructure.subagents.SubAgent",
                 return_value=MagicMock(),
             ) as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -766,4 +770,440 @@ class TestSubagentProviderConfig:
             assert mock_middleware.called
             call_kwargs = mock_sa.call_args[1]
             assert "middleware" in call_kwargs
+            assert len(call_kwargs["middleware"]) == 1
             assert mock_middleware.return_value in call_kwargs["middleware"]
+
+
+class TestToolAccessControl:
+    """Tests for allowed_tools, denied_tools, and tool_approval in subagent building."""
+
+    def test_denied_tools_filtered_from_resolved(self):
+        """Subagent with denied_tools has those tools removed."""
+        mock_tool_a = MagicMock()
+        mock_tool_a.name = "tool_a"
+        mock_tool_b = MagicMock()
+        mock_tool_b.name = "tool_b"
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "agent1": {
+                    "name": "agent1",
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a", "tool_b"],
+                    "denied_tools": ["tool_b"],
+                }
+            }
+            mock_resolve.return_value = [mock_tool_a, mock_tool_b]
+            mock_filter.return_value = [mock_tool_a]
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool_a, mock_tool_b])
+
+            mock_filter.assert_called_once_with(
+                [mock_tool_a, mock_tool_b], ["tool_b"], agent_name="agent1"
+            )
+            mock_sa.assert_called_once()
+            call_kwargs = mock_sa.call_args[1]
+            assert call_kwargs["tools"] == [mock_tool_a]
+
+    def test_default_subagent_rejects_tool_approval(self):
+        """Default subagent with tool_approval raises error — must use compiled."""
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+        ):
+            mock_get_configs.return_value = {
+                "agent1": {
+                    "name": "agent1",
+                    "type": "default",
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["sensitive_tool"],
+                    "tool_approval": ["sensitive_tool"],
+                }
+            }
+            with pytest.raises(SubAgentError, match="does not support tool_approval"):
+                load_subagents(tools=[])
+
+    def test_default_subagent_with_tool_approval_is_rejected_by_loader(self):
+        """Default subagent with tool_approval is rejected by load_subagents."""
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+        ):
+            mock_get_configs.return_value = {
+                "default_agent": {
+                    "name": "default_agent",
+                    "type": "default",
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["send_email"],
+                    "tool_approval": ["send_email"],
+                }
+            }
+            with pytest.raises(SubAgentError, match="does not support tool_approval"):
+                load_subagents(tools=[])
+
+    def test_async_subagent_rejects_tool_approval(self):
+        """Async subagent with tool_approval raises error."""
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+        ):
+            mock_get_configs.return_value = {
+                "remote": {
+                    "name": "remote",
+                    "type": "async",
+                    "description": "Remote agent",
+                    "body": "",
+                    "graph_id": "remote-graph",
+                    "tool_approval": ["some_tool"],
+                }
+            }
+            with pytest.raises(SubAgentError, match="does not support tool_approval"):
+                load_subagents(tools=[])
+
+    def test_denied_tools_with_mcp_inheritance(self):
+        """Subagent inheriting all MCP tools still filters denied ones."""
+        mock_tool_a = MagicMock()
+        mock_tool_a.name = "safe_tool"
+        mock_tool_b = MagicMock()
+        mock_tool_b.name = "dangerous_tool"
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={"mcps": ["my-mcp"]},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "admin": {
+                    "name": "admin",
+                    "model": "gemini-2.5-flash",
+                    "description": "Admin",
+                    "body": "Prompt",
+                    # No allowed_tools — inherits all via mcps
+                    "denied_tools": ["dangerous_tool"],
+                }
+            }
+            mock_filter.return_value = [mock_tool_a]
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool_a, mock_tool_b])
+
+            mock_filter.assert_called_once()
+
+    def test_compiled_subagent_gets_denied_tools_filtered(self):
+        """Compiled subagent also filters denied tools (same as default)."""
+        mock_tool = MagicMock()
+        mock_tool.name = "tool_a"
+        mock_model = MagicMock()
+        mock_graph = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deepagents.create_deep_agent") as mock_create_agent,
+            patch(
+                "deep_agent.src.infrastructure.backend.get_configured_backend"
+            ) as mock_backend,
+            patch(
+                "deep_agent.src.infrastructure.subagents.CompiledSubAgent"
+            ) as mock_compiled,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "type": "compiled",
+                    "model": "gemini-2.5-pro",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a", "tool_b"],
+                    "denied_tools": ["tool_b"],
+                }
+            }
+            mock_resolve.return_value = [mock_tool]
+            mock_filter.return_value = [mock_tool]
+            mock_create_agent.return_value = mock_graph
+            mock_backend.return_value = MagicMock()
+            mock_compiled.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool])
+
+            mock_filter.assert_called_once()
+
+    def test_two_subagents_get_different_tool_sets(self):
+        """Two subagents with different allowed_tools get isolated tool sets."""
+        mock_tool_a = MagicMock()
+        mock_tool_a.name = "tool_a"
+        mock_tool_b = MagicMock()
+        mock_tool_b.name = "tool_b"
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+        ):
+            mock_get_configs.return_value = {
+                "agent_x": {
+                    "name": "agent_x",
+                    "model": "gemini-2.5-flash",
+                    "description": "Agent X",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a"],
+                },
+                "agent_y": {
+                    "name": "agent_y",
+                    "model": "gemini-2.5-flash",
+                    "description": "Agent Y",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_b"],
+                },
+            }
+            # resolve_tools returns different results per call
+            mock_resolve.side_effect = [[mock_tool_a], [mock_tool_b]]
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool_a, mock_tool_b])
+
+            assert mock_sa.call_count == 2
+            calls = mock_sa.call_args_list
+            # First subagent gets tool_a only
+            assert calls[0][1]["tools"] == [mock_tool_a]
+            # Second subagent gets tool_b only
+            assert calls[1][1]["tools"] == [mock_tool_b]
+
+    def _mock_tac_disabled(self):
+        """Return a mock middleware config with tool_access_control.enabled=False."""
+        mw_config = MagicMock()
+        mw_config.defaults.tool_access_control.enabled = False
+        return mw_config
+
+    def test_denied_tools_skipped_when_flag_disabled(self):
+        """When tool_access_control.enabled=False, denied_tools are not filtered."""
+        mock_tool_a = MagicMock()
+        mock_tool_a.name = "tool_a"
+        mock_tool_b = MagicMock()
+        mock_tool_b.name = "tool_b"
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_middleware_config",
+                return_value=self._mock_tac_disabled(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "agent1": {
+                    "name": "agent1",
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a", "tool_b"],
+                    "denied_tools": ["tool_b"],
+                }
+            }
+            mock_resolve.return_value = [mock_tool_a, mock_tool_b]
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool_a, mock_tool_b])
+
+            mock_filter.assert_not_called()
+            call_kwargs = mock_sa.call_args[1]
+            assert call_kwargs["tools"] == [mock_tool_a, mock_tool_b]
+
+    def test_tool_approval_skipped_when_flag_disabled(self):
+        """When tool_access_control.enabled=False, tool_approval does not raise for default subagent."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_middleware_config",
+                return_value=self._mock_tac_disabled(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deep_agent.src.infrastructure.subagents.SubAgent") as mock_sa,
+        ):
+            mock_get_configs.return_value = {
+                "agent1": {
+                    "name": "agent1",
+                    "type": "default",
+                    "model": "gemini-2.5-flash",
+                    "description": "Test",
+                    "body": "Prompt",
+                    "allowed_tools": ["sensitive_tool"],
+                    "tool_approval": ["sensitive_tool"],
+                }
+            }
+            mock_sa.return_value = MagicMock()
+
+            load_subagents(tools=[])
+
+            mock_sa.assert_called_once()
+
+    def test_compiled_denied_tools_skipped_when_flag_disabled(self):
+        """When tool_access_control.enabled=False, compiled subagent skips denied_tools and interrupt_on."""
+        mock_tool = MagicMock()
+        mock_tool.name = "tool_a"
+        mock_model = MagicMock()
+        mock_graph = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
+            ) as mock_get_configs,
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_middleware_config",
+                return_value=self._mock_tac_disabled(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
+            ) as mock_resolve,
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch("deepagents.create_deep_agent") as mock_create_agent,
+            patch(
+                "deep_agent.src.infrastructure.backend.get_configured_backend"
+            ) as mock_backend,
+            patch(
+                "deep_agent.src.infrastructure.subagents.CompiledSubAgent"
+            ) as mock_compiled,
+            patch(
+                "deep_agent.src.infrastructure.subagents.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            mock_get_configs.return_value = {
+                "analyst": {
+                    "name": "analyst",
+                    "type": "compiled",
+                    "model": "gemini-2.5-pro",
+                    "description": "Analyst",
+                    "body": "Prompt",
+                    "allowed_tools": ["tool_a", "tool_b"],
+                    "denied_tools": ["tool_b"],
+                    "tool_approval": ["tool_a"],
+                }
+            }
+            mock_resolve.return_value = [mock_tool]
+            mock_create_agent.return_value = mock_graph
+            mock_backend.return_value = MagicMock()
+            mock_compiled.return_value = MagicMock()
+
+            load_subagents(tools=[mock_tool])
+
+            mock_filter.assert_not_called()
+            create_kwargs = mock_create_agent.call_args[1]
+            assert "interrupt_on" not in create_kwargs

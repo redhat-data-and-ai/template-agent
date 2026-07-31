@@ -9,8 +9,6 @@ These modules form the boundary between our application and external dependencie
 """
 
 from .backend import get_backend, get_configured_backend
-from .mcp import get_mcp_tools
-from .subagents import load_subagents
 
 __all__ = [
     "get_mcp_tools",
@@ -18,3 +16,15 @@ __all__ = [
     "get_configured_backend",
     "load_subagents",
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name == "get_mcp_tools":
+        from .mcp import get_mcp_tools
+
+        return get_mcp_tools
+    if name == "load_subagents":
+        from .subagents import load_subagents
+
+        return load_subagents
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

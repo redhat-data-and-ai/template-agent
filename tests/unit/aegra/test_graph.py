@@ -34,7 +34,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
@@ -105,7 +105,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
@@ -189,7 +189,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
             "mcps": ["dataverse-mcp-prod1"],
         }
         mock_config.resolve_tools.return_value = []
@@ -274,7 +274,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
 
@@ -364,7 +364,7 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "tools": [],
+            "allowed_tools": [],
         }
         mock_config.resolve_tools.return_value = []
 
@@ -434,3 +434,87 @@ class TestAgentFactory:
         assert "interrupt_on" not in call_kwargs, (
             "interrupt_on must not be passed when HITL is disabled"
         )
+
+    @pytest.mark.asyncio
+    async def test_denied_tools_skipped_when_flag_disabled(self):
+        """When tool_access_control.enabled=False, denied_tools are not filtered."""
+        mock_compiled = MagicMock()
+        mock_config = MagicMock()
+        mock_config.get_orchestrator_config.return_value = {
+            "name": "orchestrator",
+            "model": "gemini-2.5-flash",
+            "body": "test prompt",
+            "skill_paths": [],
+            "allowed_tools": ["tool_a", "tool_b"],
+            "denied_tools": ["tool_b"],
+        }
+        mock_config.get_middleware_config.return_value.defaults.tool_access_control.enabled = False
+
+        mock_tool_a = MagicMock()
+        mock_tool_a.name = "tool_a"
+        mock_tool_b = MagicMock()
+        mock_tool_b.name = "tool_b"
+        mock_config.resolve_tools.return_value = [mock_tool_a, mock_tool_b]
+        mock_config.resolve_agent_middleware.return_value = MagicMock(
+            skills_enabled=True
+        )
+
+        mock_runtime = MagicMock()
+        mock_runtime.user = None
+
+        _reset_graph_state()
+
+        with (
+            patch("deep_agent.src.agent.config.agent_config", mock_config),
+            patch(
+                "deep_agent.src.infrastructure.providers.register_profiles_from_config",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.agent.config.model.parse_model_config",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.cache.model_cache.get_or_create_model_from_spec",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.aegra.mcp.get_mcp_tools",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.load_subagents",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.backend.get_configured_backend",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.async_tasks.build_async_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.middleware.build_middleware_list",
+                return_value=[],
+            ),
+            patch(
+                "deep_agent.src.infrastructure.middleware.resolve_memory_param",
+                return_value=None,
+            ),
+            patch("deep_agent.aegra.graph._ensure_startup", new_callable=AsyncMock),
+            patch(
+                "deepagents.create_deep_agent", return_value=mock_compiled
+            ) as mock_create,
+            patch(
+                "deep_agent.src.infrastructure.tool_access.filter_denied_tools"
+            ) as mock_filter,
+        ):
+            from deep_agent.aegra.graph import agent
+
+            result = await agent(mock_runtime)
+
+        assert result is mock_compiled
+        mock_filter.assert_not_called()
+        assert mock_create.call_args.kwargs["tools"] == [mock_tool_a, mock_tool_b]
