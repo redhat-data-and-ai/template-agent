@@ -23,6 +23,7 @@ from typing import Any, cast
 import yaml
 
 from deep_agent.src.exceptions import AppException, ErrorCodes
+from deep_agent.src.guardrails.config import GuardrailsConfig
 from deep_agent.src.settings import settings
 from deep_agent.src.token_budget.config import TokenBudgetConfig
 from deep_agent.utils.pylogger import get_python_logger
@@ -116,6 +117,7 @@ class AgentConfig:
     _cache_config: CacheFileConfig
     _otel_config: OtelFileConfig
     _token_budget_config: TokenBudgetConfig
+    _guardrails_config: GuardrailsConfig
     _pii_config: PIIConfig
     _name: str
 
@@ -165,6 +167,31 @@ class AgentConfig:
         except Exception as e:
             logger.warning("Failed to parse runtime/agent.yaml, using defaults: %s", e)
             return {}
+
+    def _load_guardrails_config(
+        self, agent_yaml_guardrail: dict | None
+    ) -> GuardrailsConfig:
+        """Load guardrails configuration from the ``guardrail`` section of agent.yaml.
+
+        Returns a disabled GuardrailsConfig when the section is absent, ``enabled``
+        is not true, or the section fails to parse — guardrails never silently activate.
+        """
+        section = agent_yaml_guardrail or {}
+        if not section.get("enabled", False):
+            logger.info("Guardrail disabled in agent.yaml — skipping guardrail setup")
+            return GuardrailsConfig(enabled=False)
+
+        try:
+            config: GuardrailsConfig = GuardrailsConfig.model_validate(section)
+            logger.info(
+                "Loaded guardrail config from agent.yaml (model=%s)", config.model
+            )
+            return config
+        except Exception as e:
+            logger.warning(
+                "Failed to parse guardrail section — disabling guardrails: %s", e
+            )
+            return GuardrailsConfig(enabled=False)
 
     def _load_pii_config(self) -> PIIConfig:
         """Load PII configuration from runtime/pii.yaml.
@@ -252,6 +279,9 @@ class AgentConfig:
 
         # Load OTEL config from observability.yaml
         self._otel_config = self._load_otel_config()
+
+        # Load guardrails config from agent.yaml guardrail section
+        self._guardrails_config = self._load_guardrails_config(raw.get("guardrail"))
 
         # Load PII config from pii.yaml (absent file = disabled)
         self._pii_config = self._load_pii_config()
@@ -611,6 +641,15 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return self._otel_config
+
+    def get_guardrails_config(self) -> GuardrailsConfig:
+        """Get the pre-loaded guardrails configuration.
+
+        Returns:
+            The parsed GuardrailsConfig from guardrails.yaml (defaults if absent).
+        """
+        self._ensure_loaded()
+        return self._guardrails_config
 
     def get_pyproject_path(self) -> Path:
         """Get the skill sandbox pyproject.toml path.

@@ -232,6 +232,18 @@ memory:
     interval_hours: 6
   max_inject: 20
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Guardrail                                                      [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Controls whether the Granite Guardian content safety checks are active.
+# Set enabled: false or remove this section entirely to disable guardrails.
+guardrail:
+  enabled: false
+  model: "/data/granite-guardian-4.1-8b"
+  # Credentials injected via env vars — configure in Agentforge platform UI:
+  #   GUARDIAN_API_BASE   — endpoint URL (required to activate guardrails)
+  #   GUARDIAN_API_KEY    — API key ("EMPTY" for unauthenticated endpoints)
+  #   GUARDIAN_SSL_VERIFY — true/false, default true
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Token Budget                                                   [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Tracks cumulative LLM tokens per conversation thread_id in MongoDB.

@@ -394,6 +394,13 @@ def _build_default_subagent(
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
 
+    from deep_agent.src.settings import settings as app_settings
+
+    if app_settings.GUARDIAN_API_BASE:
+        from deep_agent.src.guardrails.tool_proxy import wrap_tools
+
+        resolved_tools = wrap_tools(resolved_tools)
+
     subagent_params: dict[str, Any] = {
         "name": name,
         "model": _resolve_subagent_model(agent_cfg),
@@ -460,6 +467,13 @@ def _build_compiled_subagent(
     # Build fallback middleware if spec has fallback configured
     fallback_mw = _build_fallback_middleware(spec)
 
+    from deep_agent.src.settings import settings as app_settings
+
+    if app_settings.GUARDIAN_API_BASE:
+        from deep_agent.src.guardrails.tool_proxy import wrap_tools
+
+        resolved_tools = wrap_tools(resolved_tools)
+
     create_kwargs = {
         "name": name,
         "model": _resolve_subagent_model(agent_cfg),
@@ -475,14 +489,21 @@ def _build_compiled_subagent(
 
     _inner = create_deep_agent(**create_kwargs)
 
+    runnable = _inner
+
     from deep_agent.src.pii import get_scrubber
 
     if get_scrubber() is not None:
         from deep_agent.src.pii.runnable import PIIAwareRunnable
 
-        runnable = PIIAwareRunnable(_inner)
-    else:
-        runnable = _inner
+        runnable = PIIAwareRunnable(runnable)
+        logger.info("subagent '%s' [compiled] wrapped with PIIAwareRunnable", name)
+
+    if app_settings.GUARDIAN_API_BASE:
+        from deep_agent.aegra.safety import SafetyAwareRunnable
+
+        runnable = SafetyAwareRunnable(runnable)
+        logger.info("subagent '%s' [compiled] wrapped with SafetyAwareRunnable", name)
 
     return CompiledSubAgent(
         name=name,

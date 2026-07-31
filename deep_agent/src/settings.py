@@ -144,6 +144,13 @@ class Settings(BaseSettings):
     VLLM_BASE_URL: Optional[str] = Field(default=None)
     VLLM_API_KEY: str = Field(default="EMPTY")
 
+    # ── Granite Guardian guardrails ───────────────────────────────────
+    # Guardrails are active when GUARDIAN_API_BASE is set.
+    # Model and behavior config live in config/agent/runtime/guardrails.yaml.
+    GUARDIAN_API_BASE: Optional[str] = Field(default=None)
+    GUARDIAN_API_KEY: str = Field(default="EMPTY")
+    GUARDIAN_SSL_VERIFY: bool = Field(default=True)
+
     # ── Cache ─────────────────────────────────────────────────────────
     CACHE_ENABLED: bool = Field(default=True)
 

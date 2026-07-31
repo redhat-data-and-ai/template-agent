@@ -6,6 +6,8 @@ import pytest
 
 from deep_agent.src.agent.config.middleware import ResolvedMiddlewareConfig
 from deep_agent.src.infrastructure.middleware import (
+    _build_model_fallback,
+    _build_summarization_tool_middleware,
     _import_middleware,
     build_excluded_middleware,
     build_middleware_list,
@@ -160,3 +162,37 @@ class _DummyMiddleware:
     """Test fixture — a no-op middleware class."""
 
     pass
+
+
+class TestBuildModelFallbackEdgeCases:
+    """Test edge cases for _build_model_fallback."""
+
+    def test_exception_in_init_returns_none(self):
+        with patch(
+            "langchain.agents.middleware.ModelFallbackMiddleware",
+            side_effect=Exception("model init failed"),
+        ):
+            result = _build_model_fallback("some-model")
+        assert result is None
+
+
+class TestBuildSummarizationToolMiddlewareEdgeCases:
+    """Test edge cases for _build_summarization_tool_middleware."""
+
+    def test_none_model_returns_none(self):
+        result = _build_summarization_tool_middleware(model=None, backend=MagicMock())
+        assert result is None
+
+    def test_none_backend_returns_none(self):
+        result = _build_summarization_tool_middleware(model=MagicMock(), backend=None)
+        assert result is None
+
+    def test_exception_during_creation_returns_none(self):
+        with patch(
+            "deepagents.middleware.summarization.create_summarization_tool_middleware",
+            side_effect=Exception("creation error"),
+        ):
+            result = _build_summarization_tool_middleware(
+                model=MagicMock(), backend=MagicMock()
+            )
+        assert result is None

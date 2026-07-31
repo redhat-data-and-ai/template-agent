@@ -224,3 +224,137 @@ class TestDeleteRule:
         ):
             result = await repo.delete_rule("u1", uuid.uuid4())
             assert result is True
+
+    @pytest.mark.asyncio
+    async def test_delete_returns_false_when_not_found(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+        mock_conn._cursor.rowcount = 0
+        mock_conn.execute.return_value = mock_conn._cursor
+
+        with patch(
+            "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",
+            return_value=mock_conn,
+        ):
+            result = await repo.delete_rule("u1", uuid.uuid4())
+            assert result is False
+
+
+class TestListTopMemories:
+    @pytest.mark.asyncio
+    async def test_returns_top_memories_with_limit(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+
+        mem_data = {
+            "id": uuid.uuid4(),
+            "user_id": "u1",
+            "content": "Top memory",
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "updated_at": "2025-01-01T00:00:00+00:00",
+        }
+        mock_conn._cursor.fetchall = AsyncMock(return_value=[mem_data])
+
+        with patch(
+            "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",
+            return_value=mock_conn,
+        ):
+            memories = await repo.list_top_memories("u1", limit=5)
+            assert len(memories) == 1
+            assert memories[0].content == "Top memory"
+
+    @pytest.mark.asyncio
+    async def test_empty_list(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+
+        with patch(
+            "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",
+            return_value=mock_conn,
+        ):
+            memories = await repo.list_top_memories("nobody")
+            assert memories == []
+
+
+class TestCreateMemoryWithGuardian:
+    @pytest.mark.asyncio
+    async def test_creates_memory_when_guardian_passes(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = "http://guardian"
+
+        with (
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety",
+                new_callable=AsyncMock,
+                return_value=(True, "safe"),
+            ) as mock_check,
+            patch(
+                "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",
+                return_value=mock_conn,
+            ),
+        ):
+            memory = await repo.create_memory("u1", "Safe content")
+            assert memory.user_id == "u1"
+            assert memory.content == "Safe content"
+            mock_check.assert_awaited_once_with("Safe content", context="memory")
+            mock_conn.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_raises_when_guardian_fails(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = "http://guardian"
+
+        with (
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety",
+                new_callable=AsyncMock,
+                return_value=(False, "unsafe"),
+            ) as mock_check,
+            patch(
+                "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",
+                return_value=mock_conn,
+            ),
+        ):
+            with pytest.raises(ValueError, match="safety check"):
+                await repo.create_memory("u1", "bad content")
+            mock_check.assert_awaited_once_with("bad content", context="memory")
+
+
+class TestUpsertRuleWithGuardian:
+    @pytest.mark.asyncio
+    async def test_raises_when_guardian_fails(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = "http://guardian"
+
+        with (
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch(
+                "deep_agent.src.guardrails.client.check_safety",
+                new_callable=AsyncMock,
+                return_value=(False, "unsafe"),
+            ) as mock_check,
+            patch(
+                "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",
+                return_value=mock_conn,
+            ),
+        ):
+            with pytest.raises(ValueError, match="safety check"):
+                await repo.upsert_rule("u1", "bad rule")
+            mock_check.assert_awaited_once_with("bad rule", context="rule")

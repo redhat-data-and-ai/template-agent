@@ -108,6 +108,8 @@ class TestLoadSubagents:
         mock_model = MagicMock()
         mock_subagent = MagicMock()
 
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = ""
         with (
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
@@ -127,6 +129,7 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.build_audit_middleware",
                 return_value=None,
             ),
+            patch("deep_agent.src.settings.settings", mock_settings),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -424,6 +427,8 @@ class TestAgentTypeSystem:
     def test_type_compiled_builds_compiled_subagent(self):
         mock_model = MagicMock()
         mock_graph = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = ""
 
         with (
             patch(
@@ -439,6 +444,8 @@ class TestAgentTypeSystem:
             patch(
                 "deep_agent.src.infrastructure.subagents.CompiledSubAgent"
             ) as mock_compiled,
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch("deep_agent.src.pii.get_scrubber", return_value=None),
         ):
             mock_get_configs.return_value = {
                 "analyst": {
@@ -767,3 +774,91 @@ class TestSubagentProviderConfig:
             call_kwargs = mock_sa.call_args[1]
             assert "middleware" in call_kwargs
             assert mock_middleware.return_value in call_kwargs["middleware"]
+
+
+import sys
+
+from deep_agent.src.infrastructure.subagents import (
+    _build_fallback_middleware,
+    _normalize_model_to_dict,
+    _resolve_async_headers,
+)
+
+
+class TestResolveAsyncHeaders:
+    """Tests for _resolve_async_headers function."""
+
+    def test_returns_none_when_no_token_env(self):
+        """No env var set → returns None."""
+        with patch.dict("os.environ", {}, clear=True):
+            result = _resolve_async_headers("foo")
+        assert result is None
+
+    def test_returns_bearer_header_when_env_set(self):
+        """Env var ASYNC_SUBAGENT_FOO_TOKEN=abc → returns Authorization: Bearer abc."""
+        with patch.dict("os.environ", {"ASYNC_SUBAGENT_FOO_TOKEN": "abc"}, clear=True):
+            result = _resolve_async_headers("foo")
+        assert result == {"Authorization": "Bearer abc"}
+
+    def test_normalizes_hyphens_to_underscores(self):
+        """Agent name 'my-agent' → checks env var ASYNC_SUBAGENT_MY_AGENT_TOKEN."""
+        with patch.dict(
+            "os.environ", {"ASYNC_SUBAGENT_MY_AGENT_TOKEN": "secret"}, clear=True
+        ):
+            result = _resolve_async_headers("my-agent")
+        assert result == {"Authorization": "Bearer secret"}
+
+
+class TestNormalizeModelToDict:
+    """Tests for _normalize_model_to_dict function."""
+
+    def test_string_becomes_dict(self):
+        """String model config → dict with name and provider keys."""
+        result = _normalize_model_to_dict("gemini-2.5-flash")
+        assert isinstance(result, dict)
+        assert result["name"] == "gemini-2.5-flash"
+        assert "provider" in result
+
+    def test_dict_returned_as_copy(self):
+        """Dict model config → returned as copy with same content."""
+        original = {"provider": "x", "name": "y"}
+        result = _normalize_model_to_dict(original)
+        assert isinstance(result, dict)
+        assert result == {"provider": "x", "name": "y"}
+        assert result is not original
+
+    def test_dict_fallback_stripped_when_requested(self):
+        """Dict with fallback key and strip_fallback=True → no fallback key."""
+        result = _normalize_model_to_dict(
+            {"name": "m", "fallback": {}}, strip_fallback=True
+        )
+        assert isinstance(result, dict)
+        assert "fallback" not in result
+        assert result["name"] == "m"
+
+    def test_invalid_type_returns_original_with_warning(self):
+        """Invalid type (int) → returned as-is (just warns)."""
+        result = _normalize_model_to_dict(42)
+        assert result == 42
+
+
+class TestBuildFallbackMiddleware:
+    """Tests for _build_fallback_middleware function."""
+
+    def test_no_fallback_returns_empty_list(self):
+        """ModelSpec with fallback=None → returns []."""
+        spec = ModelSpec(
+            provider=Provider.VERTEX, name="gemini-2.5-flash", fallback=None
+        )
+        result = _build_fallback_middleware(spec)
+        assert result == []
+
+    def test_import_error_returns_empty_list(self):
+        """If ModelFallbackMiddleware cannot be imported → returns []."""
+        fallback_spec = ModelSpec(
+            provider=Provider.VERTEX, name="gemini-2.5-flash", fallback=None
+        )
+        spec = ModelSpec(provider=Provider.VERTEX, name="gpt-4", fallback=fallback_spec)
+        with patch.dict(sys.modules, {"langchain.agents.middleware": None}):
+            result = _build_fallback_middleware(spec)
+        assert result == []

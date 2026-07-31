@@ -207,10 +207,29 @@ def _build_model_retry(config: Any) -> Any | None:
     try:
         from langchain.agents.middleware import ModelRetryMiddleware
 
+        from deep_agent.src.guardrails import (
+            ContentSafetyError,
+            InputContentSafetyError,
+            ToolContentSafetyError,
+        )
+
+        def _on_failure(exc: Exception) -> str:
+            # Safety errors: return clean user-facing refusal instead of raw exception text.
+            # retry_on already skips retrying these, so exc is the original exception.
+            if isinstance(exc, ToolContentSafetyError):
+                return "I wasn't able to complete this task due to a content safety policy issue."
+            if isinstance(exc, (InputContentSafetyError, ContentSafetyError)):
+                return "I can't help with that request due to content safety policy."
+            # All other errors: preserve the standard format.
+            exc_type = type(exc).__name__
+            return f"Model call failed with {exc_type}: {exc}"
+
         return ModelRetryMiddleware(
             max_retries=config.max_retries,
             backoff_factor=config.backoff_factor,
             initial_delay=config.initial_delay,
+            retry_on=lambda exc: not isinstance(exc, ContentSafetyError),
+            on_failure=_on_failure,
         )
     except ImportError:
         logger.debug("ModelRetryMiddleware not available")
