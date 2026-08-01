@@ -1,0 +1,39 @@
+name: License Compliance
+
+on:
+  push:
+    branches: [main, deep-agent]
+    paths:
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'requirements*.txt'
+      - 'Containerfile'
+  pull_request:
+    branches: [main, deep-agent]
+    paths:
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'requirements*.txt'
+      - 'Containerfile'
+
+permissions:
+  contents: read
+
+jobs:
+  license-scan:
+    name: License Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Scan for license violations
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: license
+          severity: UNKNOWN,HIGH,CRITICAL
+          exit-code: '1'
+          trivy-config: trivy-license.yaml

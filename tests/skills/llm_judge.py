@@ -5,7 +5,7 @@ from typing import Dict, Optional
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langfuse import Langfuse
 
-from template_agent.utils.google_creds import get_service_account_credentials
+from deep_agent.utils.google_creds import get_service_account_credentials
 
 # Model configuration
 MODEL_NAME = "gemini-3.1-pro-preview"

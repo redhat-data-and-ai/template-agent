@@ -3,53 +3,76 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["template_agent"]
+packages = ["deep_agent"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project]
 name = "template-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "A template for Model Context Protocol (MCP) server development"
 readme = "README.md"
 keywords = ["mcp", "template", "server"]
-requires-python = ">=3.12.2,<3.13"
+requires-python = ">=3.12.2"
 dependencies = [
     "deepagents==0.4.12",
-    "fastapi==0.135.2",
-    "uvicorn==0.42.0",
     "pydantic==2.12.5",
-    "pydantic-settings==2.13.1",
+    "pydantic-settings==2.14.2",
     "python-dotenv==1.2.2",
-    "python-multipart==0.0.22",
     "langchain-google-genai==4.2.2",
     "langchain-google-vertexai==3.2.2",
+    "langchain-openai>=0.3.0",
     "langchain-mcp-adapters==0.2.2",
-    "langfuse==3.14.5",
+    "mcp>=1.28.1,<2",
+    "langfuse>=4.9.0",
     "langgraph-checkpoint-postgres==3.0.5",
+    "langgraph-sdk>=0.1.51",
+    "aegra-cli",
     "psycopg[binary,pool]==3.3.3",
     "psycopg2-binary==2.9.11",
+    "motor==3.6.0",
     "structlog==25.5.0",
     "pyyaml==6.0.3",
-    "streamlit==1.55.0",
+    "PyJWT[crypto]>=2.8.0",
+    "cryptography>=43.0.0",
+    "httpx>=0.27.0",
+    "tenacity>=8.2.0,<10",
+    "redis>=5.0.0,<7",
+    "cachetools>=5.5.0,<6",
+    "apscheduler>=4.0.0a5",
+    "presidio-analyzer>=2.2.0",
+    "spacy>=3.7.0,<4",
+    "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
+    "opentelemetry-api>=1.33.1,<2.0.0",
+    "opentelemetry-sdk>=1.33.1,<2.0.0",
+    "opentelemetry-exporter-otlp>=1.33.1,<2.0.0",
+    "opentelemetry-instrumentation-fastapi>=0.52b1,<1.0.0",
+    "litellm>=1.40.0",
+    "aiokafka>=0.10.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.4.1",
-    "pytest-asyncio==1.0.0",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
     "pytest-cov==6.2.1",
+    "pytest-mock>=3.14.0",
     "ruff==0.12.2",
     "mypy==1.16.1",
     "pre-commit==4.2.0",
     "httpx==0.28.1",
 ]
 
-[project.scripts]
-template-agent = "template_agent.src.main:main"
-
 [project.urls]
 Homepage = "https://github.com/redhat-data-and-ai/template-agent"
 Repository = "https://github.com/redhat-data-and-ai/template-agent"
 Issues = "https://github.com/redhat-data-and-ai/template-agent/issues"
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=6.2.1",
+]
 
 [tool.ruff]
 target-version = "py312"
@@ -67,9 +90,9 @@ known-first-party = ["src"]
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-check_untyped_defs = false
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
 disallow_untyped_decorators = false
 no_implicit_optional = true
 warn_redundant_casts = true
@@ -77,9 +100,11 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+warn_return_any = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -87,10 +112,18 @@ addopts = [
     "--strict-markers",
     "--strict-config",
 ]
-markers = ["asyncio"]
+asyncio_mode = "auto"
+markers = [
+    "asyncio",
+    "unit: fast isolated unit tests",
+    "integration: tests requiring external services or multi-component interaction",
+    "skills: marks tests as skill evaluation tests (deselect with '-m \"not skills\"')",
+    "e2e: end-to-end tests requiring a running aegra server",
+    "slow: tests that take more than 30 seconds",
+]
 
 [tool.coverage.run]
-source = ["src"]
+source = ["deep_agent"]
 omit = [
     "*/tests/*",
     "*/test_*",
@@ -98,7 +131,11 @@ omit = [
     "*/migrations/*",
 ]
 
+[tool.coverage.html]
+directory = "htmlcov"
+
 [tool.coverage.report]
+show_missing = true
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

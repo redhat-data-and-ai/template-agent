@@ -1,0 +1,213 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  labels:
+    app: agent
+    component: agent
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: agent
+      component: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+        component: agent
+    spec:
+      serviceAccountName: agent
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: agent
+          image: agent:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5002
+              name: http
+              protocol: TCP
+          env:
+            - name: AGENT_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: AGENT_HOST
+            - name: AGENT_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: AGENT_PORT
+            - name: ENABLE_AUTH
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: ENABLE_AUTH
+            - name: PYTHON_LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: PYTHON_LOG_LEVEL
+            - name: LANGFUSE_TRACING_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: LANGFUSE_TRACING_ENVIRONMENT
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_PASSWORD
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+            - name: LANGFUSE_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: LANGFUSE_BASE_URL
+                  optional: true
+            - name: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
+                  optional: true
+            - name: SSO_ISSUER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: SSO_ISSUER_URL
+                  optional: true
+            - name: SSO_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: SSO_CLIENT_ID
+                  optional: true
+            - name: SSO_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: SSO_CLIENT_SECRET
+                  optional: true
+            - name: VLLM_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: VLLM_BASE_URL
+                  optional: true
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: VLLM_API_KEY
+                  optional: true
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REDIS_URL
+            - name: SSL_KEYFILE
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: SSL_KEYFILE
+                  optional: true
+            - name: SSL_CERTFILE
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: SSL_CERTFILE
+                  optional: true
+            - name: REQUEST_LOGGING_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REQUEST_LOGGING_ENABLED
+            - name: REQUEST_LOG_HEADERS
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REQUEST_LOG_HEADERS
+            - name: REQUEST_LOG_BODY
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REQUEST_LOG_BODY
+            - name: REQUEST_LOG_BODY_MAX_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REQUEST_LOG_BODY_MAX_SIZE
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 5002
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5002
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5002
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+      restartPolicy: Always

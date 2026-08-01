@@ -1,0 +1,63 @@
+name: Require Linked Issue
+
+on:
+  pull_request:
+    branches: [main, deep-agent]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  check-issue:
+    name: Check Issue Link
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require linked issue
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = context.payload.pull_request.number;
+            const prAuthor = context.payload.pull_request.user.login;
+
+            const result = await github.graphql(`
+              query($owner: String!, $repo: String!, $pr: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    closingIssuesReferences(first: 10) {
+                      nodes {
+                        number
+                        assignees(first: 10) {
+                          nodes { login }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `, { owner, repo, pr: prNumber });
+
+            const issues = result.repository.pullRequest.closingIssuesReferences.nodes;
+
+            if (issues.length === 0) {
+              core.setFailed(
+                'No linked issue found. Use the Development sidebar to link an issue to this PR.'
+              );
+              return;
+            }
+
+            core.info(`Linked issues: ${issues.map(i => '#' + i.number).join(', ')}`);
+
+            const authorAssigned = issues.some(issue =>
+              issue.assignees.nodes.some(a => a.login === prAuthor)
+            );
+
+            if (!authorAssigned) {
+              const issueList = issues.map(i => '#' + i.number).join(', ');
+              core.setFailed(
+                `PR author @${prAuthor} is not assigned to any linked issue (${issueList}). Assign yourself to the issue first.`
+              );
+            }

@@ -1,7 +1,7 @@
 """Generic skill tests with auto-discovery.
 
 This single test file automatically discovers and tests all skills in
-agent_config/skills/ by loading their evals.json files.
+config/agent/skills/ by loading their evals.json files.
 """
 
 import asyncio
@@ -12,7 +12,7 @@ import pytest
 from deepagents import create_deep_agent
 from langgraph.checkpoint.memory import MemorySaver
 
-from template_agent.src.infrastructure.backend import get_backend
+from deep_agent.src.infrastructure.backend import get_backend
 
 
 # ============================================================================
@@ -153,7 +153,7 @@ def test_skill_evaluation(
 ):
     """Test skill with eval case using LLM judge.
 
-    Auto-discovers all skills from agent_config/skills/ and runs their evals.
+    Auto-discovers all skills from config/agent/skills/ and runs their evals.
 
     Each eval must pass 70% of its assertions to be considered successful.
 

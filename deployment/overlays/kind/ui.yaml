@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  labels:
+    app: template-agent
+    component: ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: ui
+  template:
+    metadata:
+      labels:
+        app: template-agent
+        component: ui
+    spec:
+      containers:
+        - name: ui
+          image: localhost/template-ui:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8080"
+            - name: ENVIRONMENT
+              value: "development"
+            - name: AUTH_ENABLED
+              value: "false"
+            - name: AGENT_HOST
+              value: "http://agent:5002"
+            - name: UI_CONFIG_PATH
+              value: "/etc/config/ui.yaml"
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REDIS_HOST
+            - name: REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REDIS_PORT
+          volumeMounts:
+            - name: ui-config
+              mountPath: /etc/config
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+      volumes:
+        - name: ui-config
+          configMap:
+            name: ui-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ui-config
+  labels:
+    app: template-agent
+    component: ui
+data:
+  ui.yaml: |
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      body_limit: 1048576
+    logging:
+      level: info
+    cors:
+      origin: "http://localhost:5173"
+    security:
+      helmet:
+        enabled: true
+        csp:
+          default_src: ["'self'"]
+          script_src: ["'self'", "'unsafe-inline'"]
+          style_src: ["'self'", "'unsafe-inline'"]
+          img_src: ["'self'", "data:", "blob:"]
+          connect_src: ["'self'"]
+          font_src: ["'self'"]
+          object_src: ["'none'"]
+          frame_ancestors: ["'none'"]
+        cross_origin_embedder_policy: false
+      rate_limit:
+        enabled: true
+        max: 100
+        window: "1 minute"
+        exclude_paths:
+          - "/api/health"
+          - "/_health"
+      session:
+        secure_cookie: false
+        max_age_days: 30
+    otel:
+      enabled: false
+      service_name: "template-ui"
+    announcement:
+      enabled: false
+      message: ""
+      type: info
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  labels:
+    app: template-agent
+    component: ui
+spec:
+  selector:
+    component: ui
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  type: ClusterIP

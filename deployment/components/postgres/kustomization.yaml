@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - deployment.yaml
+  - pvc.yaml
+  - service.yaml
+  - init-configmap.yaml
+
+patches:
+  - target:
+      kind: ConfigMap
+      name: agent-config
+    patch: |-
+      - op: add
+        path: /data/POSTGRES_HOST
+        value: "postgres"
+      - op: add
+        path: /data/POSTGRES_PORT
+        value: "5432"
+      - op: add
+        path: /data/POSTGRES_DB
+        value: "template_agent"

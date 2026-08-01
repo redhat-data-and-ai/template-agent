@@ -4,7 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 import pytest
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -13,7 +13,7 @@ from langfuse import Langfuse
 from llm_judge import LLMJudge
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-SKILLS_DIR = PROJECT_ROOT / "template_agent" / "agent_config" / "skills"
+SKILLS_DIR = PROJECT_ROOT / "config" / "agent" / "skills"
 
 MODEL_NAME = "gemini-3.1-pro-preview"
 MODEL_TEMPERATURE = 0
@@ -95,7 +95,7 @@ def model():
     Function-scoped to ensure each test gets a fresh model instance
     bound to the correct event loop.
     """
-    from template_agent.utils.google_creds import get_service_account_credentials
+    from deep_agent.utils.google_creds import get_service_account_credentials
 
     # Check if credentials are available
     if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS_CONTENT"):

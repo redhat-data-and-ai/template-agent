@@ -1,0 +1,348 @@
+name: Build and Push Base Image
+
+on:
+  push:
+    tags:
+      - '*'
+    branches:
+      # - main
+      - deep-agent
+  pull_request:
+    branches: [ main, deep-agent ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'tests/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  security-events: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        if: github.event_name != 'pull_request'
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix={{branch}}-,enable=${{ !startsWith(github.ref, 'refs/tags/') }}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Extract version for deployment package
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          elif [[ "${{ github.ref }}" == refs/pull/* ]]; then
+            VERSION="pr-${{ github.event.pull_request.number }}-${GITHUB_SHA::7}"
+          else
+            BRANCH="${GITHUB_REF#refs/heads/}"
+            BRANCH_SAFE="$(echo "$BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g; s/^-//; s/-$//' | cut -c1-60)"
+            VERSION="${BRANCH_SAFE}-${GITHUB_SHA::7}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "package_name=deployment.zip" >> $GITHUB_OUTPUT
+
+      - name: Build image locally for scanning
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          file: ./Containerfile
+          push: false
+          load: true
+          tags: scan-target:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan-target:${{ steps.version.outputs.version }}
+          format: table
+          severity: CRITICAL,HIGH
+          scanners: vuln
+          trivyignores: .trivyignore
+          exit-code: '1'
+
+      - name: Generate Trivy JSON report
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan-target:${{ steps.version.outputs.version }}
+          format: json
+          output: trivy-report.json
+          scanners: vuln
+          exit-code: '0'
+
+      - name: Generate SBOM
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan-target:${{ steps.version.outputs.version }}
+          format: cyclonedx
+          output: sbom.cdx.json
+          scanners: vuln
+          exit-code: '0'
+
+      - name: Upload SBOM
+        if: always() && hashFiles('sbom.cdx.json') != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-${{ steps.version.outputs.version }}
+          path: sbom.cdx.json
+          retention-days: 90
+
+      - name: Generate SARIF report
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan-target:${{ steps.version.outputs.version }}
+          format: sarif
+          output: trivy-results.sarif
+          scanners: vuln
+          exit-code: '0'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        if: always() && hashFiles('trivy-results.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@e0647621c2984b5ed2f768cb892365bf2a616ad1 # v4
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Upload Trivy report as artifact
+        if: always() && hashFiles('trivy-results.sarif') != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-report-${{ steps.version.outputs.version }}
+          path: trivy-results.sarif
+          retention-days: 30
+
+      - name: Push multi-platform image
+        if: github.event_name != 'pull_request'
+        id: push
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          file: ./Containerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Verify pushed image is pullable
+        if: github.event_name != 'pull_request'
+        run: |
+          docker pull ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
+          echo "Image pull verified successfully"
+
+      - name: Sign image with cosign
+        if: github.event_name != 'pull_request'
+        id: sign
+        continue-on-error: true
+        run: |
+          for attempt in 1 2 3; do
+            if cosign sign --yes --recursive \
+              ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}; then
+              echo "signed=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Signing attempt $attempt failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "signed=false" >> $GITHUB_OUTPUT
+          echo "::warning::Image signing failed after 3 attempts. Image was pushed but is unsigned."
+          exit 1
+
+      - name: Verify cosign signature
+        if: github.event_name != 'pull_request' && steps.sign.outputs.signed == 'true'
+        run: |
+          cosign verify \
+            --certificate-identity-regexp="https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+            ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
+          echo "Signature verification passed"
+
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Create deployment package metadata
+        if: github.event_name != 'pull_request'
+        run: |
+          cat > deployment/release-info.json <<EOF
+          {
+            "version": "${{ steps.version.outputs.version }}",
+            "git_ref": "${{ github.ref }}",
+            "git_sha": "${{ github.sha }}",
+            "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "container_image": "ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}",
+            "container_digest": "${{ steps.push.outputs.digest }}",
+            "signed": ${{ steps.sign.outputs.signed || false }},
+            "repository": "${{ github.repository }}"
+          }
+          EOF
+          cat deployment/release-info.json
+
+      - name: Create deployment package
+        if: github.event_name != 'pull_request'
+        run: |
+          cd deployment
+          zip -r ../${{ steps.version.outputs.package_name }} . -x "*.git*"
+          cd ..
+          echo "Created package: ${{ steps.version.outputs.package_name }}"
+          ls -lh ${{ steps.version.outputs.package_name }}
+
+      - name: Generate checksums
+        if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'
+        run: |
+          FILES="${{ steps.version.outputs.package_name }}"
+          [ -f sbom.cdx.json ] && FILES="$FILES sbom.cdx.json"
+          [ -f trivy-report.json ] && FILES="$FILES trivy-report.json"
+          sha256sum $FILES > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Collect release artifacts
+        if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'
+        id: release-files
+        run: |
+          FILES="${{ steps.version.outputs.package_name }}"
+          FILES="$FILES
+          SHA256SUMS.txt"
+          [ -f sbom.cdx.json ] && FILES="$FILES
+          sbom.cdx.json"
+          [ -f trivy-report.json ] && FILES="$FILES
+          trivy-report.json"
+          # Use delimiter for multiline output
+          echo "files<<RELEASE_EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "RELEASE_EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release (for tags only)
+        if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        with:
+          files: ${{ steps.release-files.outputs.files }}
+          body: |
+            ## Container Image
+
+            ```bash
+            docker pull ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+            ```
+
+            **Digest:** `${{ steps.push.outputs.digest }}`
+            **Signed:** ${{ steps.sign.outputs.signed == 'true' && 'Yes' || 'No (signing failed, see workflow logs)' }}
+
+            ## Verify
+
+            ```bash
+            # Verify image signature
+            cosign verify \
+              --certificate-identity-regexp="https://github.com/${{ github.repository }}/" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+              ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+
+            # Verify build provenance
+            gh attestation verify \
+              oci://ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }} \
+              --owner ${{ github.repository_owner }}
+
+            # Verify artifact checksums
+            sha256sum -c SHA256SUMS.txt
+            ```
+
+            ## Artifacts
+
+            | File | Description |
+            |------|-------------|
+            | `deployment.zip` | Deployment manifests with release metadata |
+            | `sbom.cdx.json` | CycloneDX software bill of materials |
+            | `trivy-report.json` | Vulnerability scan results |
+            | `SHA256SUMS.txt` | SHA-256 checksums for all release artifacts |
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload deployment package as artifact (for branch builds)
+        if: "!startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'"
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.version.outputs.package_name }}
+          path: ${{ steps.version.outputs.package_name }}
+          retention-days: 30
+
+      - name: Build summary
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        run: |
+          echo "### Base Image Built Successfully! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Digest:** \`${{ steps.push.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Signed:** ${{ steps.sign.outputs.signed == 'true' && 'Yes' || 'No' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Container Image Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pull command:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Verify signature:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo 'cosign verify \' >> $GITHUB_STEP_SUMMARY
+          echo '  --certificate-identity-regexp="https://github.com/${{ github.repository }}/" \' >> $GITHUB_STEP_SUMMARY
+          echo '  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \' >> $GITHUB_STEP_SUMMARY
+          echo '  ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

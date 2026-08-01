@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Core resources - always deployed
+# Postgres and Redis are now optional components
+resources:
+  - configmap.yaml
+  - secret.yaml
+
+labels:
+  - pairs:
+      app: template-agent

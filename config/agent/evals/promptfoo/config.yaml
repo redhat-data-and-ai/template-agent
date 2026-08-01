@@ -1,0 +1,160 @@
+# Promptfoo — Fast iteration eval for deep-agent
+#
+# Usage:
+#   npx promptfoo eval                    # run all tests
+#   npx promptfoo eval --filter-pattern "bmi"  # run only BMI tests
+#   npx promptfoo view                    # open results in browser
+#
+# Requires:
+#   - deep-agent running at AGENT_URL (default: http://localhost:5002)
+#   - Node.js 18+
+#   - npx promptfoo (auto-installs on first run)
+
+description: "Deep Agent — BMI Fitness Assistant Eval Suite"
+
+providers:
+  - id: http
+    label: deep-agent-local
+    config:
+      url: "{{AGENT_URL | default: 'http://localhost:5002'}}/v1/stream"
+      method: POST
+      headers:
+        Content-Type: application/json
+      body:
+        message: "{{prompt}}"
+        thread_id: "eval-{{_testCaseId}}"
+        stream_tokens: false
+      responseParser: "data[-1]"
+      transformResponse: |
+        // Extract final text from SSE stream
+        const lines = output.split('\n').filter(l => l.startsWith('data:'));
+        const texts = lines
+          .map(l => l.replace('data:', '').trim())
+          .filter(l => l && l !== '[DONE]')
+          .map(l => { try { return JSON.parse(l); } catch { return null; } })
+          .filter(Boolean)
+          .filter(e => e.type === 'text' || e.type === 'response')
+          .map(e => e.content || e.text || '')
+        return texts.join('');
+
+defaultTest:
+  options:
+    timeout: 120000
+
+tests:
+  # ── BMI Calculation (delegation) ──────────────────────────────
+  - description: "Basic metric BMI — delegates to analyst"
+    vars:
+      prompt: "I'm 175 cm tall and weigh 70 kg. Calculate my BMI."
+    assert:
+      - type: llm-rubric
+        value: "Response contains a BMI value around 22.9 and categorizes it as Normal"
+      - type: llm-rubric
+        value: "Response includes health tips specific to the Normal BMI category"
+      - type: contains-any
+        value: ["22.9", "22.8", "23.0"]
+      - type: contains
+        value: "Normal"
+      - type: llm-rubric
+        value: "Response includes a disclaimer about consulting a healthcare professional"
+
+  - description: "Underweight BMI — correct category + tips"
+    vars:
+      prompt: "Height: 180 cm, Weight: 55 kg. What's my BMI?"
+    assert:
+      - type: llm-rubric
+        value: "Response contains a BMI around 17.0 and classifies as Underweight"
+      - type: llm-rubric
+        value: "Health tips focus on healthy weight gain, not weight loss"
+      - type: not-contains
+        value: "weight loss"
+
+  - description: "Overweight BMI — no shaming language"
+    vars:
+      prompt: "I'm 170cm and 90kg. Give me my BMI report."
+    assert:
+      - type: llm-rubric
+        value: "Response classifies BMI as Overweight (around 31.1) with supportive, non-judgmental tone"
+      - type: not-contains-any
+        value: ["bad", "failing", "terrible", "fat"]
+      - type: llm-rubric
+        value: "Includes disclaimer about consulting a healthcare professional"
+
+  # ── Imperial unit conversion ──────────────────────────────────
+  - description: "Imperial units — converts before delegating"
+    vars:
+      prompt: "I'm 5 feet 10 inches tall, 180 lbs. Calculate my BMI."
+    assert:
+      - type: llm-rubric
+        value: "Response contains a valid BMI calculation (around 25.8) with correct unit conversion from imperial to metric"
+      - type: llm-rubric
+        value: "Response does not ask the user to convert units themselves"
+
+  # ── Delegation enforcement ────────────────────────────────────
+  - description: "Orchestrator never calculates BMI itself"
+    vars:
+      prompt: "Height 175cm, weight 70kg. What is 70 / (1.75 * 1.75)?"
+    assert:
+      - type: llm-rubric
+        value: "The agent delegates BMI calculation to a subagent rather than computing it inline"
+      - type: not-contains
+        value: "70 / (1.75"
+
+  # ── Out of scope ──────────────────────────────────────────────
+  - description: "Diet plan — politely declined"
+    vars:
+      prompt: "Create a weekly meal plan for me."
+    assert:
+      - type: llm-rubric
+        value: "Response politely declines the request as out of scope and explains what the assistant can do"
+      - type: not-contains-any
+        value: ["Monday", "Tuesday", "breakfast", "lunch", "dinner"]
+
+  - description: "Exercise routine — politely declined"
+    vars:
+      prompt: "Give me a workout routine for weight loss."
+    assert:
+      - type: llm-rubric
+        value: "Response politely declines and redirects to BMI analysis capability"
+
+  # ── Email delivery ────────────────────────────────────────────
+  - description: "BMI + email — validates email then delegates"
+    vars:
+      prompt: "Calculate BMI for 175cm, 70kg and email the report to test@redhat.com"
+    assert:
+      - type: llm-rubric
+        value: "Response validates the email address and sends a BMI report to the specified recipient"
+      - type: llm-rubric
+        value: "Response confirms the email was sent or provides the report with email delivery status"
+
+  - description: "Invalid email — caught and reported"
+    vars:
+      prompt: "Calculate my BMI (170cm, 65kg) and send to not-an-email"
+    assert:
+      - type: llm-rubric
+        value: "Response identifies the invalid email address and asks for a valid one"
+
+  # ── Multi-step requests ───────────────────────────────────────
+  - description: "Multi-step — TODO list created first"
+    vars:
+      prompt: "Calculate BMI for 180cm/80kg, then email it to user@redhat.com, and also create a diet plan."
+    assert:
+      - type: llm-rubric
+        value: "Response creates a TODO list before starting work, handles BMI and email, and declines the diet plan as out of scope"
+
+  # ── Edge cases ────────────────────────────────────────────────
+  - description: "Missing weight — asks for it"
+    vars:
+      prompt: "I'm 175 cm tall. Calculate my BMI."
+    assert:
+      - type: llm-rubric
+        value: "Response asks for the missing weight measurement before proceeding"
+      - type: not-contains-any
+        value: ["22.", "23.", "24.", "25."]
+
+  - description: "Nonsense input — handled gracefully"
+    vars:
+      prompt: "aslkdjfh lkajsdf"
+    assert:
+      - type: llm-rubric
+        value: "Response handles the nonsensical input gracefully, either asking for clarification or explaining what the assistant can do"
