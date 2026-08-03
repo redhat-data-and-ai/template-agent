@@ -70,5 +70,6 @@ def _create_by_provider(
     if provider == Provider.OPENAI:
         return _create_vllm_model(model_name, temperature, max_output_tokens)
     if provider == Provider.MAAS:
+        model_name = "/data/" + model_name.lstrip("/").removeprefix("data/")
         return _create_vllm_model(model_name, temperature, max_output_tokens)
     raise ValueError(f"unsupported provider: {provider}")

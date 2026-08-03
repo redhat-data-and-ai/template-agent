@@ -72,7 +72,7 @@ class TestGuardianModel:
         cfg = MagicMock()
         cfg.model = "my-model"
         with patch("deep_agent.src.guardrails.get_guardrails_config", return_value=cfg):
-            assert _guardian_model() == "my-model"
+            assert _guardian_model() == "/data/my-model"
 
     def test_raises_when_no_config(self):
         with patch(
@@ -80,6 +80,28 @@ class TestGuardianModel:
         ):
             with pytest.raises(RuntimeError, match="not initialised"):
                 _guardian_model()
+
+    def test_raises_when_model_is_none(self):
+        cfg = MagicMock()
+        cfg.model = None
+        with patch("deep_agent.src.guardrails.get_guardrails_config", return_value=cfg):
+            with pytest.raises(RuntimeError, match="no model is configured"):
+                _guardian_model()
+
+    @pytest.mark.parametrize(
+        "input_name, expected",
+        [
+            ("granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+            ("/data/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+            ("data/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+            ("/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+        ],
+    )
+    def test_normalizes_model_name(self, input_name, expected):
+        cfg = MagicMock()
+        cfg.model = input_name
+        with patch("deep_agent.src.guardrails.get_guardrails_config", return_value=cfg):
+            assert _guardian_model() == expected
 
 
 class TestCallGuardian:
