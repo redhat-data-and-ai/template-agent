@@ -201,3 +201,63 @@ result without reconnecting.
 | `deep_agent/aegra/mcp.py` | Replace flat cache with `frozenset`-keyed dict; update lookup and store logic |
 | `tests/unit/cache/test_mcp_cache.py` | New — 6 tests covering cache miss, bug regression (×2), correct hit, TTL expiry |
 | `tests/unit/infrastructure/test_mcp.py` | Update `_reset_mcp_cache()` to reset new dict names |
+
+---
+
+## Addendum — Rebase onto upstream/deep-agent + CodeRabbit follow-ups
+
+Before this PR merged, `upstream/deep-agent` moved 57 commits ahead and landed a large OAuth/DCR
+rewrite of `mcp.py` (token-injector interceptor, per-server credential resolution, retry logic,
+auth placeholder tools, `user_id` param). That rewrite **reintroduced the exact bug described
+above** — it kept the old flat `_cached_tools` / `_cached_tools_ts` globals, since it branched
+off before this fix merged. This PR was rebased onto the latest `upstream/deep-agent` and the
+`frozenset`-keyed cache was reapplied on top of the new function bodies, with all of upstream's
+new OAuth functionality left untouched. `invalidate_mcp_tool_cache()` (new upstream, called after
+an OAuth connect completes) now does `_tool_cache.clear(); _tool_cache_ts.clear()`.
+
+CodeRabbit flagged three follow-up issues on the original diff, all addressed in the rebase:
+
+### 1 — Empty results were never cached (Major)
+
+`get_mcp_tools()` returned `[]` on both the "no enabled servers" and "all servers failed" paths
+*before* the cache-write lines, so a repeated request that resolves to zero tools reconnects on
+every single call instead of respecting the TTL like a successful result does.
+
+Fix: write to `_tool_cache[cache_key]` / `_tool_cache_ts[cache_key]` on both early-return paths
+too — **with one deliberate exception**. The "no auth token at startup" deferral is *not* cached,
+because the cache key is keyed only by `server_names`, not by auth state. Caching that negative
+result would mask the first legitimately authenticated request for the same servers for the rest
+of the TTL window. Caching is applied only when `has_auth` (`bool(sso_token or user_id)`) is true:
+
+```python
+if not tools:
+    ...
+    if has_auth:
+        _tool_cache[cache_key] = []
+        _tool_cache_ts[cache_key] = time.time()
+    return []
+```
+
+The "no enabled servers" path has no such risk — it's a static, deterministic outcome of config
++ `server_names` only, independent of any token — so it is cached unconditionally.
+
+### 2 — Missing order-independence regression test (Minor)
+
+Added `test_reversed_server_names_order_is_still_a_cache_hit`: requests
+`["main-mcp", "analytics-mcp"]` then `["analytics-mcp", "main-mcp"]` and asserts the second call
+is a cache hit (`connect_mock.call_count` stays at 2, one per server, not 4).
+
+### 3 — Missing empty-result caching regression tests (Minor)
+
+Added two tests mirroring the "Bug 2" test structure — they fail without the Section 1 fix and
+pass with it:
+
+- `test_no_enabled_servers_result_is_cached` — asserts `_get_server_configs` is called once
+  across two identical requests that resolve to zero enabled servers.
+- `test_all_servers_failed_result_is_cached_when_authenticated` — asserts
+  `connect_mock.call_count == 1` across two identical authenticated requests where every server
+  fails to connect.
+
+A third test, `test_unauthenticated_deferral_is_not_cached`, guards the deliberate exception
+above — an unauthenticated call followed by an authenticated call for the same `server_names`
+must both hit the network (`connect_mock.call_count == 2`).

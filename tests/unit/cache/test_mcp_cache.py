@@ -19,8 +19,6 @@ import time
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Patch the broken langchain_mcp_adapters import before importing the module
 # under test.  The installed langchain_mcp_adapters version references
@@ -41,7 +39,6 @@ sys.modules.setdefault("langchain_mcp_adapters.client", _fake_mcp_adapters_clien
 
 # Now safe to import the module under test
 import deep_agent.aegra.mcp as mcp_module  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,12 +68,31 @@ _FAKE_SERVERS = {
 }
 
 
-async def _fake_connect(name: str, config: dict, timeout: int, *, required: bool = False):
+async def _fake_connect(
+    name: str,
+    config: dict,
+    server_cfg: dict,
+    timeout: int,
+    *,
+    required: bool = False,
+):
     """Simulate two MCP servers with completely different tool sets."""
     if name == "main-mcp":
         return [_tool("validate_email")]
     if name == "analytics-mcp":
         return [_tool("calculate_bmi"), _tool("search_web")]
+    return []
+
+
+async def _fake_connect_all_fail(
+    name: str,
+    config: dict,
+    server_cfg: dict,
+    timeout: int,
+    *,
+    required: bool = False,
+):
+    """Simulate every MCP server being unreachable."""
     return []
 
 
@@ -259,3 +275,133 @@ class TestMcpToolCache:
         # Network was hit despite pre-populated cache (TTL expired)
         assert connect_mock.call_count == 1
         assert [t.name for t in tools] == ["validate_email"]
+
+    # ── Order independence: frozenset key ignores server_names order ────────
+
+    async def test_reversed_server_names_order_is_still_a_cache_hit(self):
+        """A request for the same servers in a different order is one cache entry.
+
+        ``frozenset(["main-mcp", "analytics-mcp"])`` must equal
+        ``frozenset(["analytics-mcp", "main-mcp"])`` — the cache key must not
+        be order-sensitive, otherwise every re-ordering of the same server
+        set would be treated as a brand-new combination and reconnect.
+        """
+        connect_mock = AsyncMock(side_effect=_fake_connect)
+
+        with (
+            patch.object(mcp_module, "_get_server_configs", return_value=_FAKE_SERVERS),
+            patch("deep_agent.aegra.mcp._connect_single_server", connect_mock),
+        ):
+            first = await mcp_module.get_mcp_tools(
+                sso_token=None,
+                server_names=["main-mcp", "analytics-mcp"],
+            )
+            second = await mcp_module.get_mcp_tools(
+                sso_token=None,
+                server_names=["analytics-mcp", "main-mcp"],
+            )
+
+        # One connect per server on the first call; the reordered second
+        # call must be a cache hit, not two more connects.
+        assert connect_mock.call_count == 2, (
+            f"Expected 2 connect calls total (one per server), got "
+            f"{connect_mock.call_count}. A reordered server_names list "
+            "created a new cache entry instead of hitting the existing one."
+        )
+        assert (
+            set(t.name for t in first)
+            == set(t.name for t in second)
+            == {
+                "validate_email",
+                "calculate_bmi",
+                "search_web",
+            }
+        )
+
+    # ── CodeRabbit: empty results must also be cached ────────────────────────
+
+    async def test_no_enabled_servers_result_is_cached(self):
+        """Repeated requests that resolve to zero enabled servers must not
+        re-run server-config resolution on every call within the TTL.
+
+        Before the fix, ``get_mcp_tools`` returned ``[]`` before writing to
+        the cache, so this path was re-evaluated on every single call.
+        """
+        get_configs_mock = MagicMock(return_value=_FAKE_SERVERS)
+
+        with patch.object(mcp_module, "_get_server_configs", get_configs_mock):
+            first = await mcp_module.get_mcp_tools(
+                sso_token=None,
+                server_names=["nonexistent-mcp"],
+            )
+            second = await mcp_module.get_mcp_tools(
+                sso_token=None,
+                server_names=["nonexistent-mcp"],
+            )
+
+        assert first == []
+        assert second == []
+        assert get_configs_mock.call_count == 1, (
+            f"Expected _get_server_configs to be called once (second call "
+            f"should be a cache hit), got {get_configs_mock.call_count}."
+        )
+
+    async def test_all_servers_failed_result_is_cached_when_authenticated(self):
+        """Repeated requests where every server fails must not reconnect
+        on every call within the TTL, as long as a token was supplied
+        (an unauthenticated deferral is intentionally NOT cached — see
+        test_unauthenticated_deferral_is_not_cached below).
+        """
+        connect_mock = AsyncMock(side_effect=_fake_connect_all_fail)
+
+        with (
+            patch.object(mcp_module, "_get_server_configs", return_value=_FAKE_SERVERS),
+            patch("deep_agent.aegra.mcp._connect_single_server", connect_mock),
+        ):
+            first = await mcp_module.get_mcp_tools(
+                sso_token="fake-sso-token",
+                server_names=["main-mcp"],
+            )
+            second = await mcp_module.get_mcp_tools(
+                sso_token="fake-sso-token",
+                server_names=["main-mcp"],
+            )
+
+        assert first == []
+        assert second == []
+        assert connect_mock.call_count == 1, (
+            f"Expected 1 connect call (second call should be a cache hit "
+            f"on the cached empty result), got {connect_mock.call_count}."
+        )
+
+    async def test_unauthenticated_deferral_is_not_cached(self):
+        """An unauthenticated deferral must NOT be cached.
+
+        Caching it under the same server_names key would mask the first
+        authenticated request — a real token arriving shortly after an
+        anonymous/cold-start call must still trigger a real connection
+        attempt, not return a stale empty list for the rest of the TTL.
+        """
+        connect_mock = AsyncMock(side_effect=_fake_connect_all_fail)
+
+        with (
+            patch.object(mcp_module, "_get_server_configs", return_value=_FAKE_SERVERS),
+            patch("deep_agent.aegra.mcp._connect_single_server", connect_mock),
+        ):
+            # First call has no token — deferred, must not be cached.
+            unauth_tools = await mcp_module.get_mcp_tools(
+                sso_token=None,
+                server_names=["main-mcp"],
+            )
+            # Second call arrives with a real token — must still connect.
+            auth_tools = await mcp_module.get_mcp_tools(
+                sso_token="fake-sso-token",
+                server_names=["main-mcp"],
+            )
+
+        assert unauth_tools == []
+        assert auth_tools == []
+        assert connect_mock.call_count == 2, (
+            f"Expected 2 connect calls (unauthenticated deferral must not "
+            f"be cached), got {connect_mock.call_count}."
+        )

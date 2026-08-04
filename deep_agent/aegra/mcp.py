@@ -589,7 +589,10 @@ async def get_mcp_tools(
     cache_key: frozenset = frozenset(server_names) if server_names else frozenset()
     now = time.time()
     cached = _tool_cache.get(cache_key)
-    if cached is not None and (now - _tool_cache_ts.get(cache_key, 0)) < _MCP_TOOL_CACHE_TTL:
+    if (
+        cached is not None
+        and (now - _tool_cache_ts.get(cache_key, 0)) < _MCP_TOOL_CACHE_TTL
+    ):
         age = now - _tool_cache_ts[cache_key]
         logger.info(
             "MCP tool cache hit (key=%s, %d tools, %.0fs old)",
