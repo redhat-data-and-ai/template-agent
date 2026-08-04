@@ -15,6 +15,11 @@ Division of responsibility
   ``scrub_one_way()`` entry point.  PII detection is therefore never
   reimplemented here, and log redaction automatically follows whatever rules
   are declared in ``agent.yaml``.
+* **User-authored content** (prompts, messages, model output) is replaced with
+  a length-only placeholder rather than pattern-matched, because a prompt can
+  disclose sensitive information without containing any token a regex or PII
+  detector would recognise.  Pattern matching cannot make free text safe, so
+  the content is simply never emitted.
 
 When the scrubber has not been initialised (``get_scrubber()`` returns
 ``None``) sanitization degrades to credentials-only rather than falling back to
@@ -26,6 +31,8 @@ they are never legitimately loggable.
 Environment variables:
     LOG_SANITIZATION_ENABLED: enable/disable sanitization (default: true)
     LOG_SANITIZATION_CUSTOM_PATTERNS: comma-separated extra regexes to redact
+    LOG_REDACT_USER_CONTENT: replace prompt/message/output values with a
+        length-only placeholder (default: true)
 """
 
 from __future__ import annotations
@@ -119,6 +126,27 @@ SENSITIVE_DICT_KEYS = frozenset(
     }
 )
 
+# Keys whose values are user- or model-authored free text.  Pattern matching
+# alone is not enough here: a prompt can disclose sensitive information without
+# containing anything a regex or PII detector would flag.  The value is replaced
+# with a length-only placeholder, which keeps the field useful for debugging
+# (empty vs truncated vs oversized input) while never emitting what was said.
+USER_CONTENT_KEYS = frozenset(
+    {
+        "message",
+        "content",
+        "input",
+        "output",
+        "prompt",
+        "query",
+        "question",
+        "answer",
+        "completion",
+        "text",
+        "user_input",
+    }
+)
+
 # Keys holding correlation identifiers rather than free text.  PII scrubbing is
 # skipped for these because the detectors produce false positives on opaque IDs
 # (a UUID substring can match the phone-number pattern), which would corrupt
@@ -153,12 +181,26 @@ ID_LIKE_KEYS = frozenset(
 # ---------------------------------------------------------------------------
 
 
+def content_placeholder(value: Any) -> str:
+    """Return a length-only stand-in for user-authored content.
+
+    Reporting the length keeps the common debugging questions answerable —
+    was the input empty, unexpectedly short, or oversized — without
+    disclosing the text itself.
+    """
+    if value is None:
+        return REDACTED
+    text = value if isinstance(value, str) else str(value)
+    return f"<redacted: {len(text)} chars>"
+
+
 class LogSanitizer:
     """Redacts credentials, sensitive keys, and PII from log payloads.
 
     Credential redaction is regex-based and always available.  PII redaction is
     delegated to the global ``PIIScrubber`` and is therefore active only once
-    the PII middleware has been initialised.
+    the PII middleware has been initialised.  User-authored content is replaced
+    with a length-only placeholder rather than pattern-matched.
     """
 
     def __init__(
@@ -166,6 +208,7 @@ class LogSanitizer:
         enabled: bool = True,
         custom_patterns: list[tuple[re.Pattern[str], str]] | None = None,
         scrub_pii: bool = True,
+        redact_user_content: bool = True,
     ) -> None:
         """Initialise the sanitizer.
 
@@ -175,9 +218,12 @@ class LogSanitizer:
                 applied after the built-in credential patterns.
             scrub_pii: Whether to delegate personal-PII redaction to the
                 global ``PIIScrubber``.
+            redact_user_content: Whether to replace values under
+                ``USER_CONTENT_KEYS`` with a length-only placeholder.
         """
         self.enabled = enabled
         self.scrub_pii = scrub_pii
+        self.redact_user_content = redact_user_content
         self._patterns: list[tuple[re.Pattern[str], str]] = []
         if enabled:
             self._patterns = list(CREDENTIAL_PATTERNS)
@@ -253,6 +299,8 @@ class LogSanitizer:
             normalised = lowered.replace("-", "_")
             if lowered in SENSITIVE_HEADER_KEYS or normalised in SENSITIVE_DICT_KEYS:
                 result[key] = REDACTED
+            elif self.redact_user_content and normalised in USER_CONTENT_KEYS:
+                result[key] = content_placeholder(val)
             else:
                 result[key] = self.sanitize_value(
                     val, scrub_pii=normalised not in ID_LIKE_KEYS
@@ -302,6 +350,7 @@ def get_default_sanitizer() -> LogSanitizer:
                 custom_patterns=parse_custom_patterns(
                     settings.LOG_SANITIZATION_CUSTOM_PATTERNS
                 ),
+                redact_user_content=settings.LOG_REDACT_USER_CONTENT,
             )
         except Exception:
             _default_sanitizer = LogSanitizer(enabled=True)

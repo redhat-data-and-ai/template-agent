@@ -9,6 +9,7 @@ import pytest
 from deep_agent.utils.log_sanitizer import (
     REDACTED,
     LogSanitizer,
+    content_placeholder,
     create_sanitize_processor,
     get_default_sanitizer,
     parse_custom_patterns,
@@ -267,7 +268,15 @@ class TestDefaultSanitizer:
         with patch("deep_agent.src.settings.settings") as mock_settings:
             mock_settings.LOG_SANITIZATION_ENABLED = False
             mock_settings.LOG_SANITIZATION_CUSTOM_PATTERNS = ""
+            mock_settings.LOG_REDACT_USER_CONTENT = True
             assert get_default_sanitizer().enabled is False
+
+    def test_reads_user_content_setting(self):
+        with patch("deep_agent.src.settings.settings") as mock_settings:
+            mock_settings.LOG_SANITIZATION_ENABLED = True
+            mock_settings.LOG_SANITIZATION_CUSTOM_PATTERNS = ""
+            mock_settings.LOG_REDACT_USER_CONTENT = False
+            assert get_default_sanitizer().redact_user_content is False
 
     def test_result_is_cached(self):
         first = get_default_sanitizer()
@@ -281,6 +290,71 @@ class TestDefaultSanitizer:
     def test_defaults_to_enabled_when_settings_unavailable(self):
         with patch.dict(sys.modules, {"deep_agent.src.settings": None}):
             assert get_default_sanitizer().enabled is True
+
+
+class TestUserContentRedaction:
+    """Prompts, messages and model output must never reach the log."""
+
+    @pytest.mark.parametrize(
+        "key",
+        ["message", "content", "prompt", "query", "input", "output", "user_input"],
+    )
+    def test_content_keys_replaced_with_length(self, key, no_scrubber):
+        result = LogSanitizer().sanitize_value({key: "hello world"})
+        assert result[key] == "<redacted: 11 chars>"
+        assert "hello" not in str(result)
+
+    def test_innocuous_looking_prompt_is_still_redacted(self, no_scrubber):
+        """The point of length-only redaction: no token here would trip a regex."""
+        prompt = "summarise the Q3 acquisition of Initech by Acme"
+        result = LogSanitizer().sanitize_value({"prompt": prompt})
+        assert result["prompt"] == f"<redacted: {len(prompt)} chars>"
+        assert "Initech" not in str(result)
+
+    def test_nested_content_redacted(self, no_scrubber):
+        event = {"payload": {"messages": [{"role": "user", "content": "secret plan"}]}}
+        result = LogSanitizer().sanitize_value(event)
+        assert result["payload"]["messages"][0]["content"] == "<redacted: 11 chars>"
+        assert result["payload"]["messages"][0]["role"] == "user"
+
+    def test_non_string_content_coerced(self, no_scrubber):
+        assert LogSanitizer().sanitize_value({"content": 12345})["content"] == (
+            "<redacted: 5 chars>"
+        )
+
+    def test_none_content_redacted(self, no_scrubber):
+        assert LogSanitizer().sanitize_value({"message": None})["message"] == REDACTED
+
+    def test_empty_content_reports_zero(self, no_scrubber):
+        assert LogSanitizer().sanitize_value({"message": ""})["message"] == (
+            "<redacted: 0 chars>"
+        )
+
+    def test_lookalike_keys_not_redacted(self, no_scrubber):
+        """``content-type``/``content_length`` are metadata, not user content."""
+        event = {"content-type": "application/json", "content_length": 42}
+        result = LogSanitizer().sanitize_value(event)
+        assert result["content-type"] == "application/json"
+        assert result["content_length"] == 42
+
+    def test_can_be_disabled(self, no_scrubber):
+        s = LogSanitizer(redact_user_content=False)
+        assert s.sanitize_value({"message": "keep me"})["message"] == "keep me"
+
+    def test_credentials_still_redacted_when_content_kept(self, no_scrubber):
+        s = LogSanitizer(redact_user_content=False)
+        result = s.sanitize_value({"message": "token=Bearer abc123"})
+        assert "Bearer ***TOKEN***" in result["message"]
+
+    def test_content_placeholder_helper(self):
+        assert content_placeholder("abcd") == "<redacted: 4 chars>"
+        assert content_placeholder(None) == REDACTED
+
+    def test_processor_redacts_user_content(self, no_scrubber):
+        event = {"event": "stream_start", "message": "my private question"}
+        result = create_sanitize_processor()(None, "info", event)
+        assert result["message"] == "<redacted: 19 chars>"
+        assert result["event"] == "stream_start"
 
 
 class TestSanitizeProcessor:

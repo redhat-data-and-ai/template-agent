@@ -66,6 +66,10 @@ class Settings(BaseSettings):
         default="",
         description="Comma-separated extra regexes to redact from log output",
     )
+    LOG_REDACT_USER_CONTENT: bool = Field(
+        default=True,
+        description="Replace prompt/message/output values with a length-only placeholder",
+    )
 
     # ── Security ──────────────────────────────────────────────────────
     REQUEST_BODY_MAX_SIZE: int = Field(
