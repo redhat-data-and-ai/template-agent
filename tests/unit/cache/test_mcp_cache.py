@@ -276,6 +276,41 @@ class TestMcpToolCache:
         assert connect_mock.call_count == 1
         assert [t.name for t in tools] == ["validate_email"]
 
+    # ── invalidate_mcp_tool_cache: blanket clear (e.g. after OAuth connect) ──
+
+    async def test_invalidate_clears_all_cache_entries(self):
+        """invalidate_mcp_tool_cache() must clear every cached key, not just one.
+
+        It's called after an OAuth connect completes for a single MCP server,
+        but a blanket clear is correct: any other cached server combination
+        may also need to reflect the newly available tools.
+        """
+        mcp_module._tool_cache[frozenset(["main-mcp"])] = [_tool("validate_email")]
+        mcp_module._tool_cache_ts[frozenset(["main-mcp"])] = time.time()
+        mcp_module._tool_cache[frozenset(["analytics-mcp"])] = [
+            _tool("calculate_bmi"),
+            _tool("search_web"),
+        ]
+        mcp_module._tool_cache_ts[frozenset(["analytics-mcp"])] = time.time()
+
+        mcp_module.invalidate_mcp_tool_cache()
+
+        assert mcp_module._tool_cache == {}
+        assert mcp_module._tool_cache_ts == {}
+
+        # A subsequent call must reconnect rather than serve stale data.
+        connect_mock = AsyncMock(side_effect=_fake_connect)
+        with (
+            patch.object(mcp_module, "_get_server_configs", return_value=_FAKE_SERVERS),
+            patch("deep_agent.aegra.mcp._connect_single_server", connect_mock),
+        ):
+            tools = await mcp_module.get_mcp_tools(
+                sso_token=None, server_names=["main-mcp"]
+            )
+
+        assert connect_mock.call_count == 1
+        assert [t.name for t in tools] == ["validate_email"]
+
     # ── Order independence: frozenset key ignores server_names order ────────
 
     async def test_reversed_server_names_order_is_still_a_cache_hit(self):
