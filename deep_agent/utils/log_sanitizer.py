@@ -366,8 +366,11 @@ def reset_default_sanitizer() -> None:
 def sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
     """Redact sensitive HTTP header values.
 
-    Intended for middleware that logs headers, providing defence in depth
-    ahead of the structlog processor.
+    No middleware on this branch logs headers today, so this has no production
+    caller yet; it is the entry point for any that starts to. Header keys are
+    already covered by the structlog processor via ``SENSITIVE_HEADER_KEYS``, so
+    this is defence in depth for callers that want to scrub a header mapping
+    before it ever reaches a log event.
     """
     sanitized: dict[str, str] = get_default_sanitizer().sanitize_value(headers)
     return sanitized
