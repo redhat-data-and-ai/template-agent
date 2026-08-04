@@ -106,7 +106,7 @@ Run:
 uv run pytest tests/unit/cache/test_mcp_cache.py -v
 ```
 
-Before the fix, `test_bug2_*` tests **fail** (proving the bug).  
+Before the fix, `test_bug2_*` tests **fail** (proving the bug).
 After the fix, all 6 tests **pass**.
 
 ---
