@@ -83,7 +83,7 @@ def to_virtual_skill_paths(skill_paths: list[str]) -> list[str]:
                 p,
                 name,
             )
-        virtual.add(f"/skills/{name}")
+        virtual.add(f"/{parent_name}/")
     return sorted(virtual)
 
 

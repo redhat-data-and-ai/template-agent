@@ -25,7 +25,7 @@ USER 65532
 
 COPY --chown=65532:root deep_agent /app/deep_agent
 COPY --chown=65532:root aegra.json /app/aegra.json
-COPY --chown=65532:root entrypoint.sh /app/entrypoint.sh
+COPY --chown=65532:root --chmod=755 entrypoint.sh /app/entrypoint.sh
 
 ENV PYTHONPATH=/app
 ENV AGENT_HOST=0.0.0.0

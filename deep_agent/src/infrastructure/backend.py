@@ -250,6 +250,15 @@ def get_configured_backend() -> LocalShellBackend | Any:
 
     backend_type = fs_config.backend.type
 
+    skills_dir = agent_config.base_dir / "skills"
+    if backend_type == "state" and skills_dir.is_dir() and any(skills_dir.iterdir()):
+        logger.info(
+            "Skills detected but backend is 'state' — auto-promoting to composite"
+        )
+        fs_config.backend.type = "composite"
+        fs_config.backend.routes.setdefault("/skills/", "filesystem_readonly")
+        return _build_composite_backend(fs_config)
+
     if backend_type == "state":
         return _build_state_backend()
 

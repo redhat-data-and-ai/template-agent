@@ -137,7 +137,10 @@ async def agent(runtime: ServerRuntime) -> Any:
         refresh_access_token,
         set_mcp_auth_context,
     )
-    from deep_agent.aegra.mcp_tool_auth import wrap_mcp_tools_for_auth
+    from deep_agent.aegra.mcp_tool_auth import (
+        reset_auth_interrupt_state,
+        wrap_mcp_tools_for_auth,
+    )
     from deep_agent.src.agent.config import agent_config
     from deep_agent.src.infrastructure.async_tasks import build_async_middleware
     from deep_agent.src.infrastructure.backend import get_configured_backend
@@ -155,6 +158,7 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     user_identity = getattr(user, "identity", None) if user else None
 
+    reset_auth_interrupt_state()
     set_mcp_auth_context(sso_token, refresh_token, user_identity)
     orchestrator_cfg = agent_config.get_orchestrator_config()
     agent_name = orchestrator_cfg.get("name", "orchestrator")
