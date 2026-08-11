@@ -149,16 +149,23 @@ See the [examples README](./examples/README.md) for detailed usage instructions.
    uv pip install -e ".[dev]"
    ```
 
-4. **Set up environment variables**
+4. **Install pre-commit** (recommended)
+   ```bash
+   pre-commit install
+   ```
+
+   Or run `make install` (installs deps and hooks). Hooks include `gitleaks` and `detect-private-key` for secret scanning. Also enable [GitHub Secret Scanning](https://docs.github.com/en/code-security/concepts/secret-security/secret-scanning) and [Push Protection](https://docs.github.com/en/code-security/concepts/secret-security/push-protection) on the repository for defense in depth.
+
+5. **Set up environment variables**
    ```bash
    cp .env.example .env
    # Edit .env with your configuration
    ```
 
-5. **Run template-mcp-server** following https://github.com/redhat-data-and-ai/template-mcp-server
+6. **Run template-mcp-server** following https://github.com/redhat-data-and-ai/template-mcp-server
 
 
-6. **Run the application**
+7. **Run the application**
    ```bash
    uv run python -m template_agent.src.main
    ```
