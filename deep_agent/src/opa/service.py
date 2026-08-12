@@ -34,7 +34,7 @@ from typing import Any, Literal
 import httpx
 from langchain_core.messages import BaseMessage
 
-from deep_agent.src.opa.config import get_opa_timeout, get_opa_url
+from deep_agent.src.opa.config import get_opa_fail_open, get_opa_timeout, get_opa_url
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
@@ -52,7 +52,16 @@ class OpaResult:
 
 
 def _parse_result(data: dict[str, Any]) -> OpaResult:
-    result = data.get("result", {})
+    result = data.get("result")
+    if not result or "deny_reasons" not in result:
+        logger.warning(
+            "OPA response missing expected decision keys (result=%s) -- denying by default",
+            "empty" if not result else list(result.keys()),
+        )
+        return OpaResult(
+            allowed=False,
+            denial_reasons=["OPA response missing expected decision keys"],
+        )
     reasons = list(result.get("deny_reasons", []))
     return OpaResult(allowed=len(reasons) == 0, denial_reasons=reasons)
 
@@ -119,78 +128,71 @@ def _log_result(action: str, opa_result: OpaResult) -> None:
         )
 
 
+def _error_result(reason: str, fail_open: bool) -> OpaResult:
+    """Return an OpaResult for an OPA communication error.
+
+    When *fail_open* is True the request is allowed (backwards-compatible).
+    When False the request is denied and an error-level log is emitted.
+    """
+    disposition = "allowed" if fail_open else "denied"
+    message = f"{reason} -- {disposition} by default"
+    if fail_open:
+        logger.warning("%s", message)
+    else:
+        logger.error("%s", message)
+    return OpaResult(allowed=fail_open, denial_reasons=[message])
+
+
 async def _query(opa_input: dict[str, Any]) -> OpaResult:
     url = get_opa_url()
     timeout = get_opa_timeout()
+    fail_open = get_opa_fail_open()
 
-    logger.debug("OPA request: POST %s input=%s", url, opa_input)
+    logger.debug(
+        "OPA request: POST %s action=%s payload_keys=%s",
+        url,
+        opa_input.get("current_intent", {}).get("action"),
+        list(opa_input.keys()),
+    )
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json={"input": opa_input})
             response.raise_for_status()
             data = response.json()
-            logger.debug("OPA response: status=%d body=%s", response.status_code, data)
+            logger.debug("OPA response: status=%d", response.status_code)
             return _parse_result(data)
     except httpx.TimeoutException:
-        logger.warning(
-            "OPA request timed out after %.1fs — allowing by default", timeout
-        )
-        return OpaResult(
-            allowed=True, denial_reasons=["OPA timeout — allowed by default"]
-        )
+        return _error_result(f"OPA request timed out after {timeout:.1f}s", fail_open)
     except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "OPA returned HTTP %d — allowing by default", exc.response.status_code
-        )
-        return OpaResult(
-            allowed=True,
-            denial_reasons=[
-                f"OPA HTTP {exc.response.status_code} — allowed by default"
-            ],
-        )
+        return _error_result(f"OPA returned HTTP {exc.response.status_code}", fail_open)
     except Exception as exc:
-        logger.warning("OPA unreachable (%s) — allowing by default", exc)
-        return OpaResult(
-            allowed=True, denial_reasons=["OPA unreachable — allowed by default"]
-        )
+        return _error_result(f"OPA unreachable ({exc})", fail_open)
 
 
 def _query_sync(opa_input: dict[str, Any]) -> OpaResult:
     url = get_opa_url()
     timeout = get_opa_timeout()
+    fail_open = get_opa_fail_open()
 
-    logger.debug("OPA request (sync): POST %s input=%s", url, opa_input)
+    logger.debug(
+        "OPA request (sync): POST %s action=%s payload_keys=%s",
+        url,
+        opa_input.get("current_intent", {}).get("action"),
+        list(opa_input.keys()),
+    )
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.post(url, json={"input": opa_input})
             response.raise_for_status()
             data = response.json()
-            logger.debug(
-                "OPA response (sync): status=%d body=%s", response.status_code, data
-            )
+            logger.debug("OPA response (sync): status=%d", response.status_code)
             return _parse_result(data)
     except httpx.TimeoutException:
-        logger.warning(
-            "OPA request timed out after %.1fs — allowing by default", timeout
-        )
-        return OpaResult(
-            allowed=True, denial_reasons=["OPA timeout — allowed by default"]
-        )
+        return _error_result(f"OPA request timed out after {timeout:.1f}s", fail_open)
     except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "OPA returned HTTP %d — allowing by default", exc.response.status_code
-        )
-        return OpaResult(
-            allowed=True,
-            denial_reasons=[
-                f"OPA HTTP {exc.response.status_code} — allowed by default"
-            ],
-        )
+        return _error_result(f"OPA returned HTTP {exc.response.status_code}", fail_open)
     except Exception as exc:
-        logger.warning("OPA unreachable (%s) — allowing by default", exc)
-        return OpaResult(
-            allowed=True, denial_reasons=["OPA unreachable — allowed by default"]
-        )
+        return _error_result(f"OPA unreachable ({exc})", fail_open)
 
 
 def evaluate_message_sync(

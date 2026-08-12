@@ -171,8 +171,8 @@ class Settings(BaseSettings):
     # Set env var to override YAML for that field only.
     OPA_ENABLED: Optional[bool] = Field(default=None)
     OPA_URL: Optional[str] = Field(default=None)
-    OPA_TIMEOUT: Optional[float] = Field(default=None)
-    OPA_MAX_RETRIES: Optional[int] = Field(default=None)
+    OPA_TIMEOUT: Optional[float] = Field(default=None, gt=0)
+    OPA_MAX_RETRIES: Optional[int] = Field(default=None, ge=0)
 
     # ── Platform ──────────────────────────────────────────────────────
     DEPLOYED_AGENT_NAME: str = Field(default="")

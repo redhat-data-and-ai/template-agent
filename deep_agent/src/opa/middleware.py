@@ -88,13 +88,17 @@ class OPAMiddleware(AgentMiddleware):
             if isinstance(m, BaseMessage) and not m.additional_kwargs.get("opa_retry")
         ]
         opa = await evaluate_trajectory(trajectory)
-        print(f"[OPA] abefore_model opa: {vars(opa)!r}", flush=True)
+        logger.debug(
+            "OPA abefore_model result: allowed=%s reason_count=%d",
+            opa.allowed,
+            len(opa.denial_reasons),
+        )
         if opa.allowed:
             return None
 
-        print(
-            f"[OPA] abefore_model blocking trajectory: {opa.denial_reasons!r}",
-            flush=True,
+        logger.debug(
+            "OPA abefore_model blocking trajectory: reason_count=%d",
+            len(opa.denial_reasons),
         )
         logger.info(
             "OPA abefore_model blocking trajectory: %s",
@@ -115,27 +119,36 @@ class OPAMiddleware(AgentMiddleware):
         current_request = request
 
         for attempt in range(max_retries + 1):
-            print(
-                f"[OPA] awrap_model_call attempt {attempt + 1}/{max_retries + 1}",
-                flush=True,
+            logger.debug(
+                "OPA awrap_model_call attempt %d/%d",
+                attempt + 1,
+                max_retries + 1,
             )
             result = await handler(
                 current_request.override(model=_NoStreamModel(current_request.model))
             )
-            print(f"[OPA] awrap_model_call result: {vars(result)!r}", flush=True)
+            logger.debug(
+                "OPA awrap_model_call result: message_count=%d", len(result.result)
+            )
             text = self._extract_text(result)
 
             if not text.strip():
                 return result
 
             opa = await evaluate_message("llm_response", agent_message=text)
-            print(f"[OPA] awrap_model_call opa: {vars(opa)!r}", flush=True)
+            logger.debug(
+                "OPA awrap_model_call result: allowed=%s reason_count=%d",
+                opa.allowed,
+                len(opa.denial_reasons),
+            )
             if opa.allowed:
                 return result
 
-            print(
-                f"[OPA] awrap_model_call blocking model output (attempt {attempt + 1}/{max_retries + 1}): {opa.denial_reasons!r}",
-                flush=True,
+            logger.debug(
+                "OPA awrap_model_call blocking model output: attempt=%d/%d reason_count=%d",
+                attempt + 1,
+                max_retries + 1,
+                len(opa.denial_reasons),
             )
 
             if attempt < max_retries:
@@ -204,13 +217,17 @@ class OPAMiddleware(AgentMiddleware):
             return result
 
         opa = await evaluate_message("tool_response", result=tool_content)
-        print(f"[OPA] awrap_tool_call opa: {vars(opa)!r}", flush=True)
+        logger.debug(
+            "OPA awrap_tool_call result: allowed=%s reason_count=%d",
+            opa.allowed,
+            len(opa.denial_reasons),
+        )
         if opa.allowed:
             return result
 
-        print(
-            f"[OPA] awrap_tool_call blocking tool output: {opa.denial_reasons!r}",
-            flush=True,
+        logger.debug(
+            "OPA awrap_tool_call blocking tool output: reason_count=%d",
+            len(opa.denial_reasons),
         )
 
         denial_summary = (

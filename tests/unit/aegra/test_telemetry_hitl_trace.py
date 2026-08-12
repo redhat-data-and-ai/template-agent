@@ -144,6 +144,8 @@ class TestHitlAwareCallbackHandler:
                 metadata={"thread_id": "t1"},
             )
 
+        assert handler._runs[resume_id] is root_obs
+
         handler.on_chain_end({"done": True}, run_id=resume_id, parent_run_id=None)
 
         root_obs.end.assert_called()
@@ -312,6 +314,7 @@ class TestHitlAwareCallbackHandler:
                 metadata={"thread_id": "t1"},
             )
 
+        assert handler._runs[resume_id] is root_obs
         assert "t1" not in handler._open_hitl_roots
 
         # Simulate a leftover map entry (pre-pop bug / race), then root hard error.
@@ -550,7 +553,7 @@ class TestHitlAwareCallbackHandler:
         handler._open_hitl_roots["t1"] = open_obs
         handler.last_trace_id = "keep-me"
 
-        with patch.object(handler, "_attach_observation"):
+        with patch.object(handler, "_attach_observation") as attach:
             handler.on_chain_start(
                 {"name": "orchestrator"},
                 Command(resume={"decisions": [{"type": "approve"}]}),
@@ -558,6 +561,7 @@ class TestHitlAwareCallbackHandler:
                 parent_run_id=None,
                 metadata={"thread_id": "t1"},
             )
+            attach.assert_called_once()
 
         assert handler.last_trace_id == "keep-me"
         assert "t1" not in handler._open_hitl_roots

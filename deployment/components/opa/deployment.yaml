@@ -14,9 +14,13 @@ spec:
       labels:
         component: opa
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: opa
-          image: opa:latest
+          image: ghcr.io/redhat-data-and-ai/template-agent-opa:latest
           ports:
             - containerPort: 8181
               name: http

@@ -71,7 +71,7 @@ services:
       dockerfile: Containerfile
     container_name: template-agent-opa
     ports:
-      - "8181:8181"
+      - "127.0.0.1:8181:8181"
     volumes:
       - ./config/agent/compliance/policies:/policies
     environment:

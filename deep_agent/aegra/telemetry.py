@@ -36,9 +36,14 @@ _pii_initialized = False
 # Mirrors Langfuse's MAX_PENDING_RESUME_TRACE_CONTEXTS bound.
 _MAX_OPEN_HITL_ROOTS = 1024
 
-# Process-wide Langfuse handler so HITL interrupt→resume keeps the same trace.
+# Process-wide Langfuse handler so HITL interrupt->resume keeps the same trace.
 # Langfuse stores pending resume context on the handler instance; a fresh
 # CallbackHandler() per run (register_configure_hook default) drops that state.
+#
+# NOTE: thread-safety limitation -- _open_hitl_roots, _keep_open_root_run_ids,
+# and _runs are plain dicts/sets with no locking.  Concurrent LangChain runs
+# sharing this handler may race on those structures.  A proper fix would use
+# per-thread or per-asyncio-task state, but that is a larger refactor.
 _shared_langfuse_handler: Any | None = None
 HitlAwareCallbackHandler: Any | None = None
 
@@ -234,8 +239,12 @@ def _build_hitl_aware_handler_class() -> type:
                 finally:
                     self._keep_open_root_run_ids.discard(run_id)
                     if parent_run_id is None:
-                        self._exit_propagation_context(run_id)
-                        self._reset(run_id)
+                        try:
+                            self._reset(run_id)
+                        except Exception:
+                            logger.warning(
+                                "HITL open-root _reset failed", exc_info=True
+                            )
                 return None
 
             # Final (or non-HITL) root end — drop open-root bookkeeping first.

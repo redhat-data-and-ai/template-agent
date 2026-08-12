@@ -77,40 +77,45 @@ sync_git_repo() {
             mkdir -p "$GIT_CLONE_DIR"
             cd "$GIT_CLONE_DIR" || return 1
 
-            if ! git init 2>&1 | grep -v "Username\|Password"; then
+            git_output=$(git init 2>&1) || {
                 log_error "Failed to initialize git repository"
                 cd /
                 return 1
-            fi
+            }
+            echo "$git_output" | grep -v "Username\|Password" || true
 
-            if ! git remote add origin "$git_url" 2>&1 | grep -v "Username\|Password"; then
+            git_output=$(git remote add origin "$git_url" 2>&1) || {
                 log_error "Failed to add git remote"
                 cd /
                 return 1
-            fi
+            }
+            echo "$git_output" | grep -v "Username\|Password" || true
 
             git config core.sparseCheckout true
             echo "$POLICY_GIT_SUBDIR/*" > .git/info/sparse-checkout
 
-            if ! git fetch --depth 1 origin "$POLICY_GIT_BRANCH" 2>&1 | grep -v "Username\|Password"; then
+            git_output=$(git fetch --depth 1 origin "$POLICY_GIT_BRANCH" 2>&1) || {
                 log_error "Failed to fetch from git repository"
                 cd /
                 return 1
-            fi
+            }
+            echo "$git_output" | grep -v "Username\|Password" || true
 
-            if ! git checkout "$POLICY_GIT_BRANCH" 2>&1 | grep -v "Username\|Password"; then
+            git_output=$(git checkout "$POLICY_GIT_BRANCH" 2>&1) || {
                 log_error "Failed to checkout branch $POLICY_GIT_BRANCH"
                 cd /
                 return 1
-            fi
+            }
+            echo "$git_output" | grep -v "Username\|Password" || true
 
             cd /
         else
             # Regular clone
-            if ! git clone --depth 1 --branch "$POLICY_GIT_BRANCH" "$git_url" "$GIT_CLONE_DIR" 2>&1 | grep -v "Username\|Password"; then
+            git_output=$(git clone --depth 1 --branch "$POLICY_GIT_BRANCH" "$git_url" "$GIT_CLONE_DIR" 2>&1) || {
                 log_error "Failed to clone git repository"
                 return 1
-            fi
+            }
+            echo "$git_output" | grep -v "Username\|Password" || true
         fi
 
         log_info "Repository cloned successfully"
@@ -118,17 +123,19 @@ sync_git_repo() {
         log_info "Updating policy repository from remote"
         cd "$GIT_CLONE_DIR" || return 1
 
-        if ! git fetch origin "$POLICY_GIT_BRANCH" --depth 1 2>&1 | grep -v "Username\|Password"; then
+        git_output=$(git fetch origin "$POLICY_GIT_BRANCH" --depth 1 2>&1) || {
             log_error "Failed to fetch updates from git repository"
             cd /
             return 1
-        fi
+        }
+        echo "$git_output" | grep -v "Username\|Password" || true
 
-        if ! git reset --hard "origin/$POLICY_GIT_BRANCH" 2>&1 | grep -v "Username\|Password"; then
+        git_output=$(git reset --hard "origin/$POLICY_GIT_BRANCH" 2>&1) || {
             log_error "Failed to reset to origin/$POLICY_GIT_BRANCH"
             cd /
             return 1
-        fi
+        }
+        echo "$git_output" | grep -v "Username\|Password" || true
 
         cd /
         log_info "Repository updated successfully"

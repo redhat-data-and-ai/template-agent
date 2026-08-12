@@ -161,7 +161,10 @@ async def check_opa() -> dict[str, Any]:
         url = get_opa_url()
         timeout = get_opa_timeout()
         parsed = urlparse(url)
-        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        # Build origin without userinfo to avoid leaking credentials.
+        host = parsed.hostname or ""
+        port_suffix = f":{parsed.port}" if parsed.port else ""
+        base_url = f"{parsed.scheme}://{host}{port_suffix}"
         health_url = f"{base_url}/health"
 
         import httpx
@@ -177,7 +180,7 @@ async def check_opa() -> dict[str, Any]:
         return {"status": "error", "error": str(exc)[:200]}
 
 
-_CRITICAL_CHECKS = frozenset({"database"})
+_CRITICAL_CHECKS = frozenset({"database", "opa"})
 
 
 async def get_health_status() -> dict[str, Any]:

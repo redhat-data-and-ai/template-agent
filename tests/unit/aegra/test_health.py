@@ -164,6 +164,7 @@ class TestGetHealthStatus:
         assert "checks" in result
         assert "mcp_servers" in result["checks"]
         assert "llm_provider" in result["checks"]
+        assert result["checks"]["opa"] == {"status": "disabled"}
 
     async def test_unhealthy_on_db_error(self):
         with _patch_all_checks(database={"status": "error", "error": "down"}):

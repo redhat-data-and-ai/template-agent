@@ -57,3 +57,8 @@ def get_opa_max_retries() -> int:
     if settings.OPA_MAX_RETRIES is not None:
         return settings.OPA_MAX_RETRIES
     return _yaml_config().max_retries
+
+
+def get_opa_fail_open() -> bool:
+    """Return whether OPA errors should fail open (allow) or closed (deny)."""
+    return _yaml_config().fail_open
