@@ -142,8 +142,8 @@ async def cluster_user_memories(
             cid = str(uuid.uuid4())
             for idx in group:
                 await conn.execute(
-                    "UPDATE user_memories SET cluster_id = %s WHERE id = %s",
-                    (cid, str(memories[idx]["id"])),
+                    "UPDATE user_memories SET cluster_id = %s WHERE id = %s AND user_id = %s",
+                    (cid, str(memories[idx]["id"]), user_id),
                 )
 
         await conn.commit()
