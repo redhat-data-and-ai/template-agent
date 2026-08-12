@@ -28,8 +28,9 @@ A template for building [Deep Agents](https://github.com/langchain-ai/deepagents
 ```bash
 git clone https://github.com/redhat-data-and-ai/template-agent.git
 cd template-agent
-make install     # creates venv, installs deps + pre-commit hooks
-make local       # pgvector + redis in compose; agent on host → :5002
+uv sync --extra dev
+cp .env.example .env          # edit with your config
+uv run python -m template_agent.src.main
 ```
 
 Verify in another terminal:
