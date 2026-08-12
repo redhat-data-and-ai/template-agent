@@ -284,4 +284,28 @@ class TestCreateByProvider:
                 Provider.MAAS, "mistral-7b", temperature=0.0, max_output_tokens=4096
             )
         assert result is mock_model
-        mock_vllm.assert_called_once_with("mistral-7b", 0.0, 4096)
+        mock_vllm.assert_called_once_with("/data/mistral-7b", 0.0, 4096)
+
+
+class TestMaasModelNameNormalization:
+    """Tests for the /data/ prefix normalization applied to MAAS model names."""
+
+    @pytest.mark.parametrize(
+        "input_name, expected",
+        [
+            ("granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+            ("/data/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+            ("data/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+            ("/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+        ],
+    )
+    def test_maas_normalizes_model_name(self, input_name, expected):
+        mock_model = MagicMock()
+        with patch(
+            "deep_agent.src.agent.provider_factory._create_vllm_model",
+            return_value=mock_model,
+        ) as mock_vllm:
+            _create_by_provider(
+                Provider.MAAS, input_name, temperature=0.0, max_output_tokens=4096
+            )
+        mock_vllm.assert_called_once_with(expected, 0.0, 4096)

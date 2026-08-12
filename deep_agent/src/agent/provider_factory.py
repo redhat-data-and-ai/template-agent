@@ -70,5 +70,8 @@ def _create_by_provider(
     if provider == Provider.OPENAI:
         return _create_vllm_model(model_name, temperature, max_output_tokens)
     if provider == Provider.MAAS:
+        # MaaS: managed open-source model serving without owning infrastructure.
+        # https://www.redhat.com/en/topics/ai/what-is-models-as-a-service
+        model_name = "/data/" + model_name.lstrip("/").removeprefix("data/")
         return _create_vllm_model(model_name, temperature, max_output_tokens)
     raise ValueError(f"unsupported provider: {provider}")

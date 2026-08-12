@@ -81,7 +81,8 @@ def _guardian_model() -> str:
         )
     if cfg.model is None:
         raise RuntimeError("Guardian model requested but no model is configured")
-    return cfg.model
+    model = cfg.model
+    return "/data/" + model.lstrip("/").removeprefix("data/")
 
 
 def _is_config_error(exc: Exception) -> bool:
