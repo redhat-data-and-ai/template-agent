@@ -5,6 +5,13 @@ description: >
   routes to analyst and publisher subagents, manages TODO lists and
   delegates health metric analysis.
 model: gemini-2.5-pro
+# MaaS (Models as a Service) lets you serve open-source models via a managed
+# API without owning the infrastructure — see:
+# https://www.redhat.com/en/topics/ai/what-is-models-as-a-service
+# Implementation should have provider attached for chat init
+# model:
+#   provider: maas
+#   name: granite-3.1-8b-instruct
 tools:
   - validate_email
   - queue_task
