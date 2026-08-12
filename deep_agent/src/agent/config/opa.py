@@ -18,6 +18,6 @@ class OpaFileConfig(BaseModel):
     timeout: float = Field(default=2.0, gt=0)
     max_retries: int = Field(default=0, ge=0)
     fail_open: bool = Field(
-        default=True,
+        default=False,
         description="When True, OPA errors allow the request (fail open). When False, OPA errors deny the request (fail closed).",
     )

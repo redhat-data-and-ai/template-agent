@@ -166,6 +166,11 @@ class TestGetHealthStatus:
         assert "llm_provider" in result["checks"]
         assert result["checks"]["opa"] == {"status": "disabled"}
 
+    async def test_unhealthy_on_opa_error(self):
+        with _patch_all_checks(opa={"status": "error", "error": "unreachable"}):
+            result = await get_health_status()
+        assert result["status"] == "unhealthy"
+
     async def test_unhealthy_on_db_error(self):
         with _patch_all_checks(database={"status": "error", "error": "down"}):
             result = await get_health_status()

@@ -62,8 +62,17 @@ def _parse_result(data: dict[str, Any]) -> OpaResult:
             allowed=False,
             denial_reasons=["OPA response missing expected decision keys"],
         )
-    reasons = list(result.get("deny_reasons", []))
-    return OpaResult(allowed=len(reasons) == 0, denial_reasons=reasons)
+    raw_reasons = result.get("deny_reasons")
+    if raw_reasons is None or not isinstance(raw_reasons, list):
+        logger.warning(
+            "OPA deny_reasons is %s, expected list -- denying by default",
+            type(raw_reasons).__name__,
+        )
+        return OpaResult(
+            allowed=False,
+            denial_reasons=["OPA deny_reasons missing or invalid type"],
+        )
+    return OpaResult(allowed=len(raw_reasons) == 0, denial_reasons=raw_reasons)
 
 
 def _serialize_message(msg: BaseMessage) -> dict[str, str]:
