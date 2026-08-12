@@ -58,6 +58,18 @@ class Settings(BaseSettings):
     REQUEST_LOG_HEADERS: bool = Field(default=True)
     REQUEST_LOG_BODY: bool = Field(default=True)
     REQUEST_LOG_BODY_MAX_SIZE: int = Field(default=10240)
+    LOG_SANITIZATION_ENABLED: bool = Field(
+        default=True,
+        description="Redact credentials and PII from log output",
+    )
+    LOG_SANITIZATION_CUSTOM_PATTERNS: str = Field(
+        default="",
+        description="Comma-separated extra regexes to redact from log output",
+    )
+    LOG_REDACT_USER_CONTENT: bool = Field(
+        default=True,
+        description="Replace prompt/message/output values with a length-only placeholder",
+    )
 
     # ── Security ──────────────────────────────────────────────────────
     REQUEST_BODY_MAX_SIZE: int = Field(
