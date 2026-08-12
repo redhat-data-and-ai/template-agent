@@ -53,7 +53,7 @@ class OpaResult:
 
 def _parse_result(data: dict[str, Any]) -> OpaResult:
     result = data.get("result")
-    if not result or "deny_reasons" not in result:
+    if not isinstance(result, dict) or "deny_reasons" not in result:
         logger.warning(
             "OPA response missing expected decision keys (result=%s) -- denying by default",
             "empty" if not result else list(result.keys()),
