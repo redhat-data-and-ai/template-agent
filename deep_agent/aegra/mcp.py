@@ -37,8 +37,12 @@ _SSO_TOKEN_URL: str = ""
 _mcp_breaker: CircuitBreaker | None = None
 
 _MCP_TOOL_CACHE_TTL: float = float(agent_config.get_cache_config().mcp.ttl)
-_cached_tools: list[Any] = []
-_cached_tools_ts: float = 0.0
+# Cache keyed by frozenset(server_names) so each unique combination of
+# requested servers gets its own entry.  A flat list would ignore
+# server_names on a cache hit and return the first caller's tools to all
+# subsequent callers regardless of which servers they requested.
+_tool_cache: dict[frozenset, list[Any]] = {}
+_tool_cache_ts: dict[frozenset, float] = {}
 
 _current_access_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_access_token", default=None
@@ -542,9 +546,8 @@ def _filter_by_names(
 
 def invalidate_mcp_tool_cache() -> None:
     """Clear the global MCP tool list cache (e.g. after OAuth connect)."""
-    global _cached_tools, _cached_tools_ts  # noqa: PLW0603
-    _cached_tools = []
-    _cached_tools_ts = 0.0
+    _tool_cache.clear()
+    _tool_cache_ts.clear()
 
 
 async def get_mcp_tools(
@@ -581,19 +584,23 @@ async def get_mcp_tools(
     Returns:
         List of available MCP tools (empty list if all connections fail).
     """
-    global _cached_tools, _cached_tools_ts  # noqa: PLW0603
+    global _tool_cache, _tool_cache_ts  # noqa: PLW0603
 
+    cache_key: frozenset = frozenset(server_names) if server_names else frozenset()
+    now = time.time()
+    cached = _tool_cache.get(cache_key)
     if (
-        _cached_tools
-        and len(_cached_tools) > 0
-        and (time.time() - _cached_tools_ts) < _MCP_TOOL_CACHE_TTL
+        cached is not None
+        and (now - _tool_cache_ts.get(cache_key, 0)) < _MCP_TOOL_CACHE_TTL
     ):
+        age = now - _tool_cache_ts[cache_key]
         logger.info(
-            "MCP tool cache hit (%d tools, %.0fs old)",
-            len(_cached_tools),
-            time.time() - _cached_tools_ts,
+            "MCP tool cache hit (key=%s, %d tools, %.0fs old)",
+            set(cache_key) or "all",
+            len(cached),
+            age,
         )
-        return _cached_tools
+        return cached
 
     servers: dict[str, dict[str, Any]] = _get_server_configs()
     enabled: dict[str, dict[str, Any]] = {
@@ -604,6 +611,8 @@ async def get_mcp_tools(
 
     if not enabled:
         logger.warning("No MCP servers enabled")
+        _tool_cache[cache_key] = []
+        _tool_cache_ts[cache_key] = now
         return []
 
     logger.warning(f"Connecting to {len(enabled)} MCP server(s): {', '.join(enabled)}")
@@ -664,11 +673,23 @@ async def get_mcp_tools(
             logger.warning("All MCP servers failed to load tools (token present)")
         else:
             logger.warning("MCP tools deferred — no auth token at startup")
+        # Only cache the negative result when a token was present. An
+        # unauthenticated deferral (e.g. at cold start) is expected to
+        # succeed as soon as a real caller supplies a token — caching that
+        # under the same server_names key would mask the first
+        # authenticated request for the full TTL.
+        if has_auth:
+            _tool_cache[cache_key] = []
+            _tool_cache_ts[cache_key] = time.time()
         return []
 
-    _cached_tools = tools
-    _cached_tools_ts = time.time()
+    _tool_cache[cache_key] = tools
+    _tool_cache_ts[cache_key] = time.time()
     logger.warning(
-        f"Loaded {len(tools)} MCP tool(s): {', '.join(seen)} (cached for {_MCP_TOOL_CACHE_TTL:.0f}s)"
+        "Loaded %d MCP tool(s): %s (key=%s, cached for %.0fs)",
+        len(tools),
+        ", ".join(seen),
+        set(cache_key) or "all",
+        _MCP_TOOL_CACHE_TTL,
     )
     return tools
