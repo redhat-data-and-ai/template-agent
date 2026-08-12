@@ -162,9 +162,12 @@ class TestFeedbackHandler:
             "name": "user-rating",
             "value": 1.0,
         }
-        with patch(
-            "deep_agent.aegra.feedback.get_langfuse_client",
-            return_value=None,
+        with (
+            patch(
+                "deep_agent.aegra.feedback.get_langfuse_client",
+                return_value=None,
+            ),
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
         ):
             res = client.post("/feedback", json=payload)
         assert res.status_code == 200
@@ -178,17 +181,17 @@ class TestFeedbackHandler:
         mock_repo.list_feedback = AsyncMock(
             return_value=[{"message_id": "m1", "feedback": "up"}]
         )
-        with patch(
-            "deep_agent.aegra.feedback.FeedbackRepository",
-            return_value=mock_repo,
+        with (
+            patch(
+                "deep_agent.aegra.feedback.FeedbackRepository",
+                return_value=mock_repo,
+            ),
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
         ):
-            res = client.get(
-                f"/feedback/{thread_uuid}",
-                params={"user_id": "u1"},
-            )
+            res = client.get(f"/feedback/{thread_uuid}")
         assert res.status_code == 200
         assert res.json() == {"feedback": [{"message_id": "m1", "feedback": "up"}]}
-        mock_repo.list_feedback.assert_awaited_once_with(thread_uuid, "u1")
+        mock_repo.list_feedback.assert_awaited_once_with(thread_uuid, "dev-user")
 
 
 class TestTokenUsageEndpoint:

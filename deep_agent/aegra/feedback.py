@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from deep_agent.aegra.auth_helpers import authenticated_user_id
 from deep_agent.aegra.telemetry import get_langfuse_client
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.feedback.repository import FeedbackRepository
@@ -195,6 +196,13 @@ async def feedback_handler(request: Request) -> JSONResponse:
         )
 
     try:
+        jwt_user_id = await authenticated_user_id(request)
+    except Exception:
+        logger.warning("JWT decode failed in feedback handler", exc_info=True)
+        jwt_user_id = "anonymous"
+    payload["user_id"] = jwt_user_id
+
+    try:
         resp = await record_feedback(payload)
     except ValidationError as exc:
         return JSONResponse(
@@ -225,11 +233,10 @@ def _validate_thread_id(thread_id: str) -> str:
 
 
 @feedback_router.get("/feedback/{thread_id}")
-async def get_thread_feedback(
-    thread_id: str, user_id: str = "anonymous"
-) -> dict[str, Any]:
-    """Return all feedback for a thread."""
+async def get_thread_feedback(thread_id: str, request: Request) -> dict[str, Any]:
+    """Return all feedback for a thread, scoped to the authenticated user."""
     thread_id = _validate_thread_id(thread_id)
+    user_id = await authenticated_user_id(request)
     if not settings.database_uri:
         return {"feedback": []}
     repo = FeedbackRepository(settings.database_uri)
@@ -238,9 +245,13 @@ async def get_thread_feedback(
 
 
 @feedback_router.get("/threads/{thread_id}/token-usage")
-async def get_thread_token_usage_endpoint(thread_id: str) -> dict[str, Any]:
-    """Return cumulative token usage for a thread."""
+async def get_thread_token_usage_endpoint(
+    thread_id: str, request: Request
+) -> dict[str, Any]:
+    """Return cumulative token usage for a thread (authenticated)."""
     thread_id = _validate_thread_id(thread_id)
+    user_id = await authenticated_user_id(request)
+    logger.info("token_usage_requested", thread_id=thread_id, user_id=user_id[:8])
     from dataclasses import asdict
 
     from deep_agent.src.token_budget.service import (
