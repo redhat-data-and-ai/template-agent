@@ -51,7 +51,7 @@ class CreateRuleRequest(BaseModel):
 @personalization_router.get("/personalization/memories")
 async def list_memories(request: Request) -> dict[str, Any]:
     """Return all memories for the authenticated user."""
-    user_id = await authenticated_user_id(request)
+    user_id = await authenticated_user_id(request, reject_anonymous=True)
     repo = _get_repo()
     memories = await repo.list_memories(user_id)
     return {
@@ -69,7 +69,7 @@ async def list_memories(request: Request) -> dict[str, Any]:
 @personalization_router.post("/personalization/memories", status_code=201)
 async def create_memory(request: Request, body: CreateMemoryRequest) -> dict[str, Any]:
     """Create a new memory for the authenticated user."""
-    user_id = await authenticated_user_id(request)
+    user_id = await authenticated_user_id(request, reject_anonymous=True)
     repo = _get_repo()
     memory_id = UUID(body.id) if body.id else None
     mem = await repo.create_memory(user_id, body.content, memory_id=memory_id)
@@ -90,7 +90,7 @@ async def delete_memory(memory_id: str, request: Request) -> dict[str, str]:
         raise HTTPException(
             status_code=400, detail="Invalid memory_id format"
         ) from None
-    user_id = await authenticated_user_id(request)
+    user_id = await authenticated_user_id(request, reject_anonymous=True)
     repo = _get_repo()
     deleted = await repo.delete_memory(user_id, mid)
     if not deleted:
@@ -105,7 +105,7 @@ async def delete_memory(memory_id: str, request: Request) -> dict[str, str]:
 @personalization_router.get("/personalization/rules")
 async def list_rules(request: Request) -> dict[str, Any]:
     """Return all rules for the authenticated user."""
-    user_id = await authenticated_user_id(request)
+    user_id = await authenticated_user_id(request, reject_anonymous=True)
     repo = _get_repo()
     rules = await repo.list_rules(user_id, active_only=False)
     return {
@@ -124,7 +124,7 @@ async def list_rules(request: Request) -> dict[str, Any]:
 @personalization_router.post("/personalization/rules", status_code=201)
 async def create_rule(request: Request, body: CreateRuleRequest) -> dict[str, Any]:
     """Create a new rule for the authenticated user."""
-    user_id = await authenticated_user_id(request)
+    user_id = await authenticated_user_id(request, reject_anonymous=True)
     repo = _get_repo()
     rule_id = UUID(body.id) if body.id else None
     rule = await repo.upsert_rule(
@@ -146,7 +146,7 @@ async def delete_rule(rule_id: str, request: Request) -> dict[str, str]:
         rid = UUID(rule_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid rule_id format") from None
-    user_id = await authenticated_user_id(request)
+    user_id = await authenticated_user_id(request, reject_anonymous=True)
     repo = _get_repo()
     deleted = await repo.delete_rule(user_id, rid)
     if not deleted:
