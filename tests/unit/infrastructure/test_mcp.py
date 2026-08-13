@@ -553,8 +553,8 @@ class TestGetMCPTools:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("auth_mode", ["oauth", "dcr"])
-    async def test_auth_placeholder_uses_server_key_not_prefix(self, auth_mode):
-        """OAuth/DCR server with tool_prefix should use original server key for auth."""
+    async def test_pending_auth_uses_server_key_not_prefix(self, auth_mode):
+        """OAuth/DCR server with no token should populate pending auth, not placeholders."""
         _reset_mcp_cache()
         mock_servers = {
             "jira-mcp-prod": {
@@ -570,13 +570,19 @@ class TestGetMCPTools:
             patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
             patch("deep_agent.aegra.mcp._resolve_connection_token") as mock_resolve,
             patch(
-                "deep_agent.aegra.mcp._create_auth_placeholder_tool"
-            ) as mock_placeholder,
+                "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver"
+            ) as mock_resolver,
         ):
             mock_get_configs.return_value = mock_servers
-            mock_resolve.return_value = None  # no token — triggers placeholder path
-            mock_tool = MagicMock()
-            mock_tool.name = "mcp__jira_mcp_prod"
-            mock_placeholder.return_value = mock_tool
-            await get_mcp_tools()
-            mock_placeholder.assert_called_once_with("jira-mcp-prod")
+            mock_resolve.return_value = None
+            mock_resolver.return_value.connect_url.return_value = (
+                "/mcp/jira-mcp-prod/connect"
+            )
+            tools = await get_mcp_tools()
+            assert len(tools) == 0
+
+            from deep_agent.aegra.mcp import get_pending_mcp_auth
+
+            pending = get_pending_mcp_auth()
+            assert len(pending) == 1
+            assert pending[0]["mcp_name"] == "jira-mcp-prod"

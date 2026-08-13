@@ -90,8 +90,6 @@ def _graph_fingerprint(
     hitl_enabled: bool = False,
     hitl_mode: str = "all",
     hitl_exclude: list[str] | None = None,
-    temperature: float = 0.0,
-    max_tokens: int | None = None,
 ) -> str:
     """Stable fingerprint for graph cache keying."""
     hitl_flag = (
@@ -99,8 +97,7 @@ def _graph_fingerprint(
         f",mode={hitl_mode}"
         f",exclude={','.join(sorted(hitl_exclude or []))}"
     )
-    model_flag = f"temp={temperature},max_tokens={max_tokens}"
-    raw = f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}\0{hitl_flag}\0{model_flag}"
+    raw = f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}\0{hitl_flag}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -137,9 +134,11 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     from deep_agent.aegra.mcp import (
         get_mcp_tools,
+        get_pending_mcp_auth,
         refresh_access_token,
         set_mcp_auth_context,
     )
+    from deep_agent.aegra.mcp_auth_gate import McpAuthGateMiddleware
     from deep_agent.aegra.mcp_tool_auth import wrap_mcp_tools_for_auth
     from deep_agent.src.agent.config import agent_config
     from deep_agent.src.infrastructure.async_tasks import build_async_middleware
@@ -220,25 +219,15 @@ async def agent(runtime: ServerRuntime) -> Any:
     orch_spec = parse_model_config(orch_model_raw)
     model_name = orch_spec.name  # For logging and cache key
 
-    model_params = agent_config.get_model_params(orch_spec.name)
-    orch_temperature = model_params.get("temperature", 0.0)
-    orch_max_tokens = model_params.get("max_tokens") or None
-
     logger.info(
-        "Building agent '%s' (model=%s, provider=%s, temp=%s, max_tokens=%s, mcp_auth=%s)",
+        "Building agent '%s' (model=%s, provider=%s, mcp_auth=%s)",
         agent_name,
         orch_spec.name,
         orch_spec.provider.value,
-        orch_temperature,
-        orch_max_tokens or "default",
         bool(sso_token),
     )
 
-    model = get_or_create_model_from_spec(
-        orch_spec,
-        temperature=float(orch_temperature),
-        max_output_tokens=int(orch_max_tokens) if orch_max_tokens else None,
-    )
+    model = get_or_create_model_from_spec(orch_spec)
 
     providers_config = agent_config.get_providers_config()
     register_profiles_from_config(providers_config)
@@ -281,8 +270,6 @@ async def agent(runtime: ServerRuntime) -> Any:
         hitl_enabled=hitl.enabled if hitl else False,
         hitl_mode=hitl.mode if hitl else "",
         hitl_exclude=hitl.exclude if hitl else [],
-        temperature=float(orch_temperature),
-        max_tokens=int(orch_max_tokens) if orch_max_tokens else None,
     )
     now = time.time()
     graph_ttl = float(agent_config.get_cache_config().graph.ttl)
@@ -310,6 +297,14 @@ async def agent(runtime: ServerRuntime) -> Any:
         skills_param = to_virtual_skill_paths(skill_paths)
     else:
         skills_param = None
+
+    pending_auth = get_pending_mcp_auth()
+    if pending_auth:
+        middleware.insert(0, McpAuthGateMiddleware(pending_auth))
+        logger.info(
+            "Auth gate active: %d MCP server(s) need OAuth — will interrupt before LLM",
+            len(pending_auth),
+        )
 
     async_mw = build_async_middleware(subagents, providers_config.async_tasks)
     if async_mw is not None:
@@ -385,6 +380,36 @@ async def agent(runtime: ServerRuntime) -> Any:
         logger.info(
             "graph_guardian_enabled: wrapped with SafetyAwareRunnable and GuardianToolProxy"
         )
+
+    # ── Lifecycle persistence: hook register/deregister around invocation ──
+    try:
+        from deep_agent.src.settings import settings as app_settings
+
+        if app_settings.LIFECYCLE_PERSISTENCE_ENABLED:
+            from deep_agent.aegra.lifecycle import build_execution_context
+
+            user_id_val = str(user_identity) if user_identity else ""
+            assistant_id_val = getattr(runtime, "assistant_id", None) or ""
+
+            _exec_ctx = build_execution_context(
+                model_name=model_name,
+                config_hash=cache_key,
+                assistant_id=assistant_id_val,
+                user_id=user_id_val,
+                refresh_token=refresh_token,
+                mcp_server_names=mcp_server_names,
+                orchestrator_config=orchestrator_cfg,
+            )
+
+            setattr(compiled, "_lifecycle_enabled", True)
+            setattr(compiled, "_lifecycle_config_hash", cache_key)
+            setattr(compiled, "_lifecycle_user_id", user_id_val)
+            setattr(compiled, "_lifecycle_assistant_id", assistant_id_val)
+            setattr(compiled, "_lifecycle_exec_ctx", _exec_ctx)
+
+            logger.debug("Lifecycle persistence enabled")
+    except ImportError:
+        pass
 
     _graph_cache[cache_key] = compiled
     _graph_cache_ts[cache_key] = time.time()
