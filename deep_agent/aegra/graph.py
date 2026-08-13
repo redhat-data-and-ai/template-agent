@@ -401,11 +401,11 @@ async def agent(runtime: ServerRuntime) -> Any:
                 orchestrator_config=orchestrator_cfg,
             )
 
-            setattr(compiled, "_lifecycle_enabled", True)
-            setattr(compiled, "_lifecycle_config_hash", cache_key)
-            setattr(compiled, "_lifecycle_user_id", user_id_val)
-            setattr(compiled, "_lifecycle_assistant_id", assistant_id_val)
-            setattr(compiled, "_lifecycle_exec_ctx", _exec_ctx)
+            compiled._lifecycle_enabled = True  # noqa: SLF001
+            compiled._lifecycle_config_hash = cache_key  # noqa: SLF001
+            compiled._lifecycle_user_id = user_id_val  # noqa: SLF001
+            compiled._lifecycle_assistant_id = assistant_id_val  # noqa: SLF001
+            compiled._lifecycle_exec_ctx = _exec_ctx  # noqa: SLF001
 
             logger.debug("Lifecycle persistence enabled")
     except ImportError:

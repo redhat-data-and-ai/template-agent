@@ -53,6 +53,19 @@ def get_pending_mcp_auth() -> list[dict[str, str]]:
     return list(_pending_mcp_auth)
 
 
+def _record_pending_auth(server_cfg: dict[str, Any], name: str) -> None:
+    """Append a server to the pending-auth list for the auth gate middleware."""
+    from deep_agent.aegra.mcp_auth import get_mcp_credential_resolver
+
+    connect_url = get_mcp_credential_resolver().connect_url(name)
+    _pending_mcp_auth.append(
+        {
+            "mcp_name": name,
+            "connect_url": connect_url,
+        }
+    )
+
+
 _current_access_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_access_token", default=None
 )
@@ -456,20 +469,22 @@ async def _connect_single_server(
                     "[%s] MCP OAuth required — deferring to auth gate",
                     name,
                 )
+                _record_pending_auth(server_cfg, name)
                 return []
-            elif _is_auth_error(exc):
+            if _is_auth_error(exc):
                 auth_mode = server_cfg.get("auth_mode", "sso")
                 if auth_mode in ("oauth", "dcr"):
                     logger.info(
                         "[%s] MCP tool discovery auth failed — deferring to auth gate",
                         name,
                     )
+                    _record_pending_auth(server_cfg, name)
                     return []
                 else:
                     logger.warning(
                         f"[{name}] MCP auth failed — {type(exc).__name__}: {exc}"
                     )
-            elif _is_connection_error(exc) and not required:
+            if _is_connection_error(exc) and not required:
                 breaker.record_failure()
                 logger.warning(
                     f"[{name}] not reachable ({config.get('url')}) — skipped"
@@ -597,6 +612,9 @@ async def get_mcp_tools(
     """
     global _cached_tools, _cached_tools_ts  # noqa: PLW0603
 
+    global _pending_mcp_auth  # noqa: PLW0603
+    _pending_mcp_auth = []
+
     if (
         _cached_tools
         and len(_cached_tools) > 0
@@ -622,9 +640,6 @@ async def get_mcp_tools(
 
     logger.warning(f"Connecting to {len(enabled)} MCP server(s): {', '.join(enabled)}")
 
-    global _pending_mcp_auth  # noqa: PLW0603
-    _pending_mcp_auth = []
-
     has_auth: bool = bool(sso_token or user_id)
     discovery_token = _mcp_tool_discovery.set(True)
     try:
@@ -634,15 +649,7 @@ async def get_mcp_tools(
             bearer = await _resolve_connection_token(name, entry, sso_token, user_id)
             auth_mode = entry.get("auth_mode", "sso")
             if auth_mode in ("oauth", "dcr") and bearer is None:
-                from deep_agent.aegra.mcp_auth import get_mcp_credential_resolver
-
-                connect_url = get_mcp_credential_resolver().connect_url(name)
-                _pending_mcp_auth.append(
-                    {
-                        "mcp_name": name,
-                        "connect_url": connect_url,
-                    }
-                )
+                _record_pending_auth(entry, name)
                 logger.info(
                     "[%s] No OAuth token for %s server — deferring to auth gate",
                     mcp_prefix_name,

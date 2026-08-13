@@ -586,3 +586,4 @@ class TestGetMCPTools:
             pending = get_pending_mcp_auth()
             assert len(pending) == 1
             assert pending[0]["mcp_name"] == "jira-mcp-prod"
+            assert pending[0]["connect_url"] == "/mcp/jira-mcp-prod/connect"
