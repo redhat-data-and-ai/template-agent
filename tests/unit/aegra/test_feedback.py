@@ -209,6 +209,16 @@ class TestTokenUsageEndpoint:
             return_value=mock_conn,
         )
 
+    def test_rejects_anonymous_request(self) -> None:
+        """Token-usage endpoint returns 401 when auth is on and no token is sent."""
+        client = TestClient(app)
+        thread_uuid = "00000000-0000-0000-0000-000000000001"
+
+        with patch("deep_agent.aegra.auth.ENABLE_AUTH", True):
+            res = client.get(f"/threads/{thread_uuid}/token-usage")
+
+        assert res.status_code == 401
+
     def test_get_thread_token_usage_success(self) -> None:
         from deep_agent.src.token_budget.service import ThreadTokenUsage
 

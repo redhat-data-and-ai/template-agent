@@ -6,6 +6,11 @@ Overrides Aegra's default DELETE /threads/{thread_id} to also purge:
 - Token usage records (MongoDB, if configured)
 
 Aegra's built-in delete only removes the thread row and cascades to runs.
+
+All PostgreSQL deletes run in a single transaction so a mid-cleanup
+failure never leaves partially-deleted data on an accessible thread.
+MongoDB token-usage cleanup runs after the PG commit as best-effort
+(cross-database atomicity is not possible).
 """
 
 from __future__ import annotations
@@ -23,38 +28,39 @@ logger = get_python_logger()
 thread_cleanup_router = APIRouter(tags=["threads"])
 
 
-async def _delete_checkpoints(thread_id: str) -> int:
-    """Delete all LangGraph checkpoint data for a thread."""
-    import psycopg
+async def _delete_pg_data(thread_id: str, user_id: str, conn: Any) -> dict[str, int]:
+    """Delete all PostgreSQL data for a thread within an existing transaction."""
+    counts: dict[str, int] = {}
 
-    async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
-        deleted = 0
-        for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
-            cur = await conn.execute(
-                f"DELETE FROM {table} WHERE thread_id = %s",
-                (thread_id,),
-            )
-            deleted += cur.rowcount
-        await conn.commit()
-    return deleted
-
-
-async def _delete_feedback(thread_id: str) -> int:
-    """Delete all feedback entries for a thread."""
-    import psycopg
-
-    async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
+    checkpoint_total = 0
+    for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
         cur = await conn.execute(
-            "DELETE FROM message_feedback WHERE thread_id = %s",
+            f"DELETE FROM {table} WHERE thread_id = %s",
             (thread_id,),
         )
-        await conn.commit()
-        count: int = cur.rowcount
-        return count
+        checkpoint_total += cur.rowcount
+    counts["checkpoints"] = checkpoint_total
+
+    cur = await conn.execute(
+        "DELETE FROM message_feedback WHERE thread_id = %s",
+        (thread_id,),
+    )
+    counts["feedback"] = cur.rowcount
+
+    await conn.execute(
+        "DELETE FROM runs WHERE thread_id = %s AND user_id = %s",
+        (thread_id, user_id),
+    )
+    await conn.execute(
+        "DELETE FROM thread WHERE thread_id = %s AND user_id = %s",
+        (thread_id, user_id),
+    )
+
+    return counts
 
 
 async def _delete_token_usage(thread_id: str) -> bool:
-    """Delete token usage records for a thread from MongoDB."""
+    """Delete token usage records for a thread from MongoDB (best-effort)."""
     if not settings.MONGODB_URI:
         return False
 
@@ -71,10 +77,9 @@ async def delete_thread_with_cleanup(
 ) -> dict[str, Any]:
     """Delete a thread and purge all associated data.
 
-    Goes beyond Aegra's default delete by also cleaning up:
-    - Checkpoint history (conversation messages)
-    - Feedback records
-    - Token usage records
+    All PostgreSQL deletes (checkpoints, feedback, runs, thread) execute
+    in one transaction — either everything is removed or nothing is.
+    MongoDB token-usage cleanup runs after the PG commit as best-effort.
     """
     from uuid import UUID
 
@@ -105,53 +110,26 @@ async def delete_thread_with_cleanup(
     if not thread:
         raise HTTPException(status_code=404, detail=f"Thread '{thread_id}' not found")
 
-    errors: list[str] = []
-    checkpoint_count = 0
-    feedback_count = 0
+    async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
+        counts = await _delete_pg_data(thread_id, user_id, conn)
+        await conn.commit()
+
     token_usage_deleted = False
-
-    try:
-        checkpoint_count = await _delete_checkpoints(thread_id)
-    except Exception:
-        logger.warning("checkpoint_cleanup_failed", thread_id=thread_id, exc_info=True)
-        errors.append("checkpoints")
-
-    try:
-        feedback_count = await _delete_feedback(thread_id)
-    except Exception:
-        logger.warning("feedback_cleanup_failed", thread_id=thread_id, exc_info=True)
-        errors.append("feedback")
-
     try:
         token_usage_deleted = await _delete_token_usage(thread_id)
     except Exception:
-        logger.warning("token_usage_cleanup_failed", thread_id=thread_id, exc_info=True)
-        errors.append("token_usage")
-
-    if errors:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Cleanup failed for: {', '.join(errors)}. "
-            f"Thread not deleted to prevent orphaned records.",
+        logger.warning(
+            "token_usage_cleanup_failed_after_pg_commit",
+            thread_id=thread_id,
+            exc_info=True,
         )
-
-    async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
-        await conn.execute(
-            "DELETE FROM runs WHERE thread_id = %s AND user_id = %s",
-            (thread_id, user_id),
-        )
-        await conn.execute(
-            "DELETE FROM thread WHERE thread_id = %s AND user_id = %s",
-            (thread_id, user_id),
-        )
-        await conn.commit()
 
     logger.info(
         "thread_deleted_with_cleanup",
         thread_id=thread_id,
         user_id=user_id[:8],
-        checkpoints_deleted=checkpoint_count,
-        feedback_deleted=feedback_count,
+        checkpoints_deleted=counts["checkpoints"],
+        feedback_deleted=counts["feedback"],
         token_usage_deleted=token_usage_deleted,
     )
 
