@@ -236,7 +236,7 @@ def _validate_thread_id(thread_id: str) -> str:
 async def get_thread_feedback(thread_id: str, request: Request) -> dict[str, Any]:
     """Return all feedback for a thread, scoped to the authenticated user."""
     thread_id = _validate_thread_id(thread_id)
-    user_id = await authenticated_user_id(request)
+    user_id = await authenticated_user_id(request, reject_anonymous=True)
     if not settings.database_uri:
         return {"feedback": []}
     repo = FeedbackRepository(settings.database_uri)
@@ -250,7 +250,7 @@ async def get_thread_token_usage_endpoint(
 ) -> dict[str, Any]:
     """Return cumulative token usage for a thread (authenticated)."""
     thread_id = _validate_thread_id(thread_id)
-    user_id = await authenticated_user_id(request)
+    user_id = await authenticated_user_id(request, reject_anonymous=True)
     logger.info("token_usage_requested", thread_id=thread_id, user_id=user_id[:8])
     from dataclasses import asdict
 
@@ -259,6 +259,23 @@ async def get_thread_token_usage_endpoint(
         TokenUsageUnavailableError,
         get_thread_token_usage,
     )
+
+    if settings.database_uri:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        async with await psycopg.AsyncConnection.connect(
+            settings.database_uri, row_factory=dict_row
+        ) as conn:
+            cur = await conn.execute(
+                "SELECT thread_id FROM thread WHERE thread_id = %s AND user_id = %s",
+                (thread_id, user_id),
+            )
+            if not await cur.fetchone():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Thread '{thread_id}' not found",
+                ) from None
 
     try:
         usage = await get_thread_token_usage(thread_id)

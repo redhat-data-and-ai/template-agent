@@ -35,13 +35,14 @@ class TestDeleteCheckpoints:
 
             assert count == 15  # 5 per table x 3 tables
             assert mock_conn.execute.call_count == 3
+            mock_conn.commit.assert_awaited_once()
             queries = [c[0][0] for c in mock_conn.execute.call_args_list]
             assert any("checkpoint_writes" in q for q in queries)
             assert any("checkpoint_blobs" in q for q in queries)
             assert any("checkpoints" in q for q in queries)
 
     @pytest.mark.asyncio
-    async def test_returns_zero_on_failure(self):
+    async def test_raises_on_failure(self):
         from deep_agent.aegra.thread_cleanup import _delete_checkpoints
 
         with (
@@ -50,11 +51,11 @@ class TestDeleteCheckpoints:
                 side_effect=Exception("connection failed"),
             ),
             patch("deep_agent.aegra.thread_cleanup.settings") as mock_settings,
+            pytest.raises(Exception, match="connection failed"),
         ):
             mock_settings.database_uri = "postgresql://test"
 
-            count = await _delete_checkpoints("thread-123")
-            assert count == 0
+            await _delete_checkpoints("thread-123")
 
 
 class TestDeleteFeedback:
@@ -83,6 +84,7 @@ class TestDeleteFeedback:
             count = await _delete_feedback("thread-123")
 
             assert count == 3
+            mock_conn.commit.assert_awaited_once()
             query = mock_conn.execute.call_args[0][0]
             assert "message_feedback" in query
             assert "thread_id" in query
@@ -158,6 +160,18 @@ class TestCleanupUserScoping:
                 new_callable=AsyncMock,
                 return_value=mock_conn,
             ),
+            patch(
+                "deep_agent.aegra.thread_cleanup._delete_checkpoints",
+                new_callable=AsyncMock,
+            ) as mock_cp,
+            patch(
+                "deep_agent.aegra.thread_cleanup._delete_feedback",
+                new_callable=AsyncMock,
+            ) as mock_fb,
+            patch(
+                "deep_agent.aegra.thread_cleanup._delete_token_usage",
+                new_callable=AsyncMock,
+            ) as mock_tu,
         ):
             mock_settings.database_uri = "postgresql://test"
 
@@ -165,3 +179,6 @@ class TestCleanupUserScoping:
             res = client.delete(f"/threads/{thread_id}")
 
             assert res.status_code == 404
+            mock_cp.assert_not_awaited()
+            mock_fb.assert_not_awaited()
+            mock_tu.assert_not_awaited()

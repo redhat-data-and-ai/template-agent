@@ -7,6 +7,7 @@ personalization data. Stores serialised JSON in Redis, keyed by
 Feature flag: ``CACHE_PERSONALIZATION_ENABLED`` (+ ``CACHE_ENABLED``).
 """
 
+import asyncio
 import json
 from typing import Any
 
@@ -103,10 +104,10 @@ async def invalidate(user_id: str | None = None) -> None:
         return
     key = _cache_key(user_id)
     redis = _get_redis()
-    if redis.delete(key):
+    if await asyncio.to_thread(redis.delete, key):
         metrics.record_delete("personalization")
         return
-    if redis.expire(key, _FALLBACK_EXPIRE_SECONDS):
+    if await asyncio.to_thread(redis.expire, key, _FALLBACK_EXPIRE_SECONDS):
         logger.warning(
             "Cache delete failed, set %ds expiry for user %s",
             _FALLBACK_EXPIRE_SECONDS,

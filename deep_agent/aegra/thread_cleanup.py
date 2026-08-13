@@ -25,56 +25,44 @@ thread_cleanup_router = APIRouter(tags=["threads"])
 
 async def _delete_checkpoints(thread_id: str) -> int:
     """Delete all LangGraph checkpoint data for a thread."""
-    try:
-        import psycopg
+    import psycopg
 
-        async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
-            deleted = 0
-            for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
-                cur = await conn.execute(
-                    f"DELETE FROM {table} WHERE thread_id = %s",
-                    (thread_id,),
-                )
-                deleted += cur.rowcount
-            await conn.commit()
-        return deleted
-    except Exception:
-        logger.warning("checkpoint_cleanup_failed", thread_id=thread_id, exc_info=True)
-        return 0
+    async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
+        deleted = 0
+        for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+            cur = await conn.execute(
+                f"DELETE FROM {table} WHERE thread_id = %s",
+                (thread_id,),
+            )
+            deleted += cur.rowcount
+        await conn.commit()
+    return deleted
 
 
 async def _delete_feedback(thread_id: str) -> int:
     """Delete all feedback entries for a thread."""
-    try:
-        import psycopg
+    import psycopg
 
-        async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
-            cur = await conn.execute(
-                "DELETE FROM message_feedback WHERE thread_id = %s",
-                (thread_id,),
-            )
-            await conn.commit()
-            count: int = cur.rowcount
-            return count
-    except Exception:
-        logger.warning("feedback_cleanup_failed", thread_id=thread_id, exc_info=True)
-        return 0
+    async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
+        cur = await conn.execute(
+            "DELETE FROM message_feedback WHERE thread_id = %s",
+            (thread_id,),
+        )
+        await conn.commit()
+        count: int = cur.rowcount
+        return count
 
 
 async def _delete_token_usage(thread_id: str) -> bool:
     """Delete token usage records for a thread from MongoDB."""
-    try:
-        if not settings.MONGODB_URI:
-            return False
-
-        from deep_agent.src.token_budget.service import _mongo_repo
-
-        repo = _mongo_repo()
-        result = await repo._thread_collection().delete_many({"thread_id": thread_id})
-        return bool(result.deleted_count > 0)
-    except Exception:
-        logger.warning("token_usage_cleanup_failed", thread_id=thread_id, exc_info=True)
+    if not settings.MONGODB_URI:
         return False
+
+    from deep_agent.src.token_budget.service import _mongo_repo
+
+    repo = _mongo_repo()
+    result = await repo._thread_collection().delete_many({"thread_id": thread_id})
+    return bool(result.deleted_count > 0)
 
 
 @thread_cleanup_router.delete("/threads/{thread_id}")
@@ -97,7 +85,7 @@ async def delete_thread_with_cleanup(
             status_code=400, detail="Invalid thread_id format"
         ) from None
 
-    user_id = await authenticated_user_id(request)
+    user_id = await authenticated_user_id(request, reject_anonymous=True)
 
     if not settings.database_uri:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -117,9 +105,35 @@ async def delete_thread_with_cleanup(
     if not thread:
         raise HTTPException(status_code=404, detail=f"Thread '{thread_id}' not found")
 
-    checkpoint_count = await _delete_checkpoints(thread_id)
-    feedback_count = await _delete_feedback(thread_id)
-    token_usage_deleted = await _delete_token_usage(thread_id)
+    errors: list[str] = []
+    checkpoint_count = 0
+    feedback_count = 0
+    token_usage_deleted = False
+
+    try:
+        checkpoint_count = await _delete_checkpoints(thread_id)
+    except Exception:
+        logger.warning("checkpoint_cleanup_failed", thread_id=thread_id, exc_info=True)
+        errors.append("checkpoints")
+
+    try:
+        feedback_count = await _delete_feedback(thread_id)
+    except Exception:
+        logger.warning("feedback_cleanup_failed", thread_id=thread_id, exc_info=True)
+        errors.append("feedback")
+
+    try:
+        token_usage_deleted = await _delete_token_usage(thread_id)
+    except Exception:
+        logger.warning("token_usage_cleanup_failed", thread_id=thread_id, exc_info=True)
+        errors.append("token_usage")
+
+    if errors:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cleanup failed for: {', '.join(errors)}. "
+            f"Thread not deleted to prevent orphaned records.",
+        )
 
     async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
         await conn.execute(

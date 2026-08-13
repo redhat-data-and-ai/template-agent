@@ -104,13 +104,12 @@ def _verify_custom_thread_delete(application: FastAPI) -> None:
             if route.endpoint is delete_thread_with_cleanup:
                 logger.info("custom_thread_delete_route_verified")
                 return
-            logger.error(
+            raise RuntimeError(
                 "custom_thread_delete_route_overridden: "
                 "Aegra's built-in DELETE /threads/{thread_id} is taking "
                 "priority over our custom cleanup handler. "
                 "Check router registration order in http_app.py."
             )
-            return
     logger.warning("thread_delete_route_not_found")
 
 
