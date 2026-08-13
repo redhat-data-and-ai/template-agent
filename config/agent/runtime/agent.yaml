@@ -281,3 +281,13 @@ logging:
 server:
   host: "0.0.0.0"
   port: 5002
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# OPA (Authorization)                                                  [env-var]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+opa:
+  enabled: false
+  url: http://opa:8181/v1/data/agent/authz
+  timeout: 2.0
+  max_retries: 3
+  fail_open: false
+# Env: OPA_ENABLED, OPA_URL, OPA_TIMEOUT, OPA_MAX_RETRIES
