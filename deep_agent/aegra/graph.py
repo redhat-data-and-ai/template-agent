@@ -115,6 +115,47 @@ async def _ensure_startup() -> None:  # noqa: E402
     _startup_done = True
 
 
+async def _sync_personalization(
+    repo: Any,
+    user_id: str,
+    ui_memories: list[str] | None,
+    ui_rules: list[str] | None,
+) -> None:
+    """Sync UI-sent memories/rules to Postgres.
+
+    Compares the UI's current set against the DB and adds new items
+    or removes ones the user deleted in the UI.
+    """
+    if ui_memories is not None:
+        db_memories = await repo.list_memories(user_id)
+        db_contents = {m.content for m in db_memories}
+        for content in ui_memories:
+            if content not in db_contents:
+                await repo.create_memory(user_id, content)
+        ui_set = set(ui_memories)
+        for mem in db_memories:
+            if mem.content not in ui_set:
+                await repo.delete_memory(user_id, mem.id)
+
+    if ui_rules is not None:
+        db_rules = await repo.list_rules(user_id, active_only=False)
+        db_contents = {r.content for r in db_rules}
+        for content in ui_rules:
+            if content not in db_contents:
+                await repo.upsert_rule(user_id, content)
+        ui_set = set(ui_rules)
+        for rule in db_rules:
+            if rule.content not in ui_set:
+                await repo.delete_rule(user_id, rule.id)
+
+    logger.info(
+        "personalization_synced",
+        user_id=user_id[:8],
+        memories=len(ui_memories) if ui_memories else 0,
+        rules=len(ui_rules) if ui_rules else 0,
+    )
+
+
 async def agent(runtime: ServerRuntime) -> Any:
     """Async graph factory — invoked per-request by Aegra.
 
@@ -171,6 +212,7 @@ async def agent(runtime: ServerRuntime) -> Any:
         try:
             from deep_agent.src.cache.personalization_cache import (
                 get_personalization,
+                invalidate,
                 set_personalization,
             )
             from deep_agent.src.memory.config import memory_settings
@@ -180,12 +222,28 @@ async def agent(runtime: ServerRuntime) -> Any:
             )
             from deep_agent.src.settings import settings as app_settings
 
+            repo = PersonalizationRepository(app_settings.database_uri)
+
+            ui_memories = (
+                getattr(runtime, "config", {})
+                .get("configurable", {})
+                .get("user_memories", None)
+            )
+            ui_rules = (
+                getattr(runtime, "config", {})
+                .get("configurable", {})
+                .get("user_rules", None)
+            )
+
+            if ui_memories is not None or ui_rules is not None:
+                await _sync_personalization(repo, user_identity, ui_memories, ui_rules)
+                await invalidate(user_identity)
+
             cached = await get_personalization(user_identity)
             if cached is not None:
                 mem_contents = [m["content"] for m in cached[0]]
                 rule_contents = [r["content"] for r in cached[1]]
             else:
-                repo = PersonalizationRepository(app_settings.database_uri)
                 max_inject = memory_settings.MEMORY_MAX_INJECT
                 memories = await repo.list_top_memories(user_identity, limit=max_inject)
                 rules = await repo.list_rules(user_identity, active_only=True)
