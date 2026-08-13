@@ -17,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from deep_agent.aegra.feedback import feedback_router
 from deep_agent.aegra.mcp_routes import router as mcp_router
+from deep_agent.aegra.personalization_routes import personalization_router
 from deep_agent.aegra.security_middleware import (
     RequestSizeLimitMiddleware,
     SecurityHeadersMiddleware,
@@ -184,6 +185,7 @@ app.add_middleware(
     RequestSizeLimitMiddleware, max_size_bytes=settings.REQUEST_BODY_MAX_SIZE
 )
 app.include_router(thread_cleanup_router)
+app.include_router(personalization_router)
 app.include_router(mcp_router)
 app.include_router(feedback_router)
 
