@@ -563,7 +563,9 @@ class TestUpdateEventHandler:
         assert events[0]["content"]["thread_id"] == stream_context.thread_id
         assert events[0]["content"]["run_id"] == stream_context.run_id
 
-    def test_handle_interrupt_event_parses_json_string(self, deduplicator, stream_context):
+    def test_handle_interrupt_event_parses_json_string(
+        self, deduplicator, stream_context
+    ):
         """MCP auth interrupts arrive as JSON strings and should be parsed."""
         handler = UpdateEventHandler(deduplicator)
         payload = {
@@ -574,9 +576,7 @@ class TestUpdateEventHandler:
         }
 
         event = {
-            "__interrupt__": [
-                type("Interrupt", (), {"value": json.dumps(payload)})()
-            ]
+            "__interrupt__": [type("Interrupt", (), {"value": json.dumps(payload)})()]
         }
 
         events = handler.handle(event, stream_context)

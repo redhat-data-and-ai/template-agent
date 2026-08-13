@@ -67,9 +67,7 @@ def _convert_interrupts_to_events(
     events: list[dict[str, Any]] = []
     for interrupt_data in interrupts:
         raw_value = (
-            interrupt_data.value
-            if hasattr(interrupt_data, "value")
-            else interrupt_data
+            interrupt_data.value if hasattr(interrupt_data, "value") else interrupt_data
         )
         events.append(
             {
