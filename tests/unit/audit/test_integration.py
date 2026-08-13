@@ -47,6 +47,10 @@ class TestBuildMiddlewareListAudit:
                 return_value=True,
             ),
             patch(
+                "deep_agent.src.opa.config.is_opa_enabled",
+                return_value=False,
+            ),
+            patch(
                 "deep_agent.src.infrastructure.middleware._build_summarization_tool_middleware",
                 return_value=mock_mw,
             ),

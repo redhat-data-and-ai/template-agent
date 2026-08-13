@@ -27,6 +27,7 @@ def _patch_all_checks(**overrides):
         "cache": {"status": "ok"},
         "mcp_servers": {"status": "ok", "servers": {}, "healthy": 0, "total": 0},
         "llm_provider": {"status": "ok", "provider": "vllm"},
+        "opa": {"status": "disabled"},
     }
     defaults.update(overrides)
 
@@ -71,6 +72,13 @@ def _patch_all_checks(**overrides):
             "deep_agent.aegra.mcp_health.check_llm_provider",
             new_callable=AsyncMock,
             return_value=defaults["llm_provider"],
+        )
+    )
+    stack.enter_context(
+        patch(
+            "deep_agent.aegra.health.check_opa",
+            new_callable=AsyncMock,
+            return_value=defaults["opa"],
         )
     )
     return stack
@@ -156,6 +164,12 @@ class TestGetHealthStatus:
         assert "checks" in result
         assert "mcp_servers" in result["checks"]
         assert "llm_provider" in result["checks"]
+        assert result["checks"]["opa"] == {"status": "disabled"}
+
+    async def test_unhealthy_on_opa_error(self):
+        with _patch_all_checks(opa={"status": "error", "error": "unreachable"}):
+            result = await get_health_status()
+        assert result["status"] == "unhealthy"
 
     async def test_unhealthy_on_db_error(self):
         with _patch_all_checks(database={"status": "error", "error": "down"}):
