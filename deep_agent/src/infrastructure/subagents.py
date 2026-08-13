@@ -227,7 +227,11 @@ def _inject_fallback_if_missing(
     return model_dict
 
 
-def _create_primary_model(spec: ModelSpec) -> object:
+def _create_primary_model(
+    spec: ModelSpec,
+    temperature: float | None = None,
+    max_output_tokens: int | None = None,
+) -> object:
     """Create only the primary BaseChatModel from a ModelSpec, without fallback wrapper.
 
     Uses the model cache for efficient reuse. Fallbacks should be handled via
@@ -235,6 +239,8 @@ def _create_primary_model(spec: ModelSpec) -> object:
 
     Args:
         spec: Parsed model specification (fallback config ignored).
+        temperature: Override from model config file, or None for default.
+        max_output_tokens: Override from model config file, or None for default.
 
     Returns:
         A BaseChatModel instance for the primary model only.
@@ -242,8 +248,13 @@ def _create_primary_model(spec: ModelSpec) -> object:
     # Create a spec without fallback for the primary model
     primary_spec = ModelSpec(provider=spec.provider, name=spec.name, fallback=None)
 
-    # Use the cache to get or create the model
-    return get_or_create_model_from_spec(primary_spec)
+    kwargs: dict[str, Any] = {}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if max_output_tokens is not None:
+        kwargs["max_output_tokens"] = max_output_tokens
+
+    return get_or_create_model_from_spec(primary_spec, **kwargs)
 
 
 def _resolve_subagent_model(agent_cfg: dict[str, Any]) -> object:
@@ -256,11 +267,17 @@ def _resolve_subagent_model(agent_cfg: dict[str, Any]) -> object:
     if raw_model is None:
         raise ValueError("missing required 'model' field in frontmatter")
 
-    # Parse model spec (may include fallback config)
     spec = parse_model_config(raw_model)
 
-    # Create only the primary model using the cache
-    return _create_primary_model(spec)
+    model_params = agent_config.get_model_params(spec.name)
+    temp = model_params.get("temperature")
+    max_tok = model_params.get("max_tokens")
+
+    return _create_primary_model(
+        spec,
+        temperature=float(temp) if temp is not None else None,
+        max_output_tokens=int(max_tok) if max_tok is not None else None,
+    )
 
 
 def _format_model_log(spec: ModelSpec) -> str:

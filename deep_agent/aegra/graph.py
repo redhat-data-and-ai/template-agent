@@ -90,6 +90,8 @@ def _graph_fingerprint(
     hitl_enabled: bool = False,
     hitl_mode: str = "all",
     hitl_exclude: list[str] | None = None,
+    temperature: float = 0.0,
+    max_tokens: int | None = None,
 ) -> str:
     """Stable fingerprint for graph cache keying."""
     hitl_flag = (
@@ -97,7 +99,8 @@ def _graph_fingerprint(
         f",mode={hitl_mode}"
         f",exclude={','.join(sorted(hitl_exclude or []))}"
     )
-    raw = f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}\0{hitl_flag}"
+    model_flag = f"temp={temperature},max_tokens={max_tokens}"
+    raw = f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}\0{hitl_flag}\0{model_flag}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -217,15 +220,25 @@ async def agent(runtime: ServerRuntime) -> Any:
     orch_spec = parse_model_config(orch_model_raw)
     model_name = orch_spec.name  # For logging and cache key
 
+    model_params = agent_config.get_model_params(orch_spec.name)
+    orch_temperature = model_params.get("temperature", 0.0)
+    orch_max_tokens = model_params.get("max_tokens") or None
+
     logger.info(
-        "Building agent '%s' (model=%s, provider=%s, mcp_auth=%s)",
+        "Building agent '%s' (model=%s, provider=%s, temp=%s, max_tokens=%s, mcp_auth=%s)",
         agent_name,
         orch_spec.name,
         orch_spec.provider.value,
+        orch_temperature,
+        orch_max_tokens or "default",
         bool(sso_token),
     )
 
-    model = get_or_create_model_from_spec(orch_spec)
+    model = get_or_create_model_from_spec(
+        orch_spec,
+        temperature=float(orch_temperature),
+        max_output_tokens=int(orch_max_tokens) if orch_max_tokens else None,
+    )
 
     providers_config = agent_config.get_providers_config()
     register_profiles_from_config(providers_config)
@@ -268,6 +281,8 @@ async def agent(runtime: ServerRuntime) -> Any:
         hitl_enabled=hitl.enabled if hitl else False,
         hitl_mode=hitl.mode if hitl else "",
         hitl_exclude=hitl.exclude if hitl else [],
+        temperature=float(orch_temperature),
+        max_tokens=int(orch_max_tokens) if orch_max_tokens else None,
     )
     now = time.time()
     graph_ttl = float(agent_config.get_cache_config().graph.ttl)
