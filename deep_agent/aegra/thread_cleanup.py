@@ -28,8 +28,14 @@ logger = get_python_logger()
 thread_cleanup_router = APIRouter(tags=["threads"])
 
 
-async def _delete_pg_data(thread_id: str, user_id: str, conn: Any) -> dict[str, int]:
-    """Delete all PostgreSQL data for a thread within an existing transaction."""
+async def _delete_pg_data(
+    thread_id: str, user_id: str | None, conn: Any
+) -> dict[str, int]:
+    """Delete all PostgreSQL data for a thread within an existing transaction.
+
+    When *user_id* is ``None`` (auth disabled), runs and thread rows are
+    deleted without a user scope filter.
+    """
     counts: dict[str, int] = {}
 
     checkpoint_total = 0
@@ -47,14 +53,24 @@ async def _delete_pg_data(thread_id: str, user_id: str, conn: Any) -> dict[str, 
     )
     counts["feedback"] = cur.rowcount
 
-    await conn.execute(
-        "DELETE FROM runs WHERE thread_id = %s AND user_id = %s",
-        (thread_id, user_id),
-    )
-    await conn.execute(
-        "DELETE FROM thread WHERE thread_id = %s AND user_id = %s",
-        (thread_id, user_id),
-    )
+    if user_id is not None:
+        await conn.execute(
+            "DELETE FROM runs WHERE thread_id = %s AND user_id = %s",
+            (thread_id, user_id),
+        )
+        await conn.execute(
+            "DELETE FROM thread WHERE thread_id = %s AND user_id = %s",
+            (thread_id, user_id),
+        )
+    else:
+        await conn.execute(
+            "DELETE FROM runs WHERE thread_id = %s",
+            (thread_id,),
+        )
+        await conn.execute(
+            "DELETE FROM thread WHERE thread_id = %s",
+            (thread_id,),
+        )
 
     return counts
 
@@ -90,7 +106,11 @@ async def delete_thread_with_cleanup(
             status_code=400, detail="Invalid thread_id format"
         ) from None
 
-    user_id = await authenticated_user_id(request, reject_anonymous=True)
+    from deep_agent.aegra.auth import ENABLE_AUTH
+
+    user_id: str | None = None
+    if ENABLE_AUTH:
+        user_id = await authenticated_user_id(request, reject_anonymous=True)
 
     if not settings.database_uri:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -101,10 +121,16 @@ async def delete_thread_with_cleanup(
     async with await psycopg.AsyncConnection.connect(
         settings.database_uri, row_factory=dict_row
     ) as conn:
-        cur = await conn.execute(
-            "SELECT thread_id FROM thread WHERE thread_id = %s AND user_id = %s",
-            (thread_id, user_id),
-        )
+        if user_id is not None:
+            cur = await conn.execute(
+                "SELECT thread_id FROM thread WHERE thread_id = %s AND user_id = %s",
+                (thread_id, user_id),
+            )
+        else:
+            cur = await conn.execute(
+                "SELECT thread_id FROM thread WHERE thread_id = %s",
+                (thread_id,),
+            )
         thread = await cur.fetchone()
 
     if not thread:
@@ -127,7 +153,7 @@ async def delete_thread_with_cleanup(
     logger.info(
         "thread_deleted_with_cleanup",
         thread_id=thread_id,
-        user_id=user_id[:8],
+        user_id=user_id[:8] if user_id else "no-auth",
         checkpoints_deleted=counts["checkpoints"],
         feedback_deleted=counts["feedback"],
         token_usage_deleted=token_usage_deleted,

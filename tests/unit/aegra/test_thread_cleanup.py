@@ -96,7 +96,7 @@ class TestDeleteThreadWithCleanup:
 
             assert res.status_code == 200
             assert res.json() == {"status": "deleted"}
-            mock_pg.assert_awaited_once_with(thread_id, "dev-user", mock_conn)
+            mock_pg.assert_awaited_once_with(thread_id, None, mock_conn)
             mock_conn.commit.assert_awaited()
             mock_tu.assert_awaited_once_with(thread_id)
 
