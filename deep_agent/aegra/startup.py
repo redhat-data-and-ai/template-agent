@@ -6,19 +6,28 @@ traffic.
 
 Startup sequence:
     1. Validate configuration
-    2. Ensure database tables exist
-    3. Warm caches (if enabled)
-    4. Start memory scheduler (if enabled)
-    5. Set up Langfuse tracing (if configured)
-    6. Log readiness
+    2. Initialize Aegra database manager (Postgres checkpointer + store)
+    3. Ensure database tables exist
+    4. Warm caches (if enabled)
+    5. Start memory scheduler (if enabled)
+    6. Set up Langfuse tracing (if configured)
+    7. Log readiness
 
 This module is idempotent — calling ``run_startup()`` multiple
 times is safe (each step guards against double-init).
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any
+
+    import psycopg
 
 from deep_agent.utils.pylogger import get_python_logger
 
@@ -42,8 +51,10 @@ async def run_startup() -> dict[str, str]:
     results: dict[str, str] = {}
 
     results["config"] = await _validate_config()
+    results["aegra_db"] = await _init_aegra_db()
     results["database"] = await _ensure_database()
     _check_mcp_encryption_key()
+    results["resume"] = await _resume_interrupted_runs()
     results["cache"] = await _warm_caches()
     results["scheduler"] = await _start_scheduler()
     results["otel"] = _setup_otel()
@@ -70,6 +81,186 @@ def _upgrade_signal_handlers() -> None:
         register_signal_handlers()
     except Exception:
         logger.warning("Failed to register signal handlers", exc_info=True)
+
+
+async def _init_aegra_db() -> str:
+    """Initialize Aegra's DatabaseManager for Postgres checkpointing.
+
+    When running under raw uvicorn (production Containerfile), the
+    ``aegra dev`` startup path that normally calls
+    ``db_manager.initialize()`` is bypassed.  This step ensures the
+    Postgres connection pool, checkpointer, and store are created
+    before the first graph request.
+    """
+    try:
+        from aegra_api.core.database import db_manager
+
+        if db_manager.engine is not None:
+            return "ok: already initialized"
+
+        await db_manager.initialize()
+        logger.info("Aegra DatabaseManager initialized (Postgres checkpointer ready)")
+        return "ok"
+    except Exception as exc:
+        logger.warning("Aegra DB init failed (falling back to in-memory): %s", exc)
+        return f"warning: {exc}"
+
+
+def _clear_stale_done_keys(run_ids: list[str]) -> None:
+    """Remove Redis done/counter/cache keys for runs being re-enqueued.
+
+    Aegra's run_executor sets ``aegra:run:done:<id>`` even for interrupted
+    runs. If these keys survive into the next pod, the LeaseReaper skips
+    the run thinking it's already handled.
+    """
+    try:
+        from deep_agent.aegra.redis import get_redis_client
+
+        client = get_redis_client()
+        if client is None:
+            return
+        prefix = "aegra:run:"
+        keys_to_delete = []
+        for rid in run_ids:
+            keys_to_delete.extend(
+                [
+                    f"{prefix}done:{rid}",
+                    f"{prefix}counter:{rid}",
+                    f"{prefix}cache:{rid}",
+                ]
+            )
+        if keys_to_delete:
+            client.delete(*keys_to_delete)
+            logger.info(
+                "Cleared %d stale Redis keys for %d re-enqueued runs",
+                len(keys_to_delete),
+                len(run_ids),
+            )
+    except Exception as exc:
+        logger.warning("Failed to clear stale Redis keys: %s", exc)
+
+
+async def _clear_input_for_checkpoint_resume(
+    conn: "psycopg.AsyncConnection[Any]",
+    run_ids: list[str],
+) -> int:
+    """Clear input_data and command from runs so they resume from checkpoint only.
+
+    When a run is re-enqueued after a crash, _resolve_input() returns
+    the stored input_data or command. Re-sending the original input
+    causes LangGraph to re-process it on top of the checkpoint state,
+    which creates duplicate messages and re-triggers HITL approvals.
+
+    Clearing both fields makes _resolve_input() return None, so the
+    graph resumes purely from its checkpoint — the correct behavior
+    for crash recovery.
+    """
+    if not run_ids:
+        return 0
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "UPDATE runs SET "
+            "input = NULL, "
+            "execution_params = jsonb_set("
+            "  jsonb_set("
+            "    execution_params, "
+            "    '{execution,input_data}', 'null'::jsonb"
+            "  ), "
+            "  '{execution,command}', 'null'::jsonb"
+            ") "
+            "WHERE run_id = ANY(%s)",
+            (run_ids,),
+        )
+        updated = cur.rowcount or 0
+    if updated:
+        logger.info(
+            "Cleared input/command for %d run(s) — will resume from checkpoint only",
+            updated,
+        )
+    return updated
+
+
+async def _resume_interrupted_runs() -> str:
+    """Reset interrupted runs so Aegra's LeaseReaper can recover them.
+
+    Aegra's own shutdown may mark active runs as ``interrupted``
+    (via executor.stop), but the LeaseReaper only scans for
+    ``status='running'`` with expired leases. This step resets
+    ``interrupted`` runs back to ``running`` with an expired lease
+    so the reaper picks them up on its next scan cycle.
+    """
+    try:
+        from deep_agent.src.settings import settings as app_settings
+
+        if not app_settings.LIFECYCLE_PERSISTENCE_ENABLED:
+            return "skipped: lifecycle persistence disabled"
+        if not app_settings.LIFECYCLE_RESUME_ON_STARTUP:
+            return "skipped: resume on startup disabled"
+
+        import psycopg
+
+        recovered = 0
+        recovered_run_ids: list[str] = []
+        async with await psycopg.AsyncConnection.connect(
+            app_settings.database_uri
+        ) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT run_id FROM runs WHERE status = 'interrupted' "
+                    "ORDER BY updated_at ASC LIMIT %s",
+                    (app_settings.LIFECYCLE_MAX_RESUME_BATCH,),
+                )
+                recovered_run_ids = [row[0] for row in await cur.fetchall()]
+
+                if recovered_run_ids:
+                    await cur.execute(
+                        "UPDATE runs SET status = 'running', "
+                        "lease_expires_at = NOW() - INTERVAL '1 second', "
+                        "claimed_by = NULL, "
+                        "updated_at = NOW() "
+                        "WHERE run_id = ANY(%s) AND status = 'interrupted'",
+                        (recovered_run_ids,),
+                    )
+                recovered = len(recovered_run_ids)
+
+                await cur.execute(
+                    "SELECT run_id, thread_id FROM runs "
+                    "WHERE status = 'running' "
+                    "AND lease_expires_at IS NOT NULL "
+                    "AND lease_expires_at < NOW() "
+                    "ORDER BY updated_at ASC LIMIT 20"
+                )
+                stale = await cur.fetchall()
+                stale_run_ids = [row[0] for row in stale]
+
+            all_recoverable = list(set(recovered_run_ids + stale_run_ids))
+            if all_recoverable:
+                await _clear_input_for_checkpoint_resume(conn, all_recoverable)
+
+            await conn.commit()
+
+        if recovered > 0:
+            _clear_stale_done_keys(recovered_run_ids)
+            logger.info(
+                "Reset %d interrupted run(s) to running — "
+                "LeaseReaper will re-enqueue them",
+                recovered,
+            )
+
+        for run_id, thread_id in stale:
+            logger.info(
+                "Stale run awaiting LeaseReaper: run=%s thread=%s",
+                run_id,
+                thread_id,
+            )
+
+        total = recovered + len(stale)
+        if total == 0:
+            return "ok: no recoverable runs"
+        return f"ok: {recovered} reset, {len(stale)} stale — LeaseReaper will recover"
+    except Exception as exc:
+        logger.warning("Resume check failed: %s", exc)
+        return f"warning: {exc}"
 
 
 async def _validate_config() -> str:

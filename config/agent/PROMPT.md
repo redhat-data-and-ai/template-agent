@@ -14,9 +14,6 @@ model: gemini-2.5-pro
 #   name: granite-3.1-8b-instruct
 tools:
   - validate_email
-  - queue_task
-  - check_task_status
-  - get_pending_results
 skills:
   - client-intake
 ---

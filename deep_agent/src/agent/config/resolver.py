@@ -72,7 +72,7 @@ def to_virtual_skill_paths(skill_paths: list[str]) -> list[str]:
     Returns:
         Virtual paths like ["/skills/my-skill", "/skills/other-skill"].
     """
-    virtual: set[str] = set()
+    virtual: list[str] = []
     for p in skill_paths:
         name = Path(p).name
         parent_name = Path(p).parent.name
@@ -83,8 +83,8 @@ def to_virtual_skill_paths(skill_paths: list[str]) -> list[str]:
                 p,
                 name,
             )
-        virtual.add(f"/skills/{name}")
-    return sorted(virtual)
+        virtual.append(f"/skills/{name}")
+    return virtual
 
 
 def resolve_tools(

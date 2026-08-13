@@ -160,19 +160,17 @@ class Settings(BaseSettings):
     MEMORY_CLUSTERING_ENABLED: bool = Field(default=True)
     MEMORY_RELATIONSHIPS_ENABLED: bool = Field(default=True)
 
+    # ── Lifecycle Persistence ─────────────────────────────────────────
+    LIFECYCLE_PERSISTENCE_ENABLED: bool = Field(default=True)
+    LIFECYCLE_LEASE_SECONDS: int = Field(default=300)
+    LIFECYCLE_MAX_RESUME_BATCH: int = Field(default=10)
+    LIFECYCLE_RESUME_ON_STARTUP: bool = Field(default=True)
+
     # ── Middleware ────────────────────────────────────────────────────
     MIDDLEWARE_ENABLED: bool = Field(default=True)
 
     # ── CLI ───────────────────────────────────────────────────────────
     ENABLE_CLI: bool = Field(default=True)
-
-    # ── OPA (Authorization) ───────────────────────────────────────────
-    # None = not set; agent.yaml opa: section is the source of truth.
-    # Set env var to override YAML for that field only.
-    OPA_ENABLED: Optional[bool] = Field(default=None)
-    OPA_URL: Optional[str] = Field(default=None)
-    OPA_TIMEOUT: Optional[float] = Field(default=None, gt=0)
-    OPA_MAX_RETRIES: Optional[int] = Field(default=None, ge=0)
 
     # ── Platform ──────────────────────────────────────────────────────
     DEPLOYED_AGENT_NAME: str = Field(default="")

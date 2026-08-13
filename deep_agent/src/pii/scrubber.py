@@ -201,7 +201,7 @@ class PIIScrubber:
         return token
 
     def _mask_value(self, value: str) -> str:
-        """Partially mask a value — preserve last 4 chars, replace rest with *."""
+        """Mask a value, preserving the last 4 chars."""
         if len(value) <= 4:
             return "*" * len(value)
         return "*" * (len(value) - 4) + value[-4:]

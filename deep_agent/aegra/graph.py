@@ -371,6 +371,36 @@ async def agent(runtime: ServerRuntime) -> Any:
             "graph_guardian_enabled: wrapped with SafetyAwareRunnable and GuardianToolProxy"
         )
 
+    # ── Lifecycle persistence: hook register/deregister around invocation ──
+    try:
+        from deep_agent.src.settings import settings as app_settings
+
+        if app_settings.LIFECYCLE_PERSISTENCE_ENABLED:
+            from deep_agent.aegra.lifecycle import build_execution_context
+
+            user_id_val = str(user_identity) if user_identity else ""
+            assistant_id_val = getattr(runtime, "assistant_id", None) or ""
+
+            _exec_ctx = build_execution_context(
+                model_name=model_name,
+                config_hash=cache_key,
+                assistant_id=assistant_id_val,
+                user_id=user_id_val,
+                refresh_token=refresh_token,
+                mcp_server_names=mcp_server_names,
+                orchestrator_config=orchestrator_cfg,
+            )
+
+            setattr(compiled, "_lifecycle_enabled", True)
+            setattr(compiled, "_lifecycle_config_hash", cache_key)
+            setattr(compiled, "_lifecycle_user_id", user_id_val)
+            setattr(compiled, "_lifecycle_assistant_id", assistant_id_val)
+            setattr(compiled, "_lifecycle_exec_ctx", _exec_ctx)
+
+            logger.debug("Lifecycle persistence enabled")
+    except ImportError:
+        pass
+
     _graph_cache[cache_key] = compiled
     _graph_cache_ts[cache_key] = time.time()
 

@@ -29,7 +29,6 @@ class TestCreateModel:
                     project="test-project",
                     max_output_tokens=8192,
                     max_retries=2,
-                    streaming=True,
                 )
 
     def test_create_claude_model(self):
@@ -50,7 +49,6 @@ class TestCreateModel:
                     temperature=0.7,
                     max_tokens=8192,
                     max_retries=2,
-                    streaming=True,
                 )
 
     @pytest.mark.parametrize(

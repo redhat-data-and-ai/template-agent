@@ -127,6 +127,7 @@ def run_shutdown_sync() -> None:
     logger.info("Sync shutdown initiated (atexit)")
 
     for key, step in [
+        ("inflight", _persist_inflight_runs),
         ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse_sync),
         ("graph_cache", _clear_graph_cache),
@@ -209,6 +210,7 @@ async def run_shutdown() -> dict[str, str]:
 
     for key, step in [
         ("drain", _drain),
+        ("inflight", _persist_inflight_runs),
         ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse),
         ("scheduler", _stop_scheduler),
@@ -232,6 +234,27 @@ async def run_shutdown() -> dict[str, str]:
 
 
 # -- Individual shutdown steps -----------------------------------------------
+
+
+def _persist_inflight_runs() -> str:
+    """Persist inflight runs to Postgres before shutdown.
+
+    Checks LIFECYCLE_PERSISTENCE_ENABLED before doing any work.
+    Non-fatal — if persistence fails, shutdown continues.
+    """
+    try:
+        from deep_agent.src.settings import settings as app_settings
+
+        if not app_settings.LIFECYCLE_PERSISTENCE_ENABLED:
+            return "skipped: lifecycle persistence disabled"
+
+        from deep_agent.aegra.lifecycle import persist_inflight_runs
+
+        count = persist_inflight_runs()
+        return f"ok: {count} runs persisted"
+    except Exception as exc:
+        logger.warning("Inflight persistence failed: %s", exc)
+        return f"error: {exc}"
 
 
 async def _drain() -> str:

@@ -36,7 +36,6 @@ from deep_agent.src.exceptions import LLMError, SubAgentError
 from deep_agent.src.infrastructure.middleware import (
     _mcp_tool_names_from_tools,
     build_audit_middleware,
-    build_opa_middleware,
 )
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -173,7 +172,7 @@ def _normalize_model_to_dict(
             "provider": infer_provider(raw_model).value,
             "name": raw_model,
         }
-    elif isinstance(raw_model, dict):
+    if isinstance(raw_model, dict):
         result = dict(raw_model)  # Copy to avoid mutation
         if strip_fallback and "fallback" in result:
             del result["fallback"]
@@ -308,7 +307,7 @@ def _subagent_middleware(
     resolved_tools: list[Any],
     fallback_mw: list[Any],
 ) -> list[Any] | None:
-    """Merge audit + OPA middleware with optional fallback middleware."""
+    """Merge audit middleware (outermost) with optional fallback middleware."""
     middleware: list[Any] = []
     audit_mw = build_audit_middleware(
         mcp_tool_names=_mcp_tool_names_from_tools(resolved_tools),
@@ -316,9 +315,6 @@ def _subagent_middleware(
     )
     if audit_mw is not None:
         middleware.append(audit_mw)
-    opa_mw = build_opa_middleware()
-    if opa_mw is not None:
-        middleware.append(opa_mw)
     middleware.extend(fallback_mw)
     return middleware or None
 

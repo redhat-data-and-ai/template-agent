@@ -103,6 +103,10 @@ class TestAgentFactory:
             ),
             patch("deep_agent.aegra.graph._ensure_startup", new_callable=AsyncMock),
             patch("deepagents.create_deep_agent", return_value=mock_compiled),
+            patch(
+                "deep_agent.src.settings.settings.LIFECYCLE_PERSISTENCE_ENABLED",
+                False,
+            ),
         ):
             from deep_agent.aegra.graph import agent
 
@@ -184,6 +188,10 @@ class TestAgentFactory:
             ),
             patch("deep_agent.aegra.graph._ensure_startup", new_callable=AsyncMock),
             patch("deepagents.create_deep_agent", return_value=mock_compiled),
+            patch(
+                "deep_agent.src.settings.settings.LIFECYCLE_PERSISTENCE_ENABLED",
+                False,
+            ),
         ):
             from deep_agent.aegra.graph import agent
 
@@ -264,6 +272,10 @@ class TestAgentFactory:
             patch(
                 "deepagents.create_deep_agent", return_value=mock_compiled
             ) as mock_create,
+            patch(
+                "deep_agent.src.settings.settings.LIFECYCLE_PERSISTENCE_ENABLED",
+                False,
+            ),
         ):
             from deep_agent.aegra.graph import agent
 
@@ -349,6 +361,10 @@ class TestAgentFactory:
             ),
             patch("deep_agent.aegra.graph._ensure_startup", new_callable=AsyncMock),
             patch("deepagents.create_deep_agent", new=mock_create),
+            patch(
+                "deep_agent.src.settings.settings.LIFECYCLE_PERSISTENCE_ENABLED",
+                False,
+            ),
         ):
             from deep_agent.aegra.graph import agent
 
@@ -437,6 +453,10 @@ class TestAgentFactory:
             ),
             patch("deep_agent.aegra.graph._ensure_startup", new_callable=AsyncMock),
             patch("deepagents.create_deep_agent", new=mock_create),
+            patch(
+                "deep_agent.src.settings.settings.LIFECYCLE_PERSISTENCE_ENABLED",
+                False,
+            ),
         ):
             from deep_agent.aegra.graph import agent
 
