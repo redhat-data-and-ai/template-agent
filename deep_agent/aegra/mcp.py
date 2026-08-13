@@ -40,6 +40,19 @@ _MCP_TOOL_CACHE_TTL: float = float(agent_config.get_cache_config().mcp.ttl)
 _cached_tools: list[Any] = []
 _cached_tools_ts: float = 0.0
 
+_pending_mcp_auth: list[dict[str, str]] = []
+
+
+def get_pending_mcp_auth() -> list[dict[str, str]]:
+    """Return MCP servers that need OAuth/DCR authentication.
+
+    Populated by get_mcp_tools() when a server requires OAuth/DCR but
+    the user hasn't authenticated yet. Consumed by McpAuthGateMiddleware
+    to interrupt the graph before the LLM runs.
+    """
+    return list(_pending_mcp_auth)
+
+
 _current_access_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_access_token", default=None
 )
@@ -440,18 +453,18 @@ async def _connect_single_server(
         except Exception as exc:
             if _is_needs_authorization(exc):
                 logger.info(
-                    "[%s] MCP OAuth required — returning auth placeholder tool",
+                    "[%s] MCP OAuth required — deferring to auth gate",
                     name,
                 )
-                return [_create_auth_placeholder_tool(name)]
+                return []
             elif _is_auth_error(exc):
                 auth_mode = server_cfg.get("auth_mode", "sso")
                 if auth_mode in ("oauth", "dcr"):
                     logger.info(
-                        "[%s] MCP tool discovery auth failed — returning auth placeholder tool",
+                        "[%s] MCP tool discovery auth failed — deferring to auth gate",
                         name,
                     )
-                    return [_create_auth_placeholder_tool(name)]
+                    return []
                 else:
                     logger.warning(
                         f"[{name}] MCP auth failed — {type(exc).__name__}: {exc}"
@@ -609,22 +622,32 @@ async def get_mcp_tools(
 
     logger.warning(f"Connecting to {len(enabled)} MCP server(s): {', '.join(enabled)}")
 
+    global _pending_mcp_auth  # noqa: PLW0603
+    _pending_mcp_auth = []
+
     has_auth: bool = bool(sso_token or user_id)
     discovery_token = _mcp_tool_discovery.set(True)
     try:
         connect_jobs = []
-        placeholder_tools: list[list[Any]] = []
         for name, entry in enabled.items():
             mcp_prefix_name = entry.get("tool_prefix") or name
             bearer = await _resolve_connection_token(name, entry, sso_token, user_id)
             auth_mode = entry.get("auth_mode", "sso")
             if auth_mode in ("oauth", "dcr") and bearer is None:
+                from deep_agent.aegra.mcp_auth import get_mcp_credential_resolver
+
+                connect_url = get_mcp_credential_resolver().connect_url(name)
+                _pending_mcp_auth.append(
+                    {
+                        "mcp_name": name,
+                        "connect_url": connect_url,
+                    }
+                )
                 logger.info(
-                    "[%s] No OAuth token for %s server — using auth placeholder",
+                    "[%s] No OAuth token for %s server — deferring to auth gate",
                     mcp_prefix_name,
                     auth_mode,
                 )
-                placeholder_tools.append([_create_auth_placeholder_tool(name)])
                 continue
             connect_jobs.append(
                 _connect_single_server(
@@ -636,7 +659,6 @@ async def get_mcp_tools(
                 )
             )
         results: list[list[Any]] = await asyncio.gather(*connect_jobs)
-        results.extend(placeholder_tools)
     finally:
         _mcp_tool_discovery.reset(discovery_token)
 
