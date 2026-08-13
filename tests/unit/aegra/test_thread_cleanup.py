@@ -56,7 +56,7 @@ class TestDeletePgData:
 
 class TestDeleteThreadWithCleanup:
     def test_endpoint_deletes_all_data_atomically(self):
-        """DELETE /threads/{id} runs _delete_pg_data and _delete_token_usage."""
+        """DELETE /threads/{id} runs ownership check + cleanup in one transaction."""
         thread_id = "00000000-0000-0000-0000-000000000001"
 
         mock_conn = AsyncMock()
@@ -100,38 +100,29 @@ class TestDeleteThreadWithCleanup:
             mock_conn.commit.assert_awaited()
             mock_tu.assert_awaited_once_with(thread_id)
 
+            first_query = mock_conn.execute.call_args_list[0][0][0]
+            assert "FOR UPDATE" in first_query
+
     def test_pg_failure_rolls_back_no_partial_delete(self):
-        """If PG delete fails mid-transaction, nothing is committed."""
+        """If PG cleanup fails, nothing is committed (single transaction)."""
         thread_id = "00000000-0000-0000-0000-000000000001"
 
-        mock_owner_conn = AsyncMock()
-        mock_owner_cursor = AsyncMock()
-        mock_owner_cursor.fetchone = AsyncMock(return_value={"thread_id": thread_id})
-        mock_owner_conn.execute = AsyncMock(return_value=mock_owner_cursor)
-        mock_owner_conn.__aenter__ = AsyncMock(return_value=mock_owner_conn)
-        mock_owner_conn.__aexit__ = AsyncMock(return_value=False)
-
-        mock_delete_conn = AsyncMock()
+        mock_conn = AsyncMock()
         call_count = 0
 
-        async def fail_on_second_execute(*args, **kwargs):
+        async def ownership_then_fail(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count == 2:
-                raise RuntimeError("disk full")
-            cursor = AsyncMock()
-            cursor.rowcount = 1
-            return cursor
+            if call_count == 1:
+                cursor = AsyncMock()
+                cursor.fetchone = AsyncMock(return_value={"thread_id": thread_id})
+                return cursor
+            raise RuntimeError("disk full")
 
-        mock_delete_conn.execute = AsyncMock(side_effect=fail_on_second_execute)
-        mock_delete_conn.commit = AsyncMock()
-        mock_delete_conn.__aenter__ = AsyncMock(return_value=mock_delete_conn)
-        mock_delete_conn.__aexit__ = AsyncMock(return_value=False)
-
-        connect_calls = [mock_owner_conn, mock_delete_conn]
-
-        async def connect_side_effect(*args, **kwargs):
-            return connect_calls.pop(0)
+        mock_conn.execute = AsyncMock(side_effect=ownership_then_fail)
+        mock_conn.commit = AsyncMock()
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
 
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
@@ -139,7 +130,7 @@ class TestDeleteThreadWithCleanup:
             patch(
                 "psycopg.AsyncConnection.connect",
                 new_callable=AsyncMock,
-                side_effect=connect_side_effect,
+                return_value=mock_conn,
             ),
         ):
             mock_settings.database_uri = "postgresql://test"
@@ -148,7 +139,7 @@ class TestDeleteThreadWithCleanup:
             res = client.delete(f"/threads/{thread_id}")
 
             assert res.status_code == 500
-            mock_delete_conn.commit.assert_not_awaited()
+            mock_conn.commit.assert_not_awaited()
 
     def test_mongodb_failure_still_returns_success(self):
         """MongoDB token-usage cleanup is best-effort after PG commit."""

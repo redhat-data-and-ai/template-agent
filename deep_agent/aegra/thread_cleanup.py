@@ -116,27 +116,26 @@ async def delete_thread_with_cleanup(
         raise HTTPException(status_code=503, detail="Database unavailable")
 
     import psycopg
-    from psycopg.rows import dict_row
 
-    async with await psycopg.AsyncConnection.connect(
-        settings.database_uri, row_factory=dict_row
-    ) as conn:
+    async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
         if user_id is not None:
             cur = await conn.execute(
-                "SELECT thread_id FROM thread WHERE thread_id = %s AND user_id = %s",
+                "SELECT thread_id FROM thread "
+                "WHERE thread_id = %s AND user_id = %s FOR UPDATE",
                 (thread_id, user_id),
             )
         else:
             cur = await conn.execute(
-                "SELECT thread_id FROM thread WHERE thread_id = %s",
+                "SELECT thread_id FROM thread WHERE thread_id = %s FOR UPDATE",
                 (thread_id,),
             )
         thread = await cur.fetchone()
 
-    if not thread:
-        raise HTTPException(status_code=404, detail=f"Thread '{thread_id}' not found")
+        if not thread:
+            raise HTTPException(
+                status_code=404, detail=f"Thread '{thread_id}' not found"
+            )
 
-    async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
         counts = await _delete_pg_data(thread_id, user_id, conn)
         await conn.commit()
 
