@@ -33,12 +33,14 @@ def _get_repo() -> Any:
 class CreateMemoryRequest(BaseModel):
     """Request body for creating a memory."""
 
+    id: str | None = None
     content: str
 
 
 class CreateRuleRequest(BaseModel):
     """Request body for creating a rule."""
 
+    id: str | None = None
     content: str
     is_active: bool = True
 
@@ -69,7 +71,8 @@ async def create_memory(request: Request, body: CreateMemoryRequest) -> dict[str
     """Create a new memory for the authenticated user."""
     user_id = await authenticated_user_id(request)
     repo = _get_repo()
-    mem = await repo.create_memory(user_id, body.content)
+    memory_id = UUID(body.id) if body.id else None
+    mem = await repo.create_memory(user_id, body.content, memory_id=memory_id)
     logger.info("memory_created", user_id=user_id[:8], memory_id=str(mem.id))
     return {
         "id": str(mem.id),
@@ -123,7 +126,10 @@ async def create_rule(request: Request, body: CreateRuleRequest) -> dict[str, An
     """Create a new rule for the authenticated user."""
     user_id = await authenticated_user_id(request)
     repo = _get_repo()
-    rule = await repo.upsert_rule(user_id, body.content, is_active=body.is_active)
+    rule_id = UUID(body.id) if body.id else None
+    rule = await repo.upsert_rule(
+        user_id, body.content, rule_id=rule_id, is_active=body.is_active
+    )
     logger.info("rule_created", user_id=user_id[:8], rule_id=str(rule.id))
     return {
         "id": str(rule.id),

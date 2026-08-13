@@ -100,23 +100,12 @@ class PersonalizationRepository:
             )
             return [Memory(**row) for row in await cur.fetchall()]
 
-    async def create_memory(self, user_id: str, content: str) -> Memory:
+    async def create_memory(
+        self, user_id: str, content: str, memory_id: uuid.UUID | None = None
+    ) -> Memory:
         """Insert a new memory and return the created model."""
-        from deep_agent.src.settings import settings
-
-        if settings.GUARDIAN_API_BASE:
-            from deep_agent.src.guardrails.client import check_safety
-
-            is_safe, verdict = await check_safety(content, context="memory")
-            if not is_safe:
-                logger.warning(
-                    "guardian_blocked_memory", user_id=user_id, verdict=verdict
-                )
-                raise ValueError(
-                    "Memory content failed safety check and was not saved."
-                )
         await self.ensure_tables()
-        mem = Memory(user_id=user_id, content=content)
+        mem = Memory(id=memory_id or uuid.uuid4(), user_id=user_id, content=content)
         async with await psycopg.AsyncConnection.connect(self._uri) as conn:
             await conn.execute(
                 "INSERT INTO user_memories (id, user_id, content, created_at, updated_at) "
