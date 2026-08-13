@@ -105,7 +105,7 @@ services:
     env_file:
       - .env
     environment:
-      - ENABLE_AUTH=${ENABLE_AUTH:-false}
+      - ENABLE_AUTH=true
       - POSTGRES_HOST=pgvector
       - POSTGRES_PORT=5432
       - POSTGRES_DB=template_agent

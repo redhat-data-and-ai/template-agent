@@ -166,6 +166,12 @@ class Settings(BaseSettings):
     # ── CLI ───────────────────────────────────────────────────────────
     ENABLE_CLI: bool = Field(default=True)
 
+    # ── Lifecycle Persistence ─────────────────────────────────────────
+    LIFECYCLE_PERSISTENCE_ENABLED: bool = Field(default=True)
+    LIFECYCLE_LEASE_SECONDS: int = Field(default=300)
+    LIFECYCLE_MAX_RESUME_BATCH: int = Field(default=10)
+    LIFECYCLE_RESUME_ON_STARTUP: bool = Field(default=True)
+
     # ── OPA (Authorization) ───────────────────────────────────────────
     # None = not set; agent.yaml opa: section is the source of truth.
     # Set env var to override YAML for that field only.
