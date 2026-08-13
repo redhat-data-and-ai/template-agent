@@ -192,7 +192,9 @@ class TestGetServiceAccountCredentials:
             ):
                 get_service_account_credentials()
 
-    def test_clear_cache_allows_reload(self, mock_service_account_info, mock_adc_failure):
+    def test_clear_cache_allows_reload(
+        self, mock_service_account_info, mock_adc_failure
+    ):
         """Test that clearing cache allows credentials to be reloaded."""
         mock_creds1 = MagicMock(spec=service_account.Credentials)
         mock_creds2 = MagicMock(spec=service_account.Credentials)
