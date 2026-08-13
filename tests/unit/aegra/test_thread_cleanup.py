@@ -56,7 +56,7 @@ class TestDeletePgData:
 
 class TestDeleteThreadWithCleanup:
     def test_endpoint_deletes_all_data_atomically(self):
-        """DELETE /threads/{id} runs all PG deletes in one transaction."""
+        """DELETE /threads/{id} runs _delete_pg_data and _delete_token_usage."""
         thread_id = "00000000-0000-0000-0000-000000000001"
 
         mock_conn = AsyncMock()
@@ -68,6 +68,8 @@ class TestDeleteThreadWithCleanup:
         mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_conn.__aexit__ = AsyncMock(return_value=False)
 
+        pg_counts = {"checkpoints": 10, "feedback": 3}
+
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
             patch("deep_agent.aegra.thread_cleanup.settings") as mock_settings,
@@ -76,6 +78,11 @@ class TestDeleteThreadWithCleanup:
                 new_callable=AsyncMock,
                 return_value=mock_conn,
             ),
+            patch(
+                "deep_agent.aegra.thread_cleanup._delete_pg_data",
+                new_callable=AsyncMock,
+                return_value=pg_counts,
+            ) as mock_pg,
             patch(
                 "deep_agent.aegra.thread_cleanup._delete_token_usage",
                 new_callable=AsyncMock,
@@ -89,6 +96,7 @@ class TestDeleteThreadWithCleanup:
 
             assert res.status_code == 200
             assert res.json() == {"status": "deleted"}
+            mock_pg.assert_awaited_once_with(thread_id, "dev-user", mock_conn)
             mock_conn.commit.assert_awaited()
             mock_tu.assert_awaited_once_with(thread_id)
 
