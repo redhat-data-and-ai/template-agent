@@ -15,7 +15,8 @@ Response format::
         "redis": {"status": "ok"},
         "config": {"status": "ok"},
         "mcp_servers": {"status": "ok", "servers": {...}},
-        "llm_provider": {"status": "ok", "provider": "vllm"}
+        "llm_provider": {"status": "ok", "provider": "vllm"},
+        "opa": {"status": "ok", "latency_ms": 1.2, "url": "http://localhost:8181"}
       }
     }
 
@@ -30,6 +31,7 @@ or wired as ASGI middleware for ``aegra serve``.
 import asyncio
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from deep_agent.aegra import __version__
 from deep_agent.utils.pylogger import get_python_logger
@@ -144,7 +146,41 @@ def check_otel() -> dict[str, Any]:
         return {"status": "error", "error": str(exc)[:200]}
 
 
-_CRITICAL_CHECKS = frozenset({"database"})
+async def check_opa() -> dict[str, Any]:
+    """Check OPA connectivity via its /health endpoint."""
+    try:
+        from deep_agent.src.opa.config import (
+            get_opa_timeout,
+            get_opa_url,
+            is_opa_enabled,
+        )
+
+        if not is_opa_enabled():
+            return {"status": "disabled"}
+
+        url = get_opa_url()
+        timeout = get_opa_timeout()
+        parsed = urlparse(url)
+        # Build origin without userinfo to avoid leaking credentials.
+        host = parsed.hostname or ""
+        port_suffix = f":{parsed.port}" if parsed.port else ""
+        base_url = f"{parsed.scheme}://{host}{port_suffix}"
+        health_url = f"{base_url}/health"
+
+        import httpx
+
+        t0 = time.monotonic()
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(health_url)
+            response.raise_for_status()
+        latency_ms = (time.monotonic() - t0) * 1000
+
+        return {"status": "ok", "latency_ms": round(latency_ms, 1), "url": base_url}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)[:200]}
+
+
+_CRITICAL_CHECKS = frozenset({"database", "opa"})
 
 
 async def get_health_status() -> dict[str, Any]:
@@ -159,16 +195,18 @@ async def get_health_status() -> dict[str, Any]:
     checks: dict[str, Any] = {}
 
     checks["config"] = check_config()
-    db_result, redis_result, mcp_result, llm_result = await asyncio.gather(
+    db_result, redis_result, mcp_result, llm_result, opa_result = await asyncio.gather(
         check_database(),
         check_redis(),
         check_mcp_servers(),
         check_llm_provider(),
+        check_opa(),
     )
     checks["database"] = db_result
     checks["redis"] = redis_result
     checks["mcp_servers"] = mcp_result
     checks["llm_provider"] = llm_result
+    checks["opa"] = opa_result
     checks["cache"] = check_cache()
     checks["otel"] = check_otel()
 
