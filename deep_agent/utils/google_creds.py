@@ -25,18 +25,43 @@ GOOGLE_AUTH_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 # Cache for credentials to avoid repeated credential fetches
 _credentials_cache: tuple[Credentials, str] | None = None
 
+_ERR_INVALID_JSON = "Invalid JSON in credentials"
+_ERR_MISSING_PROJECT_ID = "Service account JSON does not contain 'project_id' field"
+_ERR_NO_CREDENTIALS = (
+    "No Google credentials found. Either run "
+    "'gcloud auth application-default login' "
+    "or set GOOGLE_APPLICATION_CREDENTIALS_CONTENT."
+)
+
+
+def _well_known_adc_path() -> Path:
+    """Return the default gcloud application-default credentials file path."""
+    return Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+
+
+def _adc_file_paths() -> list[Path]:
+    """Return ADC JSON file paths in lookup order."""
+    paths: list[Path] = []
+    env_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if env_path:
+        paths.append(Path(env_path))
+    paths.append(_well_known_adc_path())
+    return paths
+
 
 def _project_from_adc_file() -> str | None:
-    """Read quota_project_id / project_id from the mounted ADC JSON file."""
-    adc_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if not adc_path:
-        return None
-    try:
-        adc_info = json.loads(Path(adc_path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    project = adc_info.get("quota_project_id") or adc_info.get("project_id")
-    return project if project else None
+    """Read quota_project_id / project_id from ADC JSON files."""
+    for adc_path in _adc_file_paths():
+        if not adc_path.is_file():
+            continue
+        try:
+            adc_info = json.loads(adc_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        project = adc_info.get("quota_project_id") or adc_info.get("project_id")
+        if project:
+            return project
+    return None
 
 
 def _resolve_adc_project(project: str | None) -> str | None:
@@ -73,7 +98,7 @@ def get_service_account_credentials() -> tuple[Credentials, str]:
         credentials, project = google.auth.default(scopes=GOOGLE_AUTH_SCOPES)
         resolved_project = _resolve_adc_project(project)
         if resolved_project:
-            logger.info(f"Loaded ADC credentials for project: {resolved_project}")
+            logger.info("Loaded ADC credentials for project: %s", resolved_project)
             _credentials_cache = (credentials, resolved_project)
             return _credentials_cache
     except google.auth.exceptions.DefaultCredentialsError:
@@ -86,30 +111,25 @@ def get_service_account_credentials() -> tuple[Credentials, str]:
                 settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT
             )
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"Invalid JSON in credentials: {e}") from e
+            raise RuntimeError(f"{_ERR_INVALID_JSON}: {e}") from e
 
         project = service_account_info.get("project_id")
         if not project:
-            raise RuntimeError(
-                "Service account JSON does not contain 'project_id' field"
-            )
+            raise RuntimeError(_ERR_MISSING_PROJECT_ID)
 
         credentials = service_account.Credentials.from_service_account_info(
             service_account_info, scopes=GOOGLE_AUTH_SCOPES
         )
 
         logger.info(
-            f"Loaded credentials from GOOGLE_APPLICATION_CREDENTIALS_CONTENT "
-            f"for project: {project}"
+            "Loaded credentials from GOOGLE_APPLICATION_CREDENTIALS_CONTENT "
+            "for project: %s",
+            project,
         )
         _credentials_cache = (credentials, project)
         return _credentials_cache
 
-    raise RuntimeError(
-        "No Google credentials found. Either run "
-        "'gcloud auth application-default login' "
-        "or set GOOGLE_APPLICATION_CREDENTIALS_CONTENT."
-    )
+    raise RuntimeError(_ERR_NO_CREDENTIALS)
 
 
 def clear_credentials_cache() -> None:

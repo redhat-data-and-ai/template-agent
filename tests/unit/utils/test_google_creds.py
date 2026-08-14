@@ -101,6 +101,42 @@ class TestGetServiceAccountCredentials:
                     assert credentials is mock_creds
                     assert project == "quota-project-789"
 
+    def test_adc_user_oauth_with_quota_project_from_well_known_path(self, tmp_path):
+        """Resolve project from ~/.config/gcloud/ADC when env var is unset."""
+        mock_creds = MagicMock()
+        gcloud_dir = tmp_path / ".config" / "gcloud"
+        gcloud_dir.mkdir(parents=True)
+        adc_file = gcloud_dir / "application_default_credentials.json"
+        adc_file.write_text(
+            json.dumps(
+                {
+                    "type": "authorized_user",
+                    "quota_project_id": "well-known-project-321",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch(
+            "deep_agent.utils.google_creds.google.auth.default",
+            return_value=(mock_creds, None),
+        ):
+            with patch.dict(os.environ, {}, clear=True):
+                with patch(
+                    "deep_agent.utils.google_creds.Path.home", return_value=tmp_path
+                ):
+                    with patch(
+                        "deep_agent.utils.google_creds.settings"
+                    ) as mock_settings:
+                        mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = None
+                        mock_settings.GOOGLE_CLOUD_PROJECT = None
+                        mock_settings.PYTHON_LOG_LEVEL = "INFO"
+
+                        credentials, project = get_service_account_credentials()
+
+                        assert credentials is mock_creds
+                        assert project == "well-known-project-321"
+
     def test_successful_credential_loading(
         self, mock_service_account_info, mock_adc_failure
     ):
