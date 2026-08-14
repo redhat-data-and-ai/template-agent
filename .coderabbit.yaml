@@ -1,0 +1,156 @@
+language: en-US
+tone_instructions: >-
+  Be extremely concise. Only flag bugs, security issues, and logic errors.
+  Skip style nits, naming suggestions, and minor refactors.
+  Avoid em dashes in review comments.
+  One sentence per comment. No pleasantries.
+early_access: true
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  base_branches:
+    - main
+    - deep-agent
+    - rc-.*
+  high_level_summary: false
+  poem: false
+  review_status: false
+  collapse_walkthrough: false
+  estimate_code_review_effort: false
+  related_issues: false
+  changed_files_summary: false
+  sequence_diagrams: false
+  assess_linked_issues: false
+  abort_on_close: true
+  slop_detection:
+    enabled: true
+    label: "ai-generated"
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
+  path_filters:
+    - "!**/*.md"
+    - "!**/*.txt"
+    - "!**/*.lock"
+    - "!**/.gitignore"
+    - "!**/LICENSE"
+    - "!.env*"
+  path_instructions:
+    - path: "deep_agent/**/*.py"
+      instructions: >-
+        Focus on correctness and performance: race conditions in async code,
+        missing awaits, unhandled exceptions, type mismatches, security flaws,
+        N+1 queries, blocking calls in async contexts, unnecessary copies of
+        large objects, missing connection/session reuse, and unbounded list
+        growth. Skip style and naming feedback.
+    - path: "tests/**/*.py"
+      instructions: >-
+        Only flag tests that would silently pass when they should fail,
+        missing assertions, or incorrect async usage.
+    - path: "Containerfile"
+      instructions: >-
+        Flag security issues only: secrets in layers, running as root,
+        or missing OpenShift compatibility.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Flag unpinned actions, overly broad permissions, and secret leaks.
+        Skip cosmetic suggestions.
+    - path: "deployment/**"
+      instructions: >-
+        Flag missing resource limits, privileged containers, and missing
+        security contexts.
+    - path: "config/**"
+      instructions: >-
+        Flag hardcoded secrets, insecure defaults, and missing validation.
+    - path: "compose.yaml"
+      instructions: >-
+        Flag exposed ports, missing health checks, and hardcoded credentials.
+    - path: "entrypoint.sh"
+      instructions: >-
+        Flag missing error handling (set -e), unsafe variable expansion,
+        and command injection risks.
+    - path: "pyproject.toml"
+      instructions: >-
+        Flag unpinned dependencies and known vulnerable version ranges.
+  tools:
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    gitleaks:
+      enabled: true
+    ast-grep:
+      essential_rules: true
+      rule_dirs:
+        - ".coderabbit/rules"
+
+  post_merge_actions:
+    - name: "Update changelog"
+      enabled: true
+      prompt: |
+        Review the PR title, description, and full diff.
+        Append a new entry to CHANGELOG.md at the top of the "Unreleased" section.
+
+        Format: `- <type>(<scope>): <short description> (#<PR number>)`
+        - Derive type from the changes: feat, fix, refactor, docs, chore
+        - Derive scope from the primary directory or package touched
+        - Keep the description under 80 characters in plain language
+
+        Only proceed if the PR is a notable user-facing or API change.
+        Skip for dependency bumps, typo fixes, and CI-only changes.
+        Do not modify anything else in the file.
+
+chat:
+  auto_reply: true
+
+issue_enrichment:
+  auto_enrich:
+    enabled: true
+  labeling:
+    auto_apply_labels: true
+    labeling_instructions:
+      - label: bug
+        instructions: >-
+          Issues reporting bugs, errors, crashes, incorrect behavior, or
+          unexpected results. This includes runtime errors, logic errors,
+          broken functionality, regressions, and any deviation from expected
+          or documented behavior.
+      - label: enhancement
+        instructions: >-
+          Feature requests, improvements to existing functionality, performance
+          optimizations, refactoring suggestions, UI/UX enhancements, and any
+          suggestions to make the project better or add new capabilities.
+      - label: documentation
+        instructions: >-
+          Documentation updates, additions, corrections, or clarifications
+          needed. This includes missing docs, outdated information, unclear
+          instructions, API documentation, code examples, README improvements,
+          and any requests for better explanations or guides.
+
+knowledge_base:
+  learnings:
+    scope: auto
+  issues:
+    scope: auto
+  pull_requests:
+    scope: auto
+  web_search:
+    enabled: true
+  linked_repositories:
+    - repository: "redhat-data-and-ai/template-mcp"
+      instructions: "MCP server template with tool definitions and protocol handlers"
+    - repository: "redhat-data-and-ai/template-ui"
+      instructions: "Frontend UI template that connects to this agent"
+  code_guidelines:
+    filePatterns:
+      - "**/CONTRIBUTING.md"
+      - "**/SECURITY.md"

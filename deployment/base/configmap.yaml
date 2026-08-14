@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+data:
+  # Config Path (required for base image pattern)
+  # Config path — mount config/agent at this path (see Containerfile)
+  CONFIG_PATH: "/app/config/agent"
+
+  # Note: PostgreSQL and Redis environment variables are added by
+  # optional components when postgres or redis components are included

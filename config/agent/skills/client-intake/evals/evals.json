@@ -1,0 +1,36 @@
+{
+  "skill_name": "client-intake",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm 175 cm tall and weigh 70 kg.",
+      "expected_output": "Parsed and validated metric measurements: Height 175 cm, Weight 70 kg.",
+      "files": [],
+      "assertions": [
+        "Successfully parsed height as 175 cm",
+        "Successfully parsed weight as 70 kg"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Height: 6ft, Weight: 180lbs",
+      "expected_output": "Imperial units converted to metric: Height 182.88 cm, Weight 81.65 kg.",
+      "files": [],
+      "assertions": [
+        "Height correctly converted from 6 ft to 182.88 cm",
+        "Weight correctly converted from 180 lbs to approximately 81.65 kg"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Height: 1000 cm, Weight: 50 kg",
+      "expected_output": "Invalid height detected - asks user to verify unusual measurement.",
+      "files": [],
+      "assertions": [
+        "Flags height of 1000 cm as out of normal range",
+        "Asks user to confirm or re-enter measurement",
+        "Weight of 50 kg accepted as valid"
+      ]
+    }
+  ]
+}

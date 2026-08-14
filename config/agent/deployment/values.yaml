@@ -1,0 +1,119 @@
+# Deployment configuration for the agent.
+# Reference values for ArgoCD/Helm-style deployments.
+# Kustomize overlays in deployment/overlays/ use their own patches.
+#
+# ArgoCD Vault Plugin (AVP) injects secrets at deploy time.
+
+app:
+  name: agent
+  component: agent
+  replicas: 2
+  namespace: ai-agents
+
+image:
+  name: agent
+  tag: latest
+  registry: image-registry.openshift-image-registry.svc:5000
+
+container:
+  port: 5002
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "1000m"
+
+# --- Horizontal Pod Autoscaler ---
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  scaleDown:
+    stabilizationWindowSeconds: 300
+
+# --- Health probes ---
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startup:
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 12
+
+# --- Networking ---
+networking:
+  service:
+    type: ClusterIP
+    port: 5002
+  route:
+    enabled: true
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+  networkPolicy:
+    enabled: true
+    ingress:
+      - from:
+          - podSelector:
+              matchLabels:
+                app: template-ui
+        ports:
+          - port: 5002
+
+# --- Build ---
+build:
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "4"
+
+# --- Non-sensitive configuration (maps to ConfigMap) ---
+config:
+  AGENT_HOST: "0.0.0.0"
+  AGENT_PORT: "5002"
+  PYTHON_LOG_LEVEL: "INFO"
+  LANGFUSE_TRACING_ENVIRONMENT: "production"
+  REQUEST_LOGGING_ENABLED: "true"
+  REQUEST_LOG_HEADERS: "true"
+  REQUEST_LOG_BODY: "false"
+  REQUEST_LOG_BODY_MAX_SIZE: "10240"
+  REDIS_URL: "redis://redis:6379/0"
+
+# --- Sensitive configuration (maps to Secret) ---
+# Values are injected by the ArgoCD Vault Plugin (AVP) at deploy time.
+# Use <path:vault_path#key> placeholder syntax.
+secrets:
+  POSTGRES_HOST: "<path:secret/data/<team>/<env>/agent#POSTGRES_HOST>"
+  POSTGRES_PORT: "<path:secret/data/<team>/<env>/agent#POSTGRES_PORT>"
+  POSTGRES_DB: "<path:secret/data/<team>/<env>/agent#POSTGRES_DB>"
+  POSTGRES_USER: "<path:secret/data/<team>/<env>/agent#POSTGRES_USER>"
+  POSTGRES_PASSWORD: "<path:secret/data/<team>/<env>/agent#POSTGRES_PASSWORD>"
+  SSO_ISSUER_URL: "<path:secret/data/<team>/<env>/agent#SSO_ISSUER_URL>"
+  SSO_CLIENT_ID: "<path:secret/data/<team>/<env>/agent#SSO_CLIENT_ID>"
+  SSO_CLIENT_SECRET: "<path:secret/data/<team>/<env>/agent#SSO_CLIENT_SECRET>"
+  LANGFUSE_PUBLIC_KEY: "<path:secret/data/<team>/<env>/agent#LANGFUSE_PUBLIC_KEY>"
+  LANGFUSE_SECRET_KEY: "<path:secret/data/<team>/<env>/agent#LANGFUSE_SECRET_KEY>"
+  LANGFUSE_BASE_URL: "<path:secret/data/<team>/<env>/agent#LANGFUSE_BASE_URL>"
+  GOOGLE_APPLICATION_CREDENTIALS_CONTENT: "<path:secret/data/<team>/<env>/agent#GOOGLE_APPLICATION_CREDENTIALS_CONTENT>"
+  VLLM_BASE_URL: "<path:secret/data/<team>/<env>/agent#VLLM_BASE_URL>"
+  VLLM_API_KEY: "<path:secret/data/<team>/<env>/agent#VLLM_API_KEY>"
+  REDIS_URL: "<path:secret/data/<team>/<env>/agent#REDIS_URL>"

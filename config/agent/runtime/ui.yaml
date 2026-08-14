@@ -1,0 +1,62 @@
+# UI Settings
+#
+# All feature flags, tuning knobs, and behavioral configuration for the frontend BFF.
+# Template users configure everything here — no environment variables needed
+# for UI behavior. Env vars are only for secrets and infrastructure endpoints.
+#
+# OpenShift notes:
+#   - Secrets (cookie signing key, OAuth credentials) come via OpenShift Secrets → env vars.
+#   - Infrastructure endpoints (agent host, Redis host, OTEL collector) come via ConfigMaps → env vars.
+#   - This file is mounted as a ConfigMap into the UI pod.
+
+# --- Server ---
+server:
+  host: "0.0.0.0"
+  port: 8080
+  body_limit: 1048576       # Max request body size in bytes (1MB)
+
+# --- Logging ---
+logging:
+  level: info                # debug | info | warn | error | silent
+
+# --- CORS ---
+cors:
+  origin: "http://localhost:5173"   # Allowed origin (set to your frontend URL in prod)
+
+# --- Security ---
+security:
+  helmet:
+    enabled: true
+    csp:
+      default_src: ["'self'"]
+      script_src: ["'self'", "'unsafe-inline'"]      # unsafe-inline needed for HTML shell <script> blocks
+      style_src: ["'self'", "'unsafe-inline'"]        # PatternFly injects inline styles
+      img_src: ["'self'", "data:", "blob:"]
+      connect_src: ["'self'"]
+      font_src: ["'self'", "data:"]
+      object_src: ["'none'"]
+      frame_ancestors: ["'none'"]
+    cross_origin_embedder_policy: false               # Must be false — breaks SSE streaming
+
+  rate_limit:
+    enabled: true
+    max: 100                 # Max requests per window per IP
+    window: "1 minute"       # Time window
+    exclude_paths:           # Paths exempt from rate limiting
+      - "/api/health"
+      - "/_health"
+
+  session:
+    secure_cookie: false     # Set true in production (requires HTTPS)
+    max_age_days: 30         # Session cookie max age
+
+# --- Observability ---
+otel:
+  enabled: true              # Master switch — set true to activate OTEL tracing
+  service_name: "template-ui"
+
+# --- Announcement Banner ---
+announcement:
+  enabled: true
+  message: "Welcome to the Agent Template Demo — all features enabled"
+  type: info                 # info | warning | danger | success

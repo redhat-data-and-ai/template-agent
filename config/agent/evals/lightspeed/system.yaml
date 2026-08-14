@@ -1,0 +1,151 @@
+# lightspeed-evaluation — Formal benchmark config for deep-agent
+#
+# Usage:
+#   lightspeed-eval \
+#     --system-config deep_agent/evals/lightspeed/system.yaml \
+#     --eval-data deep_agent/evals/lightspeed/eval_data.yaml \
+#     --output-dir eval_output
+#
+# Requires:
+#   pip install lightspeed-evaluation
+
+core:
+  max_threads: 5
+  fail_on_invalid_data: true
+  skip_on_failure: false
+
+llm_pool:
+  defaults:
+    cache_enabled: true
+    cache_dir: ".caches/llm_cache"
+    timeout: 300
+    num_retries: 3
+    parameters:
+      temperature: 0.0
+      max_completion_tokens: 1024
+  models:
+    judge_gemini_flash:
+      provider: gemini
+      model: gemini-2.5-flash
+
+judge_panel:
+  judges:
+    - judge_gemini_flash
+  aggregation_strategy: max
+
+embedding:
+  provider: gemini
+  model: text-embedding-004
+  cache_dir: ".caches/embedding_cache"
+  cache_enabled: true
+
+api:
+  enabled: true
+  api_base: http://localhost:5002
+  version: v1
+  endpoint_type: streaming
+  timeout: 120
+  num_retries: 2
+  provider: gemini
+  model: gemini-3.1-pro-preview
+
+metrics_metadata:
+  turn_level:
+    "custom:answer_correctness":
+      threshold: 0.75
+      description: "Correctness of the response vs expected answer"
+      default: true
+
+    "custom:intent_eval":
+      threshold: 1
+      description: "Did the agent understand the user's intent correctly"
+      default: true
+
+    "custom:keywords_eval":
+      description: "Required keywords present in response"
+
+    "custom:tool_eval":
+      description: "Tool calls match expected calls"
+      ordered: false
+      full_match: true
+
+    "geval:delegation_compliance":
+      criteria: |
+        Assess whether the orchestrator agent correctly delegates work
+        to subagents instead of performing calculations, analysis, or
+        email formatting itself. The orchestrator should never compute
+        BMI values, determine health categories, or generate email HTML.
+      evaluation_params:
+        - query
+        - response
+      evaluation_steps:
+        - "Check if BMI calculation is performed by a subagent (analyst), not the orchestrator"
+        - "Verify health tips come from subagent output, not inline generation"
+        - "If email is requested, confirm publisher subagent handles formatting"
+        - "Check that the orchestrator only coordinates, greets, and relays results"
+      threshold: 0.8
+      description: "Orchestrator delegates correctly — never does analyst/publisher work itself"
+
+    "geval:tone_safety":
+      criteria: |
+        Evaluate whether the response maintains a supportive, encouraging,
+        and non-judgmental tone when discussing health metrics. The agent
+        must never use shaming language or make the user feel bad about
+        their BMI category.
+      evaluation_params:
+        - query
+        - response
+      evaluation_steps:
+        - "Check for absence of negative words like 'bad', 'failing', 'terrible', 'fat'"
+        - "Verify health tips are framed positively (what to do, not what's wrong)"
+        - "Confirm disclaimer is present and appropriately worded"
+        - "Assess overall supportive and professional tone"
+      threshold: 0.9
+      description: "Response tone is supportive, non-judgmental, and professional"
+
+  conversation_level:
+    "deepeval:conversation_completeness":
+      threshold: 0.7
+      description: "Conversation addresses all user intentions"
+
+    "deepeval:conversation_relevancy":
+      threshold: 0.7
+      description: "Conversation stays relevant to fitness assessment scope"
+
+storage:
+  - type: "file"
+    output_dir: "./eval_output"
+    base_filename: "deep_agent_eval"
+    enabled_outputs:
+      - csv
+      - json
+      - txt
+    csv_columns:
+      - "conversation_group_id"
+      - "turn_id"
+      - "metric_identifier"
+      - "result"
+      - "score"
+      - "threshold"
+      - "reason"
+      - "execution_time"
+      - "query"
+      - "response"
+      - "expected_response"
+
+visualization:
+  figsize: [12, 8]
+  dpi: 300
+  enabled_graphs:
+    - "pass_rates"
+    - "score_distribution"
+    - "conversation_heatmap"
+
+environment:
+  DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+  DEEPEVAL_DISABLE_PROGRESS_BAR: "YES"
+  LITELLM_LOG: ERROR
+
+logging:
+  source_level: INFO
+  package_level: ERROR

@@ -1,38 +1,39 @@
-FROM registry.access.redhat.com/ubi9/python-312:latest
+# Containerfile for template-agent (single image for dev and production)
+#
+# Agent config is NOT baked in — mount config/agent at /app/config/agent
+# (compose: ./config:/app/config:ro; K8s: ConfigMap/PVC).
+#
+# Build: podman build -t template-agent .
+# Run:   podman run -v ./config:/app/config:ro -p 5002:5002 template-agent
 
-# --------------------------------------------------------------------------------------------------
-# set the working directory to /app
-# --------------------------------------------------------------------------------------------------
+ARG PYTHON_TAG=3.14.4-builder
+FROM registry.access.redhat.com/hi/python:${PYTHON_TAG}
 
 WORKDIR /app
-
-# --------------------------------------------------------------------------------------------------
-# Copy manifest files and install python packages
-# --------------------------------------------------------------------------------------------------
-
 USER root
+
 COPY pyproject.toml /app/pyproject.toml
-RUN pip install uv
-RUN uv venv
-RUN source /app/.venv/bin/activate
-RUN uv pip install -r pyproject.toml
-USER default
 
-# --------------------------------------------------------------------------------------------------
-# copy source code and files
-# --------------------------------------------------------------------------------------------------
+RUN pip install --no-cache-dir uv && \
+    uv venv /app/.venv && \
+    uv pip install --python /app/.venv/bin/python -r pyproject.toml && \
+    mkdir -p /app/.cache /app/config/agent && \
+    chown -R 65532:root /app/.cache /app/config && \
+    chown 65532:0 /app && chmod g+w /app
 
-COPY template_agent /app/template_agent
+USER 65532
 
-# --------------------------------------------------------------------------------------------------
-# Set PYTHONPATH to include /app
-# --------------------------------------------------------------------------------------------------
+COPY --chown=65532:root deep_agent /app/deep_agent
+COPY --chown=65532:root aegra.json /app/aegra.json
+COPY --chown=65532:root entrypoint.sh /app/entrypoint.sh
 
 ENV PYTHONPATH=/app
+ENV AGENT_HOST=0.0.0.0
+ENV AGENT_PORT=5002
+ENV AEGRA_CONFIG=/app/aegra.json
+ENV CONFIG_PATH=/app/config/agent
 
+EXPOSE 5002
 
-# --------------------------------------------------------------------------------------------------
-# add entrypoint for the container
-# --------------------------------------------------------------------------------------------------
-
-CMD ["/app/.venv/bin/python", "-m", "template_agent.src.main"]
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["/app/.venv/bin/python", "-m", "deep_agent.aegra.entrypoint"]

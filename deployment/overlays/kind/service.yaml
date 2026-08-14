@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent
+  labels:
+    app: agent
+    component: agent
+spec:
+  selector:
+    app: agent
+    component: agent
+  ports:
+    - port: 5002
+      targetPort: 5002
+      protocol: TCP
+      name: http
+  type: ClusterIP

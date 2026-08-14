@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policies
+data:
+  agent_authz.rego: |
+    package agent.authz
+
+    # Agent Authorization Policy - Local Development Placeholder
+    #
+    # This file is intentionally minimal. Production policies are loaded from
+    # the git repository and will completely control authorization behavior.
+    #
+    # Do not add allow/deny rules here to avoid conflicts with git policies.
+    # Local trajectory overrides live in trajectory_limits.rego (local cap 10 vs git 20).
+
+    import rego.v1
+  message_policies.rego: |
+    package agent.authz
+
+    import rego.v1
+
+    # Additional banned words for local development.
+    # Git policy banned-words.rego defines base banned_words and allow rules;
+    # this file extends the same package without redefining banned_words (OPA conflict).
+    # Git allow/deny rules automatically pick up these supplementary checks via
+    # shared rule names (contains_banned_word_in_agent_message, etc.).
+
+    additional_banned_words := {
+    	"prescription",
+    	"nurse",
+    }
+
+    contains_banned_word_in_agent_message if {
+    	input.current_intent.action == "llm_response"
+    	agent_msg := lower(input.current_intent.agent_message)
+    	word := additional_banned_words[_]
+    	contains(agent_msg, lower(word))
+    }
+
+    contains_banned_word_in_tool_result if {
+    	input.current_intent.action == "tool_response"
+    	tool_result := lower(input.current_intent.result)
+    	word := additional_banned_words[_]
+    	contains(tool_result, lower(word))
+    }
+
+    deny_reasons contains msg if {
+    	input.current_intent.action == "llm_response"
+    	agent_msg := lower(input.current_intent.agent_message)
+    	word := additional_banned_words[_]
+    	contains(agent_msg, lower(word))
+    	msg := sprintf("Banned word '%s' found in agent response", [word])
+    }
+
+    deny_reasons contains msg if {
+    	input.current_intent.action == "tool_response"
+    	tool_result := lower(input.current_intent.result)
+    	word := additional_banned_words[_]
+    	contains(tool_result, lower(word))
+    	msg := sprintf("Banned word '%s' found in tool result", [word])
+    }
+  trajectory_policies.rego: |
+    package agent.authz
+
+    import rego.v1
+
+    # Local trajectory limits for development.
+    # Git trajectory policy defines max_trajectory_length := 20; this file sets a
+    # different local cap via local_max_trajectory_length to avoid OPA complete-rule
+    # conflict when both policy sources are loaded.
+
+    local_max_trajectory_length := 20
+
+    deny_reasons contains msg if {
+    	input.current_intent.action == "trajectory_validation"
+    	count(input.trajectory) > local_max_trajectory_length
+    	msg := sprintf(
+    		"Local trajectory length (%d) exceeds limit (%d)",
+    		[count(input.trajectory), local_max_trajectory_length],
+    	)
+    }

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+data:
+  # OpenShift-specific config
+  AGENT_HOST: "0.0.0.0"
+  AGENT_PORT: "5002"
+  PYTHON_LOG_LEVEL: "INFO"
+
+  # Environment & Security
+  ENVIRONMENT: "production"
+  ENABLE_AUTH: "true"
+  REQUEST_BODY_MAX_SIZE: "10485760"  # 10MB
+
+  # Request Logging
+  REQUEST_LOGGING_ENABLED: "true"
+  REQUEST_LOG_HEADERS: "true"
+  REQUEST_LOG_BODY: "false"
+  REQUEST_LOG_BODY_MAX_SIZE: "10240"
+
+  # Observability
+  LANGFUSE_TRACING_ENVIRONMENT: "production"
+
+  # Redis
+  REDIS_URL: "redis://redis:6379/0"

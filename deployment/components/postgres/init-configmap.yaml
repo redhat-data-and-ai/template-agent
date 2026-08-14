@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  labels:
+    component: database
+data:
+  init-databases.sql: |
+    CREATE DATABASE mcp_server;

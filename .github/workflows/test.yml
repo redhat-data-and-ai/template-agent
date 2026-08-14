@@ -2,40 +2,59 @@ name: Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, deep-agent ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, deep-agent ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  unit-tests:
     name: Test Suite
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
+    timeout-minutes: 15
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v3
+    - name: Setup Python with uv
+      uses: ./.github/actions/setup-python-uv
       with:
-        version: "latest"
+        python-version: "3.14"
 
-    - name: Set up virtual env
-      run: uv venv --python ${{ matrix.python-version }}
-
-    - name: Install dependencies
+    - name: Run unit tests with coverage
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS_CONTENT: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_CONTENT }}
       run: |
-        uv pip install -e ".[dev]"
+        source .venv/bin/activate && pytest tests/unit -m "not e2e" --cov=deep_agent --cov-report=xml --cov-report=html --cov-report=term-missing --cov-fail-under=68 --junitxml=test-results.xml
 
-    - name: Run tests with coverage
+    - name: Test summary
+      if: always()
+      continue-on-error: true
       run: |
-        source .venv/bin/activate && pytest --cov=template_agent --cov-report=xml --cov-report=term-missing --cov-fail-under=19
+        if [ -f test-results.xml ]; then
+          echo "### Test Results (Python 3.14)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          TESTS=$(grep -oP 'tests="\K[^"]+' test-results.xml | head -1)
+          FAILURES=$(grep -oP 'failures="\K[^"]+' test-results.xml | head -1)
+          ERRORS=$(grep -oP 'errors="\K[^"]+' test-results.xml | head -1)
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ${TESTS:-0} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failures | ${FAILURES:-0} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Errors | ${ERRORS:-0} |" >> $GITHUB_STEP_SUMMARY
+        fi
 
     - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v4
+      if: always()
+      continue-on-error: true
+      uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
       with:
         file: ./coverage.xml
         flags: unittests
