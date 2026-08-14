@@ -334,9 +334,7 @@ async def handle_mcp_oauth_callback(
         logger.debug("Graph cache invalidation skipped", exc_info=True)
 
     opener_origin = caller_origin or settings.ui_origin
-    return HTMLResponse(
-        _callback_html(mcp_name=mcp_name, opener_origin=opener_origin)
-    )
+    return HTMLResponse(_callback_html(mcp_name=mcp_name, opener_origin=opener_origin))
 
 
 async def handle_mcp_status(user_id: str, mcp_name: str) -> dict[str, Any]:
