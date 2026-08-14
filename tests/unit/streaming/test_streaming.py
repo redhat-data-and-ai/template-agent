@@ -562,6 +562,9 @@ class TestUpdateEventHandler:
         assert events[0]["content"]["value"] == "Please confirm action"
         assert events[0]["content"]["thread_id"] == stream_context.thread_id
         assert events[0]["content"]["run_id"] == stream_context.run_id
+        assert events[0]["content"]["trace_id"] == stream_context.trace_id
+        assert events[0]["content"]["session_id"] == stream_context.session_id
+        assert events[0]["content"]["user_id"] == stream_context.user_id
 
     def test_handle_interrupt_event_parses_json_string(
         self, deduplicator, stream_context
@@ -584,6 +587,36 @@ class TestUpdateEventHandler:
         assert len(events) == 1
         assert events[0]["type"] == "interrupt"
         assert events[0]["content"]["value"] == payload
+
+    def test_handle_interrupt_event_malformed_json_string(
+        self, deduplicator, stream_context
+    ):
+        """Malformed JSON strings should be returned unchanged."""
+        handler = UpdateEventHandler(deduplicator)
+        malformed = "{not valid json"
+
+        event = {"__interrupt__": [type("Interrupt", (), {"value": malformed})()]}
+
+        events = handler.handle(event, stream_context)
+
+        assert len(events) == 1
+        assert events[0]["type"] == "interrupt"
+        assert events[0]["content"]["value"] == malformed
+
+    def test_handle_interrupt_event_raw_interrupt_object(
+        self, deduplicator, stream_context
+    ):
+        """Interrupts without a .value attribute are passed through as-is."""
+        handler = UpdateEventHandler(deduplicator)
+        raw_interrupt = {"type": "hitl", "prompt": "Approve?"}
+
+        event = {"__interrupt__": [raw_interrupt]}
+
+        events = handler.handle(event, stream_context)
+
+        assert len(events) == 1
+        assert events[0]["type"] == "interrupt"
+        assert events[0]["content"]["value"] == raw_interrupt
 
     def test_handle_regular_messages(self, deduplicator, stream_context):
         """Test handling of regular message updates."""
