@@ -192,6 +192,7 @@ class Settings(BaseSettings):
     # ── MCP OAuth ─────────────────────────────────────────────────────
     MCP_TOKEN_ENCRYPTION_KEY: Optional[str] = Field(default=None)
     MCP_TOKEN_ENCRYPTION_KEY_PREVIOUS: Optional[str] = Field(default=None)
+    MCP_DCR_ENABLED: bool = Field(default=True)
     AGENT_PUBLIC_BASE_URL: Optional[str] = Field(default=None)
     UI_ORIGIN: Optional[str] = Field(
         default=None,

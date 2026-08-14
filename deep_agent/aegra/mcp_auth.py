@@ -96,6 +96,10 @@ class McpCredentialResolver:
         if auth_mode == "sso":
             return await self._resolve_sso()
 
+        if auth_mode == "dcr" and not settings.MCP_DCR_ENABLED:
+            logger.info("DCR disabled — skipping auth for MCP '%s'", mcp_name)
+            return ""
+
         oauth_cfg = server_cfg.get("oauth") or {}
         if oauth_cfg.get("grant_type") == "client_credentials":
             return await self._resolve_client_credentials_grant(mcp_name, server_cfg)

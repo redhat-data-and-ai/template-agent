@@ -281,8 +281,10 @@ def _check_mcp_encryption_key() -> None:
         from deep_agent.src.agent.config import agent_config
 
         servers = agent_config.get_mcp_servers()
+        dcr_enabled = os.environ.get("MCP_DCR_ENABLED", "true").lower() == "true"
+        check_modes = {"oauth", "dcr"} if dcr_enabled else {"oauth"}
         needs_key = any(
-            s.get("auth_mode") in ("oauth", "dcr")
+            s.get("auth_mode") in check_modes
             for s in servers.values()
             if isinstance(s, dict) and s.get("enabled", False)
         )

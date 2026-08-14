@@ -143,17 +143,27 @@ class McpTokenStore:
 
     def _payload_to_token(
         self, agent_name: str, user_id: str, mcp_name: str, payload: dict[str, Any]
-    ) -> McpOAuthToken:
-        return McpOAuthToken(
-            agent_name=agent_name,
-            user_id=user_id,
-            mcp_name=mcp_name,
-            access_token=decrypt_secret(payload.get("access_token")) or "",
-            refresh_token=decrypt_secret(payload.get("refresh_token")),
-            expires_at=self._deserialize_datetime(payload.get("expires_at")),
-            scopes=list(payload["scopes"]) if payload.get("scopes") else None,
-            updated_at=self._deserialize_datetime(payload.get("updated_at")),
-        )
+    ) -> McpOAuthToken | None:
+        try:
+            return McpOAuthToken(
+                agent_name=agent_name,
+                user_id=user_id,
+                mcp_name=mcp_name,
+                access_token=decrypt_secret(payload.get("access_token")) or "",
+                refresh_token=decrypt_secret(payload.get("refresh_token")),
+                expires_at=self._deserialize_datetime(payload.get("expires_at")),
+                scopes=list(payload["scopes"]) if payload.get("scopes") else None,
+                updated_at=self._deserialize_datetime(payload.get("updated_at")),
+            )
+        except RuntimeError:
+            logger.warning(
+                "MCP OAuth token decryption failed (key rotation?) for "
+                "agent '%s' user '%s' MCP '%s'; treating as expired",
+                agent_name,
+                user_id,
+                mcp_name,
+            )
+            return None
 
     async def ensure_tables(self) -> None:
         """Create MCP OAuth client table in Postgres if it does not already exist."""
@@ -179,11 +189,21 @@ class McpTokenStore:
             row = await cur.fetchone()
             if row is None:
                 return None
+            try:
+                decrypted_secret = decrypt_secret(row["client_secret"])
+            except RuntimeError:
+                logger.warning(
+                    "MCP OAuth client secret decryption failed (key rotation?) for "
+                    "agent '%s' MCP '%s'; treating as unregistered",
+                    agent_name,
+                    mcp_name,
+                )
+                return None
             return McpOAuthClient(
                 agent_name=row["agent_name"],
                 mcp_name=row["mcp_name"],
                 client_id=row["client_id"],
-                client_secret=decrypt_secret(row["client_secret"]),
+                client_secret=decrypted_secret,
                 registration_data=row["registration_data"],
                 updated_at=row["updated_at"],
             )

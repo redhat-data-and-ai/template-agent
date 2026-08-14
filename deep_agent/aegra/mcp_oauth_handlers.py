@@ -122,7 +122,9 @@ async def _register_dcr_client(
     return client_id, client_secret
 
 
-async def handle_mcp_connect(user_id: str, mcp_name: str) -> dict[str, str]:
+async def handle_mcp_connect(
+    user_id: str, mcp_name: str, *, caller_origin: str | None = None
+) -> dict[str, str]:
     """Start the OAuth authorization flow for *mcp_name*."""
     server_cfg = _get_mcp_server_config(mcp_name)
     auth_mode = server_cfg.get("auth_mode", "sso")
@@ -171,9 +173,14 @@ async def handle_mcp_connect(user_id: str, mcp_name: str) -> dict[str, str]:
     code_verifier, code_challenge = _pkce_pair()
     state = secrets.token_urlsafe(32)
 
-    state_payload = json.dumps(
-        {"user_id": user_id, "mcp_name": mcp_name, "code_verifier": code_verifier}
-    )
+    state_data_dict: dict[str, str] = {
+        "user_id": user_id,
+        "mcp_name": mcp_name,
+        "code_verifier": code_verifier,
+    }
+    if caller_origin:
+        state_data_dict["caller_origin"] = caller_origin
+    state_payload = json.dumps(state_data_dict)
     if not cache_set(
         f"mcp_oauth_state:{state}", state_payload, _OAUTH_STATE_TTL_SECONDS
     ):
@@ -215,6 +222,7 @@ async def handle_mcp_oauth_callback(
         user_id = state_data["user_id"]
         mcp_name = state_data["mcp_name"]
         code_verifier = state_data["code_verifier"]
+        caller_origin = state_data.get("caller_origin")
     except (json.JSONDecodeError, KeyError):
         return HTMLResponse(
             _callback_html(error="Corrupt OAuth state"),
@@ -325,8 +333,9 @@ async def handle_mcp_oauth_callback(
     except Exception:
         logger.debug("Graph cache invalidation skipped", exc_info=True)
 
+    opener_origin = caller_origin or settings.ui_origin
     return HTMLResponse(
-        _callback_html(mcp_name=mcp_name, opener_origin=settings.ui_origin)
+        _callback_html(mcp_name=mcp_name, opener_origin=opener_origin)
     )
 
 
