@@ -211,6 +211,7 @@ class PersonalizationRepository:
                 DO UPDATE SET content = EXCLUDED.content,
                               is_active = EXCLUDED.is_active,
                               updated_at = EXCLUDED.updated_at
+                WHERE user_rules.user_id = EXCLUDED.user_id
                 """,
                 (
                     str(rule.id),

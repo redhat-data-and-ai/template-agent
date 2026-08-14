@@ -260,7 +260,7 @@ async def get_thread_token_usage_endpoint(
         get_thread_token_usage,
     )
 
-    if not settings.database_uri:
+    if not settings.POSTGRES_HOST:
         raise HTTPException(
             status_code=503,
             detail="Ownership verification unavailable",
