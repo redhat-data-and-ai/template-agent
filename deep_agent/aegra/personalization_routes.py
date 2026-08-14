@@ -7,7 +7,7 @@ waiting for a chat message.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -17,12 +17,15 @@ from deep_agent.aegra.auth_helpers import authenticated_user_id
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
+if TYPE_CHECKING:
+    from deep_agent.src.personalization.repository import PersonalizationRepository
+
 logger = get_python_logger()
 
 personalization_router = APIRouter(tags=["personalization"])
 
 
-def _get_repo() -> Any:
+def _get_repo() -> PersonalizationRepository:
     from deep_agent.src.personalization.repository import PersonalizationRepository
 
     if not settings.database_uri:
@@ -33,14 +36,14 @@ def _get_repo() -> Any:
 class CreateMemoryRequest(BaseModel):
     """Request body for creating a memory."""
 
-    id: str | None = None
+    id: UUID | None = None
     content: str
 
 
 class CreateRuleRequest(BaseModel):
     """Request body for creating a rule."""
 
-    id: str | None = None
+    id: UUID | None = None
     content: str
     is_active: bool = True
 
@@ -71,8 +74,7 @@ async def create_memory(request: Request, body: CreateMemoryRequest) -> dict[str
     """Create a new memory for the authenticated user."""
     user_id = await authenticated_user_id(request, reject_anonymous=True)
     repo = _get_repo()
-    memory_id = UUID(body.id) if body.id else None
-    mem = await repo.create_memory(user_id, body.content, memory_id=memory_id)
+    mem = await repo.create_memory(user_id, body.content, memory_id=body.id)
     logger.info("memory_created", user_id=user_id[:8], memory_id=str(mem.id))
     return {
         "id": str(mem.id),
@@ -126,9 +128,12 @@ async def create_rule(request: Request, body: CreateRuleRequest) -> dict[str, An
     """Create a new rule for the authenticated user."""
     user_id = await authenticated_user_id(request, reject_anonymous=True)
     repo = _get_repo()
-    rule_id = UUID(body.id) if body.id else None
+    if body.id is not None:
+        existing = await repo.get_rule_owner(body.id)
+        if existing is not None and existing != user_id:
+            raise HTTPException(status_code=403, detail="Rule belongs to another user")
     rule = await repo.upsert_rule(
-        user_id, body.content, rule_id=rule_id, is_active=body.is_active
+        user_id, body.content, rule_id=body.id, is_active=body.is_active
     )
     logger.info("rule_created", user_id=user_id[:8], rule_id=str(rule.id))
     return {

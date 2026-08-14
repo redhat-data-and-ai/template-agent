@@ -200,9 +200,10 @@ class RedisCache:
             return False
         try:
             client.expire(self._key(key), ttl)
-            return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
+        else:
+            return True
 
     def clear(self) -> None:
         """Clear is not supported for Redis (too dangerous). No-op."""

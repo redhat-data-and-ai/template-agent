@@ -47,7 +47,7 @@ async def get_personalization(
     if not cache_settings.is_enabled("personalization"):
         return None
 
-    raw = _get_redis().get(_cache_key(user_id))
+    raw = await asyncio.to_thread(_get_redis().get, _cache_key(user_id))
     if raw is None:
         metrics.record_miss("personalization")
         return None
@@ -61,7 +61,7 @@ async def get_personalization(
         logger.debug(
             "Personalization cache corrupt for user %s — evicting", user_id[:8]
         )
-        _get_redis().delete(_cache_key(user_id))
+        await asyncio.to_thread(_get_redis().delete, _cache_key(user_id))
         metrics.record_miss("personalization")
         return None
 
@@ -76,7 +76,7 @@ async def set_personalization(
         return
 
     payload = json.dumps({"memories": memories, "rules": rules})
-    _get_redis().set(_cache_key(user_id), payload)
+    await asyncio.to_thread(_get_redis().set, _cache_key(user_id), payload)
     metrics.record_set("personalization")
     logger.debug(
         "Personalization cached for user %s (%d memories, %d rules)",

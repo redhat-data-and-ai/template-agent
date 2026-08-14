@@ -260,22 +260,27 @@ async def get_thread_token_usage_endpoint(
         get_thread_token_usage,
     )
 
-    if settings.database_uri:
-        import psycopg
-        from psycopg.rows import dict_row
+    if not settings.database_uri:
+        raise HTTPException(
+            status_code=503,
+            detail="Ownership verification unavailable",
+        )
 
-        async with await psycopg.AsyncConnection.connect(
-            settings.database_uri, row_factory=dict_row
-        ) as conn:
-            cur = await conn.execute(
-                "SELECT thread_id FROM thread WHERE thread_id = %s AND user_id = %s",
-                (thread_id, user_id),
-            )
-            if not await cur.fetchone():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Thread '{thread_id}' not found",
-                ) from None
+    import psycopg
+    from psycopg.rows import dict_row
+
+    async with await psycopg.AsyncConnection.connect(
+        settings.database_uri, row_factory=dict_row
+    ) as conn:
+        cur = await conn.execute(
+            "SELECT thread_id FROM thread WHERE thread_id = %s AND user_id = %s",
+            (thread_id, user_id),
+        )
+        if not await cur.fetchone():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Thread '{thread_id}' not found",
+            ) from None
 
     try:
         usage = await get_thread_token_usage(thread_id)

@@ -181,6 +181,7 @@ class TestCleanupUserScoping:
     def test_thread_ownership_checked_before_delete(self):
         """DELETE returns 404 when thread doesn't belong to the authenticated user."""
         thread_id = "00000000-0000-0000-0000-000000000002"
+        test_user_id = "auth-user-abc"
 
         mock_conn = AsyncMock()
         mock_cursor = AsyncMock()
@@ -190,13 +191,21 @@ class TestCleanupUserScoping:
         mock_conn.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": test_user_id},
+            ),
             patch("deep_agent.aegra.thread_cleanup.settings") as mock_settings,
             patch(
                 "psycopg.AsyncConnection.connect",
                 new_callable=AsyncMock,
                 return_value=mock_conn,
             ),
+            patch(
+                "deep_agent.aegra.thread_cleanup._delete_pg_data",
+                new_callable=AsyncMock,
+            ) as mock_pg,
             patch(
                 "deep_agent.aegra.thread_cleanup._delete_token_usage",
                 new_callable=AsyncMock,
@@ -205,7 +214,14 @@ class TestCleanupUserScoping:
             mock_settings.database_uri = "postgresql://test"
 
             client = TestClient(app)
-            res = client.delete(f"/threads/{thread_id}")
+            res = client.delete(
+                f"/threads/{thread_id}",
+                headers={"Authorization": "Bearer fake-jwt-token"},
+            )
 
             assert res.status_code == 404
+            query_args = mock_conn.execute.call_args_list[0]
+            assert thread_id in query_args[0][1]
+            assert test_user_id in query_args[0][1]
+            mock_pg.assert_not_awaited()
             mock_tu.assert_not_awaited()

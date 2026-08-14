@@ -159,6 +159,19 @@ class PersonalizationRepository:
             )
             return [Rule(**row) for row in await cur.fetchall()]
 
+    async def get_rule_owner(self, rule_id: uuid.UUID) -> str | None:
+        """Return the user_id that owns *rule_id*, or None if not found."""
+        await self.ensure_tables()
+        async with await psycopg.AsyncConnection.connect(
+            self._uri, row_factory=dict_row
+        ) as conn:
+            cur = await conn.execute(
+                "SELECT user_id FROM user_rules WHERE id = %s",
+                (str(rule_id),),
+            )
+            row = await cur.fetchone()
+            return row["user_id"] if row else None
+
     async def upsert_rule(
         self,
         user_id: str,
