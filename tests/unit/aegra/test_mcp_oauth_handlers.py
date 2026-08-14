@@ -139,19 +139,29 @@ class TestRegisterDcrClient:
 
 def _mock_request() -> Request:
     """Create a minimal mock Starlette Request for OAuth callback tests."""
-    scope = {"type": "http", "method": "GET", "path": "/mcp/oauth/callback", "query_string": b"", "headers": []}
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/mcp/oauth/callback",
+        "query_string": b"",
+        "headers": [],
+    }
     return Request(scope)
 
 
 @pytest.mark.asyncio
 class TestHandleMcpOauthCallback:
     async def test_missing_code_returns_error(self):
-        response = await handle_mcp_oauth_callback(code=None, state="some-state", request=_mock_request())
+        response = await handle_mcp_oauth_callback(
+            code=None, state="some-state", request=_mock_request()
+        )
         assert response.status_code == 400
         assert b"Missing" in response.body
 
     async def test_missing_state_returns_error(self):
-        response = await handle_mcp_oauth_callback(code="some-code", state=None, request=_mock_request())
+        response = await handle_mcp_oauth_callback(
+            code="some-code", state=None, request=_mock_request()
+        )
         assert response.status_code == 400
         assert b"Missing" in response.body
 
