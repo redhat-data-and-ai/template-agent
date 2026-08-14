@@ -140,7 +140,7 @@ def _build_hitl_aware_handler_class() -> type:
     class _HitlAwareCallbackHandler(CallbackHandler):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             super().__init__(*args, **kwargs)
-            # thread_id -> still-open root observation across HITL pauses (LRU)
+            # thread_id → still-open root observation across HITL pauses (LRU)
             self._open_hitl_roots: OrderedDict[str, Any] = OrderedDict()
             # root run_ids that must skip span.end() on on_chain_end
             self._keep_open_root_run_ids: set[UUID] = set()
@@ -178,14 +178,14 @@ def _build_hitl_aware_handler_class() -> type:
             root_run_id: UUID | None = None
             root_obs: Any | None = None
             resume_key: str | None = None
-            # Capture before super() -- root hard errors clear resume_key upstream.
+            # Capture before super() — root hard errors clear resume_key upstream.
             stale_resume_key: str | None = None
             if parent_run_id is None:
                 root_state = self._get_root_run_state(run_id)
                 if root_state is not None:
                     stale_resume_key = root_state.resume_key
 
-            # Only HITL GraphInterrupt -- not ParentCommand / other GraphBubbleUp.
+            # Only HITL GraphInterrupt — not ParentCommand / other GraphBubbleUp.
             if (
                 parent_run_id is not None
                 and _GraphInterrupt is not None
@@ -247,7 +247,7 @@ def _build_hitl_aware_handler_class() -> type:
                             )
                 return None
 
-            # Final (or non-HITL) root end -- drop open-root bookkeeping first.
+            # Final (or non-HITL) root end — drop open-root bookkeeping first.
             if parent_run_id is None:
                 root_state = self._get_root_run_state(run_id)
                 if root_state is not None and root_state.resume_key is not None:
@@ -269,7 +269,7 @@ def _build_hitl_aware_handler_class() -> type:
             metadata: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> Any:
-            # New user message while a HITL root is still open -> close it.
+            # New user message while a HITL root is still open → close it.
             if parent_run_id is None and not self._is_langgraph_resume(inputs):
                 stale_key = self._get_langgraph_resume_key(metadata)
                 if stale_key is not None:
@@ -360,9 +360,9 @@ def setup_langfuse_tracing() -> None:
 
     Two mechanisms work together:
 
-    1. ``register_configure_hook`` -- injects a **process-wide** HITL-aware
-       ``CallbackHandler`` so interrupt->resume keeps the same Langfuse trace.
-    2. ``LangfuseObservabilityProvider`` -- plugs into Aegra's
+    1. ``register_configure_hook`` — injects a **process-wide** HITL-aware
+       ``CallbackHandler`` so interrupt→resume keeps the same Langfuse trace.
+    2. ``LangfuseObservabilityProvider`` — plugs into Aegra's
        ``ObservabilityManager`` so that ``create_run_config`` injects
        ``langfuse_user_id``, ``langfuse_session_id``, ``thread_id``, and
        ``langfuse_trace_name`` into ``RunnableConfig.metadata``.
@@ -464,7 +464,7 @@ class LangfuseObservabilityProvider:
 
     - ``langfuse_user_id`` — who triggered the run
     - ``langfuse_session_id`` — groups traces by conversation (thread)
-    - ``thread_id`` — Langfuse resume-key for HITL interrupt->resume stitching
+    - ``thread_id`` — Langfuse resume-key for HITL interrupt→resume stitching
     - ``langfuse_trace_name`` — human-readable trace name in the UI
     """
 

@@ -142,7 +142,6 @@ The `opa:` section in `agent.yaml` and the `OPA_*` environment variables above c
 
 See **[`opa/README.md`](./opa/README.md)** for a full explanation of how the middleware, service, config, and OPA container work together.
 
-
 ## MCP Server Configuration
 
 MCP servers are defined in [`config/agent/mcp.json`](./config/agent/mcp.json) and attached to agents via the `mcps` frontmatter field in [`config/agent/PROMPT.md`](./config/agent/PROMPT.md) (orchestrator) or [`config/agent/subagents/*.md`](./config/agent/subagents/).

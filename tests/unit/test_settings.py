@@ -136,6 +136,7 @@ class TestValidateConfigPublicBaseUrl:
         assert s.oauth_callback_url == "http://localhost:5002/mcp/oauth/callback"
 
 
+
 class TestUiOrigin:
     def test_returns_explicit_ui_origin(self):
         s = Settings(UI_ORIGIN="http://localhost:5173")
