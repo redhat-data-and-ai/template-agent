@@ -1,10 +1,11 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redis
   labels:
     component: cache
 spec:
+  serviceName: redis
   replicas: 1
   selector:
     matchLabels:
@@ -16,15 +17,33 @@ spec:
     spec:
       containers:
         - name: redis
-          image: redis:7-alpine
+          image: docker.io/redis:7-alpine
           command:
             - redis-server
             - --appendonly
+            - "yes"
+            - --appendfsync
+            - "everysec"
+            - --no-appendfsync-on-rewrite
             - "yes"
             - --maxmemory
             - "256mb"
             - --maxmemory-policy
             - "allkeys-lru"
+            - --maxclients
+            - "2000"
+            - --tcp-keepalive
+            - "300"
+            - --tcp-backlog
+            - "2048"
+            - --hz
+            - "50"
+            - --activedefrag
+            - "yes"
+            - --lazyfree-lazy-eviction
+            - "yes"
+            - --lazyfree-lazy-expire
+            - "yes"
           ports:
             - containerPort: 6379
               name: redis
@@ -63,8 +82,15 @@ spec:
             capabilities:
               drop:
                 - ALL
-      volumes:
-        - name: redis-data
-          persistentVolumeClaim:
-            claimName: redis-pvc
       restartPolicy: Always
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          component: cache
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

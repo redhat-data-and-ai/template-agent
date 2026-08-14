@@ -24,15 +24,35 @@ spec:
     spec:
       serviceAccountName: agent
       terminationGracePeriodSeconds: 60
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: agent
+                    component: agent
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: agent
+              component: agent
       containers:
         - name: agent
-          image: agent:latest
+          image: ghcr.io/redhat-data-and-ai/template-agent:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 5002
               name: http
               protocol: TCP
           env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
             - name: AGENT_HOST
               valueFrom:
                 configMapKeyRef:
@@ -46,7 +66,7 @@ spec:
             - name: ENABLE_AUTH
               valueFrom:
                 configMapKeyRef:
-                  name: agent-config
+                  name: agent-feature-flags
                   key: ENABLE_AUTH
             - name: PYTHON_LOG_LEVEL
               valueFrom:
@@ -137,6 +157,8 @@ spec:
                   name: agent-secrets
                   key: VLLM_API_KEY
                   optional: true
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
             - name: REDIS_URL
               valueFrom:
                 configMapKeyRef:
@@ -157,23 +179,82 @@ spec:
             - name: REQUEST_LOGGING_ENABLED
               valueFrom:
                 configMapKeyRef:
-                  name: agent-config
+                  name: agent-feature-flags
                   key: REQUEST_LOGGING_ENABLED
             - name: REQUEST_LOG_HEADERS
               valueFrom:
                 configMapKeyRef:
-                  name: agent-config
+                  name: agent-feature-flags
                   key: REQUEST_LOG_HEADERS
             - name: REQUEST_LOG_BODY
               valueFrom:
                 configMapKeyRef:
-                  name: agent-config
+                  name: agent-feature-flags
                   key: REQUEST_LOG_BODY
             - name: REQUEST_LOG_BODY_MAX_SIZE
               valueFrom:
                 configMapKeyRef:
                   name: agent-config
                   key: REQUEST_LOG_BODY_MAX_SIZE
+            - name: ENABLE_USER_ID_ENCRYPTION
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: ENABLE_USER_ID_ENCRYPTION
+            - name: ENABLE_OTEL_METRICS
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: ENABLE_OTEL_METRICS
+            - name: ENABLE_OTEL_TRACES
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: ENABLE_OTEL_TRACES
+            - name: PLATFORM_AUDIT_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: PLATFORM_AUDIT_ENABLED
+            - name: MIDDLEWARE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: MIDDLEWARE_ENABLED
+            - name: REDIS_BROKER_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: REDIS_BROKER_ENABLED
+            - name: CONFIG_AUTO_RELOAD
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: CONFIG_AUTO_RELOAD
+            - name: CACHE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: CACHE_ENABLED
+            - name: MEMORY_CONSOLIDATION_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: MEMORY_CONSOLIDATION_ENABLED
+            - name: OPA_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: OPA_ENABLED
+            - name: GUARDIAN_SSL_VERIFY
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-feature-flags
+                  key: GUARDIAN_SSL_VERIFY
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -191,7 +272,6 @@ spec:
             httpGet:
               path: /health
               port: 5002
-            initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
@@ -199,7 +279,6 @@ spec:
             httpGet:
               path: /health
               port: 5002
-            initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3

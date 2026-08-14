@@ -1,13 +1,12 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: pgvector
+  name: postgres
   labels:
     component: database
 spec:
+  serviceName: postgres-backend
   replicas: 1
-  strategy:
-    type: Recreate
   selector:
     matchLabels:
       component: database
@@ -17,8 +16,8 @@ spec:
         component: database
     spec:
       containers:
-        - name: pgvector
-          image: pgvector/pgvector:pg16
+        - name: postgres
+          image: docker.io/pgvector/pgvector:pg16
           env:
             - name: POSTGRES_USER
               valueFrom:
@@ -46,7 +45,7 @@ spec:
               command:
                 - pg_isready
                 - -U
-                - pgvector
+                - postgres
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
@@ -56,7 +55,7 @@ spec:
               command:
                 - pg_isready
                 - -U
-                - pgvector
+                - postgres
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3
@@ -80,10 +79,18 @@ spec:
               drop:
                 - ALL
       volumes:
-        - name: postgres-data
-          persistentVolumeClaim:
-            claimName: postgres-pvc
         - name: postgres-init
           configMap:
             name: postgres-init
       restartPolicy: Always
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+        labels:
+          component: database
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi

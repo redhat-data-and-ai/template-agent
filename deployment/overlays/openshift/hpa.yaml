@@ -10,39 +10,30 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: agent
-  minReplicas: 2  # HA baseline - handles ~20-40 concurrent users
-  maxReplicas: 10  # Peak capacity - handles ~100-150 concurrent users
+  minReplicas: 2
+  maxReplicas: 10
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 70  # Scale up when CPU > 70%
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 75  # Scale up when memory > 75%
+          averageUtilization: 60
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 60  # Wait 60s before scaling up
+      stabilizationWindowSeconds: 30
       policies:
         - type: Percent
-          value: 50  # Scale up by 50% (1→2, 2→3, 4→6)
+          value: 100
           periodSeconds: 60
         - type: Pods
-          value: 2  # Or add 2 pods at once
+          value: 4
           periodSeconds: 60
-      selectPolicy: Max  # Use whichever policy scales faster
+      selectPolicy: Max
     scaleDown:
-      stabilizationWindowSeconds: 300  # Wait 5min before scaling down
+      stabilizationWindowSeconds: 300
       policies:
         - type: Percent
-          value: 25  # Scale down by 25% at a time
-          periodSeconds: 60
-        - type: Pods
-          value: 1  # Or remove 1 pod at once
-          periodSeconds: 180
-      selectPolicy: Min  # Use whichever policy scales slower (conservative)
+          value: 25
+          periodSeconds: 120
+      selectPolicy: Min

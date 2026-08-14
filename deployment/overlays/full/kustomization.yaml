@@ -1,0 +1,116 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../openshift
+  - postgres-deployment.yaml
+  - pgbouncer.yaml
+  - postgres-service.yaml
+  - postgres-init-configmap.yaml
+  - redis-deployment.yaml
+  - redis-service.yaml
+
+patches:
+  # Point connection details at self-hosted services
+  - target:
+      kind: ConfigMap
+      name: agent-config
+    patch: |-
+      - op: replace
+        path: /data/POSTGRES_HOST
+        value: "postgres"
+      - op: replace
+        path: /data/REDIS_URL
+        value: "redis://redis:6379/0"
+
+  # PostgreSQL resource limits and tuning
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "2Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "2000m"
+      - op: add
+        path: /spec/template/spec/containers/0/args
+        value:
+          - "-c"
+          - "max_connections=300"
+          - "-c"
+          - "shared_buffers=512MB"
+          - "-c"
+          - "effective_cache_size=1536MB"
+          - "-c"
+          - "work_mem=8MB"
+          - "-c"
+          - "maintenance_work_mem=256MB"
+          - "-c"
+          - "wal_buffers=16MB"
+          - "-c"
+          - "checkpoint_completion_target=0.9"
+          - "-c"
+          - "random_page_cost=1.1"
+          - "-c"
+          - "effective_io_concurrency=200"
+          - "-c"
+          - "huge_pages=off"
+          - "-c"
+          - "jit=off"
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: "10Gi"
+
+  # Redis resource limits and tuning
+  - target:
+      kind: StatefulSet
+      name: redis
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "256Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/command
+        value:
+          - redis-server
+          - --appendonly
+          - "yes"
+          - --appendfsync
+          - everysec
+          - --no-appendfsync-on-rewrite
+          - "yes"
+          - --maxmemory
+          - 450mb
+          - --maxmemory-policy
+          - allkeys-lru
+          - --maxclients
+          - "2000"
+          - --tcp-keepalive
+          - "300"
+          - --tcp-backlog
+          - "2048"
+          - --hz
+          - "50"
+          - --activedefrag
+          - "yes"
+          - --lazyfree-lazy-eviction
+          - "yes"
+          - --lazyfree-lazy-expire
+          - "yes"
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: "5Gi"

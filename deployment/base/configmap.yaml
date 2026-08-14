@@ -3,9 +3,15 @@ kind: ConfigMap
 metadata:
   name: agent-config
 data:
-  # Config Path (required for base image pattern)
-  # Config path — mount config/agent at this path (see Containerfile)
   CONFIG_PATH: "/app/config/agent"
-
-  # Note: PostgreSQL and Redis environment variables are added by
-  # optional components when postgres or redis components are included
+  AGENT_HOST: "0.0.0.0"
+  AGENT_PORT: "5002"
+  PYTHON_LOG_LEVEL: "INFO"
+  ENVIRONMENT: "production"
+  REQUEST_BODY_MAX_SIZE: "10485760"  # 10MB
+  REQUEST_LOG_BODY_MAX_SIZE: "10240"
+  LANGFUSE_TRACING_ENVIRONMENT: "production"
+  REDIS_URL: ""
+  POSTGRES_HOST: ""
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "template_agent"

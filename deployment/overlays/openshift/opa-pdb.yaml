@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: opa
+  labels:
+    component: opa
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      component: opa
