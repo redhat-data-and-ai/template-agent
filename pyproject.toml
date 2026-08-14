@@ -59,7 +59,7 @@ dev = [
     "pytest-cov==6.2.1",
     "pytest-mock>=3.14.0",
     "ruff==0.12.2",
-    "mypy==1.16.1",
+    "mypy==2.3.0",
     "pre-commit==4.2.0",
     "httpx==0.28.1",
 ]
