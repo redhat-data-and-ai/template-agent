@@ -254,14 +254,21 @@ async def agent(runtime: ServerRuntime) -> Any:
     tools = agent_config.resolve_tools(
         tool_names, all_available_tools, agent_name=agent_name
     )
-    if not tools and not tool_names and mcp_server_names and mcp_tools:
-        logger.info(
-            "Agent '%s' declared MCP servers %s but no explicit tools; exposing all %d MCP tool(s)",
-            agent_name,
-            mcp_server_names,
-            len(mcp_tools),
-        )
-        tools = mcp_tools
+    if mcp_server_names and mcp_tools:
+        resolved_names = {t.name for t in tools}
+        extra = []
+        for tool in mcp_tools:
+            if tool.name not in resolved_names:
+                resolved_names.add(tool.name)
+                extra.append(tool)
+        if extra:
+            logger.info(
+                "Agent '%s' adding %d MCP tool(s) from servers %s",
+                agent_name,
+                len(extra),
+                mcp_server_names,
+            )
+            tools.extend(extra)
 
     from deep_agent.src.infrastructure.middleware import (
         build_middleware_list,
