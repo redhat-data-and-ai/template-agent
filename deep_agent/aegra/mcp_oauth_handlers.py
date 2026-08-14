@@ -178,7 +178,7 @@ async def handle_mcp_connect(
         "mcp_name": mcp_name,
         "code_verifier": code_verifier,
     }
-    if caller_origin:
+    if caller_origin and caller_origin == settings.ui_origin:
         state_data_dict["caller_origin"] = caller_origin
     state_payload = json.dumps(state_data_dict)
     if not cache_set(

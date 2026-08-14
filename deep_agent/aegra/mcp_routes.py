@@ -97,6 +97,8 @@ async def get_agent_info() -> dict[str, Any]:
     oauth_mcps = sorted(
         name
         for name, cfg in servers.items()
-        if cfg.get("enabled") and cfg.get("auth_mode") in allowed_auth_modes
+        if cfg.get("enabled")
+        and cfg.get("auth_mode") in allowed_auth_modes
+        and (cfg.get("oauth") or {}).get("grant_type") != "client_credentials"
     )
     return {"name": agent_config.get_name(), "oauth_mcps": oauth_mcps}
