@@ -105,7 +105,7 @@ class PersonalizationRepository:
         from deep_agent.src.settings import settings
 
         if settings.GUARDIAN_API_BASE:
-            from deep_agent.src.guardrails.client import check_safety
+            from deep_agent.src.guardrails.client import check_injection, check_safety
 
             is_safe, verdict = await check_safety(content, context="memory")
             if not is_safe:
@@ -114,6 +114,18 @@ class PersonalizationRepository:
                 )
                 raise ValueError(
                     "Memory content failed safety check and was not saved."
+                )
+            is_clean, injection_verdict = await check_injection(
+                content, context="memory"
+            )
+            if not is_clean:
+                logger.warning(
+                    "guardian_blocked_memory_injection",
+                    user_id=user_id,
+                    verdict=injection_verdict,
+                )
+                raise ValueError(
+                    "Memory content failed injection check and was not saved."
                 )
         await self.ensure_tables()
         mem = Memory(user_id=user_id, content=content)
@@ -163,7 +175,7 @@ class PersonalizationRepository:
         from deep_agent.src.settings import settings
 
         if settings.GUARDIAN_API_BASE:
-            from deep_agent.src.guardrails.client import check_safety
+            from deep_agent.src.guardrails.client import check_injection, check_safety
 
             is_safe, verdict = await check_safety(content, context="rule")
             if not is_safe:
@@ -171,6 +183,16 @@ class PersonalizationRepository:
                     "guardian_blocked_rule", user_id=user_id, verdict=verdict
                 )
                 raise ValueError("Rule content failed safety check and was not saved.")
+            is_clean, injection_verdict = await check_injection(content, context="rule")
+            if not is_clean:
+                logger.warning(
+                    "guardian_blocked_rule_injection",
+                    user_id=user_id,
+                    verdict=injection_verdict,
+                )
+                raise ValueError(
+                    "Rule content failed injection check and was not saved."
+                )
         await self.ensure_tables()
         now = datetime.utcnow()
         rid = rule_id or uuid.uuid4()
