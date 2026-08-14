@@ -197,6 +197,7 @@ class TestUpsertRule:
         import deep_agent.src.personalization.repository as repo_mod
 
         repo_mod._TABLES_ENSURED = True
+        mock_conn._cursor.rowcount = 1
 
         with patch(
             "deep_agent.src.personalization.repository.psycopg.AsyncConnection.connect",

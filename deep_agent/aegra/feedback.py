@@ -269,18 +269,25 @@ async def get_thread_token_usage_endpoint(
     import psycopg
     from psycopg.rows import dict_row
 
-    async with await psycopg.AsyncConnection.connect(
-        settings.database_uri, row_factory=dict_row
-    ) as conn:
-        cur = await conn.execute(
-            "SELECT thread_id FROM thread WHERE thread_id = %s AND user_id = %s",
-            (thread_id, user_id),
-        )
-        if not await cur.fetchone():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Thread '{thread_id}' not found",
-            ) from None
+    try:
+        async with await psycopg.AsyncConnection.connect(
+            settings.database_uri, row_factory=dict_row
+        ) as conn:
+            cur = await conn.execute(
+                "SELECT thread_id FROM thread WHERE thread_id = %s AND user_id = %s",
+                (thread_id, user_id),
+            )
+            if not await cur.fetchone():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Thread '{thread_id}' not found",
+                ) from None
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=503, detail="Database connection failed"
+        ) from None
 
     try:
         usage = await get_thread_token_usage(thread_id)

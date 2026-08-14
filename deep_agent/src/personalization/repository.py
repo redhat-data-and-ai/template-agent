@@ -203,7 +203,7 @@ class PersonalizationRepository:
             updated_at=now,
         )
         async with await psycopg.AsyncConnection.connect(self._uri) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 """
                 INSERT INTO user_rules (id, user_id, content, is_active, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -222,6 +222,8 @@ class PersonalizationRepository:
                     rule.updated_at,
                 ),
             )
+            if cur.rowcount == 0:
+                raise PermissionError(f"Rule {rule.id} belongs to another user")
             await conn.commit()
         return rule
 

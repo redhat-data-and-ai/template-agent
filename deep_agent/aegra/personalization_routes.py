@@ -128,9 +128,14 @@ async def create_rule(request: Request, body: CreateRuleRequest) -> dict[str, An
     """Create a new rule for the authenticated user."""
     user_id = await authenticated_user_id(request, reject_anonymous=True)
     repo = _get_repo()
-    rule = await repo.upsert_rule(
-        user_id, body.content, rule_id=body.id, is_active=body.is_active
-    )
+    try:
+        rule = await repo.upsert_rule(
+            user_id, body.content, rule_id=body.id, is_active=body.is_active
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=409, detail="Rule belongs to another user"
+        ) from None
     logger.info("rule_created", user_id=user_id[:8], rule_id=str(rule.id))
     return {
         "id": str(rule.id),
