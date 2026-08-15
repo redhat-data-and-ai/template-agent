@@ -337,7 +337,7 @@ async def _ensure_database() -> str:
         return "ok"
     except Exception as exc:
         logger.error("Database setup failed: %s", exc)
-        return f"error: {exc}"
+        raise
 
 
 async def _warm_caches() -> str:
