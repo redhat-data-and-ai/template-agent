@@ -132,6 +132,19 @@ def cache_set_persistent(key: str, value: str) -> bool:
         return False
 
 
+def cache_getdel(key: str) -> str | None:
+    """Atomically read and delete a value from Redis. Returns None on miss or error."""
+    client = get_redis_client()
+    if client is None:
+        return None
+    try:
+        val = client.getdel(f"{REDIS_KEY_PREFIX}{key}")
+        return str(val) if val is not None else None
+    except Exception:
+        logger.debug("Cache getdel failed for key '%s'", key, exc_info=True)
+        return None
+
+
 def cache_delete(key: str) -> bool:
     """Delete a key from Redis cache. Returns False on error."""
     client = get_redis_client()

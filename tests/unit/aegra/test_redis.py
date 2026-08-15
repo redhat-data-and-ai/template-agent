@@ -8,6 +8,7 @@ import deep_agent.aegra.redis as redis_mod
 from deep_agent.aegra.redis import (
     cache_delete,
     cache_get,
+    cache_getdel,
     cache_set,
     get_redis_client,
     get_redis_config,
@@ -87,6 +88,31 @@ class TestCacheSet:
         mock_client.setex.side_effect = Exception("write fail")
         redis_mod._client = mock_client
         assert cache_set("key", "value") is False
+
+
+class TestCacheGetdel:
+    def test_returns_none_when_no_client(self):
+        with patch("deep_agent.aegra.redis.get_redis_client", return_value=None):
+            assert cache_getdel("key") is None
+
+    def test_returns_value_and_deletes(self):
+        mock_client = MagicMock()
+        mock_client.getdel.return_value = "cached_value"
+        redis_mod._client = mock_client
+        assert cache_getdel("key") == "cached_value"
+        mock_client.getdel.assert_called_once_with(f"{redis_mod.REDIS_KEY_PREFIX}key")
+
+    def test_returns_none_on_miss(self):
+        mock_client = MagicMock()
+        mock_client.getdel.return_value = None
+        redis_mod._client = mock_client
+        assert cache_getdel("key") is None
+
+    def test_returns_none_on_error(self):
+        mock_client = MagicMock()
+        mock_client.getdel.side_effect = Exception("redis error")
+        redis_mod._client = mock_client
+        assert cache_getdel("key") is None
 
 
 class TestCacheDelete:
