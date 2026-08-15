@@ -102,4 +102,5 @@ class TestInjectPersonalization:
         result = inject_personalization("Base", [payload], [])
         assert result.count("</user-provided-memories>") == 1
         assert "&lt;/user-provided-memories&gt;" in result
+        assert result.count("</user-provided-rules>") == 0
         assert "&lt;/user-provided-rules&gt;" in result
