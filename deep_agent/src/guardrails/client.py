@@ -110,6 +110,12 @@ async def _call_guardian(
     if get_guardrails_config() is None:
         return True, "disabled"
 
+    from deep_agent.src.guardrails import (
+        close_guardrails_circuit,
+        disable_guardrails_runtime,
+        guardrails_circuit_state,
+    )
+
     try:
         response = await litellm.acompletion(
             model=f"openai/{_guardian_model()}",
@@ -122,12 +128,12 @@ async def _call_guardian(
         verdict = _extract_verdict(raw)
         is_safe = not verdict.lower().startswith("yes")
         logger.info("guardian_check", context=context, verdict=verdict, is_safe=is_safe)
+        if guardrails_circuit_state() == "half-open":
+            close_guardrails_circuit()
         return is_safe, verdict
     except Exception as exc:
         if _is_config_error(exc):
             logger.warning("guardian_check_failed", context=context, reason=str(exc))
-            from deep_agent.src.guardrails import disable_guardrails_runtime
-
             disable_guardrails_runtime(reason=str(exc))
         else:
             logger.warning("guardian_check_failed", context=context, exc_info=True)

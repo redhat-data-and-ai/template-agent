@@ -180,8 +180,8 @@ class TestCallGuardian:
             mock_disable.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_config_error_returns_safe_and_disables_guardrail(self):
-        """404/401/403 are permanent misconfigs — guardrail must self-disable after first hit."""
+    async def test_config_error_returns_safe_and_opens_circuit(self):
+        """404/401/403 are permanent misconfigs -- circuit breaker must open."""
 
         class _NotFound(Exception):
             status_code = 404
@@ -207,8 +207,8 @@ class TestCallGuardian:
             mock_disable.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_auth_error_disables_guardrail(self):
-        """401 auth failure must self-disable so bad credentials don't spam logs."""
+    async def test_auth_error_opens_circuit(self):
+        """401 auth failure must open circuit breaker."""
 
         class _AuthError(Exception):
             status_code = 401
@@ -230,6 +230,60 @@ class TestCallGuardian:
                 [{"role": "user", "content": "hi"}], "input"
             )
             assert is_safe is True
+            mock_disable.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_successful_half_open_probe_closes_circuit(self):
+        """After cooldown, a successful call must close the circuit breaker."""
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "No"
+
+        with (
+            patch(
+                "deep_agent.src.guardrails.client._guardian_model", return_value="model"
+            ),
+            patch("deep_agent.src.guardrails.client._get_guardian_client"),
+            patch(
+                "deep_agent.src.guardrails.client.litellm.acompletion",
+                new=AsyncMock(return_value=mock_response),
+            ),
+            patch(
+                "deep_agent.src.guardrails.guardrails_circuit_state",
+                return_value="half-open",
+            ),
+            patch("deep_agent.src.guardrails.close_guardrails_circuit") as mock_close,
+        ):
+            is_safe, verdict = await _call_guardian(
+                [{"role": "user", "content": "hi"}], "input"
+            )
+            assert is_safe is True
+            mock_close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_failed_half_open_probe_reopens_circuit(self):
+        """After cooldown, a failed probe must re-open the circuit."""
+
+        class _NotFound(Exception):
+            status_code = 404
+
+        with (
+            patch(
+                "deep_agent.src.guardrails.client._guardian_model", return_value="model"
+            ),
+            patch("deep_agent.src.guardrails.client._get_guardian_client"),
+            patch(
+                "deep_agent.src.guardrails.client.litellm.acompletion",
+                new=AsyncMock(side_effect=_NotFound("still broken")),
+            ),
+            patch(
+                "deep_agent.src.guardrails.disable_guardrails_runtime"
+            ) as mock_disable,
+        ):
+            is_safe, verdict = await _call_guardian(
+                [{"role": "user", "content": "hi"}], "input"
+            )
+            assert is_safe is True
+            assert verdict == "error"
             mock_disable.assert_called_once()
 
 
