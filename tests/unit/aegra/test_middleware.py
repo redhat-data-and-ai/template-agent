@@ -6,9 +6,9 @@ import pytest
 
 from deep_agent.aegra.middleware import (
     AuthError,
-    _hmac_validate,
     authenticate,
     validate_api_key,
+    validate_jwt_token,
 )
 
 
@@ -37,15 +37,15 @@ class TestValidateApiKey:
             assert validate_api_key("wrong") is False
 
 
-class TestHmacValidate:
+class TestValidateJwtToken:
     def test_malformed_token_raises(self):
-        with pytest.raises(AuthError, match="Malformed"):
-            _hmac_validate("not-a-jwt")
+        with pytest.raises(AuthError, match="JWT validation failed"):
+            validate_jwt_token("not-a-jwt")
 
     def test_invalid_signature_raises(self):
         with patch("deep_agent.aegra.middleware.JWT_SECRET", "secret"):
-            with pytest.raises(AuthError, match="Invalid token signature"):
-                _hmac_validate("header.payload.badsig")
+            with pytest.raises(AuthError, match="JWT validation failed"):
+                validate_jwt_token("header.payload.badsig")
 
 
 class TestAuthenticate:
