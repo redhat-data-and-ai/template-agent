@@ -107,12 +107,14 @@ class TestCacheGetdel:
         mock_client.getdel.return_value = None
         redis_mod._client = mock_client
         assert cache_getdel("key") is None
+        mock_client.getdel.assert_called_once_with(f"{redis_mod.REDIS_KEY_PREFIX}key")
 
     def test_returns_none_on_error(self):
         mock_client = MagicMock()
         mock_client.getdel.side_effect = Exception("redis error")
         redis_mod._client = mock_client
         assert cache_getdel("key") is None
+        mock_client.getdel.assert_called_once_with(f"{redis_mod.REDIS_KEY_PREFIX}key")
 
 
 class TestCacheDelete:
