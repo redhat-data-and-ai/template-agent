@@ -180,20 +180,16 @@ class PIIAwareRunnable:
             return {}, False
 
     def _clear_container(self, owned: bool) -> None:
-        """Clear the instance-level container reference on the scrubber after a request.
+        """Reset the ContextVar container reference after a request.
 
         Only the wrapper that created the container (owned=True) may clear it.
-        A nested/reusing call clearing it would wipe the singleton fallback
-        attribute out from under the still-running outer wrapper.
         """
         if not owned:
             return
         try:
-            from deep_agent.src.pii import get_scrubber
+            from deep_agent.src.pii.scrubber import _shared_token_map_ref
 
-            s = get_scrubber()
-            if s and getattr(s, "_instance_container", None) is not None:
-                s._instance_container = None
+            _shared_token_map_ref.set(None)
         except Exception:
             pass
 

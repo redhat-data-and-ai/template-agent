@@ -229,6 +229,38 @@ class TestTokenMapPersistence:
         s.scrub("user@example.com")
         s.snapshot_to_container()  # should not raise
 
+    def test_concurrent_containers_are_isolated(self):
+        """Verify that a singleton scrubber does not leak PII across requests."""
+        import contextvars
+
+        s = _scrubber(_make_rule("email", "scrub"))
+
+        container_a: dict[str, str] = {}
+        container_b: dict[str, str] = {}
+
+        ctx_a = contextvars.copy_context()
+        ctx_b = contextvars.copy_context()
+
+        def request_a():
+            s.set_shared_container(container_a)
+            s.scrub("alice@example.com")
+            s.snapshot_to_container()
+
+        def request_b():
+            s.set_shared_container(container_b)
+            s.scrub("bob@example.com")
+            s.snapshot_to_container()
+
+        ctx_a.run(request_a)
+        ctx_b.run(request_b)
+
+        a_values = " ".join(container_a.values())
+        b_values = " ".join(container_b.values())
+        assert "alice" in a_values
+        assert "bob" not in a_values
+        assert "bob" in b_values
+        assert "alice" not in b_values
+
 
 class TestMultipleRules:
     """Test scrubber behaviour with multiple rules active simultaneously."""
