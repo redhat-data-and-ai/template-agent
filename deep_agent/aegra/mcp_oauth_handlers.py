@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import json
 import secrets
 from typing import Any
@@ -352,9 +353,10 @@ def _callback_html(
 ) -> str:
     """Return the HTML page shown after OAuth callback completes."""
     if error:
+        safe_error = html.escape(error)
         return f"""<!DOCTYPE html>
 <html><head><title>MCP OAuth Error</title></head>
-<body><p>{error}</p></body></html>"""
+<body><p>{safe_error}</p></body></html>"""
 
     safe_name = json.dumps(mcp_name)
     if opener_origin:
