@@ -145,9 +145,9 @@ class Settings(BaseSettings):
     VLLM_API_KEY: str = Field(default="EMPTY")
 
     # ── Multi-Provider LLMs ───────────────────────────────────────────
-    OPENAI_API_KEY: Optional[str] = Field(default=None)
-    ANTHROPIC_API_KEY: Optional[str] = Field(default=None)
-    AZURE_OPENAI_API_KEY: Optional[str] = Field(default=None)
+    OPENAI_API_KEY: Optional[str] = Field(default=None, repr=False)
+    ANTHROPIC_API_KEY: Optional[str] = Field(default=None, repr=False)
+    AZURE_OPENAI_API_KEY: Optional[str] = Field(default=None, repr=False)
     AZURE_OPENAI_ENDPOINT: Optional[str] = Field(default=None)
     AZURE_OPENAI_DEPLOYMENT: Optional[str] = Field(default=None)
     AZURE_OPENAI_API_VERSION: Optional[str] = Field(default=None)

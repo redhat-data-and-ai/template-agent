@@ -213,8 +213,12 @@ def _create_openai_model(
     except (ValueError, LLMError):
         raise
     except Exception as e:
-        logger.error(f"Failed to create OpenAI model '{model_name}'", exc_info=True)
-        raise LLMError(f"Failed to create OpenAI model '{model_name}': {e}") from e
+        logger.exception(
+            "Failed to create OpenAI model",
+            model=model_name,
+            error_type=type(e).__name__,
+        )
+        raise LLMError(f"Failed to create OpenAI model '{model_name}'") from e
 
 
 def _create_anthropic_model(
@@ -245,8 +249,12 @@ def _create_anthropic_model(
     except (ValueError, LLMError):
         raise
     except Exception as e:
-        logger.error(f"Failed to create Anthropic model '{model_name}'", exc_info=True)
-        raise LLMError(f"Failed to create Anthropic model '{model_name}': {e}") from e
+        logger.exception(
+            "Failed to create Anthropic model",
+            model=model_name,
+            error_type=type(e).__name__,
+        )
+        raise LLMError(f"Failed to create Anthropic model '{model_name}'") from e
 
 
 def _create_azure_model(
@@ -291,8 +299,12 @@ def _create_azure_model(
     except (ValueError, LLMError):
         raise
     except Exception as e:
-        logger.error(f"Failed to create Azure model '{model_name}'", exc_info=True)
-        raise LLMError(f"Failed to create Azure model '{model_name}': {e}") from e
+        logger.exception(
+            "Failed to create Azure model",
+            model=model_name,
+            error_type=type(e).__name__,
+        )
+        raise LLMError(f"Failed to create Azure model '{model_name}'") from e
 
 
 def _create_ollama_model(
@@ -316,9 +328,14 @@ def _create_ollama_model(
             model=model_name,
             base_url=settings.OLLAMA_BASE_URL,
             temperature=temperature,
+            num_predict=max_output_tokens,
         )
     except (ValueError, LLMError):
         raise
     except Exception as e:
-        logger.error(f"Failed to create Ollama model '{model_name}'", exc_info=True)
-        raise LLMError(f"Failed to create Ollama model '{model_name}': {e}") from e
+        logger.exception(
+            "Failed to create Ollama model",
+            model=model_name,
+            error_type=type(e).__name__,
+        )
+        raise LLMError(f"Failed to create Ollama model '{model_name}'") from e

@@ -10,7 +10,6 @@ from deep_agent.src.agent.llm import (
     _create_ollama_model,
     _create_openai_model,
 )
-from deep_agent.src.exceptions import LLMError
 
 
 class TestCreateOpenAIModel:
@@ -24,18 +23,17 @@ class TestCreateOpenAIModel:
 
     def test_creates_model_with_valid_key(self):
         mock_model = MagicMock()
-        with (
-            patch("deep_agent.src.agent.llm.settings") as mock_settings,
-            patch(
-                "deep_agent.src.agent.llm.ChatOpenAI",
-                return_value=mock_model,
-                create=True,
-            ),
-        ):
+        with patch("deep_agent.src.agent.llm.settings") as mock_settings:
             mock_settings.OPENAI_API_KEY = "test-key"
-            with patch.dict("sys.modules", {"langchain_openai": MagicMock()}):
+            with patch(
+                "langchain_openai.ChatOpenAI", return_value=mock_model
+            ) as mock_cls:
                 result = _create_openai_model("gpt-4o", 0.0, 4096)
-            assert result is not None
+        assert result is mock_model
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["model"] == "gpt-4o"
+        assert mock_cls.call_args.kwargs["temperature"] == 0.0
+        assert mock_cls.call_args.kwargs["max_tokens"] == 4096
 
 
 class TestCreateAnthropicModel:
@@ -49,18 +47,17 @@ class TestCreateAnthropicModel:
 
     def test_creates_model_with_valid_key(self):
         mock_model = MagicMock()
-        with (
-            patch("deep_agent.src.agent.llm.settings") as mock_settings,
-            patch(
-                "deep_agent.src.agent.llm.ChatAnthropic",
-                return_value=mock_model,
-                create=True,
-            ),
-        ):
+        with patch("deep_agent.src.agent.llm.settings") as mock_settings:
             mock_settings.ANTHROPIC_API_KEY = "test-key"
-            with patch.dict("sys.modules", {"langchain_anthropic": MagicMock()}):
+            with patch(
+                "langchain_anthropic.ChatAnthropic", return_value=mock_model
+            ) as mock_cls:
                 result = _create_anthropic_model("claude-3-haiku", 0.0, 4096)
-            assert result is not None
+        assert result is mock_model
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["model"] == "claude-3-haiku"
+        assert mock_cls.call_args.kwargs["temperature"] == 0.0
+        assert mock_cls.call_args.kwargs["max_tokens"] == 4096
 
 
 class TestCreateAzureModel:
@@ -81,8 +78,9 @@ class TestCreateAzureModel:
             mock_settings.AZURE_OPENAI_ENDPOINT = None
             mock_settings.AZURE_OPENAI_DEPLOYMENT = "test-deploy"
             mock_settings.AZURE_OPENAI_API_VERSION = "2024-02-01"
-            with pytest.raises(ValueError, match="AZURE_OPENAI_API_KEY"):
+            with pytest.raises(ValueError, match="AZURE_OPENAI_API_KEY") as exc_info:
                 _create_azure_model("gpt-4o", 0.0, 4096)
+            assert "AZURE_OPENAI_ENDPOINT" in str(exc_info.value)
 
 
 class TestCreateOllamaModel:
@@ -96,15 +94,13 @@ class TestCreateOllamaModel:
 
     def test_creates_model_with_valid_url(self):
         mock_model = MagicMock()
-        with (
-            patch("deep_agent.src.agent.llm.settings") as mock_settings,
-            patch(
-                "deep_agent.src.agent.llm.ChatOllama",
-                return_value=mock_model,
-                create=True,
-            ),
-        ):
+        with patch("deep_agent.src.agent.llm.settings") as mock_settings:
             mock_settings.OLLAMA_BASE_URL = "http://localhost:11434"
-            with patch.dict("sys.modules", {"langchain_ollama": MagicMock()}):
+            with patch(
+                "langchain_ollama.ChatOllama", return_value=mock_model
+            ) as mock_cls:
                 result = _create_ollama_model("llama3", 0.0, 4096)
-            assert result is not None
+        assert result is mock_model
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["model"] == "llama3"
+        assert mock_cls.call_args.kwargs["num_predict"] == 4096
