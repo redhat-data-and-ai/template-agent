@@ -10,7 +10,14 @@ from __future__ import annotations
 from langchain_core.language_models import BaseChatModel
 
 from deep_agent.src.agent.config.model import ModelSpec, Provider
-from deep_agent.src.agent.llm import _create_vertex_model, _create_vllm_model
+from deep_agent.src.agent.llm import (
+    _create_anthropic_model,
+    _create_azure_model,
+    _create_ollama_model,
+    _create_openai_model,
+    _create_vertex_model,
+    _create_vllm_model,
+)
 from deep_agent.src.settings import settings
 
 
@@ -68,10 +75,16 @@ def _create_by_provider(
     if provider == Provider.VERTEX:
         return _create_vertex_model(model_name, temperature, max_output_tokens)
     if provider == Provider.OPENAI:
-        return _create_vllm_model(model_name, temperature, max_output_tokens)
+        return _create_openai_model(model_name, temperature, max_output_tokens)
     if provider == Provider.MAAS:
         # MaaS: managed open-source model serving without owning infrastructure.
         # https://www.redhat.com/en/topics/ai/what-is-models-as-a-service
         model_name = "/data/" + model_name.lstrip("/").removeprefix("data/")
         return _create_vllm_model(model_name, temperature, max_output_tokens)
+    if provider == Provider.ANTHROPIC:
+        return _create_anthropic_model(model_name, temperature, max_output_tokens)
+    if provider == Provider.AZURE:
+        return _create_azure_model(model_name, temperature, max_output_tokens)
+    if provider == Provider.OLLAMA:
+        return _create_ollama_model(model_name, temperature, max_output_tokens)
     raise ValueError(f"unsupported provider: {provider}")

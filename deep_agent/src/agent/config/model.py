@@ -20,6 +20,9 @@ class Provider(str, Enum):
     VERTEX = "vertex"
     OPENAI = "openai"
     MAAS = "maas"  # Model as a Service (VLLM)
+    ANTHROPIC = "anthropic"
+    AZURE = "azure"
+    OLLAMA = "ollama"
 
 
 class ModelSpec(BaseModel):
