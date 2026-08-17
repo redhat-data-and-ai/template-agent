@@ -1,0 +1,10 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: eval-runner
+  labels:
+    app: eval-runner
+    component: eval-runner
+spec:
+  lookupPolicy:
+    local: true

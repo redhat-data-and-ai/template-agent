@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eval-runner
+  labels:
+    app: eval-runner
+    component: eval-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eval-runner
+      component: eval-runner
+  template:
+    metadata:
+      labels:
+        app: eval-runner
+        component: eval-runner
+    spec:
+      containers:
+        - name: eval-runner
+          image: eval-runner:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8099
+              name: http
+              protocol: TCP
+          env:
+            - name: AGENT_CONFIG_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: eval-runner-config
+                  key: AGENT_CONFIG_DIR
+            - name: AGENT_HOST
+              value: "http://agent:5002"
+            - name: AI_PLATFORM_AGENT_ORG
+              value: "default"
+            - name: AI_PLATFORM_AGENT_NAME
+              value: "template-agent"
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_PASSWORD
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8099
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8099
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8099
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: agent-config
+              mountPath: /agent-config
+              readOnly: true
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+
+      volumes:
+        - name: agent-config
+          persistentVolumeClaim:
+            claimName: agent-source-data
+            readOnly: true

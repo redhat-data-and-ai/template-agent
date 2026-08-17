@@ -1,0 +1,39 @@
+## Eval runner compose — run with the root stack:
+##   docker compose -f compose.yaml -f eval-runner/compose.yaml --profile eval up
+
+services:
+  eval-runner:
+    profiles: [eval]
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: template-agent-eval-runner
+    ports:
+      - "8099:8099"
+    environment:
+      - AGENT_HOST=http://template-agent:5002
+      - AI_PLATFORM_AGENT_ORG=demo
+      - AI_PLATFORM_AGENT_NAME=template-agent
+      - POSTGRES_HOST=pgvector
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=template_agent
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    env_file:
+      - ../.env
+    volumes:
+      - ../config/agent:/agent-config:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://0.0.0.0:8099/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - agent-network
+
+networks:
+  agent-network:
+    external: true
+    name: template-agent_agent-network

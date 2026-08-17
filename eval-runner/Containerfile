@@ -1,0 +1,29 @@
+ARG PYTHON_TAG=3.13-builder
+FROM registry.access.redhat.com/hi/python:${PYTHON_TAG}
+
+WORKDIR /app
+USER root
+
+RUN dnf install -y git && dnf clean all
+
+RUN pip install --no-cache-dir \
+    "lightspeed-evaluation @ git+https://github.com/lightspeed-core/lightspeed-evaluation.git@v0.7.0" \
+    fastapi \
+    "uvicorn[standard]" \
+    httpx \
+    pyyaml \
+    psycopg2-binary
+
+COPY src/ ./
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+USER 65532
+
+# /evals  — mounted from PVC: system.yaml + eval_*.yaml (agent-engine writes these)
+# /eval_output — mount a volume here for result persistence
+VOLUME ["/evals", "/eval_output"]
+
+EXPOSE 8099
+
+ENTRYPOINT ["/app/entrypoint.sh", "uvicorn", "eval_api:app", "--host", "0.0.0.0", "--port", "8099"]

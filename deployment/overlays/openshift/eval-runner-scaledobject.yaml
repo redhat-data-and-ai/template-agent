@@ -1,0 +1,31 @@
+# Requires the KEDA HTTP Add-on operator (http.keda.sh) to be installed.
+# Install: https://github.com/kedacore/http-add-on
+#
+# Scales eval-runner to 0 replicas when idle, up to 2 on incoming HTTP traffic.
+# The interceptor proxy buffers the first request while the pod cold-starts (~10s).
+# scaledownPeriod: 300s keeps the pod alive for 5 minutes after the last request,
+# which covers long-running eval jobs that may not produce continuous HTTP traffic.
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: eval-runner
+  labels:
+    app: eval-runner
+    component: eval-runner
+spec:
+  hosts:
+    - eval-runner
+  pathPrefixes:
+    - /evals
+    - /health
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: eval-runner
+    service: eval-runner
+    port: 8099
+  replicas:
+    min: 0
+    max: 2
+  # Keep pod alive 5 minutes after last request — eval jobs run for several minutes
+  scaledownPeriod: 300

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: eval-runner
+  labels:
+    app: eval-runner
+    component: eval-runner
+spec:
+  type: ClusterIP      # internal-only — no external route
+  ports:
+    - port: 8099
+      targetPort: 8099
+      protocol: TCP
+      name: http
+  selector:
+    app: eval-runner
+    component: eval-runner

@@ -62,6 +62,12 @@ spec:
                 configMapKeyRef:
                   name: agent-config
                   key: REDIS_URL
+            - name: EVAL_RUNNER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: EVAL_RUNNER_URL
+                  optional: true
             - name: GOOGLE_APPLICATION_CREDENTIALS_CONTENT
               valueFrom:
                 secretKeyRef:

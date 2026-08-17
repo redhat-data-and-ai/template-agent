@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eval-runner-config
+data:
+  # Config directory — PVC is mounted here; eval_api.py derives eval_cases.yaml
+  # and system.yaml paths from this: {AGENT_CONFIG_DIR}/evals/lightspeed-agent/
+  AGENT_CONFIG_DIR: "/agent-config"

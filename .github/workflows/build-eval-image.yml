@@ -1,0 +1,222 @@
+name: Build and Push Eval Runner Image
+
+on:
+  push:
+    tags:
+      - '*'
+    branches:
+      # - main
+      - deep-agent
+      - feat/agent_evaluation_lightspeed
+  pull_request:
+    branches: [ deep-agent, feat/agent_evaluation_lightspeed ]
+    paths:
+      - 'eval-runner/**'
+      - 'eval-runner/Containerfile'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  security-events: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-eval
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix={{branch}}-,enable=${{ !startsWith(github.ref, 'refs/tags/') }}
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="${GITHUB_REF#refs/heads/}-${GITHUB_SHA::7}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build image locally for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: ./eval-runner
+          file: ./eval-runner/Containerfile
+          push: false
+          load: true
+          tags: scan-target-eval:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan-target-eval:${{ steps.version.outputs.version }}
+          format: table
+          severity: CRITICAL,HIGH
+          scanners: vuln
+          trivyignores: .trivyignore
+          exit-code: '1'
+
+      - name: Generate Trivy JSON report
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan-target-eval:${{ steps.version.outputs.version }}
+          format: json
+          output: trivy-report-eval.json
+          scanners: vuln
+          exit-code: '0'
+
+      - name: Generate SBOM
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan-target-eval:${{ steps.version.outputs.version }}
+          format: cyclonedx
+          output: sbom-eval.cdx.json
+          scanners: vuln
+          exit-code: '0'
+
+      - name: Upload SBOM
+        if: always() && hashFiles('sbom-eval.cdx.json') != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-eval-${{ steps.version.outputs.version }}
+          path: sbom-eval.cdx.json
+          retention-days: 90
+
+      - name: Generate SARIF report
+        if: always()
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scan-target-eval:${{ steps.version.outputs.version }}
+          format: sarif
+          output: trivy-results-eval.sarif
+          scanners: vuln
+          exit-code: '0'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        if: always() && hashFiles('trivy-results-eval.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results-eval.sarif
+
+      - name: Upload Trivy report as artifact
+        if: always() && hashFiles('trivy-results-eval.sarif') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-report-eval-${{ steps.version.outputs.version }}
+          path: trivy-results-eval.sarif
+          retention-days: 30
+
+      - name: Push multi-platform image
+        id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./eval-runner
+          file: ./eval-runner/Containerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Sign eval image with cosign
+        id: sign
+        continue-on-error: true
+        run: |
+          for attempt in 1 2 3; do
+            if cosign sign --yes --recursive \
+              ghcr.io/${{ github.repository }}-eval@${{ steps.push.outputs.digest }}; then
+              echo "signed=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Signing attempt $attempt failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "signed=false" >> $GITHUB_OUTPUT
+          echo "::warning::Image signing failed after 3 attempts. Image was pushed but is unsigned."
+          exit 1
+
+      - name: Attest eval build provenance
+        continue-on-error: true
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}-eval
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Record last-good-eval build
+        run: |
+          cat > /tmp/last-good-eval.json <<EOF
+          {
+            "container_image": "ghcr.io/${{ github.repository }}-eval:${{ steps.version.outputs.version }}",
+            "container_digest": "${{ steps.push.outputs.digest }}",
+            "git_sha": "${{ github.sha }}",
+            "git_ref": "${{ github.ref }}",
+            "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "signed": ${{ steps.sign.outputs.signed == 'true' }}
+          }
+          EOF
+          cat /tmp/last-good-eval.json
+
+      - name: Upload last-good-eval artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: last-good-eval
+          path: /tmp/last-good-eval.json
+          retention-days: 90
+
+      - name: Build summary
+        run: |
+          echo "### Eval Runner Image Built Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Container Image Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pull command:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/${{ github.repository }}-eval:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployment:** managed via \`deployment/components/eval-runner/\` Kustomize component." >> $GITHUB_STEP_SUMMARY

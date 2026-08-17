@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: eval-runner-internal-only
+  labels:
+    app: eval-runner
+    component: eval-runner
+spec:
+  podSelector:
+    matchLabels:
+      app: eval-runner
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow traffic from the agent pod within the same namespace
+    - from:
+        - podSelector:
+            matchLabels:
+              app: agent
+      ports:
+        - protocol: TCP
+          port: 8099
+    # Allow traffic from the UI pod (triggers POST /evals/run)
+    - from:
+        - podSelector:
+            matchLabels:
+              component: ui
+      ports:
+        - protocol: TCP
+          port: 8099
+    # Allow KEDA HTTP add-on interceptor to forward buffered requests after scale-up.
+    # The interceptor runs in the keda (or keda-add-ons) namespace and proxies
+    # the original caller's request to this pod once it becomes Ready.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keda
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keda-add-ons
+      ports:
+        - protocol: TCP
+          port: 8099

@@ -1,0 +1,74 @@
+# Managed by eval sidecar — use POST /evals/cases to add cases.
+
+- conversation_group_id: bmi_calculate_tool_call
+  description: Verify orchestrator delegates to analyst and returns correct BMI with health tips
+  tag: tool_use
+  turns:
+  - turn_id: ask_bmi
+    query: "I'm 175 cm and weigh 70 kg. What is my BMI?"
+    expected_response: |
+      BMI is approximately 22.9, classified as Normal weight (18.5–24.9).
+      Includes health tips and a disclaimer about consulting a professional.
+    expected_keywords:
+      - ["22.9", "22.8", "23.0"]
+      - ["Normal"]
+    expected_tool_calls:
+      - - tool_name: calculate_bmi
+          arguments:
+            height_cm: 175
+            weight_kg: 70
+    turn_metrics:
+      - custom:answer_correctness
+      - custom:keywords_eval
+      - custom:tool_eval
+      - ragas:faithfulness
+      - geval:tone_safety
+    turn_metrics_metadata:
+      custom:tool_eval:
+        ordered: false
+        full_match: false
+
+- conversation_group_id: hitl_bmi_email_approval
+  description: "Agent calculates BMI from provided data then pauses for human approval before emailing results"
+  tag: hitl
+  turns:
+  - turn_id: bmi_and_email_request
+    hitl: true
+    query: "I am 175 cm tall and weigh 70 kg. Calculate my BMI and email the results to user@example.com"
+    expected_response: |
+      Agent has enough data to act and requests approval before sending the email
+      or validating the email address. The response should pause and ask the user
+      to confirm before proceeding with the email delivery.
+    expected_intent: "request approval to execute tool"
+    turn_metrics:
+      - custom:intent_eval
+
+- conversation_group_id: multi_turn_incremental_intake_and_email
+  description: Multi-turn — user gives height only, agent asks for weight, user supplies it, BMI is calculated, user then requests email delivery
+  tag: multi_turn
+  turns:
+  - turn_id: height_only
+    query: "Hi, I'm 175 cm tall. Can you check my BMI?"
+    expected_response: |
+      Agent acknowledges the height but cannot yet calculate BMI.
+      Asks the user to provide their weight (in kg or lbs) to proceed.
+    expected_keywords:
+      - ["weight", "weigh"]
+    turn_metrics:
+      - custom:answer_correctness
+      - custom:keywords_eval
+  - turn_id: provide_weight
+    query: "My weight is 70 kg"
+    expected_response: |
+      BMI is approximately 22.9, classified as Normal weight (18.5–24.9).
+      Includes health tips and a disclaimer about consulting a professional.
+      The agent remembered the height of 175 cm from the previous turn.
+    expected_keywords:
+      - ["22.9", "22.8", "23.0"]
+      - ["Normal"]
+    turn_metrics:
+      - custom:answer_correctness
+      - custom:keywords_eval
+      - ragas:faithfulness
+  conversation_metrics:
+    - deepeval:knowledge_retention

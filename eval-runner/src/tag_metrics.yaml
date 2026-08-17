@@ -1,0 +1,85 @@
+# Tag → default metrics mapping
+#
+# Tag describes conversation SHAPE, not tool usage.
+# custom:tool_eval is auto-appended by the eval runner whenever a turn has
+# expected_tool_calls — regardless of tag. You don't need a separate "tool_use"
+# tag just because a case has tool calls.
+#
+# Fields per tag:
+#   turn_metrics            (required) metric IDs applied to every turn
+#   hitl                    (optional) marks turns as requiring human approval
+#   expected_intent         (optional) default expected intent for HITL turns
+#   turn_metrics_metadata   (optional) per-metric config overrides
+
+# metric_thresholds: pass/fail threshold for each metric (single source of truth).
+# Used when auto-generating system.yaml and when patching the static system.yaml.
+metric_thresholds:
+  custom:answer_correctness: 0.75
+  custom:intent_eval: 1.0
+  custom:keywords_eval: ~          # boolean (pass/fail), no numeric threshold
+  custom:tool_eval: ~              # boolean
+  geval:tone_safety: 0.8
+  geval:technical_accuracy: 0.7
+  ragas:faithfulness: 0.7
+  ragas:context_precision_with_reference: 0.7
+  deepeval:knowledge_retention: 0.7
+  deepeval:conversation_completeness: 0.8
+
+# tool_turn_metrics: metrics added ONLY to turns where tool calls are expected.
+# ragas:faithfulness requires contexts (tool results) — adding it to turns with no
+# tool calls causes a lightspeed-eval validation error.
+tool_turn_metrics:
+  - ragas:faithfulness
+
+# Single-turn, no human approval required
+non_hitl:
+  turn_metrics:
+    - custom:answer_correctness
+    - geval:tone_safety
+
+# Human-in-the-loop approval step required
+# Note: do NOT set a default expected_intent here — it would be applied to every
+# turn including non-approval turns. Set expected_intent per-turn in the Dataset UI
+# only on the turn where the HITL approval fires.
+hitl:
+  turn_metrics:
+    - custom:intent_eval
+  hitl: true
+
+# Multi-turn conversation — tests context retention across turns
+# ragas:faithfulness is added per-turn automatically when toolCallEnabled=True
+multi_turn:
+  turn_metrics:
+    - custom:answer_correctness
+    - geval:tone_safety
+  conversation_metrics:
+    - deepeval:knowledge_retention
+    - deepeval:conversation_completeness
+
+
+# Multi-agent orchestration
+# geval:delegation_compliance is NOT listed here — it is added conditionally
+# in _dataset_to_eval_cases() only when expected_tool_calls are present, because
+# delegation only occurs via tool calls to sub-agents.
+multi_agent:
+  turn_metrics:
+    - custom:answer_correctness
+  turn_metrics_metadata:
+    custom:tool_eval:
+      ordered: false
+      full_match: false
+
+# tool_use: cases where the agent is expected to call specific tools.
+# The eval runner promotes any case with expected_tool_calls to tag: tool_use
+# so it fetches subagent tool calls from Postgres checkpoint_blobs.
+# full_match: false — checks that expected tools APPEAR in actual calls,
+# not that the actual calls are an exact match (agents often call extra tools).
+tool_use:
+  turn_metrics:
+    - custom:tool_eval
+    - custom:answer_correctness
+    - ragas:faithfulness   # tool results provide the contexts for faithfulness scoring
+  turn_metrics_metadata:
+    custom:tool_eval:
+      ordered: false
+      full_match: false
