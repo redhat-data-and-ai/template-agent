@@ -176,7 +176,7 @@ def _update_run_status_postgres(
 
         from deep_agent.src.settings import settings
 
-        with psycopg.connect(settings.database_uri) as conn:
+        with psycopg.connect(settings.database_uri, connect_timeout=5) as conn:
             with conn.cursor() as cur:
                 if claimed_by is not None:
                     cur.execute(
@@ -249,7 +249,7 @@ def _expire_run_leases_batch(run_ids: list[str]) -> int:
 
         from deep_agent.src.settings import settings
 
-        with psycopg.connect(settings.database_uri) as conn:
+        with psycopg.connect(settings.database_uri, connect_timeout=5) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE runs SET lease_expires_at = NOW() - INTERVAL '1 second', "
@@ -311,7 +311,9 @@ async def resume_interrupted_runs(
     try:
         import psycopg
 
-        async with await psycopg.AsyncConnection.connect(db_uri) as conn:
+        async with await psycopg.AsyncConnection.connect(
+            db_uri, connect_timeout=5
+        ) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT run_id, thread_id, assistant_id, execution_params::text "

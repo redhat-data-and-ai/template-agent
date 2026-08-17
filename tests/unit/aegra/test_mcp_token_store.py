@@ -130,22 +130,28 @@ class TestMcpTokenStoreRedis:
             "updated_at": None,
         }
 
+        mock_cur = AsyncMock()
+        mock_cur.fetchone.return_value = fake_row
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = mock_cur
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _fake_connection(**kwargs):
+            yield mock_conn
+
         with (
             patch.object(store, "ensure_tables"),
             patch(
                 "deep_agent.aegra.mcp_token_store.decrypt_secret",
                 side_effect=RuntimeError("MCP token decryption failed"),
             ),
-            patch("deep_agent.aegra.mcp_token_store.psycopg") as mock_psycopg,
+            patch(
+                "deep_agent.aegra.mcp_token_store.async_connection",
+                _fake_connection,
+            ),
         ):
-            mock_cur = AsyncMock()
-            mock_cur.fetchone.return_value = fake_row
-            mock_conn = AsyncMock()
-            mock_conn.execute.return_value = mock_cur
-            mock_psycopg.AsyncConnection.connect = AsyncMock(return_value=mock_conn)
-            mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
-            mock_conn.__aexit__ = AsyncMock(return_value=False)
-
             result = await store.get_client("default", "dcr-mcp")
 
         assert result is None

@@ -63,8 +63,9 @@ async def decay_all_memories(database_uri: str) -> int:
 
     Returns the number of memories updated.
     """
-    import psycopg
     from psycopg.rows import dict_row
+
+    from deep_agent.aegra.db import async_connection
 
     if not memory_settings.is_enabled("decay"):
         logger.debug("Memory decay disabled — skipping")
@@ -73,9 +74,7 @@ async def decay_all_memories(database_uri: str) -> int:
     now = datetime.now(timezone.utc)
     updated = 0
 
-    async with await psycopg.AsyncConnection.connect(
-        database_uri, row_factory=dict_row
-    ) as conn:
+    async with async_connection(row_factory=dict_row) as conn:
         cur = await conn.execute("SELECT id, score, updated_at FROM user_memories")
         rows = await cur.fetchall()
 

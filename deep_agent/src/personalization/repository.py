@@ -10,9 +10,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-import psycopg
 from psycopg.rows import dict_row
 
+from deep_agent.aegra.db import async_connection
 from deep_agent.src.personalization.models import Memory, Rule
 from deep_agent.utils.pylogger import get_python_logger
 
@@ -65,7 +65,7 @@ class PersonalizationRepository:
         global _TABLES_ENSURED  # noqa: PLW0603
         if _TABLES_ENSURED:
             return
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             await conn.execute(CREATE_MEMORIES_TABLE)
             await conn.execute(CREATE_RULES_TABLE)
             await conn.execute(MIGRATE_MEMORIES_TABLE)
@@ -78,9 +78,7 @@ class PersonalizationRepository:
     async def list_memories(self, user_id: str) -> list[Memory]:
         """Return all memories for *user_id*, newest first."""
         await self.ensure_tables()
-        async with await psycopg.AsyncConnection.connect(
-            self._uri, row_factory=dict_row
-        ) as conn:
+        async with async_connection(row_factory=dict_row) as conn:
             cur = await conn.execute(
                 "SELECT * FROM user_memories WHERE user_id = %s ORDER BY created_at DESC",
                 (user_id,),
@@ -90,9 +88,7 @@ class PersonalizationRepository:
     async def list_top_memories(self, user_id: str, limit: int = 20) -> list[Memory]:
         """Return top-N memories for *user_id*, ranked by score descending."""
         await self.ensure_tables()
-        async with await psycopg.AsyncConnection.connect(
-            self._uri, row_factory=dict_row
-        ) as conn:
+        async with async_connection(row_factory=dict_row) as conn:
             cur = await conn.execute(
                 "SELECT * FROM user_memories WHERE user_id = %s "
                 "ORDER BY score DESC, updated_at DESC LIMIT %s",
@@ -117,7 +113,7 @@ class PersonalizationRepository:
                 )
         await self.ensure_tables()
         mem = Memory(user_id=user_id, content=content)
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             await conn.execute(
                 "INSERT INTO user_memories (id, user_id, content, created_at, updated_at) "
                 "VALUES (%s, %s, %s, %s, %s)",
@@ -129,7 +125,7 @@ class PersonalizationRepository:
     async def delete_memory(self, user_id: str, memory_id: uuid.UUID) -> bool:
         """Delete a memory by id; return True if a row was removed."""
         await self.ensure_tables()
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             cur = await conn.execute(
                 "DELETE FROM user_memories WHERE id = %s AND user_id = %s",
                 (str(memory_id), user_id),
@@ -143,9 +139,7 @@ class PersonalizationRepository:
         """Return rules for *user_id*, optionally filtering to active only."""
         await self.ensure_tables()
         clause = " AND is_active = TRUE" if active_only else ""
-        async with await psycopg.AsyncConnection.connect(
-            self._uri, row_factory=dict_row
-        ) as conn:
+        async with async_connection(row_factory=dict_row) as conn:
             cur = await conn.execute(
                 f"SELECT * FROM user_rules WHERE user_id = %s{clause} ORDER BY created_at DESC",
                 (user_id,),
@@ -182,7 +176,7 @@ class PersonalizationRepository:
             created_at=now,
             updated_at=now,
         )
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             await conn.execute(
                 """
                 INSERT INTO user_rules (id, user_id, content, is_active, created_at, updated_at)
@@ -207,7 +201,7 @@ class PersonalizationRepository:
     async def delete_rule(self, user_id: str, rule_id: uuid.UUID) -> bool:
         """Delete a rule by id; return True if a row was removed."""
         await self.ensure_tables()
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             cur = await conn.execute(
                 "DELETE FROM user_rules WHERE id = %s AND user_id = %s",
                 (str(rule_id), user_id),

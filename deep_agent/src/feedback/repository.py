@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-import psycopg
 from psycopg.rows import dict_row
 
+from deep_agent.aegra.db import async_connection
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -41,7 +41,7 @@ class FeedbackRepository:
         global _TABLE_ENSURED  # noqa: PLW0603
         if _TABLE_ENSURED:
             return
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             await conn.execute(CREATE_FEEDBACK_TABLE)
             await conn.commit()
         _TABLE_ENSURED = True
@@ -58,7 +58,7 @@ class FeedbackRepository:
         """Insert or update feedback for a message (per thread and user)."""
         await self.ensure_table()
         uid = user_id if user_id else "anonymous"
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             await conn.execute(
                 """
                 INSERT INTO message_feedback (
@@ -84,7 +84,7 @@ class FeedbackRepository:
         """Remove feedback row (un-vote). Returns True if a row was deleted."""
         await self.ensure_table()
         uid = user_id if user_id else "anonymous"
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             cur = await conn.execute(
                 """
                 DELETE FROM message_feedback
@@ -103,9 +103,7 @@ class FeedbackRepository:
         """Return feedback entries for the thread and user as ``{message_id, feedback}``."""
         await self.ensure_table()
         uid = user_id if user_id else "anonymous"
-        async with await psycopg.AsyncConnection.connect(
-            self._uri, row_factory=dict_row
-        ) as conn:
+        async with async_connection(row_factory=dict_row) as conn:
             cur = await conn.execute(
                 """
                 SELECT message_id, feedback
