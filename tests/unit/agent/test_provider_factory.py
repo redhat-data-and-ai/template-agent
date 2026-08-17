@@ -107,9 +107,14 @@ class TestParseModelConfig:
         with pytest.raises(ValueError, match="cannot be empty"):
             parse_model_config("")
 
+    def test_parses_new_providers(self):
+        for prov in ("anthropic", "azure", "ollama"):
+            spec = parse_model_config({"provider": prov, "name": "some-model"})
+            assert spec.provider == Provider(prov)
+
     def test_rejects_invalid_provider(self):
         with pytest.raises(ValueError, match="invalid provider"):
-            parse_model_config({"provider": "azure", "name": "gpt-4"})
+            parse_model_config({"provider": "nonexistent_provider", "name": "gpt-4"})
 
     def test_rejects_missing_name(self):
         with pytest.raises(ValueError, match="requires non-empty 'name'"):
@@ -262,17 +267,56 @@ class TestCreateByProvider:
         assert result is mock_model
         mock_vertex.assert_called_once_with("gemini-2.5-pro", 0.0, 8192)
 
-    def test_openai_delegates_to_vllm_model(self):
+    def test_openai_delegates_to_openai_model(self):
         mock_model = MagicMock()
         with patch(
-            "deep_agent.src.agent.provider_factory._create_vllm_model",
+            "deep_agent.src.agent.provider_factory._create_openai_model",
             return_value=mock_model,
-        ) as mock_vllm:
+        ) as mock_openai:
             result = _create_by_provider(
                 Provider.OPENAI, "gpt-4o-mini", temperature=0.0, max_output_tokens=4096
             )
         assert result is mock_model
-        mock_vllm.assert_called_once_with("gpt-4o-mini", 0.0, 4096)
+        mock_openai.assert_called_once_with("gpt-4o-mini", 0.0, 4096)
+
+    def test_anthropic_delegates_to_anthropic_model(self):
+        mock_model = MagicMock()
+        with patch(
+            "deep_agent.src.agent.provider_factory._create_anthropic_model",
+            return_value=mock_model,
+        ) as mock_anthropic:
+            result = _create_by_provider(
+                Provider.ANTHROPIC,
+                "claude-3-haiku",
+                temperature=0.0,
+                max_output_tokens=4096,
+            )
+        assert result is mock_model
+        mock_anthropic.assert_called_once_with("claude-3-haiku", 0.0, 4096)
+
+    def test_azure_delegates_to_azure_model(self):
+        mock_model = MagicMock()
+        with patch(
+            "deep_agent.src.agent.provider_factory._create_azure_model",
+            return_value=mock_model,
+        ) as mock_azure:
+            result = _create_by_provider(
+                Provider.AZURE, "gpt-4o", temperature=0.0, max_output_tokens=4096
+            )
+        assert result is mock_model
+        mock_azure.assert_called_once_with("gpt-4o", 0.0, 4096)
+
+    def test_ollama_delegates_to_ollama_model(self):
+        mock_model = MagicMock()
+        with patch(
+            "deep_agent.src.agent.provider_factory._create_ollama_model",
+            return_value=mock_model,
+        ) as mock_ollama:
+            result = _create_by_provider(
+                Provider.OLLAMA, "llama3", temperature=0.0, max_output_tokens=4096
+            )
+        assert result is mock_model
+        mock_ollama.assert_called_once_with("llama3", 0.0, 4096)
 
     def test_maas_delegates_to_vllm_model(self):
         mock_model = MagicMock()

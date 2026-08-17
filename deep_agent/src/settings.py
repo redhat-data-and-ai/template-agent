@@ -144,6 +144,15 @@ class Settings(BaseSettings):
     VLLM_BASE_URL: Optional[str] = Field(default=None)
     VLLM_API_KEY: str = Field(default="EMPTY")
 
+    # ── Multi-Provider LLMs ───────────────────────────────────────────
+    OPENAI_API_KEY: Optional[str] = Field(default=None, repr=False)
+    ANTHROPIC_API_KEY: Optional[str] = Field(default=None, repr=False)
+    AZURE_OPENAI_API_KEY: Optional[str] = Field(default=None, repr=False)
+    AZURE_OPENAI_ENDPOINT: Optional[str] = Field(default=None)
+    AZURE_OPENAI_DEPLOYMENT: Optional[str] = Field(default=None)
+    AZURE_OPENAI_API_VERSION: Optional[str] = Field(default=None)
+    OLLAMA_BASE_URL: Optional[str] = Field(default=None)
+
     # ── Granite Guardian guardrails ───────────────────────────────────
     # Guardrails are active when GUARDIAN_API_BASE is set.
     # Model and behavior config live in config/agent/runtime/guardrails.yaml.
