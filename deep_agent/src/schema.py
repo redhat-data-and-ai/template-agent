@@ -93,6 +93,10 @@ class ChatMessage(BaseModel):
         default=None,
         examples=["call_Jja7J89XsjrOLA5r!MEOW!SL"],
     )
+    status: str | None = Field(
+        description="Status of a tool message result (e.g. 'success' or 'error').",
+        default=None,
+    )
     run_id: str | None = Field(
         description="Run ID associated with this message for tracking (hex format).",
         default=None,

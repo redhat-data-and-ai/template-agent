@@ -48,9 +48,20 @@ async def _authenticated_user_id(request: Request) -> str:
 async def mcp_connect(mcp_name: str, request: Request) -> JSONResponse:
     """Start OAuth/DCR authorization for an MCP server."""
     from deep_agent.aegra.mcp_oauth_handlers import handle_mcp_connect
+    from deep_agent.src.agent.config import agent_config
+    from deep_agent.src.settings import settings
+
+    servers = agent_config.get_mcp_servers()
+    cfg = servers.get(mcp_name, {})
+    if cfg.get("auth_mode") == "dcr" and not settings.MCP_DCR_ENABLED:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "DCR is disabled"},
+        )
 
     user_id = await _authenticated_user_id(request)
-    result = await handle_mcp_connect(user_id, mcp_name)
+    caller_origin = request.headers.get("origin")
+    result = await handle_mcp_connect(user_id, mcp_name, caller_origin=caller_origin)
     return JSONResponse(content=result)
 
 
@@ -80,9 +91,14 @@ async def mcp_status(mcp_name: str, request: Request) -> JSONResponse:
 async def get_agent_info() -> dict[str, Any]:
     """Return agent identity metadata from config."""
     servers = agent_config.get_mcp_servers()
+    from deep_agent.src.settings import settings
+
+    allowed_auth_modes = {"oauth", "dcr"} if settings.MCP_DCR_ENABLED else {"oauth"}
     oauth_mcps = sorted(
         name
         for name, cfg in servers.items()
-        if cfg.get("enabled") and cfg.get("auth_mode") in ("oauth", "dcr")
+        if cfg.get("enabled")
+        and cfg.get("auth_mode") in allowed_auth_modes
+        and (cfg.get("oauth") or {}).get("grant_type") != "client_credentials"
     )
     return {"name": agent_config.get_name(), "oauth_mcps": oauth_mcps}

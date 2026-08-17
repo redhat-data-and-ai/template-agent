@@ -79,6 +79,7 @@ class McpCredentialResolver:
         """Initialize with an optional token store (defaults to Redis + Postgres)."""
         self._store = token_store or McpTokenStore(settings.database_uri)
         self._cache: dict[tuple[str, str], tuple[str, float]] = {}
+        self._cc_cache: dict[str, tuple[str, float]] = {}
 
     @staticmethod
     def connect_url(mcp_name: str) -> str:
@@ -94,6 +95,14 @@ class McpCredentialResolver:
 
         if auth_mode == "sso":
             return await self._resolve_sso()
+
+        if auth_mode == "dcr" and not settings.MCP_DCR_ENABLED:
+            logger.info("DCR disabled — skipping auth for MCP '%s'", mcp_name)
+            return ""
+
+        oauth_cfg = server_cfg.get("oauth") or {}
+        if oauth_cfg.get("grant_type") == "client_credentials":
+            return await self._resolve_client_credentials_grant(mcp_name, server_cfg)
 
         cache_key = (user_id, mcp_name)
         cached = self._cache.get(cache_key)
@@ -112,6 +121,10 @@ class McpCredentialResolver:
         if auth_mode == "sso":
             access = _current_access_token.get()
             return bool(access)
+
+        oauth_cfg = server_cfg.get("oauth") or {}
+        if oauth_cfg.get("grant_type") == "client_credentials":
+            return True
 
         current_agent_name = settings.agent_deployment_id
         stored = await self._store.get_token(current_agent_name, user_id, mcp_name)
@@ -136,12 +149,99 @@ class McpCredentialResolver:
             return ""
         return await refresh_access_token(access, refresh)
 
+    async def _resolve_client_credentials_grant(
+        self,
+        mcp_name: str,
+        server_cfg: dict[str, Any],
+    ) -> str:
+        """Acquire a token using the client_credentials grant (no user interaction)."""
+        cached = self._cc_cache.get(mcp_name)
+        if cached:
+            token, expires_at = cached
+            if (expires_at - time.time()) > _TOKEN_EXPIRY_BUFFER_SECONDS:
+                return token
+
+        lock_name = f"mcp_cc_token:{mcp_name}"
+        async with distributed_lock(
+            lock_name,
+            ttl_seconds=_TOKEN_REFRESH_LOCK_TTL_SECONDS,
+            wait_seconds=_TOKEN_REFRESH_LOCK_WAIT_SECONDS,
+        ) as lock_state:
+            cached = self._cc_cache.get(mcp_name)
+            if cached:
+                token, expires_at = cached
+                if (expires_at - time.time()) > _TOKEN_EXPIRY_BUFFER_SECONDS:
+                    return token
+
+            if lock_state == "timeout":
+                raise RuntimeError(
+                    f"MCP '{mcp_name}': timed out waiting for client_credentials token lock"
+                )
+
+            oauth_cfg = server_cfg.get("oauth") or {}
+            token_endpoint = oauth_cfg.get("token_endpoint")
+            if not token_endpoint:
+                raise RuntimeError(
+                    f"MCP '{mcp_name}': token_endpoint missing for client_credentials grant"
+                )
+
+            client_id, client_secret = await self._resolve_client_credentials(
+                mcp_name, server_cfg
+            )
+            if not client_id:
+                raise RuntimeError(
+                    f"MCP '{mcp_name}': client_id unavailable for client_credentials grant"
+                )
+
+            data: dict[str, str] = {
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+            }
+            if client_secret:
+                data["client_secret"] = client_secret
+
+            scopes = requested_scopes(oauth_cfg)
+            if scopes:
+                data["scope"] = " ".join(scopes)
+
+            try:
+                async with httpx.AsyncClient(
+                    verify=mcp_httpx_verify(server_cfg)
+                ) as client:
+                    resp = await client.post(token_endpoint, data=data, timeout=30)
+                    resp.raise_for_status()
+                    body: dict[str, Any] = resp.json()
+            except Exception:
+                logger.error(
+                    "Client credentials token acquisition failed for '%s'",
+                    mcp_name,
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    f"MCP '{mcp_name}': client_credentials token acquisition failed"
+                )
+
+            access_token = body.get("access_token")
+            if not isinstance(access_token, str) or not access_token:
+                raise RuntimeError(
+                    f"MCP '{mcp_name}': client_credentials response missing access_token"
+                )
+
+            try:
+                expires_in = int(body.get("expires_in", 3600))
+            except (TypeError, ValueError):
+                expires_in = 3600
+            self._cc_cache[mcp_name] = (access_token, time.time() + expires_in)
+            logger.info("Acquired client_credentials token for MCP '%s'", mcp_name)
+            return access_token
+
     async def _resolve_oauth(
         self,
         user_id: str,
         mcp_name: str,
         server_cfg: dict[str, Any],
     ) -> str:
+        """Resolve an OAuth token, refreshing if expired."""
         current_agent_name = settings.agent_deployment_id
         stored = await self._store.get_token(current_agent_name, user_id, mcp_name)
         if stored is None:
@@ -206,6 +306,7 @@ class McpCredentialResolver:
 
     @staticmethod
     def _token_valid(token: McpOAuthToken) -> bool:
+        """Return True if the token is present and not near expiry."""
         if not token.access_token:
             return False
         if token.expires_at is None:
@@ -218,6 +319,7 @@ class McpCredentialResolver:
         stored: McpOAuthToken,
         server_cfg: dict[str, Any],
     ) -> str | None:
+        """Refresh an expired token using the stored refresh_token."""
         oauth_cfg = server_cfg.get("oauth") or {}
         token_endpoint = oauth_cfg.get("token_endpoint")
         if not token_endpoint:
@@ -296,6 +398,7 @@ class McpCredentialResolver:
     async def _resolve_client_credentials(
         self, mcp_name: str, server_cfg: dict[str, Any]
     ) -> tuple[str | None, str | None]:
+        """Return (client_id, client_secret) from config or DCR store."""
         auth_mode = server_cfg.get("auth_mode", "sso")
         oauth_cfg = server_cfg.get("oauth") or {}
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from cryptography.fernet import Fernet
@@ -94,6 +94,61 @@ class TestMcpTokenStoreRedis:
                     mcp_name="oauth-mcp",
                     access_token="access-secret",
                 )
+
+    async def test_payload_to_token_returns_none_on_decryption_failure(
+        self, store, fernet_key
+    ):
+        """Key rotation: _payload_to_token returns None when decrypt_secret raises."""
+        payload = {
+            "access_token": "gAAAAABinvalid_ciphertext",
+            "refresh_token": "gAAAAABinvalid_ciphertext",
+            "expires_at": None,
+            "scopes": None,
+            "updated_at": None,
+        }
+
+        stored_value = json.dumps(payload)
+
+        with patch(
+            "deep_agent.aegra.mcp_token_store.cache_get",
+            return_value=stored_value,
+        ):
+            result = await store.get_token("default", "user-1", "oauth-mcp")
+
+        assert result is None
+
+    async def test_get_client_returns_none_on_secret_decryption_failure(
+        self, store, fernet_key
+    ):
+        """Key rotation: get_client returns None when client_secret can't be decrypted."""
+        fake_row = {
+            "agent_name": "default",
+            "mcp_name": "dcr-mcp",
+            "client_id": "cid-123",
+            "client_secret": "gAAAAABinvalid_ciphertext",
+            "registration_data": None,
+            "updated_at": None,
+        }
+
+        with (
+            patch.object(store, "ensure_tables"),
+            patch(
+                "deep_agent.aegra.mcp_token_store.decrypt_secret",
+                side_effect=RuntimeError("MCP token decryption failed"),
+            ),
+            patch("deep_agent.aegra.mcp_token_store.psycopg") as mock_psycopg,
+        ):
+            mock_cur = AsyncMock()
+            mock_cur.fetchone.return_value = fake_row
+            mock_conn = AsyncMock()
+            mock_conn.execute.return_value = mock_cur
+            mock_psycopg.AsyncConnection.connect = AsyncMock(return_value=mock_conn)
+            mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+            mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+            result = await store.get_client("default", "dcr-mcp")
+
+        assert result is None
 
     async def test_delete_token(self, store):
         deleted_keys: list[str] = []
