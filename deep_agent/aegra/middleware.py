@@ -37,8 +37,10 @@ class AuthError(Exception):
 def validate_api_key(provided_key: str) -> bool:
     """Constant-time comparison of API keys to prevent timing attacks."""
     if not API_KEY:
-        logger.warning("LANGGRAPH_API_KEY not set — all keys accepted")
-        return True
+        raise AuthError(
+            "LANGGRAPH_API_KEY is not configured; API key authentication is unavailable",
+            status_code=500,
+        )
     return hmac.compare_digest(provided_key.encode(), API_KEY.encode())
 
 

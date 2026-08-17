@@ -24,9 +24,11 @@ class TestAuthError:
 
 
 class TestValidateApiKey:
-    def test_accepts_when_no_key_configured(self):
+    def test_raises_when_no_key_configured(self):
         with patch("deep_agent.aegra.middleware.API_KEY", ""):
-            assert validate_api_key("anything") is True
+            with pytest.raises(AuthError, match="not configured") as exc_info:
+                validate_api_key("anything")
+            assert exc_info.value.status_code == 500
 
     def test_accepts_correct_key(self):
         with patch("deep_agent.aegra.middleware.API_KEY", "secret123"):
