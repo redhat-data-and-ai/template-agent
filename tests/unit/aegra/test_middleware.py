@@ -6,9 +6,12 @@ import pytest
 
 from deep_agent.aegra.middleware import (
     AuthError,
+    _MIN_JWT_SECRET_BYTES,
     _hmac_validate,
     authenticate,
     validate_api_key,
+    validate_auth_config,
+    validate_jwt_token,
 )
 
 
@@ -39,11 +42,16 @@ class TestValidateApiKey:
 
 class TestHmacValidate:
     def test_malformed_token_raises(self):
-        with pytest.raises(AuthError, match="Malformed"):
-            _hmac_validate("not-a-jwt")
+        with patch(
+            "deep_agent.aegra.middleware.JWT_SECRET", "s" * _MIN_JWT_SECRET_BYTES
+        ):
+            with pytest.raises(AuthError, match="Malformed"):
+                _hmac_validate("not-a-jwt")
 
     def test_invalid_signature_raises(self):
-        with patch("deep_agent.aegra.middleware.JWT_SECRET", "secret"):
+        with patch(
+            "deep_agent.aegra.middleware.JWT_SECRET", "s" * _MIN_JWT_SECRET_BYTES
+        ):
             with pytest.raises(AuthError, match="Invalid token signature"):
                 _hmac_validate("header.payload.badsig")
 
@@ -80,3 +88,57 @@ class TestAuthenticate:
         with patch("deep_agent.aegra.middleware.AUTH_TYPE", "custom_nonsense"):
             with pytest.raises(AuthError, match="Unknown auth type"):
                 authenticate({})
+
+
+class TestValidateAuthConfig:
+    def test_noop_passes(self):
+        with patch("deep_agent.aegra.middleware.AUTH_TYPE", "noop"):
+            validate_auth_config()
+
+    def test_jwt_with_empty_secret_raises(self):
+        with (
+            patch("deep_agent.aegra.middleware.AUTH_TYPE", "jwt"),
+            patch("deep_agent.aegra.middleware.JWT_SECRET", ""),
+        ):
+            with pytest.raises(ValueError, match="must be set"):
+                validate_auth_config()
+
+    def test_jwt_with_short_secret_raises(self):
+        with (
+            patch("deep_agent.aegra.middleware.AUTH_TYPE", "jwt"),
+            patch("deep_agent.aegra.middleware.JWT_SECRET", "tooshort"),
+        ):
+            with pytest.raises(ValueError, match="at least"):
+                validate_auth_config()
+
+    def test_jwt_with_valid_secret_passes(self):
+        secret = "a" * _MIN_JWT_SECRET_BYTES
+        with (
+            patch("deep_agent.aegra.middleware.AUTH_TYPE", "jwt"),
+            patch("deep_agent.aegra.middleware.JWT_SECRET", secret),
+        ):
+            validate_auth_config()
+
+
+class TestValidateJwtTokenRejectsWeakSecret:
+    def test_empty_secret_raises_auth_error(self):
+        with patch("deep_agent.aegra.middleware.JWT_SECRET", ""):
+            with pytest.raises(AuthError, match="not configured or too short"):
+                validate_jwt_token("header.payload.sig")
+
+    def test_short_secret_raises_auth_error(self):
+        with patch("deep_agent.aegra.middleware.JWT_SECRET", "short"):
+            with pytest.raises(AuthError, match="not configured or too short"):
+                validate_jwt_token("header.payload.sig")
+
+
+class TestHmacValidateRejectsWeakSecret:
+    def test_empty_secret_raises_auth_error(self):
+        with patch("deep_agent.aegra.middleware.JWT_SECRET", ""):
+            with pytest.raises(AuthError, match="not configured or too short"):
+                _hmac_validate("header.payload.sig")
+
+    def test_short_secret_raises_auth_error(self):
+        with patch("deep_agent.aegra.middleware.JWT_SECRET", "short"):
+            with pytest.raises(AuthError, match="not configured or too short"):
+                _hmac_validate("header.payload.sig")
