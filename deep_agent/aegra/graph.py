@@ -282,10 +282,7 @@ async def agent(runtime: ServerRuntime) -> Any:
     )
 
     hitl = getattr(resolved_mw, "human_approval", None)
-    if hitl and hitl.enabled and mcp_tools:
-        mcp_exclude = [t.name for t in mcp_tools if t.name not in hitl.exclude]
-        if mcp_exclude:
-            hitl = hitl.model_copy(update={"exclude": hitl.exclude + mcp_exclude})
+
     cache_key = _graph_fingerprint(
         model_name,
         system_prompt,
