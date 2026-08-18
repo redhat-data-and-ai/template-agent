@@ -10,7 +10,7 @@ allow-direct-references = true
 
 [project]
 name = "template-agent"
-version = "0.2.0"
+version = "1.1.0"
 description = "A template for Model Context Protocol (MCP) server development"
 readme = "README.md"
 keywords = ["mcp", "template", "server"]
