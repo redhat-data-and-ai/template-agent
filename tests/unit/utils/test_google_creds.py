@@ -241,6 +241,27 @@ class TestGetServiceAccountCredentials:
 
                 mock_adc.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "creds_content",
+        ["[]", "[1, 2]", '"not-an-object"', "null", "true", "1"],
+    )
+    def test_non_object_json_does_not_fall_back_to_adc(self, creds_content):
+        """Non-object CONTENT fails hard even when ADC would succeed."""
+        mock_creds = MagicMock()
+
+        with patch(
+            "deep_agent.utils.google_creds.google.auth.default",
+            return_value=(mock_creds, "adc-project-456"),
+        ) as mock_adc:
+            with patch("deep_agent.utils.google_creds.settings") as mock_settings:
+                mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = creds_content
+                mock_settings.PYTHON_LOG_LEVEL = "INFO"
+
+                with pytest.raises(RuntimeError, match="Invalid JSON in credentials"):
+                    get_service_account_credentials()
+
+                mock_adc.assert_not_called()
+
     @pytest.mark.parametrize("action", ["remove", "empty"])
     def test_invalid_project_id(
         self, mock_service_account_info, action, mock_adc_failure

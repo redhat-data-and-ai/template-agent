@@ -8,6 +8,7 @@ Default Credentials (ADC) as the fallback.
 
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import google.auth
@@ -109,6 +110,9 @@ def get_service_account_credentials() -> tuple[Credentials, str]:
             )
         except json.JSONDecodeError as e:
             raise RuntimeError(f"{_ERR_INVALID_JSON}: {e}") from e
+
+        if not isinstance(service_account_info, Mapping):
+            raise RuntimeError(_ERR_INVALID_JSON)
 
         project = service_account_info.get("project_id")
         if not project:
