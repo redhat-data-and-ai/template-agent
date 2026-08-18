@@ -144,6 +144,7 @@ class TestConnectSingleServer:
         """Test successful connection to MCP server."""
         mock_tool = MagicMock()
         mock_tool.name = "test_tool"
+        mock_tool.metadata = None
 
         mock_client = MagicMock()
         mock_client.get_tools = AsyncMock(return_value=[mock_tool])
@@ -154,10 +155,59 @@ class TestConnectSingleServer:
             "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
-            tools = await _connect_single_server("test_server", config, {}, timeout=5)
+            tools = await _connect_single_server(
+                "test_server",
+                config,
+                {},
+                timeout=5,
+                mcp_server="test_server",
+            )
 
             assert len(tools) == 1
             assert tools[0].name == "test_tool"
+            assert tools[0].metadata["mcp_server"] == "test_server"
+
+    @pytest.mark.asyncio
+    async def test_filters_app_only_tools_from_model_list(self):
+        """App-only tools are annotated but not returned for the LLM."""
+        from types import SimpleNamespace
+
+        model_tool = SimpleNamespace(
+            name="show_chart",
+            metadata={
+                "_meta": {
+                    "ui": {
+                        "resourceUri": "ui://charts/app.html",
+                        "visibility": ["model", "app"],
+                    }
+                }
+            },
+        )
+        app_only = SimpleNamespace(
+            name="refresh_chart",
+            metadata={"_meta": {"ui": {"visibility": ["app"]}}},
+        )
+
+        mock_client = MagicMock()
+        mock_client.get_tools = AsyncMock(return_value=[model_tool, app_only])
+
+        config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
+
+        with patch(
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
+            return_value=mock_client,
+        ):
+            tools = await _connect_single_server(
+                "charts",
+                config,
+                {},
+                timeout=5,
+                mcp_server="chart-mcp-server",
+            )
+
+        assert [t.name for t in tools] == ["show_chart"]
+        assert tools[0].metadata["mcp_server"] == "chart-mcp-server"
+        assert app_only.metadata["mcp_server"] == "chart-mcp-server"
 
     @pytest.mark.asyncio
     async def test_connection_timeout_returns_empty_list(self):

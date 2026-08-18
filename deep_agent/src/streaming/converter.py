@@ -40,6 +40,8 @@ def convert_message_to_api_format(
         ]
     if chat_message.tool_call_id:
         content["tool_call_id"] = chat_message.tool_call_id
+    if getattr(chat_message, "status", None):
+        content["status"] = chat_message.status
     if chat_message.response_metadata:
         content["response_metadata"] = chat_message.response_metadata
 

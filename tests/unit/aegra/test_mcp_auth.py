@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -104,6 +104,34 @@ Test prompt.
         with caplog.at_level("ERROR"):
             AgentConfig(tmp_path).get_mcp_servers()
         assert any("client_id is required" in r.message for r in caplog.records)
+
+    def test_client_credentials_no_error_without_authorization_endpoint(
+        self, tmp_path, caplog
+    ):
+        self._write_minimal_config_dir(tmp_path)
+        mcp_json = tmp_path / "mcp.json"
+        mcp_json.write_text(
+            """
+            {
+              "mcpServers": {
+                "cc-mcp": {
+                  "url": "http://localhost/mcp",
+                  "enabled": true,
+                  "auth_mode": "oauth",
+                  "oauth": {
+                    "grant_type": "client_credentials",
+                    "token_endpoint": "https://as.example.com/token",
+                    "client_id": "cid"
+                  }
+                }
+              }
+            }
+            """
+        )
+        with caplog.at_level("ERROR"):
+            servers = AgentConfig(tmp_path).get_mcp_servers()
+        assert not any("authorization_endpoint" in r.message for r in caplog.records)
+        assert servers["cc-mcp"]["auth_mode"] == "oauth"
 
     def test_logs_error_for_dcr_without_registration_endpoint(self, tmp_path, caplog):
         self._write_minimal_config_dir(tmp_path)
@@ -244,3 +272,197 @@ class TestMcpCredentialResolver:
         await resolver.resolve("user-1", "oauth-mcp", cfg)
 
         store.get_token.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+class TestClientCredentialsGrant:
+    """Tests for the client_credentials grant type flow."""
+
+    async def test_client_credentials_acquires_token(self):
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "access_token": "cc-access-token",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+                "client_secret": "csecret",
+            },
+        }
+
+        with patch("deep_agent.aegra.mcp_auth.httpx.AsyncClient") as mock_client:
+            mock_ctx = AsyncMock(post=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            token = await resolver.resolve("user-1", "cc-mcp", cfg)
+
+        assert token == "cc-access-token"
+        store.get_token.assert_not_called()
+
+    async def test_client_credentials_caches_token(self):
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "access_token": "cc-access-token",
+            "expires_in": 3600,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+                "client_secret": "csecret",
+            },
+        }
+
+        with patch("deep_agent.aegra.mcp_auth.httpx.AsyncClient") as mock_client:
+            mock_ctx = AsyncMock(post=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            await resolver.resolve("user-1", "cc-mcp", cfg)
+            await resolver.resolve("user-1", "cc-mcp", cfg)
+
+            mock_ctx.post.assert_awaited_once()
+
+    async def test_client_credentials_has_valid_token_returns_true(self):
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+            },
+        }
+
+        result = await resolver.has_valid_token("user-1", "cc-mcp", cfg)
+        assert result is True
+        store.get_token.assert_not_called()
+
+    async def test_client_credentials_raises_without_token_endpoint(self):
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "client_id": "cid",
+            },
+        }
+
+        with pytest.raises(RuntimeError, match="token_endpoint missing"):
+            await resolver.resolve("user-1", "cc-mcp", cfg)
+
+    async def test_client_credentials_raises_without_client_id(self):
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "token_endpoint": "https://auth.example.com/token",
+            },
+        }
+
+        with pytest.raises(RuntimeError, match="client_id unavailable"):
+            await resolver.resolve("user-1", "cc-mcp", cfg)
+
+    async def test_client_credentials_raises_on_http_failure(self):
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+                "client_secret": "csecret",
+            },
+        }
+
+        with patch("deep_agent.aegra.mcp_auth.httpx.AsyncClient") as mock_client:
+            mock_ctx = AsyncMock(
+                post=AsyncMock(side_effect=Exception("connection refused")),
+            )
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(RuntimeError, match="token acquisition failed"):
+                await resolver.resolve("user-1", "cc-mcp", cfg)
+
+    async def test_client_credentials_raises_on_missing_access_token(self):
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"token_type": "Bearer"}
+        mock_response.raise_for_status = MagicMock()
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+                "client_secret": "csecret",
+            },
+        }
+
+        with patch("deep_agent.aegra.mcp_auth.httpx.AsyncClient") as mock_client:
+            mock_ctx = AsyncMock(post=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(RuntimeError, match="missing access_token"):
+                await resolver.resolve("user-1", "cc-mcp", cfg)
+
+    async def test_client_credentials_sends_scopes(self):
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "access_token": "scoped-token",
+            "expires_in": 3600,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+                "client_secret": "csecret",
+                "scopes": ["read", "write"],
+            },
+        }
+
+        with patch("deep_agent.aegra.mcp_auth.httpx.AsyncClient") as mock_client:
+            mock_ctx = AsyncMock(post=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            token = await resolver.resolve("user-1", "cc-mcp", cfg)
+
+        assert token == "scoped-token"
+        call_kwargs = mock_ctx.post.call_args
+        data = call_kwargs.kwargs.get("data", call_kwargs[1].get("data", {}))
+        assert data["scope"] == "read write"

@@ -14,6 +14,7 @@ A template for building [Deep Agents](https://github.com/langchain-ai/deepagents
 - Orchestrator with analyst and publisher subagents
 - Skills: `client-intake`, `bmi-report`, `email-formatter`
 - MCP auth modes: SSO pass-through, OAuth, and DCR
+- MCP Apps host APIs (`resources/read` + app `tools/call`) for interactive `ui://` UIs in Template UI
 
 **Infrastructure:**
 - Aegra dev server with Redis-backed SSE streaming
@@ -85,6 +86,8 @@ curl -N -X POST "http://localhost:5002/threads/THREAD_ID/runs/stream" \
 | `/mcp/{name}/connect` | POST | Start OAuth/DCR flow for an MCP server |
 | `/mcp/oauth/callback` | GET | OAuth redirect handler |
 | `/mcp/{name}/status` | GET | MCP connection status for current user |
+| `/mcp/{name}/resources/read` | POST | MCP Apps: read a `ui://` resource |
+| `/mcp/{name}/tools/call` | POST | MCP Apps: app-initiated tool call |
 
 Use [template-ui](https://github.com/redhat-data-and-ai/template-ui) for a full chat experience against this API.
 
@@ -155,6 +158,23 @@ MCP servers are defined in [`config/agent/mcp.json`](./config/agent/mcp.json) an
 | `dcr` | MCP supports OAuth Dynamic Client Registration | Agent registers at connect; per-user OAuth flow follows |
 
 Set `"auth": false` for public/local MCP servers with no Authorization header.
+
+### MCP Apps (interactive UI)
+
+The agent advertises the MCP Apps UI extension on `initialize` and exposes host proxy routes used by Template UI:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/mcp/{name}/resources/read` | POST | Read a `ui://` Apps resource (HTML) |
+| `/mcp/{name}/tools/call` | POST | App-initiated tool call (`visibility` must include `app`) |
+
+Add any SEP-1865-compliant App server to `mcp.json` the same way as a normal MCP — no agent code changes.
+
+Compliance smoke tests:
+
+```bash
+.venv/bin/python -m pytest tests/unit/aegra/test_mcp_apps_smoke.py -q
+```
 
 ### MCP URL by run mode
 
