@@ -49,7 +49,14 @@ def _fix_stringified_json_args(tool: Any, kwargs: dict[str, Any]) -> dict[str, A
             continue
         prop = schema_props.get(key, {})
         expected_type = prop.get("type", "")
-        if expected_type == "string":
+        if expected_type == "string" or (
+            isinstance(expected_type, list) and "string" in expected_type
+        ):
+            continue
+        if any(
+            "string" in str(s.get("type", ""))
+            for s in prop.get("anyOf", prop.get("oneOf", []))
+        ):
             continue
         stripped = value.strip()
         if stripped and stripped[0] in ("{", "["):
@@ -62,7 +69,7 @@ def _fix_stringified_json_args(tool: Any, kwargs: dict[str, Any]) -> dict[str, A
                         key,
                         getattr(tool, "name", "?"),
                     )
-            except (json.JSONDecodeError, ValueError):
+            except (json.JSONDecodeError, ValueError, RecursionError):
                 pass
     return fixed
 
