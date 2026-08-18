@@ -134,3 +134,23 @@ class TestValidateConfigPublicBaseUrl:
     def test_oauth_callback_url_defaults_to_localhost(self):
         s = Settings(AGENT_PORT=5002)
         assert s.oauth_callback_url == "http://localhost:5002/mcp/oauth/callback"
+
+
+class TestUiOrigin:
+    def test_returns_explicit_ui_origin(self):
+        s = Settings(UI_ORIGIN="http://localhost:5173")
+        assert s.ui_origin == "http://localhost:5173"
+
+    def test_strips_trailing_slash(self):
+        s = Settings(UI_ORIGIN="http://localhost:5173/")
+        assert s.ui_origin == "http://localhost:5173"
+
+    def test_falls_back_to_agent_public_base_url(self):
+        s = Settings(
+            AGENT_PUBLIC_BASE_URL="https://agent.example.com/org/name/api/proxy/agent"
+        )
+        assert s.ui_origin == "https://agent.example.com"
+
+    def test_returns_none_when_neither_set(self):
+        s = Settings(UI_ORIGIN=None, AGENT_PUBLIC_BASE_URL=None)
+        assert s.ui_origin is None

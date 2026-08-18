@@ -499,10 +499,21 @@ class AgentConfig:
             )
             return
 
-        for field in (
-            "authorization_endpoint",
-            "token_endpoint",
-        ):
+        grant_type = oauth.get("grant_type", "authorization_code")
+
+        if auth_mode == "dcr" and grant_type == "client_credentials":
+            logger.error(
+                "MCP server '%s': auth_mode 'dcr' is incompatible with "
+                "grant_type 'client_credentials' — use auth_mode 'oauth' instead",
+                name,
+            )
+            return
+
+        required_fields = ["token_endpoint"]
+        if grant_type != "client_credentials":
+            required_fields.append("authorization_endpoint")
+
+        for field in required_fields:
             if not oauth.get(field):
                 logger.error(
                     "MCP server '%s': oauth.%s is required for auth_mode '%s'",
