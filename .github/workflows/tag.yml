@@ -1,0 +1,30 @@
+name: Tag Pre-Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create pre-release tag
+        run: |
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          LATEST=$(git tag --list "v${VERSION}-rc.*" --sort=-v:refname | head -n1)
+          if [ -z "$LATEST" ]; then
+            NEXT=1
+          else
+            CURRENT=$(echo "$LATEST" | sed "s/v${VERSION}-rc\.//")
+            NEXT=$((CURRENT + 1))
+          fi
+          TAG="v${VERSION}-rc.${NEXT}"
+          git tag "$TAG"
+          git push origin "$TAG"
