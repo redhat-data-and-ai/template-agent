@@ -9,6 +9,7 @@ from google.auth.exceptions import DefaultCredentialsError
 from google.oauth2 import service_account
 
 from deep_agent.utils.google_creds import (
+    _well_known_adc_path,
     clear_credentials_cache,
     get_service_account_credentials,
 )
@@ -39,7 +40,7 @@ def mock_service_account_info():
 
 @pytest.fixture
 def mock_adc_failure():
-    """Patch ADC lookup to fail so inline JSON tests exercise the fallback path."""
+    """Patch ADC lookup to fail so tests without CONTENT hit the error path."""
     with patch(
         "deep_agent.utils.google_creds.google.auth.default",
         side_effect=DefaultCredentialsError(),
@@ -102,11 +103,9 @@ class TestGetServiceAccountCredentials:
                     assert project == "quota-project-789"
 
     def test_adc_user_oauth_with_quota_project_from_well_known_path(self, tmp_path):
-        """Resolve project from ~/.config/gcloud/ADC when env var is unset."""
+        """Resolve project from the platform well-known ADC file when env var is unset."""
         mock_creds = MagicMock()
-        gcloud_dir = tmp_path / ".config" / "gcloud"
-        gcloud_dir.mkdir(parents=True)
-        adc_file = gcloud_dir / "application_default_credentials.json"
+        adc_file = tmp_path / "application_default_credentials.json"
         adc_file.write_text(
             json.dumps(
                 {
@@ -123,7 +122,8 @@ class TestGetServiceAccountCredentials:
         ):
             with patch.dict(os.environ, {}, clear=True):
                 with patch(
-                    "deep_agent.utils.google_creds.Path.home", return_value=tmp_path
+                    "deep_agent.utils.google_creds._cloud_sdk.get_application_default_credentials_path",
+                    return_value=str(adc_file),
                 ):
                     with patch(
                         "deep_agent.utils.google_creds.settings"
@@ -136,6 +136,31 @@ class TestGetServiceAccountCredentials:
 
                         assert credentials is mock_creds
                         assert project == "well-known-project-321"
+
+    def test_inline_json_takes_precedence_over_adc(self, mock_service_account_info):
+        """Inline JSON wins when both CONTENT and ADC are available."""
+        adc_creds = MagicMock()
+        json_creds = MagicMock(spec=service_account.Credentials)
+
+        with patch(
+            "deep_agent.utils.google_creds.google.auth.default",
+            return_value=(adc_creds, "adc-project-456"),
+        ) as mock_adc:
+            with patch("deep_agent.utils.google_creds.settings") as mock_settings:
+                mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = json.dumps(
+                    mock_service_account_info
+                )
+                mock_settings.PYTHON_LOG_LEVEL = "INFO"
+
+                with patch(
+                    "deep_agent.utils.google_creds.service_account.Credentials.from_service_account_info",
+                    return_value=json_creds,
+                ):
+                    credentials, project = get_service_account_credentials()
+
+                    assert credentials is json_creds
+                    assert project == "test-project-123"
+                    mock_adc.assert_not_called()
 
     def test_successful_credential_loading(
         self, mock_service_account_info, mock_adc_failure
@@ -197,14 +222,24 @@ class TestGetServiceAccountCredentials:
                 with pytest.raises(RuntimeError, match="No Google credentials found"):
                     get_service_account_credentials()
 
-    def test_invalid_json(self, mock_adc_failure):
-        """Test error when credentials content is not valid JSON."""
-        with patch("deep_agent.utils.google_creds.settings") as mock_settings:
-            mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = "not valid json {"
-            mock_settings.PYTHON_LOG_LEVEL = "INFO"
+    def test_invalid_json_does_not_fall_back_to_adc(self):
+        """Invalid CONTENT fails hard even when ADC would succeed."""
+        mock_creds = MagicMock()
 
-            with pytest.raises(RuntimeError, match="Invalid JSON in credentials"):
-                get_service_account_credentials()
+        with patch(
+            "deep_agent.utils.google_creds.google.auth.default",
+            return_value=(mock_creds, "adc-project-456"),
+        ) as mock_adc:
+            with patch("deep_agent.utils.google_creds.settings") as mock_settings:
+                mock_settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT = (
+                    "not valid json {"
+                )
+                mock_settings.PYTHON_LOG_LEVEL = "INFO"
+
+                with pytest.raises(RuntimeError, match="Invalid JSON in credentials"):
+                    get_service_account_credentials()
+
+                mock_adc.assert_not_called()
 
     @pytest.mark.parametrize("action", ["remove", "empty"])
     def test_invalid_project_id(
@@ -254,3 +289,33 @@ class TestGetServiceAccountCredentials:
                 assert creds2 is mock_creds2
                 assert creds2 is not creds1
                 assert mock_from_info.call_count == 2
+
+
+class TestWellKnownAdcPath:
+    """Tests for platform-aware well-known ADC file path resolution."""
+
+    def test_uses_google_auth_platform_path(self, tmp_path):
+        """Delegate to google-auth so CLOUDSDK_CONFIG and Windows paths match ADC."""
+        expected = tmp_path / "gcloud" / "application_default_credentials.json"
+        with patch(
+            "deep_agent.utils.google_creds._cloud_sdk.get_application_default_credentials_path",
+            return_value=str(expected),
+        ):
+            assert _well_known_adc_path() == expected
+
+    def test_windows_appdata_path(self, tmp_path, monkeypatch):
+        """On Windows, resolve %APPDATA%/gcloud rather than ~/.config/gcloud."""
+        appdata = tmp_path / "AppData" / "Roaming"
+        monkeypatch.setattr("google.auth._cloud_sdk.os.name", "nt")
+        monkeypatch.setenv("APPDATA", str(appdata))
+        monkeypatch.delenv("CLOUDSDK_CONFIG", raising=False)
+
+        path = _well_known_adc_path()
+        posix_path = str(path).replace("\\", "/")
+        posix_expected = str(
+            appdata / "gcloud" / "application_default_credentials.json"
+        ).replace("\\", "/")
+
+        # google-auth returns a WindowsPath with backslashes when os.name is "nt".
+        assert posix_path == posix_expected
+        assert "/.config/gcloud/" not in posix_path

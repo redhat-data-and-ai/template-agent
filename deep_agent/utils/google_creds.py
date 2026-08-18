@@ -1,8 +1,9 @@
 """Google credentials management utilities.
 
 This module provides functions for obtaining Google Cloud credentials
-for Vertex AI access. Supports Application Default Credentials (ADC)
-as the primary method, with inline JSON as a fallback.
+for Vertex AI access. Prefers inline JSON from
+GOOGLE_APPLICATION_CREDENTIALS_CONTENT when set, with Application
+Default Credentials (ADC) as the fallback.
 """
 
 import json
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import google.auth
 import google.auth.exceptions
+from google.auth import _cloud_sdk
 from google.auth.credentials import Credentials
 from google.oauth2 import service_account
 
@@ -35,8 +37,12 @@ _ERR_NO_CREDENTIALS = (
 
 
 def _well_known_adc_path() -> Path:
-    """Return the default gcloud application-default credentials file path."""
-    return Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+    """Return the platform-aware gcloud application-default credentials path.
+
+    Uses google-auth so Windows resolves %APPDATA%/gcloud and CLOUDSDK_CONFIG
+    is honored, matching google.auth.default().
+    """
+    return Path(_cloud_sdk.get_application_default_credentials_path())
 
 
 def _adc_file_paths() -> list[Path]:
@@ -74,13 +80,15 @@ def _resolve_adc_project(project: str | None) -> str | None:
 
 
 def get_service_account_credentials() -> tuple[Credentials, str]:
-    """Get Google Cloud credentials using ADC or inline JSON.
+    """Get Google Cloud credentials using inline JSON or ADC.
 
     Tries credential sources in priority order:
-      1. Application Default Credentials (ADC) — discovered automatically
-         from GOOGLE_APPLICATION_CREDENTIALS env var, well-known file
-         location (~/.config/gcloud/), or GCE metadata server.
-      2. Inline JSON from GOOGLE_APPLICATION_CREDENTIALS_CONTENT env var.
+      1. Inline JSON from GOOGLE_APPLICATION_CREDENTIALS_CONTENT env var.
+         When present, invalid JSON or a missing project_id fails hard
+         (no ADC fallback).
+      2. Application Default Credentials (ADC) — discovered automatically
+         from GOOGLE_APPLICATION_CREDENTIALS env var, the platform well-known
+         file location, or GCE metadata server.
 
     Returns:
         Tuple of (credentials, project_id)
@@ -93,18 +101,7 @@ def get_service_account_credentials() -> tuple[Credentials, str]:
     if _credentials_cache is not None:
         return _credentials_cache
 
-    # Priority 1: Application Default Credentials
-    try:
-        credentials, project = google.auth.default(scopes=GOOGLE_AUTH_SCOPES)
-        resolved_project = _resolve_adc_project(project)
-        if resolved_project:
-            logger.info("Loaded ADC credentials for project: %s", resolved_project)
-            _credentials_cache = (credentials, resolved_project)
-            return _credentials_cache
-    except google.auth.exceptions.DefaultCredentialsError:
-        pass
-
-    # Priority 2: Inline JSON from env var (existing behavior)
+    # Priority 1: Inline JSON from env var
     if settings.GOOGLE_APPLICATION_CREDENTIALS_CONTENT:
         try:
             service_account_info = json.loads(
@@ -128,6 +125,17 @@ def get_service_account_credentials() -> tuple[Credentials, str]:
         )
         _credentials_cache = (credentials, project)
         return _credentials_cache
+
+    # Priority 2: Application Default Credentials
+    try:
+        credentials, project = google.auth.default(scopes=GOOGLE_AUTH_SCOPES)
+        resolved_project = _resolve_adc_project(project)
+        if resolved_project:
+            logger.info("Loaded ADC credentials for project: %s", resolved_project)
+            _credentials_cache = (credentials, resolved_project)
+            return _credentials_cache
+    except google.auth.exceptions.DefaultCredentialsError:
+        pass
 
     raise RuntimeError(_ERR_NO_CREDENTIALS)
 

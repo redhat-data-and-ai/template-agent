@@ -17,7 +17,7 @@ We use multiple evaluation frameworks:
 - Agent must be running at `http://localhost:5002`
 - Environment variables set:
   - `GOOGLE_GENAI_API_KEY` - for LLM calls and judging
-  - `GOOGLE_APPLICATION_CREDENTIALS_CONTENT` - for Google service account
+  - `GOOGLE_APPLICATION_CREDENTIALS_CONTENT` - preferred Google service account JSON (ADC is used if unset)
 
 ### 1. Skills Evals (Pytest-based)
 
