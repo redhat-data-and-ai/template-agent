@@ -52,6 +52,33 @@ class TestSerializeMessage:
         assert result["tool_call_id"] == "tc1"
         assert result["name"] == "search"
 
+    def test_tool_message_preserves_artifact_and_mcp_app(self):
+        msg = ToolMessage(
+            content="ok",
+            tool_call_id="tc1",
+            name="show_chart",
+            id="t1",
+            artifact={
+                "structured_content": {"n": 1},
+                "mcp_app": {
+                    "server": "chart-mcp-server",
+                    "resourceUri": "ui://charts/app.html",
+                    "result": {
+                        "content": [{"type": "text", "text": "ok"}],
+                        "structuredContent": {"n": 1},
+                        "isError": False,
+                    },
+                },
+            },
+        )
+        result = serialize_message(msg)
+        assert result["artifact"]["structured_content"]["n"] == 1
+        assert result["mcpApp"]["resourceUri"] == "ui://charts/app.html"
+        assert result["mcpApp"]["server"] == "chart-mcp-server"
+        assert result["mcpApp"]["result"]["isError"] is False
+        assert result["mcpApp"]["result"]["structuredContent"] == {"n": 1}
+        assert result["mcpApp"]["result"]["content"] == [{"type": "text", "text": "ok"}]
+
     def test_system_message(self):
         msg = SystemMessage(content="you are helpful")
         result = serialize_message(msg)
@@ -103,6 +130,62 @@ class TestDeserializeMessage:
         msg = deserialize_message(data)
         assert isinstance(msg, ToolMessage)
         assert msg.tool_call_id == "tc1"
+
+    def test_tool_message_with_artifact(self):
+        data = {
+            "type": "tool",
+            "content": "ok",
+            "tool_call_id": "tc1",
+            "name": "show",
+            "artifact": {"structured_content": {"n": 1}},
+        }
+        msg = deserialize_message(data)
+        assert isinstance(msg, ToolMessage)
+        assert msg.artifact["structured_content"]["n"] == 1
+
+    def test_tool_message_mcp_app_without_artifact(self):
+        data = {
+            "type": "tool",
+            "content": "ok",
+            "tool_call_id": "tc1",
+            "name": "show",
+            "mcpApp": {
+                "server": "srv",
+                "resourceUri": "ui://x",
+                "result": {"content": [], "isError": False},
+            },
+        }
+        msg = deserialize_message(data)
+        assert isinstance(msg, ToolMessage)
+        assert msg.additional_kwargs["mcpApp"]["resourceUri"] == "ui://x"
+        assert msg.additional_kwargs["mcpApp"]["result"]["isError"] is False
+
+    def test_tool_message_merges_mcp_app_into_existing_additional_kwargs(self):
+        data = {
+            "type": "tool",
+            "content": "ok",
+            "tool_call_id": "tc1",
+            "name": "show",
+            "additional_kwargs": {"trace": "t1"},
+            "mcpApp": {
+                "server": "srv",
+                "resourceUri": "ui://merged",
+                "result": {"content": [], "isError": False},
+            },
+        }
+        msg = deserialize_message(data)
+        assert msg.additional_kwargs["trace"] == "t1"
+        assert msg.additional_kwargs["mcpApp"]["resourceUri"] == "ui://merged"
+
+    def test_human_message_roundtrips_additional_kwargs(self):
+        original = HumanMessage(
+            content="retry",
+            id="h1",
+            additional_kwargs={"opa_retry": True},
+        )
+        restored = deserialize_message(serialize_message(original))
+        assert isinstance(restored, HumanMessage)
+        assert restored.additional_kwargs["opa_retry"] is True
 
     def test_unknown_type_defaults_to_human(self):
         data = {"type": "unknown_type", "content": "fallback"}
