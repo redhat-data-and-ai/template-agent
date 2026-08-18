@@ -124,6 +124,7 @@ def langchain_to_chat_message(message: BaseMessage) -> ChatMessage:
                 type="tool",
                 content=convert_message_content_to_string(message.content),
                 tool_call_id=message.tool_call_id,
+                status=getattr(message, "status", None),
                 run_id=run_id,
                 trace_id=trace_id,
                 session_id=session_id,

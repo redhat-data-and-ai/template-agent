@@ -35,6 +35,7 @@ security:
       connect_src: ["'self'"]
       font_src: ["'self'", "data:"]
       object_src: ["'none'"]
+      frame_src: ["'self'"]                          # MCP Apps sandbox proxy iframe
       frame_ancestors: ["'none'"]
     cross_origin_embedder_policy: false               # Must be false — breaks SSE streaming
 
@@ -54,6 +55,11 @@ security:
 otel:
   enabled: true              # Master switch — set true to activate OTEL tracing
   service_name: "template-ui"
+
+# --- Features ---
+features:
+  mcp_apps:
+    enabled: true            # Serve /sandbox_proxy.html for MCP Apps host rendering
 
 # --- Announcement Banner ---
 announcement:
