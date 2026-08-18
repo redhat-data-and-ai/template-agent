@@ -46,6 +46,7 @@ def _callback_redirect_uri(request: Request) -> str:
 
 
 def _pkce_pair() -> tuple[str, str]:
+    """Generate a PKCE code verifier and S256 challenge pair."""
     verifier = secrets.token_urlsafe(64)
     digest = hashlib.sha256(verifier.encode()).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
@@ -53,6 +54,7 @@ def _pkce_pair() -> tuple[str, str]:
 
 
 def _get_mcp_server_config(mcp_name: str) -> dict[str, Any]:
+    """Return the enabled MCP server config or raise 404."""
     servers = agent_config.get_mcp_servers()
     cfg = servers.get(mcp_name)
     if not isinstance(cfg, dict) or not cfg.get("enabled", False):
@@ -68,6 +70,7 @@ async def _register_dcr_client(
     oauth_cfg: dict[str, Any],
     server_cfg: dict[str, Any],
 ) -> tuple[str, str | None]:
+    """Perform Dynamic Client Registration and persist the client credentials."""
     registration_endpoint = oauth_cfg.get("registration_endpoint")
     if not registration_endpoint:
         raise HTTPException(
@@ -75,8 +78,7 @@ async def _register_dcr_client(
             detail=f"MCP '{mcp_name}' is missing oauth.registration_endpoint",
         )
 
-    scopes = oauth_cfg.get("scopes") or []
-    scope_str = " ".join(scopes) if isinstance(scopes, list) else str(scopes)
+    scopes = requested_scopes(oauth_cfg)
     redirect_uri = settings.oauth_callback_url
 
     body = {
@@ -84,8 +86,9 @@ async def _register_dcr_client(
         "redirect_uris": [redirect_uri],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
-        "scope": scope_str or "read write",
     }
+    if scopes:
+        body["scope"] = " ".join(scopes)
 
     async with httpx.AsyncClient(verify=mcp_httpx_verify(server_cfg)) as client:
         resp = await client.post(registration_endpoint, json=body, timeout=30)
@@ -119,7 +122,9 @@ async def _register_dcr_client(
     return client_id, client_secret
 
 
-async def handle_mcp_connect(user_id: str, mcp_name: str) -> dict[str, str]:
+async def handle_mcp_connect(
+    user_id: str, mcp_name: str, *, caller_origin: str | None = None
+) -> dict[str, str]:
     """Start the OAuth authorization flow for *mcp_name*."""
     server_cfg = _get_mcp_server_config(mcp_name)
     auth_mode = server_cfg.get("auth_mode", "sso")
@@ -130,6 +135,12 @@ async def handle_mcp_connect(user_id: str, mcp_name: str) -> dict[str, str]:
         )
 
     oauth_cfg = server_cfg.get("oauth") or {}
+    if oauth_cfg.get("grant_type") == "client_credentials":
+        raise HTTPException(
+            status_code=400,
+            detail=f"MCP '{mcp_name}' uses client_credentials grant — manual authorization is not required",
+        )
+
     for field in ("authorization_endpoint", "token_endpoint"):
         if not oauth_cfg.get(field):
             raise HTTPException(
@@ -157,15 +168,19 @@ async def handle_mcp_connect(user_id: str, mcp_name: str) -> dict[str, str]:
             status_code=400, detail=f"No OAuth client_id for '{mcp_name}'"
         )
 
-    scopes = oauth_cfg.get("scopes") or []
-    scope_str = " ".join(scopes) if isinstance(scopes, list) else str(scopes)
+    scopes = requested_scopes(oauth_cfg)
 
     code_verifier, code_challenge = _pkce_pair()
     state = secrets.token_urlsafe(32)
 
-    state_payload = json.dumps(
-        {"user_id": user_id, "mcp_name": mcp_name, "code_verifier": code_verifier}
-    )
+    state_data_dict: dict[str, str] = {
+        "user_id": user_id,
+        "mcp_name": mcp_name,
+        "code_verifier": code_verifier,
+    }
+    if caller_origin and caller_origin == settings.ui_origin:
+        state_data_dict["caller_origin"] = caller_origin
+    state_payload = json.dumps(state_data_dict)
     if not cache_set(
         f"mcp_oauth_state:{state}", state_payload, _OAUTH_STATE_TTL_SECONDS
     ):
@@ -175,11 +190,12 @@ async def handle_mcp_connect(user_id: str, mcp_name: str) -> dict[str, str]:
         "response_type": "code",
         "client_id": client_id,
         "redirect_uri": redirect_uri,
-        "scope": scope_str,
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
     }
+    if scopes:
+        params["scope"] = " ".join(scopes)
     authorize_url = f"{oauth_cfg['authorization_endpoint']}?{urlencode(params)}"
     return {"authorize_url": authorize_url}
 
@@ -206,6 +222,7 @@ async def handle_mcp_oauth_callback(
         user_id = state_data["user_id"]
         mcp_name = state_data["mcp_name"]
         code_verifier = state_data["code_verifier"]
+        caller_origin = state_data.get("caller_origin")
     except (json.JSONDecodeError, KeyError):
         return HTMLResponse(
             _callback_html(error="Corrupt OAuth state"),
@@ -316,7 +333,8 @@ async def handle_mcp_oauth_callback(
     except Exception:
         logger.debug("Graph cache invalidation skipped", exc_info=True)
 
-    return HTMLResponse(_callback_html(mcp_name=mcp_name))
+    opener_origin = caller_origin or settings.ui_origin
+    return HTMLResponse(_callback_html(mcp_name=mcp_name, opener_origin=opener_origin))
 
 
 async def handle_mcp_status(user_id: str, mcp_name: str) -> dict[str, Any]:
@@ -330,21 +348,35 @@ async def handle_mcp_status(user_id: str, mcp_name: str) -> dict[str, Any]:
 def _callback_html(
     mcp_name: str | None = None,
     error: str | None = None,
+    opener_origin: str | None = None,
 ) -> str:
+    """Return the HTML page shown after OAuth callback completes."""
     if error:
         return f"""<!DOCTYPE html>
 <html><head><title>MCP OAuth Error</title></head>
 <body><p>{error}</p></body></html>"""
 
     safe_name = json.dumps(mcp_name)
+    if opener_origin:
+        target_origin = json.dumps(opener_origin)
+        post_message_script = (
+            f"if (window.opener) {{"
+            f" window.opener.postMessage("
+            f"{{ type: 'mcp_oauth_done', mcp_name: {safe_name} }}, {target_origin});"
+            f" }}"
+        )
+    else:
+        logger.warning(
+            "No UI_ORIGIN configured — skipping postMessage for MCP '%s'",
+            mcp_name,
+        )
+        post_message_script = ""
     return f"""<!DOCTYPE html>
 <html><head><title>MCP Connected</title></head>
 <body>
 <p>Connected. You can close this window.</p>
 <script>
-  if (window.opener) {{
-    window.opener.postMessage({{ type: "mcp_oauth_done", mcp_name: {safe_name} }}, window.location.origin);
-  }}
+  {post_message_script}
   window.close();
 </script>
 </body></html>"""

@@ -192,7 +192,14 @@ class Settings(BaseSettings):
     # ── MCP OAuth ─────────────────────────────────────────────────────
     MCP_TOKEN_ENCRYPTION_KEY: Optional[str] = Field(default=None)
     MCP_TOKEN_ENCRYPTION_KEY_PREVIOUS: Optional[str] = Field(default=None)
+    MCP_DCR_ENABLED: bool = Field(default=True)
     AGENT_PUBLIC_BASE_URL: Optional[str] = Field(default=None)
+    UI_ORIGIN: Optional[str] = Field(
+        default=None,
+        description="Origin of the frontend UI (e.g. http://localhost:5173). "
+        "Used as postMessage target in OAuth callback. "
+        "Falls back to AGENT_PUBLIC_BASE_URL if not set.",
+    )
 
     # ── Derived ───────────────────────────────────────────────────────
 
@@ -226,6 +233,21 @@ class Settings(BaseSettings):
         return parsed.scheme == "http" and (
             hostname in _DEV_PUBLIC_HOSTS or hostname.endswith(".localhost")
         )
+
+    @property
+    def ui_origin(self) -> str | None:
+        """Origin for postMessage in OAuth callback HTML.
+
+        Returns the configured UI_ORIGIN, or falls back to
+        AGENT_PUBLIC_BASE_URL. Returns None only when neither is set
+        (callback HTML will use '*' as last resort).
+        """
+        if self.UI_ORIGIN:
+            return self.UI_ORIGIN.rstrip("/")
+        if self.AGENT_PUBLIC_BASE_URL:
+            parsed = urlparse(self.AGENT_PUBLIC_BASE_URL)
+            return f"{parsed.scheme}://{parsed.netloc}"
+        return None
 
     @property
     def oauth_callback_url(self) -> str:
