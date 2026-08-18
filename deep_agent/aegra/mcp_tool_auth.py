@@ -53,10 +53,8 @@ def _fix_stringified_json_args(tool: Any, kwargs: dict[str, Any]) -> dict[str, A
             isinstance(expected_type, list) and "string" in expected_type
         ):
             continue
-        if any(
-            "string" in str(s.get("type", ""))
-            for s in prop.get("anyOf", prop.get("oneOf", []))
-        ):
+        union_schemas = prop.get("anyOf", []) + prop.get("oneOf", [])
+        if any("string" in str(s.get("type", "")) for s in union_schemas):
             continue
         stripped = value.strip()
         if stripped and stripped[0] in ("{", "["):
