@@ -17,14 +17,14 @@ jobs:
 
       - name: Create pre-release tag
         run: |
-          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          LATEST=$(git tag --list "v${VERSION}-rc.*" --sort=-v:refname | head -n1)
+          DATE=$(date -u +%Y.%m.%d)
+          LATEST=$(git tag --list "v${DATE}-rc.*" --sort=-v:refname | head -n1)
           if [ -z "$LATEST" ]; then
             NEXT=1
           else
-            CURRENT=$(echo "$LATEST" | sed "s/v${VERSION}-rc\.//")
+            CURRENT=$(echo "$LATEST" | sed "s/v${DATE}-rc\.//")
             NEXT=$((CURRENT + 1))
           fi
-          TAG="v${VERSION}-rc.${NEXT}"
+          TAG="v${DATE}-rc.${NEXT}"
           git tag "$TAG"
           git push origin "$TAG"
