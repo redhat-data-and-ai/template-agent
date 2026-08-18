@@ -65,7 +65,7 @@ def _project_from_adc_file() -> str | None:
         except (OSError, json.JSONDecodeError):
             continue
         project = adc_info.get("quota_project_id") or adc_info.get("project_id")
-        if project:
+        if isinstance(project, str) and project:
             return project
     return None
 
