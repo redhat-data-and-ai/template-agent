@@ -13,7 +13,7 @@ model: gemini-2.5-pro
 #   provider: maas
 #   name: granite-3.1-8b-instruct
 tools:
-  - validate_email
+  - template_validate_email
 skills:
   - client-intake
 ---
