@@ -700,19 +700,28 @@ class TestGetMCPTools:
             mock_conn.return_value = [tool]
 
             await get_mcp_tools(user_id="user-a")
+            await get_mcp_tools(user_id="user-a", server_names=["srv"])
             await get_mcp_tools(user_id="user-b")
 
             from deep_agent.aegra import mcp
 
             assert "user-a:" in mcp._cached_tools
+            assert "user-a:srv" in mcp._cached_tools
             assert "user-b:" in mcp._cached_tools
+            assert "user-a:" in mcp._cached_tools_ts
+            assert "user-a:srv" in mcp._cached_tools_ts
+            assert "user-b:" in mcp._cached_tools_ts
 
             from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
 
             invalidate_mcp_tool_cache(user_id="user-a")
 
             assert "user-a:" not in mcp._cached_tools
+            assert "user-a:srv" not in mcp._cached_tools
+            assert "user-a:" not in mcp._cached_tools_ts
+            assert "user-a:srv" not in mcp._cached_tools_ts
             assert "user-b:" in mcp._cached_tools
+            assert "user-b:" in mcp._cached_tools_ts
 
 
 class TestCreateAuthPlaceholderTool:
