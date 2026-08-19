@@ -640,7 +640,8 @@ async def get_mcp_tools(
     Returns:
         List of available MCP tools (empty list if all connections fail).
     """
-    cache_key = user_id
+    server_key = ",".join(sorted(server_names)) if server_names else ""
+    cache_key = f"{user_id}:{server_key}" if server_key else user_id
     cached = _cached_tools.get(cache_key)
     cached_ts = _cached_tools_ts.get(cache_key, 0.0)
 
@@ -664,7 +665,9 @@ async def get_mcp_tools(
         logger.warning("No MCP servers enabled")
         return []
 
-    logger.warning(f"Connecting to {len(enabled)} MCP server(s): {', '.join(enabled)}")
+    logger.warning(
+        "Connecting to %d MCP server(s): %s", len(enabled), ", ".join(enabled)
+    )
 
     has_auth: bool = bool(sso_token or user_id)
     discovery_token = _mcp_tool_discovery.set(True)

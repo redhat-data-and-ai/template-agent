@@ -702,11 +702,14 @@ class TestGetMCPTools:
             await get_mcp_tools(user_id="user-a")
             await get_mcp_tools(user_id="user-b")
 
+            from deep_agent.aegra import mcp
+
+            assert "user-a" in mcp._cached_tools
+            assert "user-b" in mcp._cached_tools
+
             from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
 
             invalidate_mcp_tool_cache(user_id="user-a")
-
-            from deep_agent.aegra import mcp
 
             assert "user-a" not in mcp._cached_tools
             assert "user-b" in mcp._cached_tools
