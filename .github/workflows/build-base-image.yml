@@ -5,7 +5,7 @@ on:
     tags:
       - '*'
     branches:
-      # - main
+      - main
       - deep-agent
   pull_request:
     branches: [ main, deep-agent ]
