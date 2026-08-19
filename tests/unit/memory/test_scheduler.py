@@ -24,7 +24,8 @@ class TestScheduler:
                 return_value=MagicMock(),
             ),
         ):
-            await scheduler.start_scheduler("postgresql://test")
+            result = await scheduler.start_scheduler("postgresql://test")
+            assert result is True
             mock_cls.assert_called_once_with()
 
     async def test_start_skips_when_disabled(self):
