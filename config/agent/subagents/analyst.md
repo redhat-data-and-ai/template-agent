@@ -7,8 +7,8 @@ description: >
   and weight for BMI analysis.
 model: gemini-2.5-pro
 tools:
-  - calculate_bmi
-  - search_web
+  - template_calculate_bmi
+  - template_search_web
 skills:
   - bmi-report
 ---
