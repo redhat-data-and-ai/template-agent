@@ -123,22 +123,34 @@ class TestValidateAuthConfig:
 class TestValidateJwtTokenRejectsWeakSecret:
     def test_empty_secret_raises_auth_error(self):
         with patch("deep_agent.aegra.middleware.JWT_SECRET", ""):
-            with pytest.raises(AuthError, match="not configured or too short"):
+            with pytest.raises(
+                AuthError, match="not configured or too short"
+            ) as exc_info:
                 validate_jwt_token("header.payload.sig")
+            assert exc_info.value.status_code == 500
 
     def test_short_secret_raises_auth_error(self):
         with patch("deep_agent.aegra.middleware.JWT_SECRET", "short"):
-            with pytest.raises(AuthError, match="not configured or too short"):
+            with pytest.raises(
+                AuthError, match="not configured or too short"
+            ) as exc_info:
                 validate_jwt_token("header.payload.sig")
+            assert exc_info.value.status_code == 500
 
 
 class TestHmacValidateRejectsWeakSecret:
     def test_empty_secret_raises_auth_error(self):
         with patch("deep_agent.aegra.middleware.JWT_SECRET", ""):
-            with pytest.raises(AuthError, match="not configured or too short"):
+            with pytest.raises(
+                AuthError, match="not configured or too short"
+            ) as exc_info:
                 _hmac_validate("header.payload.sig")
+            assert exc_info.value.status_code == 500
 
     def test_short_secret_raises_auth_error(self):
         with patch("deep_agent.aegra.middleware.JWT_SECRET", "short"):
-            with pytest.raises(AuthError, match="not configured or too short"):
+            with pytest.raises(
+                AuthError, match="not configured or too short"
+            ) as exc_info:
                 _hmac_validate("header.payload.sig")
+            assert exc_info.value.status_code == 500
