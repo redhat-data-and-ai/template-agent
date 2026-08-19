@@ -276,19 +276,16 @@ def get_configured_backend() -> LocalShellBackend | Any:
 
 
 def _build_state_backend() -> Any:
-    """Build a StateBackend factory (thread-scoped scratch space).
+    """Build a StateBackend instance (thread-scoped scratch space).
 
     Recommended for production. Files persist across turns within a thread
     via checkpointer but are not shared across threads.
-
-    Returns the StateBackend class as a factory — create_deep_agent calls it
-    with ToolRuntime at execution time.
     """
     try:
         from deepagents.backends.state import StateBackend
 
         logger.info("Using StateBackend (thread-scoped scratch)")
-        return StateBackend
+        return StateBackend()
     except ImportError:
         logger.warning("StateBackend not available, falling back to LocalShellBackend")
         return get_backend()
@@ -370,19 +367,17 @@ def _build_store_backend(fs_config: Any) -> Any:
 
 
 def _build_composite_backend(fs_config: Any) -> Any:
-    """Return a factory that builds a CompositeBackend at request time.
+    """Build a CompositeBackend instance with configured routes."""
+    from deepagents.backends.composite import CompositeBackend
+    from deepagents.backends.state import StateBackend
 
-    StateBackend and StoreBackend require ToolRuntime (only available per-request),
-    so we return a callable. ReadOnlyFilesystemBackend and LocalShellBackend are
-    built eagerly since they don't need runtime.
-    """
-    # --- Eager: backends that don't need runtime ---
-    eager_routes: dict[str, Any] = {}
+    state_backend = StateBackend()
+    routes: dict[str, Any] = {}
 
     for path_prefix, backend_name in fs_config.backend.routes.items():
         if backend_name == "filesystem_readonly":
             dir_name = path_prefix.strip("/")
-            eager_routes[path_prefix] = _build_filesystem_readonly_backend(
+            routes[path_prefix] = _build_filesystem_readonly_backend(
                 agent_config.base_dir / dir_name
             )
 
@@ -396,66 +391,42 @@ def _build_composite_backend(fs_config: Any) -> Any:
         )
         for path_prefix, backend_name in fs_config.backend.routes.items():
             if backend_name == "local_shell":
-                eager_routes[path_prefix] = local_shell_backend
+                routes[path_prefix] = local_shell_backend
 
-    # --- Deferred config (captured for use inside factory) ---
     store_route_prefixes = [
         p for p, v in fs_config.backend.routes.items() if v == "store"
     ]
-    store_scope: str | None = None
     if store_route_prefixes:
-        scope = getattr(fs_config.backend, "store", None)
-        store_scope = scope.scope if scope else "user"
+        try:
+            from deepagents.backends.store import StoreBackend
+
+            scope = getattr(fs_config.backend, "store", None)
+            store_scope = scope.scope if scope else "user"
+            ns = _STORE_NAMESPACE_FACTORIES.get(store_scope, _safe_namespace_user)
+            store_backend = StoreBackend(namespace=ns)
+            for prefix in store_route_prefixes:
+                routes[prefix] = store_backend
+        except ImportError:
+            logger.warning(
+                "StoreBackend not available — store routes will use StateBackend"
+            )
+            for prefix in store_route_prefixes:
+                routes[prefix] = state_backend
+
+    known_types = {"filesystem_readonly", "local_shell", "store", "state"}
+    for path_prefix, backend_name in fs_config.backend.routes.items():
+        if backend_name not in known_types:
+            logger.warning(
+                "Unknown backend '%s' in route for '%s'", backend_name, path_prefix
+            )
 
     logger.info(
-        "Prepared CompositeBackend factory: %d eager route(s), %d deferred route(s)",
-        len(eager_routes),
-        len(store_route_prefixes),
+        "Built CompositeBackend: %d route(s), default=StateBackend",
+        len(routes),
     )
 
-    # --- Factory: called per-request with ToolRuntime ---
-    def factory(runtime: Any) -> Any:
-        """Build a CompositeBackend when invoked by create_deep_agent with ToolRuntime.
-
-        We instantiate StateBackend/StoreBackend here (rather than returning
-        bare classes) because CompositeBackend needs composed *instances* —
-        this factory IS the protocol-compliant callable that create_deep_agent expects.
-        """
-        from deepagents.backends.composite import CompositeBackend
-        from deepagents.backends.state import StateBackend
-
-        state_backend = StateBackend(runtime)
-
-        routes: dict[str, Any] = dict(eager_routes)
-
-        if store_route_prefixes:
-            try:
-                from deepagents.backends.store import StoreBackend
-
-                ns = _STORE_NAMESPACE_FACTORIES.get(
-                    store_scope or "user", _safe_namespace_user
-                )
-                store_backend = StoreBackend(runtime, namespace=ns)
-                for prefix in store_route_prefixes:
-                    routes[prefix] = store_backend
-            except ImportError:
-                logger.warning(
-                    "StoreBackend not available — store routes will use StateBackend"
-                )
-                for prefix in store_route_prefixes:
-                    routes[prefix] = state_backend
-
-        known_types = {"filesystem_readonly", "local_shell", "store", "state"}
-        for path_prefix, backend_name in fs_config.backend.routes.items():
-            if backend_name not in known_types:
-                logger.warning(
-                    "Unknown backend '%s' in route for '%s'", backend_name, path_prefix
-                )
-
-        default_backend = routes.pop("/", state_backend)
-        return CompositeBackend(default=default_backend, routes=routes)
-
-    return factory
+    default_backend = routes.pop("/", state_backend)
+    return CompositeBackend(default=default_backend, routes=routes)
 
 
 def _build_filesystem_readonly_backend(root_dir: Path) -> ReadOnlyFilesystemBackend:

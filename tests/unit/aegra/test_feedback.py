@@ -162,9 +162,12 @@ class TestFeedbackHandler:
             "name": "user-rating",
             "value": 1.0,
         }
-        with patch(
-            "deep_agent.aegra.feedback.get_langfuse_client",
-            return_value=None,
+        with (
+            patch(
+                "deep_agent.aegra.feedback.get_langfuse_client",
+                return_value=None,
+            ),
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
         ):
             res = client.post("/feedback", json=payload)
         assert res.status_code == 200
@@ -178,37 +181,67 @@ class TestFeedbackHandler:
         mock_repo.list_feedback = AsyncMock(
             return_value=[{"message_id": "m1", "feedback": "up"}]
         )
-        with patch(
-            "deep_agent.aegra.feedback.FeedbackRepository",
-            return_value=mock_repo,
+        with (
+            patch(
+                "deep_agent.aegra.feedback.FeedbackRepository",
+                return_value=mock_repo,
+            ),
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
         ):
-            res = client.get(
-                f"/feedback/{thread_uuid}",
-                params={"user_id": "u1"},
-            )
+            res = client.get(f"/feedback/{thread_uuid}")
         assert res.status_code == 200
         assert res.json() == {"feedback": [{"message_id": "m1", "feedback": "up"}]}
-        mock_repo.list_feedback.assert_awaited_once_with(thread_uuid, "u1")
+        mock_repo.list_feedback.assert_awaited_once_with(thread_uuid, "dev-user")
 
 
 class TestTokenUsageEndpoint:
+    def _mock_thread_owner(self):
+        """Return a context manager that mocks the thread ownership query."""
+        mock_conn = AsyncMock()
+        mock_cursor = AsyncMock()
+        mock_cursor.fetchone = AsyncMock(return_value={"thread_id": "exists"})
+        mock_conn.execute = AsyncMock(return_value=mock_cursor)
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+        return patch(
+            "psycopg.AsyncConnection.connect",
+            new_callable=AsyncMock,
+            return_value=mock_conn,
+        )
+
+    def test_rejects_anonymous_request(self) -> None:
+        """Token-usage endpoint returns 401 when auth is on and no token is sent."""
+        client = TestClient(app)
+        thread_uuid = "00000000-0000-0000-0000-000000000001"
+
+        with patch("deep_agent.aegra.auth.ENABLE_AUTH", True):
+            res = client.get(f"/threads/{thread_uuid}/token-usage")
+
+        assert res.status_code == 401
+
     def test_get_thread_token_usage_success(self) -> None:
         from deep_agent.src.token_budget.service import ThreadTokenUsage
 
         client = TestClient(app)
         thread_uuid = "00000000-0000-0000-0000-000000000001"
 
-        with patch(
-            "deep_agent.src.token_budget.service.get_thread_token_usage",
-            new=AsyncMock(
-                return_value=ThreadTokenUsage(
-                    thread_id=thread_uuid,
-                    used=150,
-                    input_tokens=100,
-                    output_tokens=50,
-                )
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
+            patch("deep_agent.aegra.feedback.settings") as mock_settings,
+            self._mock_thread_owner(),
+            patch(
+                "deep_agent.src.token_budget.service.get_thread_token_usage",
+                new=AsyncMock(
+                    return_value=ThreadTokenUsage(
+                        thread_id=thread_uuid,
+                        used=150,
+                        input_tokens=100,
+                        output_tokens=50,
+                    )
+                ),
             ),
         ):
+            mock_settings.database_uri = "postgresql://test"
             res = client.get(f"/threads/{thread_uuid}/token-usage")
 
         assert res.status_code == 200
@@ -224,10 +257,16 @@ class TestTokenUsageEndpoint:
 
         client = TestClient(app)
         thread_uuid = "00000000-0000-0000-0000-000000000001"
-        with patch(
-            "deep_agent.src.token_budget.service.get_thread_token_usage",
-            new=AsyncMock(side_effect=TokenUsageNotFoundError(thread_uuid)),
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
+            patch("deep_agent.aegra.feedback.settings") as mock_settings,
+            self._mock_thread_owner(),
+            patch(
+                "deep_agent.src.token_budget.service.get_thread_token_usage",
+                new=AsyncMock(side_effect=TokenUsageNotFoundError(thread_uuid)),
+            ),
         ):
+            mock_settings.database_uri = "postgresql://test"
             res = client.get(f"/threads/{thread_uuid}/token-usage")
 
         assert res.status_code == 404
@@ -237,10 +276,16 @@ class TestTokenUsageEndpoint:
 
         client = TestClient(app)
         thread_uuid = "00000000-0000-0000-0000-000000000001"
-        with patch(
-            "deep_agent.src.token_budget.service.get_thread_token_usage",
-            new=AsyncMock(side_effect=TokenUsageUnavailableError("down")),
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
+            patch("deep_agent.aegra.feedback.settings") as mock_settings,
+            self._mock_thread_owner(),
+            patch(
+                "deep_agent.src.token_budget.service.get_thread_token_usage",
+                new=AsyncMock(side_effect=TokenUsageUnavailableError("down")),
+            ),
         ):
+            mock_settings.database_uri = "postgresql://test"
             res = client.get(f"/threads/{thread_uuid}/token-usage")
 
         assert res.status_code == 503

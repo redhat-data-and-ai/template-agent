@@ -39,9 +39,21 @@ def serialize_message(msg: BaseMessage) -> dict[str, Any]:
     if isinstance(msg, ToolMessage):
         data["tool_call_id"] = msg.tool_call_id
         data["name"] = getattr(msg, "name", None)
+        artifact = getattr(msg, "artifact", None)
+        if artifact is not None:
+            data["artifact"] = _safe_serialize(artifact)
+        from deep_agent.aegra.mcp_apps import extract_mcp_app_from_message
+
+        mcp_app = extract_mcp_app_from_message(msg)
+        if mcp_app is not None:
+            data["mcpApp"] = _safe_serialize(mcp_app)
 
     if msg.response_metadata:
         data["response_metadata"] = _safe_serialize(msg.response_metadata)
+
+    additional_kwargs = getattr(msg, "additional_kwargs", None)
+    if additional_kwargs:
+        data["additional_kwargs"] = _safe_serialize(additional_kwargs)
 
     return data
 
@@ -51,25 +63,41 @@ def deserialize_message(data: dict[str, Any]) -> BaseMessage:
     msg_type = data.get("type", "human")
     content = data.get("content", "")
     msg_id = data.get("id")
+    additional_kwargs = data.get("additional_kwargs")
+    kwargs_extra: dict[str, Any] = {}
+    if isinstance(additional_kwargs, dict):
+        kwargs_extra["additional_kwargs"] = dict(additional_kwargs)
 
     if msg_type == "human":
-        return HumanMessage(content=content, id=msg_id)
+        return HumanMessage(content=content, id=msg_id, **kwargs_extra)
     elif msg_type == "ai":
-        kwargs: dict[str, Any] = {"content": content, "id": msg_id}
+        kwargs: dict[str, Any] = {"content": content, "id": msg_id, **kwargs_extra}
         if "tool_calls" in data:
             kwargs["tool_calls"] = data["tool_calls"]
         return AIMessage(**kwargs)
     elif msg_type == "system":
-        return SystemMessage(content=content, id=msg_id)
+        return SystemMessage(content=content, id=msg_id, **kwargs_extra)
     elif msg_type == "tool":
-        return ToolMessage(
-            content=content,
-            tool_call_id=data.get("tool_call_id", ""),
-            name=data.get("name"),
-            id=msg_id,
-        )
+        tool_kwargs: dict[str, Any] = {
+            "content": content,
+            "tool_call_id": data.get("tool_call_id", ""),
+            "name": data.get("name"),
+            "id": msg_id,
+        }
+        if "artifact" in data:
+            tool_kwargs["artifact"] = data["artifact"]
+        merged_kwargs = dict(kwargs_extra.get("additional_kwargs") or {})
+        if (
+            "mcpApp" in data
+            and "mcpApp" not in merged_kwargs
+            and "mcp_app" not in merged_kwargs
+        ):
+            merged_kwargs["mcpApp"] = data["mcpApp"]
+        if merged_kwargs:
+            tool_kwargs["additional_kwargs"] = merged_kwargs
+        return ToolMessage(**tool_kwargs)
     else:
-        return HumanMessage(content=content, id=msg_id)
+        return HumanMessage(content=content, id=msg_id, **kwargs_extra)
 
 
 def serialize_state(state: dict[str, Any]) -> dict[str, Any]:
