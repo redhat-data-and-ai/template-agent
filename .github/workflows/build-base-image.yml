@@ -230,6 +230,16 @@ jobs:
           EOF
           cat deployment/release-info.json
 
+      - name: Stamp image reference into deployment manifests
+        if: github.event_name != 'pull_request'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          IMAGE="ghcr.io/${{ github.repository }}"
+          cd deployment/overlays/openshift
+          kustomize edit set image agent=${IMAGE}:${VERSION}
+          echo "Stamped image ${IMAGE}:${VERSION} into deployment/overlays/openshift/kustomization.yaml"
+          grep -A3 'images:' kustomization.yaml
+
       - name: Create deployment package
         if: github.event_name != 'pull_request'
         run: |
