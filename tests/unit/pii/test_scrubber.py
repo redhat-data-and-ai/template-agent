@@ -251,15 +251,24 @@ class TestTokenMapPersistence:
             s.scrub("bob@example.com")
             s.snapshot_to_container()
 
+        ctx_c = contextvars.copy_context()
+
+        def request_c():
+            s.scrub("charlie@example.com")
+            s.snapshot_to_container()
+
         ctx_a.run(request_a)
         ctx_b.run(request_b)
+        ctx_c.run(request_c)
 
         a_values = " ".join(container_a.values())
         b_values = " ".join(container_b.values())
         assert "alice" in a_values
         assert "bob" not in a_values
+        assert "charlie" not in a_values
         assert "bob" in b_values
         assert "alice" not in b_values
+        assert "charlie" not in b_values
 
 
 class TestMultipleRules:
