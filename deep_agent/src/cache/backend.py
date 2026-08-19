@@ -193,5 +193,17 @@ class RedisCache:
         except Exception:
             return False
 
+    def expire(self, key: str, ttl: int) -> bool:
+        """Set a short TTL on a key so it expires soon even if delete fails."""
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            client.expire(self._key(key), ttl)
+        except Exception:  # noqa: BLE001
+            return False
+        else:
+            return True
+
     def clear(self) -> None:
         """Clear is not supported for Redis (too dangerous). No-op."""

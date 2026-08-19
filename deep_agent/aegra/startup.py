@@ -55,6 +55,7 @@ async def run_startup() -> dict[str, str]:
     results["database"] = await _ensure_database()
     _check_mcp_encryption_key()
     results["resume"] = await _resume_interrupted_runs()
+    results["mcp_apps"] = _setup_mcp_apps_capability()
     results["cache"] = await _warm_caches()
     results["scheduler"] = await _start_scheduler()
     results["otel"] = _setup_otel()
@@ -279,9 +280,10 @@ def _check_mcp_encryption_key() -> None:
     """Warn if any MCP server uses oauth/dcr but MCP_TOKEN_ENCRYPTION_KEY is not set."""
     try:
         from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.settings import settings
 
         servers = agent_config.get_mcp_servers()
-        dcr_enabled = os.environ.get("MCP_DCR_ENABLED", "true").lower() == "true"
+        dcr_enabled = settings.MCP_DCR_ENABLED
         check_modes = {"oauth", "dcr"} if dcr_enabled else {"oauth"}
         needs_key = any(
             s.get("auth_mode") in check_modes
@@ -295,6 +297,18 @@ def _check_mcp_encryption_key() -> None:
             )
     except Exception:
         logger.debug("MCP encryption key check skipped", exc_info=True)
+
+
+def _setup_mcp_apps_capability() -> str:
+    """Ensure MCP initialize advertises the Apps UI extension (SEP-1865)."""
+    try:
+        from deep_agent.aegra.mcp_apps import ensure_mcp_apps_capability_advertised
+
+        newly_installed = ensure_mcp_apps_capability_advertised()
+        return "ok" if newly_installed else "already_installed"
+    except Exception as exc:
+        logger.error("MCP Apps capability setup failed: %s", exc)
+        return f"error: {exc}"
 
 
 async def _ensure_database() -> str:

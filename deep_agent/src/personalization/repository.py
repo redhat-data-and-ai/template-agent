@@ -100,7 +100,9 @@ class PersonalizationRepository:
             )
             return [Memory(**row) for row in await cur.fetchall()]
 
-    async def create_memory(self, user_id: str, content: str) -> Memory:
+    async def create_memory(
+        self, user_id: str, content: str, memory_id: uuid.UUID | None = None
+    ) -> Memory:
         """Insert a new memory and return the created model."""
         from deep_agent.src.settings import settings
 
@@ -128,7 +130,7 @@ class PersonalizationRepository:
                     "Memory content failed injection check and was not saved."
                 )
         await self.ensure_tables()
-        mem = Memory(user_id=user_id, content=content)
+        mem = Memory(id=memory_id or uuid.uuid4(), user_id=user_id, content=content)
         async with await psycopg.AsyncConnection.connect(self._uri) as conn:
             await conn.execute(
                 "INSERT INTO user_memories (id, user_id, content, created_at, updated_at) "
@@ -147,7 +149,12 @@ class PersonalizationRepository:
                 (str(memory_id), user_id),
             )
             await conn.commit()
-            return bool(cur.rowcount > 0)
+            deleted = bool(cur.rowcount > 0)
+        if deleted:
+            from deep_agent.src.cache.personalization_cache import invalidate
+
+            await invalidate(user_id)
+        return deleted
 
     # ── Rules ─────────────────────────────────────────────────
 
@@ -163,6 +170,19 @@ class PersonalizationRepository:
                 (user_id,),
             )
             return [Rule(**row) for row in await cur.fetchall()]
+
+    async def get_rule_owner(self, rule_id: uuid.UUID) -> str | None:
+        """Return the user_id that owns *rule_id*, or None if not found."""
+        await self.ensure_tables()
+        async with await psycopg.AsyncConnection.connect(
+            self._uri, row_factory=dict_row
+        ) as conn:
+            cur = await conn.execute(
+                "SELECT user_id FROM user_rules WHERE id = %s",
+                (str(rule_id),),
+            )
+            row = await cur.fetchone()
+            return row["user_id"] if row else None
 
     async def upsert_rule(
         self,
@@ -205,7 +225,7 @@ class PersonalizationRepository:
             updated_at=now,
         )
         async with await psycopg.AsyncConnection.connect(self._uri) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 """
                 INSERT INTO user_rules (id, user_id, content, is_active, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s)
@@ -213,6 +233,7 @@ class PersonalizationRepository:
                 DO UPDATE SET content = EXCLUDED.content,
                               is_active = EXCLUDED.is_active,
                               updated_at = EXCLUDED.updated_at
+                WHERE user_rules.user_id = EXCLUDED.user_id
                 """,
                 (
                     str(rule.id),
@@ -223,6 +244,8 @@ class PersonalizationRepository:
                     rule.updated_at,
                 ),
             )
+            if cur.rowcount == 0:
+                raise PermissionError(f"Rule {rule.id} belongs to another user")
             await conn.commit()
         return rule
 
@@ -235,4 +258,9 @@ class PersonalizationRepository:
                 (str(rule_id), user_id),
             )
             await conn.commit()
-            return bool(cur.rowcount > 0)
+            deleted = bool(cur.rowcount > 0)
+        if deleted:
+            from deep_agent.src.cache.personalization_cache import invalidate
+
+            await invalidate(user_id)
+        return deleted

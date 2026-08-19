@@ -74,10 +74,9 @@ def build_async_middleware(
 
 
 def _extract_async_subagents(subagents: list[Any]) -> list[Any]:
-    """Filter the subagent list for AsyncSubAgent instances."""
-    try:
-        from deepagents.middleware.async_subagents import AsyncSubAgent
+    """Filter the subagent list for AsyncSubAgent dicts.
 
-        return [s for s in subagents if isinstance(s, AsyncSubAgent)]
-    except ImportError:
-        return []
+    Since deepagents 0.7 changed AsyncSubAgent from a class to a TypedDict,
+    we identify them by the presence of the 'graph_id' key.
+    """
+    return [s for s in subagents if isinstance(s, dict) and "graph_id" in s]
