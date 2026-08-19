@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  labels:
+    component: connection-pool
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      component: connection-pool
+  template:
+    metadata:
+      labels:
+        component: connection-pool
+    spec:
+      containers:
+        - name: pgbouncer
+          image: docker.io/bitnami/pgbouncer:1
+          env:
+            - name: POSTGRESQL_HOST
+              value: "postgres-backend"
+            - name: POSTGRESQL_PORT
+              value: "5432"
+            - name: POSTGRESQL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_DB
+            - name: PGBOUNCER_POOL_MODE
+              value: "transaction"
+            - name: PGBOUNCER_MAX_CLIENT_CONN
+              value: "2000"
+            - name: PGBOUNCER_DEFAULT_POOL_SIZE
+              value: "50"
+            - name: PGBOUNCER_MIN_POOL_SIZE
+              value: "10"
+            - name: PGBOUNCER_RESERVE_POOL_SIZE
+              value: "15"
+            - name: PGBOUNCER_MAX_DB_CONNECTIONS
+              value: "75"
+          ports:
+            - containerPort: 6432
+              name: pgbouncer
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "250m"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      restartPolicy: Always

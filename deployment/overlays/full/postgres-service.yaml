@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    component: connection-pool
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 6432
+      protocol: TCP
+      name: postgres
+  selector:
+    component: connection-pool
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-backend
+  labels:
+    component: database
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgres
+  selector:
+    component: database
