@@ -599,8 +599,11 @@ def invalidate_mcp_tool_cache(user_id: str | None = None) -> None:
     (e.g. after a server-level config change).
     """
     if user_id is not None:
-        _cached_tools.pop(user_id, None)
-        _cached_tools_ts.pop(user_id, None)
+        prefix = f"{user_id}:"
+        keys = [k for k in _cached_tools if k is not None and k.startswith(prefix)]
+        for k in keys:
+            _cached_tools.pop(k, None)
+            _cached_tools_ts.pop(k, None)
     else:
         _cached_tools.clear()
         _cached_tools_ts.clear()
@@ -641,9 +644,9 @@ async def get_mcp_tools(
         List of available MCP tools (empty list if all connections fail).
     """
     server_key = ",".join(sorted(server_names)) if server_names else ""
-    cache_key = f"{user_id}:{server_key}" if server_key else user_id
-    cached = _cached_tools.get(cache_key)
-    cached_ts = _cached_tools_ts.get(cache_key, 0.0)
+    cache_key: str | None = f"{user_id}:{server_key}" if user_id else None
+    cached = _cached_tools.get(cache_key) if cache_key else None
+    cached_ts = _cached_tools_ts.get(cache_key, 0.0) if cache_key else 0.0
 
     if cached and len(cached) > 0 and (time.time() - cached_ts) < _MCP_TOOL_CACHE_TTL:
         logger.info(
@@ -733,10 +736,14 @@ async def get_mcp_tools(
             logger.warning("MCP tools deferred — no auth token at startup")
         return []
 
-    _cached_tools[cache_key] = tools
-    _cached_tools_ts[cache_key] = time.time()
+    if cache_key is not None:
+        _cached_tools[cache_key] = tools
+        _cached_tools_ts[cache_key] = time.time()
     logger.warning(
-        f"Loaded {len(tools)} MCP tool(s): {', '.join(seen)} "
-        f"(cached for {_MCP_TOOL_CACHE_TTL:.0f}s, user={cache_key or 'anonymous'})"
+        "Loaded %d MCP tool(s): %s (cached for %.0fs, user=%s)",
+        len(tools),
+        ", ".join(seen),
+        _MCP_TOOL_CACHE_TTL,
+        cache_key or "anonymous",
     )
     return tools

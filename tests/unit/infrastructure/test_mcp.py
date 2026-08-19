@@ -704,15 +704,15 @@ class TestGetMCPTools:
 
             from deep_agent.aegra import mcp
 
-            assert "user-a" in mcp._cached_tools
-            assert "user-b" in mcp._cached_tools
+            assert "user-a:" in mcp._cached_tools
+            assert "user-b:" in mcp._cached_tools
 
             from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
 
             invalidate_mcp_tool_cache(user_id="user-a")
 
-            assert "user-a" not in mcp._cached_tools
-            assert "user-b" in mcp._cached_tools
+            assert "user-a:" not in mcp._cached_tools
+            assert "user-b:" in mcp._cached_tools
 
 
 class TestCreateAuthPlaceholderTool:
