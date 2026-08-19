@@ -58,8 +58,7 @@ otel:
 
 # --- Features ---
 features:
-  mcp_apps:
-    enabled: true            # Serve /sandbox_proxy.html for MCP Apps host rendering
+  mcp_apps_enabled: true     # Serve /sandbox_proxy.html for MCP Apps host rendering
 
 # --- Announcement Banner ---
 announcement:

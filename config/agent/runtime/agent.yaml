@@ -141,7 +141,7 @@ middleware:
   tool_retry:
     enabled: true
     max_retries: 2
-    tools: ["calculate_bmi", "search_web", "send_email"]
+    tools: ["template_calculate_bmi", "template_search_web", "template_send_email"]
   extra: []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
