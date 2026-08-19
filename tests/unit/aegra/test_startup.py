@@ -166,6 +166,31 @@ class TestSetupTelemetry:
         assert "warning" in result
 
 
+class TestSetupMcpAppsCapability:
+    def test_ok_when_newly_installed(self):
+        with patch(
+            "deep_agent.aegra.mcp_apps.ensure_mcp_apps_capability_advertised",
+            return_value=True,
+        ):
+            assert startup._setup_mcp_apps_capability() == "ok"
+
+    def test_already_installed(self):
+        with patch(
+            "deep_agent.aegra.mcp_apps.ensure_mcp_apps_capability_advertised",
+            return_value=False,
+        ):
+            assert startup._setup_mcp_apps_capability() == "already_installed"
+
+    def test_error(self):
+        with patch(
+            "deep_agent.aegra.mcp_apps.ensure_mcp_apps_capability_advertised",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = startup._setup_mcp_apps_capability()
+        assert result.startswith("error:")
+        assert "boom" in result
+
+
 class TestIsReady:
     def test_not_ready_initially(self):
         startup._startup_complete = False
