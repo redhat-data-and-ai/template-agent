@@ -415,6 +415,11 @@ class TestCircuitBreakerRedis:
         cb1.record_failure()
         assert cb1.state == "open"
 
+        stored_ts = float(mock_redis._store["aegra:circuit:test"]["last_failure_ts"])
+        assert stored_ts > 1_000_000_000, (
+            "timestamp should be wall-clock, not monotonic"
+        )
+
         past = time.time() - 10.0
         mock_redis._store["aegra:circuit:test"]["last_failure_ts"] = str(past)
         cb2 = CircuitBreaker(
