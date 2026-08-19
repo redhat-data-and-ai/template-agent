@@ -137,8 +137,13 @@ class TestMcpTokenStoreRedis:
 
         from contextlib import asynccontextmanager
 
+        from psycopg.rows import dict_row
+
+        connection_kwargs: dict = {}
+
         @asynccontextmanager
         async def _fake_connection(**kwargs):
+            connection_kwargs.update(kwargs)
             yield mock_conn
 
         with (
@@ -155,6 +160,7 @@ class TestMcpTokenStoreRedis:
             result = await store.get_client("default", "dcr-mcp")
 
         assert result is None
+        assert connection_kwargs.get("row_factory") is dict_row
 
     async def test_delete_token(self, store):
         deleted_keys: list[str] = []

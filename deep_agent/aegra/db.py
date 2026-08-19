@@ -39,13 +39,14 @@ async def init_pool(uri: str) -> None:
     if _pool is not None:
         return
     conninfo = f"{uri} connect_timeout={_CONNECT_TIMEOUT}"
-    _pool = AsyncConnectionPool(
+    pool = AsyncConnectionPool(
         conninfo=conninfo,
         min_size=_POOL_MIN_SIZE,
         max_size=_POOL_MAX_SIZE,
         open=False,
     )
-    await _pool.open()
+    await pool.open(wait=True)
+    _pool = pool
     logger.info(
         "Async connection pool opened (min=%d, max=%d)", _POOL_MIN_SIZE, _POOL_MAX_SIZE
     )
@@ -74,9 +75,13 @@ async def async_connection(**kwargs: Any) -> AsyncIterator[Any]:
     """
     if _pool is not None:
         async with _pool.connection() as conn:
+            original_row_factory = conn.row_factory
             if kwargs.get("row_factory") is dict_row:
                 conn.row_factory = dict_row
-            yield conn
+            try:
+                yield conn
+            finally:
+                conn.row_factory = original_row_factory
     else:
         import psycopg
 

@@ -270,8 +270,8 @@ async def _init_pool() -> str:
     try:
         from deep_agent.src.settings import settings
 
-        if not settings.database_uri:
-            return "skipped: no database_uri configured"
+        if not settings.POSTGRES_HOST:
+            return "skipped: no POSTGRES_HOST configured"
 
         from deep_agent.aegra.db import init_pool
 

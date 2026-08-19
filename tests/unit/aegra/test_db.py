@@ -24,7 +24,7 @@ class TestInitPool:
             await db.init_pool("postgresql://test")
 
         assert db._pool is mock_pool
-        mock_pool.open.assert_awaited_once()
+        mock_pool.open.assert_awaited_once_with(wait=True)
 
     async def test_appends_connect_timeout_to_conninfo(self):
         mock_pool = AsyncMock()
@@ -35,6 +35,17 @@ class TestInitPool:
 
         call_kwargs = mock_cls.call_args[1]
         assert "connect_timeout=5" in call_kwargs["conninfo"]
+
+    async def test_pool_not_assigned_on_open_failure(self):
+        mock_pool = AsyncMock()
+        mock_pool.open.side_effect = OSError("connection refused")
+        with (
+            patch("deep_agent.aegra.db.AsyncConnectionPool", return_value=mock_pool),
+            pytest.raises(OSError, match="connection refused"),
+        ):
+            await db.init_pool("postgresql://test")
+
+        assert db._pool is None
 
     async def test_idempotent_when_pool_exists(self):
         db._pool = MagicMock()
@@ -93,6 +104,21 @@ class TestAsyncConnection:
 
         async with db.async_connection(row_factory=dict_row) as conn:
             assert conn.row_factory is dict_row
+
+    async def test_restores_row_factory_after_pool_connection(self):
+        from psycopg.rows import dict_row, tuple_row
+
+        mock_conn = MagicMock()
+        mock_conn.row_factory = tuple_row
+        mock_pool = MagicMock()
+        mock_pool.connection.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_pool.connection.return_value.__aexit__ = AsyncMock(return_value=False)
+        db._pool = mock_pool
+
+        async with db.async_connection(row_factory=dict_row) as conn:
+            assert conn.row_factory is dict_row
+
+        assert mock_conn.row_factory is tuple_row
 
     async def test_falls_back_to_direct_connection(self):
         mock_conn = AsyncMock()
