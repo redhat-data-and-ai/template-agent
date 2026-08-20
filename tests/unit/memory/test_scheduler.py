@@ -1,6 +1,6 @@
 """Unit tests for memory scheduler."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from deep_agent.src.memory import scheduler
 from deep_agent.src.memory.config import MemorySettings
@@ -9,6 +9,24 @@ from deep_agent.src.memory.config import MemorySettings
 class TestScheduler:
     def setup_method(self):
         scheduler._scheduler = None
+
+    async def test_scheduler_uses_in_memory_store(self):
+        """Guard against adding a persistent data store (CVE-2026-31072)."""
+        enabled = MemorySettings(MEMORY_CONSOLIDATION_ENABLED=True)
+        mock_cls = MagicMock()
+        mock_instance = AsyncMock()
+        mock_cls.return_value = mock_instance
+        with (
+            patch.object(scheduler, "memory_settings", enabled),
+            patch("apscheduler.AsyncScheduler", mock_cls),
+            patch(
+                "apscheduler.triggers.interval.IntervalTrigger",
+                return_value=MagicMock(),
+            ),
+        ):
+            result = await scheduler.start_scheduler("postgresql://test")
+            assert result is True
+            mock_cls.assert_called_once_with()
 
     async def test_start_skips_when_disabled(self):
         disabled = MemorySettings(MEMORY_CONSOLIDATION_ENABLED=False)

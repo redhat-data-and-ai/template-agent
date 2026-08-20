@@ -76,6 +76,44 @@ class TestSettings:
         assert s.REQUEST_LOG_BODY_MAX_SIZE == 10240
 
 
+class TestEmptyStringToNone:
+    """Empty-string env vars must not bypass defaults for sensitive fields."""
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+            "OTEL_AUTH_TOKEN",
+            "PII_HASH_KEY",
+        ],
+    )
+    def test_empty_string_becomes_none(self, field):
+        s = Settings(**{field: ""})
+        assert getattr(s, field) is None
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+            "OTEL_AUTH_TOKEN",
+            "PII_HASH_KEY",
+        ],
+    )
+    def test_whitespace_only_becomes_none(self, field):
+        s = Settings(**{field: "   "})
+        assert getattr(s, field) is None
+
+    def test_non_empty_value_preserved(self):
+        s = Settings(PII_HASH_KEY="secret-key-123")
+        assert s.PII_HASH_KEY == "secret-key-123"
+
+    def test_otel_endpoint_non_empty_preserved(self):
+        s = Settings(OTEL_EXPORTER_OTLP_ENDPOINT="http://otel:4317")
+        assert s.OTEL_EXPORTER_OTLP_ENDPOINT == "http://otel:4317"
+
+
 class TestValidateConfig:
     """Tests for validate_config function."""
 
