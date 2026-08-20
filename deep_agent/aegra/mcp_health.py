@@ -41,8 +41,8 @@ def _ensure_gauges() -> None:
         return
 
     with _gauge_lock:
-        _gauge_initialized = True
-
+        if _gauge_initialized:
+            return  # type: ignore[unreachable]
         try:
             if (
                 not settings.ENABLE_OTEL_METRICS
@@ -63,6 +63,8 @@ def _ensure_gauges() -> None:
             )
         except Exception:
             logger.warning("mcp_health_otel_gauge_init_failed", exc_info=True)
+        finally:
+            _gauge_initialized = True
 
 
 def _emit_mcp_gauge(server_name: str, healthy: bool) -> None:
