@@ -22,6 +22,7 @@ AUTH_TYPE = os.environ.get("LANGGRAPH_AUTH_TYPE", "noop")
 API_KEY = os.environ.get("LANGGRAPH_API_KEY", "")
 JWT_SECRET = os.environ.get("LANGGRAPH_JWT_SECRET", "")
 JWT_ALGORITHM = os.environ.get("LANGGRAPH_JWT_ALGORITHM", "HS256")
+_MIN_JWT_SECRET_BYTES = 32
 
 
 class AuthError(Exception):
@@ -37,9 +38,29 @@ class AuthError(Exception):
 def validate_api_key(provided_key: str) -> bool:
     """Constant-time comparison of API keys to prevent timing attacks."""
     if not API_KEY:
-        logger.warning("LANGGRAPH_API_KEY not set — all keys accepted")
-        return True
+        raise AuthError(
+            "LANGGRAPH_API_KEY is not configured; API key authentication is unavailable",
+            status_code=500,
+        )
     return hmac.compare_digest(provided_key.encode(), API_KEY.encode())
+
+
+def validate_auth_config() -> None:
+    """Validate auth configuration at startup.
+
+    Raises ValueError if AUTH_TYPE is 'jwt' and the JWT secret is
+    missing or too short.
+    """
+    if AUTH_TYPE != "jwt":
+        return
+    if not JWT_SECRET:
+        raise ValueError(
+            "LANGGRAPH_JWT_SECRET must be set when LANGGRAPH_AUTH_TYPE=jwt"
+        )
+    if len(JWT_SECRET.encode()) < _MIN_JWT_SECRET_BYTES:
+        raise ValueError(
+            f"LANGGRAPH_JWT_SECRET must be at least {_MIN_JWT_SECRET_BYTES} bytes"
+        )
 
 
 def validate_jwt_token(token: str) -> dict[str, Any]:
@@ -48,6 +69,8 @@ def validate_jwt_token(token: str) -> dict[str, Any]:
     Requires ``PyJWT`` to be installed. Falls back to a simple
     HMAC-based validation if PyJWT is unavailable.
     """
+    if not JWT_SECRET or len(JWT_SECRET.encode()) < _MIN_JWT_SECRET_BYTES:
+        raise AuthError("JWT secret is not configured or too short", status_code=500)
     try:
         import jwt
 
@@ -66,6 +89,8 @@ def validate_jwt_token(token: str) -> dict[str, Any]:
 
 def _hmac_validate(token: str) -> dict[str, Any]:
     """Minimal HMAC-based token validation without PyJWT."""
+    if not JWT_SECRET or len(JWT_SECRET.encode()) < _MIN_JWT_SECRET_BYTES:
+        raise AuthError("JWT secret is not configured or too short", status_code=500)
     parts = token.split(".")
     if len(parts) != 3:
         raise AuthError("Malformed token")
