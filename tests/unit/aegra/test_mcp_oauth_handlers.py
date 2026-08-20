@@ -267,6 +267,11 @@ class TestCallbackHtml:
         assert "Connected" in html
 
     def test_error_html_returned(self):
-        html = _callback_html(error="something broke")
-        assert "something broke" in html
-        assert "MCP OAuth Error" in html
+        result = _callback_html(error="something broke")
+        assert "something broke" in result
+        assert "MCP OAuth Error" in result
+
+    def test_error_html_escapes_tags(self):
+        result = _callback_html(error='<script>alert("xss")</script>')
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result

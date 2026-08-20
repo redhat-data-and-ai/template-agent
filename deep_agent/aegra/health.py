@@ -230,8 +230,39 @@ async def get_health_status() -> dict[str, Any]:
     }
 
 
-async def health_response() -> tuple[int, dict[str, Any]]:
-    """Return (status_code, body) for the health endpoint."""
+def liveness_response() -> tuple[int, dict[str, Any]]:
+    """Return (status_code, body) for liveness probes.
+
+    Liveness probes answer "is the process alive?" -- no dependency checks.
+    Returning 503 here causes Kubernetes to restart the pod, so only fail
+    when the process is genuinely stuck or shutting down.
+    """
+    from deep_agent.aegra.shutdown import is_shutting_down
+
+    if is_shutting_down():
+        return 503, {
+            "status": "shutting_down",
+            "version": __version__,
+            "uptime_seconds": round(time.monotonic() - _start_time, 1),
+        }
+
+    return 200, {
+        "status": "alive",
+        "version": __version__,
+        "uptime_seconds": round(time.monotonic() - _start_time, 1),
+    }
+
+
+async def health_response(path: str = "/health") -> tuple[int, dict[str, Any]]:
+    """Return (status_code, body) for health and readiness endpoints.
+
+    When *path* is ``/livez`` the response is a lightweight liveness check
+    with no dependency probing.  All other paths run full dependency checks
+    suitable for readiness probes.
+    """
+    if path in LIVENESS_PATHS:
+        return liveness_response()
+
     from deep_agent.aegra.shutdown import is_shutting_down
 
     if is_shutting_down():
@@ -246,4 +277,5 @@ async def health_response() -> tuple[int, dict[str, Any]]:
     return code, result
 
 
+LIVENESS_PATHS = frozenset({"/livez"})
 HEALTH_PATHS = frozenset({"/health", "/healthz", "/readyz", "/livez"})

@@ -270,6 +270,10 @@ async def _validate_config() -> str:
         from deep_agent.src.settings import settings, validate_config
 
         validate_config(settings)
+
+        from deep_agent.aegra.middleware import validate_auth_config
+
+        validate_auth_config()
         return "ok"
     except Exception as exc:
         logger.error("Config validation failed: %s", exc)
