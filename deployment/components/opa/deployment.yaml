@@ -46,6 +46,12 @@ spec:
                 configMapKeyRef:
                   name: opa-config
                   key: OPA_POLICY_GIT_SSL_VERIFY
+            - name: OPA_POLICY_OVERRIDES_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: opa-config
+                  key: OPA_POLICY_OVERRIDES_DIR
+                  optional: true
             - name: OPA_POLL_INTERVAL
               valueFrom:
                 configMapKeyRef:

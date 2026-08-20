@@ -20,8 +20,22 @@ OPA input shapes (defined by agent.authz policies):
     {"current_intent": {"action": "trajectory_validation"},
      "trajectory": [{"type": "...", "content": "..."}, ...]}
 
-OPA response shape:
-  {"result": {"deny_reasons": ["..."]}}
+OPA response shapes:
+
+  Legacy (deny_reasons only):
+    {"result": {"deny_reasons": ["..."]}}
+
+  Mode-aware (controls with per-control enforcement):
+    {"result": {"controls": [
+      {"id": "BW-01", "status": "fail", "mode": "WARN", "reason": "..."},
+      ...
+    ]}}
+
+When OPA_MODES_ENABLED is True and the response contains ``controls``,
+each control's mode determines behavior:
+  OFF     → skip (treat as allowed, don't log)
+  WARN    → allow but log the violation
+  ENFORCE → deny the request
 
 Allowed is derived from deny_reasons being empty — the allow flag is not read.
 """
@@ -44,26 +58,86 @@ MessageAction = Literal["llm_response", "tool_response"]
 
 
 @dataclass
+class ControlResult:
+    """Result of a single OPA control evaluation."""
+
+    id: str
+    status: str
+    mode: str
+    reason: str = ""
+
+
+@dataclass
 class OpaResult:
     """Result of an OPA policy evaluation."""
 
     allowed: bool
     denial_reasons: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    controls: list[ControlResult] = field(default_factory=list)
+
+
+def _apply_modes(controls: list[dict[str, Any]]) -> OpaResult:
+    """Apply per-control enforcement modes and return an aggregated result."""
+    denial_reasons: list[str] = []
+    warnings: list[str] = []
+    parsed_controls: list[ControlResult] = []
+
+    for ctrl in controls:
+        ctrl_id = ctrl.get("id", "unknown")
+        status = ctrl.get("status", "pass")
+        mode = ctrl.get("mode", "OFF").upper()
+        reason = ctrl.get("reason", "")
+
+        parsed = ControlResult(id=ctrl_id, status=status, mode=mode, reason=reason)
+        parsed_controls.append(parsed)
+
+        if status == "pass" or mode == "OFF":
+            continue
+
+        msg = f"[{ctrl_id}] {reason}" if reason else f"[{ctrl_id}] policy violation"
+
+        if mode == "WARN":
+            logger.warning("OPA control violation (WARN): %s", msg)
+            warnings.append(msg)
+        elif mode == "ENFORCE":
+            denial_reasons.append(msg)
+
+    return OpaResult(
+        allowed=len(denial_reasons) == 0,
+        denial_reasons=denial_reasons,
+        warnings=warnings,
+        controls=parsed_controls,
+    )
 
 
 def _parse_result(data: dict[str, Any]) -> OpaResult:
     result = data.get("result")
-    if not isinstance(result, dict) or "deny_reasons" not in result:
+    if not isinstance(result, dict):
         logger.warning(
             "OPA response missing expected decision keys (result=%s) -- denying by default",
-            type(result).__name__
-            if result and not isinstance(result, dict)
-            else ("empty" if not result else list(result.keys())),
+            type(result).__name__ if result else "empty",
         )
         return OpaResult(
             allowed=False,
             denial_reasons=["OPA response missing expected decision keys"],
         )
+
+    if settings.OPA_MODES_ENABLED and "controls" in result:
+        raw_controls = result["controls"]
+        if isinstance(raw_controls, list):
+            return _apply_modes(raw_controls)
+
+    if "deny_reasons" not in result:
+        logger.warning(
+            "OPA response missing deny_reasons (keys=%s) -- denying by default",
+            list(result.keys()),
+        )
+        return OpaResult(
+            allowed=False,
+            denial_reasons=["OPA response missing expected decision keys"],
+        )
+
     raw_reasons = result.get("deny_reasons")
     if raw_reasons is None or not isinstance(raw_reasons, list):
         logger.warning(
