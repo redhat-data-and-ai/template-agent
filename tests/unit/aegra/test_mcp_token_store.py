@@ -150,6 +150,53 @@ class TestMcpTokenStoreRedis:
 
         assert result is None
 
+    async def test_payload_to_token_returns_none_on_invalid_fernet_key(
+        self, store, fernet_key
+    ):
+        """Malformed Fernet key: decrypt_secret raises ValueError, not RuntimeError."""
+        with (
+            patch(
+                "deep_agent.aegra.mcp_token_store.cache_get",
+                return_value=json.dumps({"access_token": "x"}),
+            ),
+            patch(
+                "deep_agent.aegra.mcp_token_store.decrypt_secret",
+                side_effect=ValueError("Fernet key is not valid base64"),
+            ),
+        ):
+            result = await store.get_token("default", "user-1", "oauth-mcp")
+        assert result is None
+
+    async def test_get_client_returns_none_on_invalid_fernet_key(
+        self, store, fernet_key
+    ):
+        """Malformed Fernet key: get_client handles ValueError from decrypt_secret."""
+        fake_row = {
+            "agent_name": "default",
+            "mcp_name": "dcr-mcp",
+            "client_id": "cid-123",
+            "client_secret": "bad-base64",
+            "registration_data": None,
+            "updated_at": None,
+        }
+        with (
+            patch.object(store, "ensure_tables"),
+            patch(
+                "deep_agent.aegra.mcp_token_store.decrypt_secret",
+                side_effect=ValueError("Fernet key is not valid base64"),
+            ),
+            patch("deep_agent.aegra.mcp_token_store.psycopg") as mock_psycopg,
+        ):
+            mock_cur = AsyncMock()
+            mock_cur.fetchone.return_value = fake_row
+            mock_conn = AsyncMock()
+            mock_conn.execute.return_value = mock_cur
+            mock_psycopg.AsyncConnection.connect = AsyncMock(return_value=mock_conn)
+            mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+            mock_conn.__aexit__ = AsyncMock(return_value=False)
+            result = await store.get_client("default", "dcr-mcp")
+        assert result is None
+
     async def test_delete_token(self, store):
         deleted_keys: list[str] = []
 
