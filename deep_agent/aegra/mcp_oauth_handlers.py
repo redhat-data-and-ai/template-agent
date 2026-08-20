@@ -325,7 +325,7 @@ async def handle_mcp_oauth_callback(
     get_mcp_credential_resolver().invalidate_cache(user_id, mcp_name)
     from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
 
-    invalidate_mcp_tool_cache()
+    invalidate_mcp_tool_cache(user_id=user_id)
     try:
         from deep_agent.aegra.graph import invalidate_graph_cache
 
