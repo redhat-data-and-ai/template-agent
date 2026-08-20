@@ -22,38 +22,15 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from deep_agent.src.opa.config import get_opa_max_retries
-from deep_agent.src.opa.service import OpaResult, evaluate_message, evaluate_trajectory
+from deep_agent.src.opa.service import (
+    evaluate_message,
+    evaluate_trajectory,
+    update_compliance_state,
+)
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
-
-
-def _emit_opa_otel(action: str, opa: OpaResult) -> None:
-    """Emit OTEL span attributes for an OPA decision."""
-    if not settings.ENABLE_OTEL_TRACES:
-        return
-    try:
-        from opentelemetry import trace as otel_trace
-
-        span = otel_trace.get_current_span()
-        if span is None or not span.is_recording():
-            return
-        attrs: dict[str, Any] = {
-            "opa.decision": "allowed" if opa.allowed else "denied",
-            "opa.policy": action,
-        }
-        if opa.controls:
-            violation_ids = [c.id for c in opa.controls if c.status != "pass"]
-            modes = {c.id: c.mode for c in opa.controls if c.status != "pass"}
-            if violation_ids:
-                attrs["opa.violations"] = ",".join(violation_ids)
-                attrs["opa.modes"] = ",".join(f"{k}={v}" for k, v in modes.items())
-        elif opa.denial_reasons:
-            attrs["opa.violations"] = ",".join(opa.denial_reasons[:5])
-        span.add_event("opa.evaluation", attributes=attrs)
-    except ImportError:
-        pass
 
 
 _BLOCKED_TOOL_MESSAGE = "Tool call blocked by OPA policy."
@@ -116,7 +93,7 @@ class OPAMiddleware(AgentMiddleware):
             if isinstance(m, BaseMessage) and not m.additional_kwargs.get("opa_retry")
         ]
         opa = await evaluate_trajectory(trajectory)
-        _emit_opa_otel("trajectory_validation", opa)
+        update_compliance_state(opa)
         logger.debug(
             "OPA abefore_model result: allowed=%s reason_count=%d",
             opa.allowed,
@@ -165,7 +142,7 @@ class OPAMiddleware(AgentMiddleware):
                 return result
 
             opa = await evaluate_message("llm_response", agent_message=text)
-            _emit_opa_otel("llm_response", opa)
+            update_compliance_state(opa)
             logger.debug(
                 "OPA awrap_model_call result: allowed=%s reason_count=%d",
                 opa.allowed,
@@ -247,7 +224,7 @@ class OPAMiddleware(AgentMiddleware):
             return result
 
         opa = await evaluate_message("tool_response", result=tool_content)
-        _emit_opa_otel("tool_response", opa)
+        update_compliance_state(opa)
         logger.debug(
             "OPA awrap_tool_call result: allowed=%s reason_count=%d",
             opa.allowed,
