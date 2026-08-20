@@ -155,7 +155,7 @@ class McpTokenStore:
                 scopes=list(payload["scopes"]) if payload.get("scopes") else None,
                 updated_at=self._deserialize_datetime(payload.get("updated_at")),
             )
-        except RuntimeError:
+        except (RuntimeError, ValueError):
             logger.warning(
                 "MCP OAuth token decryption failed (key rotation?) for "
                 "agent '%s' user '%s' MCP '%s'; treating as expired",
@@ -191,7 +191,7 @@ class McpTokenStore:
                 return None
             try:
                 decrypted_secret = decrypt_secret(row["client_secret"])
-            except RuntimeError:
+            except (RuntimeError, ValueError):
                 logger.warning(
                     "MCP OAuth client secret decryption failed (key rotation?) for "
                     "agent '%s' MCP '%s'; treating as unregistered",

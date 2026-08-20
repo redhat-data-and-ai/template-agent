@@ -45,8 +45,8 @@ _SSO_TOKEN_URL: str = ""
 _mcp_breaker: CircuitBreaker | None = None
 
 _MCP_TOOL_CACHE_TTL: float = float(agent_config.get_cache_config().mcp.ttl)
-_cached_tools: list[Any] = []
-_cached_tools_ts: float = 0.0
+_cached_tools: dict[str | None, list[Any]] = {}
+_cached_tools_ts: dict[str | None, float] = {}
 
 _current_access_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_access_token", default=None
@@ -591,11 +591,22 @@ def _filter_by_names(
     return {k: v for k, v in enabled.items() if k in requested}
 
 
-def invalidate_mcp_tool_cache() -> None:
-    """Clear the global MCP tool list cache (e.g. after OAuth connect)."""
-    global _cached_tools, _cached_tools_ts  # noqa: PLW0603
-    _cached_tools = []
-    _cached_tools_ts = 0.0
+def invalidate_mcp_tool_cache(user_id: str | None = None) -> None:
+    """Clear the MCP tool cache.
+
+    When *user_id* is given, only that user's entry is removed.
+    When *user_id* is ``None``, the entire cache is cleared
+    (e.g. after a server-level config change).
+    """
+    if user_id is not None:
+        prefix = f"{user_id}:"
+        keys = [k for k in _cached_tools if k is not None and k.startswith(prefix)]
+        for k in keys:
+            _cached_tools.pop(k, None)
+            _cached_tools_ts.pop(k, None)
+    else:
+        _cached_tools.clear()
+        _cached_tools_ts.clear()
 
 
 async def get_mcp_tools(
@@ -632,19 +643,19 @@ async def get_mcp_tools(
     Returns:
         List of available MCP tools (empty list if all connections fail).
     """
-    global _cached_tools, _cached_tools_ts  # noqa: PLW0603
+    server_key = ",".join(sorted(server_names)) if server_names else ""
+    cache_key: str | None = f"{user_id}:{server_key}" if user_id else None
+    cached = _cached_tools.get(cache_key) if cache_key else None
+    cached_ts = _cached_tools_ts.get(cache_key, 0.0) if cache_key else 0.0
 
-    if (
-        _cached_tools
-        and len(_cached_tools) > 0
-        and (time.time() - _cached_tools_ts) < _MCP_TOOL_CACHE_TTL
-    ):
+    if cached and len(cached) > 0 and (time.time() - cached_ts) < _MCP_TOOL_CACHE_TTL:
         logger.info(
-            "MCP tool cache hit (%d tools, %.0fs old)",
-            len(_cached_tools),
-            time.time() - _cached_tools_ts,
+            "MCP tool cache hit (%d tools, %.0fs old, user=%s)",
+            len(cached),
+            time.time() - cached_ts,
+            cache_key or "anonymous",
         )
-        return _cached_tools
+        return cached
 
     servers: dict[str, dict[str, Any]] = _get_server_configs()
     enabled: dict[str, dict[str, Any]] = {
@@ -657,7 +668,9 @@ async def get_mcp_tools(
         logger.warning("No MCP servers enabled")
         return []
 
-    logger.warning(f"Connecting to {len(enabled)} MCP server(s): {', '.join(enabled)}")
+    logger.warning(
+        "Connecting to %d MCP server(s): %s", len(enabled), ", ".join(enabled)
+    )
 
     has_auth: bool = bool(sso_token or user_id)
     discovery_token = _mcp_tool_discovery.set(True)
@@ -723,9 +736,14 @@ async def get_mcp_tools(
             logger.warning("MCP tools deferred — no auth token at startup")
         return []
 
-    _cached_tools = tools
-    _cached_tools_ts = time.time()
+    if cache_key is not None:
+        _cached_tools[cache_key] = tools
+        _cached_tools_ts[cache_key] = time.time()
     logger.warning(
-        f"Loaded {len(tools)} MCP tool(s): {', '.join(seen)} (cached for {_MCP_TOOL_CACHE_TTL:.0f}s)"
+        "Loaded %d MCP tool(s): %s (cached for %.0fs, user=%s)",
+        len(tools),
+        ", ".join(seen),
+        _MCP_TOOL_CACHE_TTL,
+        cache_key or "anonymous",
     )
     return tools

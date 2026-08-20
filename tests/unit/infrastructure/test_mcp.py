@@ -319,8 +319,8 @@ def _reset_mcp_cache() -> None:
     """Clear MCP tool cache between tests."""
     from deep_agent.aegra import mcp
 
-    mcp._cached_tools = []
-    mcp._cached_tools_ts = 0.0
+    mcp._cached_tools.clear()
+    mcp._cached_tools_ts.clear()
 
 
 class TestGetMCPTools:
@@ -642,6 +642,86 @@ class TestGetMCPTools:
             mock_placeholder.assert_called_once_with(
                 "jira-mcp-prod", mock_servers["jira-mcp-prod"]
             )
+
+    @pytest.mark.asyncio
+    async def test_cache_is_per_user(self):
+        """Different users should not share cached MCP tools."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "srv": {
+                "url": "http://srv/mcp/",
+                "enabled": True,
+                "auth": False,
+                "timeout": 5,
+            }
+        }
+        tool_a = MagicMock()
+        tool_a.name = "tool_a"
+        tool_b = MagicMock()
+        tool_b.name = "tool_b"
+
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_cfg,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_conn,
+        ):
+            mock_cfg.return_value = mock_servers
+
+            mock_conn.return_value = [tool_a]
+            result_a = await get_mcp_tools(user_id="user-a")
+            assert [t.name for t in result_a] == ["tool_a"]
+
+            mock_conn.return_value = [tool_b]
+            result_b = await get_mcp_tools(user_id="user-b")
+            assert [t.name for t in result_b] == ["tool_b"]
+
+            result_a_cached = await get_mcp_tools(user_id="user-a")
+            assert [t.name for t in result_a_cached] == ["tool_a"]
+
+    @pytest.mark.asyncio
+    async def test_invalidate_cache_per_user(self):
+        """Invalidating one user's cache should not affect another's."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "srv": {
+                "url": "http://srv/mcp/",
+                "enabled": True,
+                "auth": False,
+                "timeout": 5,
+            }
+        }
+        tool = MagicMock()
+        tool.name = "shared_tool"
+
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_cfg,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_conn,
+        ):
+            mock_cfg.return_value = mock_servers
+            mock_conn.return_value = [tool]
+
+            await get_mcp_tools(user_id="user-a")
+            await get_mcp_tools(user_id="user-a", server_names=["srv"])
+            await get_mcp_tools(user_id="user-b")
+
+            from deep_agent.aegra import mcp
+
+            assert "user-a:" in mcp._cached_tools
+            assert "user-a:srv" in mcp._cached_tools
+            assert "user-b:" in mcp._cached_tools
+            assert "user-a:" in mcp._cached_tools_ts
+            assert "user-a:srv" in mcp._cached_tools_ts
+            assert "user-b:" in mcp._cached_tools_ts
+
+            from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
+
+            invalidate_mcp_tool_cache(user_id="user-a")
+
+            assert "user-a:" not in mcp._cached_tools
+            assert "user-a:srv" not in mcp._cached_tools
+            assert "user-a:" not in mcp._cached_tools_ts
+            assert "user-a:srv" not in mcp._cached_tools_ts
+            assert "user-b:" in mcp._cached_tools
+            assert "user-b:" in mcp._cached_tools_ts
 
 
 class TestCreateAuthPlaceholderTool:

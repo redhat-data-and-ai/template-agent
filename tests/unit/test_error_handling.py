@@ -405,6 +405,29 @@ class TestCircuitBreakerRedis:
         )
         assert cb._key_ttl == 600
 
+    def test_half_open_after_pod_restart(self):
+        """Circuit breaker recovers after pod restart (wall-clock timestamps)."""
+        mock_redis = self._make_redis_mock()
+        cb1 = CircuitBreaker(
+            "test", threshold=2, reset_timeout=5.0, redis_client=mock_redis
+        )
+        cb1.record_failure()
+        cb1.record_failure()
+        assert cb1.state == "open"
+
+        stored_ts = float(mock_redis._store["aegra:circuit:test"]["last_failure_ts"])
+        assert stored_ts > 1_000_000_000, (
+            "timestamp should be wall-clock, not monotonic"
+        )
+
+        past = time.time() - 10.0
+        mock_redis._store["aegra:circuit:test"]["last_failure_ts"] = str(past)
+        cb2 = CircuitBreaker(
+            "test", threshold=2, reset_timeout=5.0, redis_client=mock_redis
+        )
+        assert cb2.is_open is False
+        assert cb2.state == "half-open"
+
 
 # ───────────────────────────────────────────────────────────────────
 # create_circuit_breaker factory
