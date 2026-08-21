@@ -6,6 +6,8 @@ USER root
 
 RUN dnf install -y git && dnf clean all
 
+RUN pip install --no-cache-dir --upgrade pip
+
 RUN pip install --no-cache-dir \
     "lightspeed-evaluation @ git+https://github.com/lightspeed-core/lightspeed-evaluation.git@v0.8.0" \
     fastapi \

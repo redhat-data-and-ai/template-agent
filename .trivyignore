@@ -9,3 +9,11 @@ CVE-2026-31072
 # Fixed in pyarrow 23.0.1, but pinning it causes a build dependency conflict.
 # pyarrow is a transitive dep — not used directly. Revisit when upstream resolves.
 CVE-2026-25087
+
+# GHSA-6v7p-g79w-8964: msgpack 1.1.2 out-of-bounds read (HIGH)
+# CVE-2025-47273: setuptools 70.3.0 path traversal (HIGH)
+# Both are pip's own vendored internal dependencies (pip/_vendor/vendor.txt),
+# not accessible to user code. pip 26.2.1 (latest) still ships these versions.
+# Revisit when pip upstream updates its vendored copies.
+GHSA-6v7p-g79w-8964
+CVE-2025-47273
