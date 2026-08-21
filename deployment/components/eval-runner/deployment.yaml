@@ -62,6 +62,12 @@ spec:
                 secretKeyRef:
                   name: agent-secrets
                   key: POSTGRES_PASSWORD
+            - name: EVAL_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: EVAL_INTERNAL_TOKEN
+                  optional: true
           startupProbe:
             httpGet:
               path: /health

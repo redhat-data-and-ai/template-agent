@@ -12,10 +12,14 @@ resources:
   - route.yaml
   - pdb.yaml
   - hpa.yaml
+  - eval-runner-buildconfig.yaml
+  - eval-runner-imagestream.yaml
+  - eval-runner-scaledobject.yaml
 
 components:
   - ../../components/postgres
   - ../../components/redis
+  - ../../components/eval-runner
 
 labels:
   - pairs:
@@ -101,6 +105,12 @@ patches:
       - op: replace
         path: /spec/resources/requests/storage
         value: "2Gi"
+
+  # Eval-runner deployment patches (KEDA: start at 0 replicas, scale on HTTP traffic)
+  - path: eval-runner-deployment-patch.yaml
+    target:
+      kind: Deployment
+      name: eval-runner
 
   # BuildConfig patches
   - target:
