@@ -11,6 +11,7 @@ from deep_agent.aegra.health import (
     check_redis,
     get_health_status,
     health_response,
+    liveness_response,
 )
 
 
@@ -256,3 +257,43 @@ class TestHealthResponse:
         ):
             code, body = await health_response()
         assert code == 503
+
+    async def test_livez_skips_dependency_checks(self):
+        """Liveness probe must not run get_health_status (no DB/Redis/OPA checks)."""
+        with patch(
+            "deep_agent.aegra.health.get_health_status",
+            new_callable=AsyncMock,
+        ) as mock_health:
+            code, body = await health_response(path="/livez")
+        mock_health.assert_not_called()
+        assert code == 200
+        assert body["status"] == "alive"
+
+    async def test_readyz_runs_dependency_checks(self):
+        """Readiness probe must run full dependency checks."""
+        with patch(
+            "deep_agent.aegra.health.get_health_status",
+            new_callable=AsyncMock,
+            return_value={"status": "unhealthy"},
+        ) as mock_health:
+            code, body = await health_response(path="/readyz")
+        mock_health.assert_called_once()
+        assert code == 503
+
+
+class TestLivenessResponse:
+    def test_alive_when_not_shutting_down(self):
+        code, body = liveness_response()
+        assert code == 200
+        assert body["status"] == "alive"
+        assert "uptime_seconds" in body
+        assert "version" in body
+
+    def test_503_when_shutting_down(self):
+        with patch(
+            "deep_agent.aegra.shutdown.is_shutting_down",
+            return_value=True,
+        ):
+            code, body = liveness_response()
+        assert code == 503
+        assert body["status"] == "shutting_down"

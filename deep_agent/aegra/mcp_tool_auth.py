@@ -25,6 +25,53 @@ def _mcp_auth_interrupt_payload(exc: NeedsAuthorization) -> str:
     )
 
 
+def _fix_stringified_json_args(tool: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Parse stringified JSON args when the tool schema expects object/array.
+
+    Some models (notably Gemini) serialize nested objects as JSON strings
+    instead of proper dicts when calling tools with complex input schemas.
+    Parses args whose schema type is ``object``, ``array``, or untyped
+    (``Any`` — no ``type`` key in the schema property). Args explicitly
+    typed as ``string`` are never modified.
+    """
+    schema_props: dict[str, Any] = {}
+    try:
+        schema_props = getattr(tool, "args", {}) or {}
+    except Exception:
+        return kwargs
+
+    if not schema_props:
+        return kwargs
+
+    fixed = dict(kwargs)
+    for key, value in fixed.items():
+        if not isinstance(value, str):
+            continue
+        prop = schema_props.get(key, {})
+        expected_type = prop.get("type", "")
+        if expected_type == "string" or (
+            isinstance(expected_type, list) and "string" in expected_type
+        ):
+            continue
+        union_schemas = prop.get("anyOf", []) + prop.get("oneOf", [])
+        if any("string" in str(s.get("type", "")) for s in union_schemas):
+            continue
+        stripped = value.strip()
+        if stripped and stripped[0] in ("{", "["):
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, (dict, list)):
+                    fixed[key] = parsed
+                    logger.debug(
+                        "Fixed stringified JSON arg '%s' for tool '%s'",
+                        key,
+                        getattr(tool, "name", "?"),
+                    )
+            except (json.JSONDecodeError, ValueError, RecursionError):
+                pass
+    return fixed
+
+
 def wrap_mcp_tools_for_auth(tools: list[Any]) -> list[Any]:
     """Wrap MCP tools so ``NeedsAuthorization`` becomes a resumable interrupt."""
     wrapped: list[Any] = []
@@ -42,6 +89,7 @@ def _wrap_single_tool(tool: Any) -> Any:
         async def wrapped_coroutine(**kwargs: Any) -> Any:
             while True:
                 try:
+                    kwargs = _fix_stringified_json_args(tool, kwargs)
                     return await coroutine(**kwargs)
                 except NeedsAuthorization as exc:
                     logger.info(
@@ -61,6 +109,7 @@ def _wrap_single_tool(tool: Any) -> Any:
         def wrapped_func(**kwargs: Any) -> Any:
             while True:
                 try:
+                    kwargs = _fix_stringified_json_args(tool, kwargs)
                     return func(**kwargs)
                 except NeedsAuthorization as exc:
                     interrupt(_mcp_auth_interrupt_payload(exc))

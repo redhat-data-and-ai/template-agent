@@ -144,6 +144,7 @@ class TestConnectSingleServer:
         """Test successful connection to MCP server."""
         mock_tool = MagicMock()
         mock_tool.name = "test_tool"
+        mock_tool.metadata = None
 
         mock_client = MagicMock()
         mock_client.get_tools = AsyncMock(return_value=[mock_tool])
@@ -154,10 +155,59 @@ class TestConnectSingleServer:
             "deep_agent.aegra.mcp.MultiServerMCPClient",
             return_value=mock_client,
         ):
-            tools = await _connect_single_server("test_server", config, {}, timeout=5)
+            tools = await _connect_single_server(
+                "test_server",
+                config,
+                {},
+                timeout=5,
+                mcp_server="test_server",
+            )
 
             assert len(tools) == 1
             assert tools[0].name == "test_tool"
+            assert tools[0].metadata["mcp_server"] == "test_server"
+
+    @pytest.mark.asyncio
+    async def test_filters_app_only_tools_from_model_list(self):
+        """App-only tools are annotated but not returned for the LLM."""
+        from types import SimpleNamespace
+
+        model_tool = SimpleNamespace(
+            name="show_chart",
+            metadata={
+                "_meta": {
+                    "ui": {
+                        "resourceUri": "ui://charts/app.html",
+                        "visibility": ["model", "app"],
+                    }
+                }
+            },
+        )
+        app_only = SimpleNamespace(
+            name="refresh_chart",
+            metadata={"_meta": {"ui": {"visibility": ["app"]}}},
+        )
+
+        mock_client = MagicMock()
+        mock_client.get_tools = AsyncMock(return_value=[model_tool, app_only])
+
+        config = {"url": "http://localhost:8000/mcp/", "transport": "http"}
+
+        with patch(
+            "deep_agent.aegra.mcp.MultiServerMCPClient",
+            return_value=mock_client,
+        ):
+            tools = await _connect_single_server(
+                "charts",
+                config,
+                {},
+                timeout=5,
+                mcp_server="chart-mcp-server",
+            )
+
+        assert [t.name for t in tools] == ["show_chart"]
+        assert tools[0].metadata["mcp_server"] == "chart-mcp-server"
+        assert app_only.metadata["mcp_server"] == "chart-mcp-server"
 
     @pytest.mark.asyncio
     async def test_connection_timeout_returns_empty_list(self):
@@ -269,8 +319,8 @@ def _reset_mcp_cache() -> None:
     """Clear MCP tool cache between tests."""
     from deep_agent.aegra import mcp
 
-    mcp._cached_tools = []
-    mcp._cached_tools_ts = 0.0
+    mcp._cached_tools.clear()
+    mcp._cached_tools_ts.clear()
 
 
 class TestGetMCPTools:
@@ -592,6 +642,86 @@ class TestGetMCPTools:
             mock_placeholder.assert_called_once_with(
                 "jira-mcp-prod", mock_servers["jira-mcp-prod"]
             )
+
+    @pytest.mark.asyncio
+    async def test_cache_is_per_user(self):
+        """Different users should not share cached MCP tools."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "srv": {
+                "url": "http://srv/mcp/",
+                "enabled": True,
+                "auth": False,
+                "timeout": 5,
+            }
+        }
+        tool_a = MagicMock()
+        tool_a.name = "tool_a"
+        tool_b = MagicMock()
+        tool_b.name = "tool_b"
+
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_cfg,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_conn,
+        ):
+            mock_cfg.return_value = mock_servers
+
+            mock_conn.return_value = [tool_a]
+            result_a = await get_mcp_tools(user_id="user-a")
+            assert [t.name for t in result_a] == ["tool_a"]
+
+            mock_conn.return_value = [tool_b]
+            result_b = await get_mcp_tools(user_id="user-b")
+            assert [t.name for t in result_b] == ["tool_b"]
+
+            result_a_cached = await get_mcp_tools(user_id="user-a")
+            assert [t.name for t in result_a_cached] == ["tool_a"]
+
+    @pytest.mark.asyncio
+    async def test_invalidate_cache_per_user(self):
+        """Invalidating one user's cache should not affect another's."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "srv": {
+                "url": "http://srv/mcp/",
+                "enabled": True,
+                "auth": False,
+                "timeout": 5,
+            }
+        }
+        tool = MagicMock()
+        tool.name = "shared_tool"
+
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_cfg,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_conn,
+        ):
+            mock_cfg.return_value = mock_servers
+            mock_conn.return_value = [tool]
+
+            await get_mcp_tools(user_id="user-a")
+            await get_mcp_tools(user_id="user-a", server_names=["srv"])
+            await get_mcp_tools(user_id="user-b")
+
+            from deep_agent.aegra import mcp
+
+            assert "user-a:" in mcp._cached_tools
+            assert "user-a:srv" in mcp._cached_tools
+            assert "user-b:" in mcp._cached_tools
+            assert "user-a:" in mcp._cached_tools_ts
+            assert "user-a:srv" in mcp._cached_tools_ts
+            assert "user-b:" in mcp._cached_tools_ts
+
+            from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
+
+            invalidate_mcp_tool_cache(user_id="user-a")
+
+            assert "user-a:" not in mcp._cached_tools
+            assert "user-a:srv" not in mcp._cached_tools
+            assert "user-a:" not in mcp._cached_tools_ts
+            assert "user-a:srv" not in mcp._cached_tools_ts
+            assert "user-b:" in mcp._cached_tools
+            assert "user-b:" in mcp._cached_tools_ts
 
 
 class TestCreateAuthPlaceholderTool:

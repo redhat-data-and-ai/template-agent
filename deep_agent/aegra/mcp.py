@@ -25,6 +25,11 @@ from typing import Any
 import httpx
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from deep_agent.aegra.mcp_apps import (
+    McpAppCallToolResultInterceptor,
+    ensure_mcp_apps_capability_advertised,
+    prepare_tools_for_model,
+)
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.error_handling import CircuitBreaker, create_circuit_breaker
 from deep_agent.src.settings import settings
@@ -32,13 +37,16 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
+# Advertise MCP Apps UI capability for langchain-mcp-adapters sessions.
+ensure_mcp_apps_capability_advertised()
+
 _SSO_TOKEN_URL: str = ""
 
 _mcp_breaker: CircuitBreaker | None = None
 
 _MCP_TOOL_CACHE_TTL: float = float(agent_config.get_cache_config().mcp.ttl)
-_cached_tools: list[Any] = []
-_cached_tools_ts: float = 0.0
+_cached_tools: dict[str | None, list[Any]] = {}
+_cached_tools_ts: dict[str | None, float] = {}
 
 _current_access_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_access_token", default=None
@@ -408,22 +416,31 @@ async def _connect_single_server(
     *,
     required: bool = False,
     server_key: str | None = None,
+    mcp_server: str | None = None,
 ) -> list[Any]:
-    """Connect to one MCP server and return its tools.
+    """Connect to one MCP server and return its model-visible tools.
 
     Failures are logged and return empty list for fault isolation.
     Updates the module-level circuit breaker on success/failure.
 
+    Tools are annotated with ``mcp_server`` (mcp.json key) and app-only
+    tools (``visibility: ["app"]``) are filtered out before return so the
+    LLM never sees them. No shared Apps registry is written.
+
     Args:
-        name: Human-readable server identifier used in log messages.
+        name: Human-readable server identifier used in log messages /
+            MultiServerMCPClient connection key (may be ``tool_prefix``).
         config: MCP client connection config (url, transport, headers, etc.).
         server_cfg: Raw MCP server definition from ``mcp.json`` (auth, ssl_verify).
         timeout: Seconds before the connection attempt is cancelled.
         required: If True the server is explicitly enabled in config,
             so connection failures are logged at error level.
-        server_key: Optional key override for auth token lookup.
+        server_key: Optional mcp.json key for auth token lookup and Apps
+            metadata. Defaults to ``mcp_server`` or ``name`` when omitted.
+        mcp_server: Alias for ``server_key`` (v2 Apps naming). Ignored when
+            ``server_key`` is provided.
     """
-    auth_key = server_key or name
+    auth_key = server_key or mcp_server or name
     breaker = _get_mcp_breaker()
     if breaker.is_open:
         logger.warning(f"[{name}] circuit breaker open — skipping connection")
@@ -439,13 +456,25 @@ async def _connect_single_server(
                         _TokenInjectorInterceptor(
                             name, server_cfg, server_key=auth_key
                         ),
+                        # Capture raw MCP CallToolResult before LC conversion so
+                        # UI-bound tools embed spec-faithful mcp_app.result.
+                        McpAppCallToolResultInterceptor(),
                     ],
                     tool_name_prefix=bool(server_cfg.get("tool_prefix", "")),
                 )
                 tools: list[Any] = await client.get_tools()
-            logger.info(f"[{name}] loaded {len(tools)} tool(s)")
+            model_tools = prepare_tools_for_model(tools, auth_key)
+            skipped = len(tools) - len(model_tools)
+            if skipped:
+                logger.info(
+                    "[%s] hid %d app-only tool(s) from the model (%d model-visible)",
+                    name,
+                    skipped,
+                    len(model_tools),
+                )
+            logger.info(f"[{name}] loaded {len(model_tools)} tool(s)")
             breaker.record_success()
-            return tools
+            return model_tools
         except TimeoutError:
             if attempt < max_attempts:
                 logger.warning(
@@ -460,7 +489,10 @@ async def _connect_single_server(
                     "[%s] MCP OAuth required — returning auth placeholder tool",
                     name,
                 )
-                return [_create_auth_placeholder_tool(auth_key, server_cfg)]
+                return prepare_tools_for_model(
+                    [_create_auth_placeholder_tool(auth_key, server_cfg)],
+                    auth_key,
+                )
             elif _is_auth_error(exc):
                 auth_mode = server_cfg.get("auth_mode", "sso")
                 if auth_mode in ("oauth", "dcr"):
@@ -468,7 +500,10 @@ async def _connect_single_server(
                         "[%s] MCP tool discovery auth failed — returning auth placeholder tool",
                         name,
                     )
-                    return [_create_auth_placeholder_tool(auth_key, server_cfg)]
+                    return prepare_tools_for_model(
+                        [_create_auth_placeholder_tool(auth_key, server_cfg)],
+                        auth_key,
+                    )
                 else:
                     logger.warning(
                         f"[{name}] MCP auth failed — {type(exc).__name__}: {exc}"
@@ -558,11 +593,22 @@ def _filter_by_names(
     return {k: v for k, v in enabled.items() if k in requested}
 
 
-def invalidate_mcp_tool_cache() -> None:
-    """Clear the global MCP tool list cache (e.g. after OAuth connect)."""
-    global _cached_tools, _cached_tools_ts  # noqa: PLW0603
-    _cached_tools = []
-    _cached_tools_ts = 0.0
+def invalidate_mcp_tool_cache(user_id: str | None = None) -> None:
+    """Clear the MCP tool cache.
+
+    When *user_id* is given, only that user's entry is removed.
+    When *user_id* is ``None``, the entire cache is cleared
+    (e.g. after a server-level config change).
+    """
+    if user_id is not None:
+        prefix = f"{user_id}:"
+        keys = [k for k in _cached_tools if k is not None and k.startswith(prefix)]
+        for k in keys:
+            _cached_tools.pop(k, None)
+            _cached_tools_ts.pop(k, None)
+    else:
+        _cached_tools.clear()
+        _cached_tools_ts.clear()
 
 
 async def get_mcp_tools(
@@ -599,19 +645,19 @@ async def get_mcp_tools(
     Returns:
         List of available MCP tools (empty list if all connections fail).
     """
-    global _cached_tools, _cached_tools_ts  # noqa: PLW0603
+    server_key = ",".join(sorted(server_names)) if server_names else ""
+    cache_key: str | None = f"{user_id}:{server_key}" if user_id else None
+    cached = _cached_tools.get(cache_key) if cache_key else None
+    cached_ts = _cached_tools_ts.get(cache_key, 0.0) if cache_key else 0.0
 
-    if (
-        _cached_tools
-        and len(_cached_tools) > 0
-        and (time.time() - _cached_tools_ts) < _MCP_TOOL_CACHE_TTL
-    ):
+    if cached and len(cached) > 0 and (time.time() - cached_ts) < _MCP_TOOL_CACHE_TTL:
         logger.info(
-            "MCP tool cache hit (%d tools, %.0fs old)",
-            len(_cached_tools),
-            time.time() - _cached_tools_ts,
+            "MCP tool cache hit (%d tools, %.0fs old, user=%s)",
+            len(cached),
+            time.time() - cached_ts,
+            cache_key or "anonymous",
         )
-        return _cached_tools
+        return cached
 
     servers: dict[str, dict[str, Any]] = _get_server_configs()
     enabled: dict[str, dict[str, Any]] = {
@@ -624,7 +670,9 @@ async def get_mcp_tools(
         logger.warning("No MCP servers enabled")
         return []
 
-    logger.warning(f"Connecting to {len(enabled)} MCP server(s): {', '.join(enabled)}")
+    logger.warning(
+        "Connecting to %d MCP server(s): %s", len(enabled), ", ".join(enabled)
+    )
 
     has_auth: bool = bool(sso_token or user_id)
     discovery_token = _mcp_tool_discovery.set(True)
@@ -641,7 +689,12 @@ async def get_mcp_tools(
                     mcp_prefix_name,
                     auth_mode,
                 )
-                placeholder_tools.append([_create_auth_placeholder_tool(name, entry)])
+                placeholder_tools.append(
+                    prepare_tools_for_model(
+                        [_create_auth_placeholder_tool(name, entry)],
+                        name,
+                    )
+                )
                 continue
             connect_jobs.append(
                 _connect_single_server(
@@ -685,9 +738,14 @@ async def get_mcp_tools(
             logger.warning("MCP tools deferred — no auth token at startup")
         return []
 
-    _cached_tools = tools
-    _cached_tools_ts = time.time()
+    if cache_key is not None:
+        _cached_tools[cache_key] = tools
+        _cached_tools_ts[cache_key] = time.time()
     logger.warning(
-        f"Loaded {len(tools)} MCP tool(s): {', '.join(seen)} (cached for {_MCP_TOOL_CACHE_TTL:.0f}s)"
+        "Loaded %d MCP tool(s): %s (cached for %.0fs, user=%s)",
+        len(tools),
+        ", ".join(seen),
+        _MCP_TOOL_CACHE_TTL,
+        cache_key or "anonymous",
     )
     return tools

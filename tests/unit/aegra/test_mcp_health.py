@@ -358,3 +358,20 @@ class TestOtelGauges:
             mcp_health._ensure_gauges()
 
         assert mock_meter.create_gauge.call_count == 2
+
+    def test_gauge_initialized_set_even_when_otel_disabled(self):
+        """_gauge_initialized is True after _ensure_gauges even if OTEL is off."""
+        mock_settings = MagicMock()
+        mock_settings.ENABLE_OTEL_METRICS = False
+        mock_settings.OTEL_EXPORTER_OTLP_ENDPOINT = ""
+
+        with patch("deep_agent.aegra.mcp_health.settings", mock_settings):
+            mcp_health._ensure_gauges()
+
+        assert mcp_health._gauge_initialized is True
+        assert mcp_health._mcp_health_gauge is None
+
+        with patch("deep_agent.aegra.mcp_health.settings", mock_settings):
+            mcp_health._ensure_gauges()
+
+        assert mcp_health._mcp_health_gauge is None
