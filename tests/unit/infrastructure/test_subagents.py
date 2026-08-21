@@ -932,6 +932,10 @@ class TestGuardianActivationGate:
                 "deep_agent.src.infrastructure.subagents.build_audit_middleware",
                 return_value=None,
             ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
             patch("deep_agent.src.settings.settings", mock_settings),
             patch(
                 "deep_agent.src.guardrails.tool_proxy.wrap_tools",
@@ -940,11 +944,12 @@ class TestGuardianActivationGate:
             patch(
                 "deep_agent.src.infrastructure.subagents.SubAgent",
                 return_value=MagicMock(),
-            ),
+            ) as mock_sa_cls,
         ):
             load_subagents(tools=[mock_tool])
 
         mock_wrap.assert_called_once_with([mock_tool])
+        assert mock_sa_cls.call_args.kwargs["tools"] == [mock_tool]
 
     def test_default_subagent_skips_wrapping_when_config_disabled(self):
         """enabled=False + GUARDIAN_API_BASE set → wrap_tools not called."""
@@ -982,6 +987,10 @@ class TestGuardianActivationGate:
             ),
             patch(
                 "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
                 return_value=None,
             ),
             patch("deep_agent.src.settings.settings", mock_settings),
@@ -1031,6 +1040,10 @@ class TestGuardianActivationGate:
             ),
             patch(
                 "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
                 return_value=None,
             ),
             patch("deep_agent.src.settings.settings", mock_settings),
@@ -1085,6 +1098,14 @@ class TestGuardianActivationGate:
             patch(
                 "deep_agent.src.infrastructure.subagents.CompiledSubAgent",
                 return_value=MagicMock(),
+            ) as mock_compiled_sa_cls,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
             ),
             patch("deep_agent.src.settings.settings", mock_settings),
             patch("deep_agent.src.pii.get_scrubber", return_value=None),
@@ -1099,6 +1120,7 @@ class TestGuardianActivationGate:
 
         mock_wrap.assert_called_once()
         mock_safety_cls.assert_called_once_with(mock_graph)
+        assert mock_compiled_sa_cls.call_args.kwargs["runnable"] is mock_safety
 
     def test_compiled_subagent_skips_guardian_when_config_disabled(self):
         """enabled=False + GUARDIAN_API_BASE set → no wrap_tools or SafetyAwareRunnable."""
@@ -1138,6 +1160,14 @@ class TestGuardianActivationGate:
             patch(
                 "deep_agent.src.infrastructure.subagents.CompiledSubAgent",
                 return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
             ),
             patch("deep_agent.src.settings.settings", mock_settings),
             patch("deep_agent.src.pii.get_scrubber", return_value=None),
@@ -1187,6 +1217,14 @@ class TestGuardianActivationGate:
             patch(
                 "deep_agent.src.infrastructure.subagents.CompiledSubAgent",
                 return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
             ),
             patch("deep_agent.src.settings.settings", mock_settings),
             patch("deep_agent.src.pii.get_scrubber", return_value=None),

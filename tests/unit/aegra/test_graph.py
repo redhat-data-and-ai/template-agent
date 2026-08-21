@@ -687,7 +687,7 @@ class TestGuardianActivationGate:
         with contextlib.ExitStack() as stack:
             for p in self._base_patches(mock_config, mock_settings):
                 stack.enter_context(p)
-            stack.enter_context(
+            mock_create = stack.enter_context(
                 patch("deepagents.create_deep_agent", return_value=mock_compiled)
             )
             mock_wrap = stack.enter_context(
@@ -709,6 +709,8 @@ class TestGuardianActivationGate:
         mock_wrap.assert_called_once()
         mock_safety_cls.assert_called_once_with(mock_compiled, outermost=True)
         assert result is mock_safety
+        system_prompt_used = mock_create.call_args.kwargs["system_prompt"]
+        assert "STOP ALL WORK" in system_prompt_used
 
     @pytest.mark.asyncio
     async def test_guardian_inactive_when_config_disabled(self):
@@ -728,7 +730,7 @@ class TestGuardianActivationGate:
         with contextlib.ExitStack() as stack:
             for p in self._base_patches(mock_config, mock_settings):
                 stack.enter_context(p)
-            stack.enter_context(
+            mock_create = stack.enter_context(
                 patch("deepagents.create_deep_agent", return_value=mock_compiled)
             )
             mock_wrap = stack.enter_context(
@@ -745,6 +747,8 @@ class TestGuardianActivationGate:
         mock_wrap.assert_not_called()
         mock_safety_cls.assert_not_called()
         assert result is mock_compiled
+        system_prompt_used = mock_create.call_args.kwargs["system_prompt"]
+        assert "STOP ALL WORK" not in system_prompt_used
 
     @pytest.mark.asyncio
     async def test_guardian_inactive_when_api_base_absent(self):
@@ -764,7 +768,7 @@ class TestGuardianActivationGate:
         with contextlib.ExitStack() as stack:
             for p in self._base_patches(mock_config, mock_settings):
                 stack.enter_context(p)
-            stack.enter_context(
+            mock_create = stack.enter_context(
                 patch("deepagents.create_deep_agent", return_value=mock_compiled)
             )
             mock_wrap = stack.enter_context(
@@ -781,3 +785,5 @@ class TestGuardianActivationGate:
         mock_wrap.assert_not_called()
         mock_safety_cls.assert_not_called()
         assert result is mock_compiled
+        system_prompt_used = mock_create.call_args.kwargs["system_prompt"]
+        assert "STOP ALL WORK" not in system_prompt_used
