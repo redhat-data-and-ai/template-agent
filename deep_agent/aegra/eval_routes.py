@@ -24,7 +24,6 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -779,7 +778,9 @@ async def _fire_eval_run(
     trigger endpoint can surface the failure directly to the UI.
     """
     if not _EVAL_RUNNER_URL:
-        return "EVAL_RUNNER_URL not set — eval runner is not deployed"
+        msg = "EVAL_RUNNER_URL not set — eval runner is not deployed"
+        log.warning(msg)
+        return msg
     try:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if auth_token:
@@ -895,7 +896,7 @@ async def _require_eval_files() -> None:
 
 
 @eval_mgmt_router.post("/trigger")
-async def trigger_eval(request: Request) -> Response | dict[str, Any]:
+async def trigger_eval(request: Request) -> dict[str, Any]:
     """Cache-first eval trigger. Returns cached result or sets in_progress."""
     await _require_eval_files()
 
@@ -947,11 +948,9 @@ async def trigger_eval(request: Request) -> Response | dict[str, Any]:
     # auth check does not leave a stuck in_progress record.
     missing_auth = await _check_dcr_auth(request)
     if missing_auth:
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
+        raise HTTPException(
             status_code=403,
-            content={
+            detail={
                 "message": "Connect required MCP servers before running eval",
                 "auth_required": missing_auth,
             },
@@ -964,15 +963,13 @@ async def trigger_eval(request: Request) -> Response | dict[str, Any]:
 
 
 @eval_mgmt_router.post("/force-trigger")
-async def force_trigger_eval(request: Request) -> Response | dict[str, Any]:
+async def force_trigger_eval(request: Request) -> dict[str, Any]:
     """Force a fresh eval run, bypassing cache."""
     missing_auth = await _check_dcr_auth(request)
     if missing_auth:
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
+        raise HTTPException(
             status_code=403,
-            content={
+            detail={
                 "message": "Connect required MCP servers before running eval",
                 "auth_required": missing_auth,
             },

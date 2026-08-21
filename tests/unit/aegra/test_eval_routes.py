@@ -1,4 +1,5 @@
 """Unit tests for deep_agent/aegra/eval_routes.py."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ import deep_agent.aegra.eval_routes as er
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
 
 class _AsyncCursor:
     """Async cursor mock that supports fetchone, fetchall, and `async for`."""
@@ -58,6 +60,7 @@ def _col(name):
 
 # ── _pg_row_to_dict ───────────────────────────────────────────────────────────
 
+
 class TestPgRowToDict:
     def test_basic(self):
         cursor = MagicMock()
@@ -74,6 +77,7 @@ class TestPgRowToDict:
 
 # ── _messages_from_run ────────────────────────────────────────────────────────
 
+
 class TestMessagesFromRun:
     def test_top_level_messages(self):
         state = {"messages": [{"type": "ai", "content": "hi"}]}
@@ -89,6 +93,7 @@ class TestMessagesFromRun:
 
 
 # ── _detect_interrupt ─────────────────────────────────────────────────────────
+
 
 class TestDetectInterrupt:
     def test_top_level_interrupt(self):
@@ -112,6 +117,7 @@ class TestDetectInterrupt:
 
 # ── _extract_from_messages ────────────────────────────────────────────────────
 
+
 class TestExtractFromMessages:
     def test_ai_text_response(self):
         msgs = [{"type": "ai", "content": "Hello world"}]
@@ -121,10 +127,15 @@ class TestExtractFromMessages:
         assert ctxs == []
 
     def test_ai_block_content(self):
-        msgs = [{"type": "ai", "content": [
-            {"type": "text", "text": "block response"},
-            {"type": "image", "data": "..."},
-        ]}]
+        msgs = [
+            {
+                "type": "ai",
+                "content": [
+                    {"type": "text", "text": "block response"},
+                    {"type": "image", "data": "..."},
+                ],
+            }
+        ]
         resp, _, _ = er._extract_from_messages(msgs)
         assert resp == "block response"
 
@@ -134,10 +145,16 @@ class TestExtractFromMessages:
         assert ctxs == ["tool result text"]
 
     def test_internal_tools_excluded(self):
-        msgs = [{"type": "ai", "content": "", "tool_calls": [
-            {"name": "write_todos", "args": {}},
-            {"name": "calculate_bmi", "args": {"height_cm": 175}},
-        ]}]
+        msgs = [
+            {
+                "type": "ai",
+                "content": "",
+                "tool_calls": [
+                    {"name": "write_todos", "args": {}},
+                    {"name": "calculate_bmi", "args": {"height_cm": 175}},
+                ],
+            }
+        ]
         _, tcs, _ = er._extract_from_messages(msgs)
         assert len(tcs) == 1
         assert tcs[0]["tool_name"] == "calculate_bmi"
@@ -161,33 +178,59 @@ class TestExtractFromMessages:
 
 # ── _extract_tool_calls_from_messages ─────────────────────────────────────────
 
+
 class TestExtractToolCallsFromMessages:
     def test_tool_calls_list(self):
-        msgs = [{"type": "ai", "tool_calls": [
-            {"name": "calculate_bmi", "args": {"height_cm": 175}},
-        ]}]
+        msgs = [
+            {
+                "type": "ai",
+                "tool_calls": [
+                    {"name": "calculate_bmi", "args": {"height_cm": 175}},
+                ],
+            }
+        ]
         result = er._extract_tool_calls_from_messages(msgs)
         assert len(result) == 1
         assert result[0]["tool_name"] == "calculate_bmi"
 
     def test_internal_tool_excluded(self):
-        msgs = [{"type": "ai", "tool_calls": [
-            {"name": "write_todos", "args": {}},
-        ]}]
+        msgs = [
+            {
+                "type": "ai",
+                "tool_calls": [
+                    {"name": "write_todos", "args": {}},
+                ],
+            }
+        ]
         assert er._extract_tool_calls_from_messages(msgs) == []
 
     def test_gemini_function_call_fallback(self):
-        msgs = [{"type": "ai", "tool_calls": [], "additional_kwargs": {
-            "function_call": {"name": "send_email", "arguments": '{"to": "a@b.com"}'},
-        }}]
+        msgs = [
+            {
+                "type": "ai",
+                "tool_calls": [],
+                "additional_kwargs": {
+                    "function_call": {
+                        "name": "send_email",
+                        "arguments": '{"to": "a@b.com"}',
+                    },
+                },
+            }
+        ]
         result = er._extract_tool_calls_from_messages(msgs)
         assert result[0]["tool_name"] == "send_email"
         assert result[0]["arguments"]["to"] == "a@b.com"
 
     def test_gemini_invalid_json_args_safe(self):
-        msgs = [{"type": "ai", "tool_calls": [], "additional_kwargs": {
-            "function_call": {"name": "send_email", "arguments": "not-json"},
-        }}]
+        msgs = [
+            {
+                "type": "ai",
+                "tool_calls": [],
+                "additional_kwargs": {
+                    "function_call": {"name": "send_email", "arguments": "not-json"},
+                },
+            }
+        ]
         result = er._extract_tool_calls_from_messages(msgs)
         assert result[0]["tool_name"] == "send_email"
         assert result[0]["arguments"] == {}
@@ -198,6 +241,7 @@ class TestExtractToolCallsFromMessages:
 
 
 # ── _compute_config_hash ──────────────────────────────────────────────────────
+
 
 class TestComputeConfigHash:
     def test_returns_16_char_hex(self, tmp_path):
@@ -245,23 +289,31 @@ class TestComputeConfigHash:
 
 # ── _get_config_hash ──────────────────────────────────────────────────────────
 
+
 class TestGetConfigHash:
     def test_prefers_env_var(self):
         with patch.dict("os.environ", {"AGENT_CONFIG_HASH": "abc123"}):
             assert er._get_config_hash() == "abc123"
 
     def test_computes_when_env_missing(self, tmp_path):
-        with patch.dict("os.environ", {"AGENT_CONFIG_HASH": "", "AGENT_CONFIG_DIR": str(tmp_path)}):
+        with patch.dict(
+            "os.environ", {"AGENT_CONFIG_HASH": "", "AGENT_CONFIG_DIR": str(tmp_path)}
+        ):
             result = er._get_config_hash()
         assert len(result) == 16
 
 
 # ── _require_eval_files ───────────────────────────────────────────────────────
 
+
 class TestRequireEvalCases:
     async def test_raises_when_missing(self, tmp_path):
         from fastapi import HTTPException
-        with patch("deep_agent.aegra.eval_routes._has_postgres_dataset", AsyncMock(return_value=False)):
+
+        with patch(
+            "deep_agent.aegra.eval_routes._has_postgres_dataset",
+            AsyncMock(return_value=False),
+        ):
             with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
                 with pytest.raises(HTTPException) as exc_info:
                     await er._require_eval_files()
@@ -272,17 +324,23 @@ class TestRequireEvalCases:
         evals_dir.mkdir(parents=True)
         (evals_dir / "eval_cases.yaml").write_text("cases: []")
         (evals_dir / "system.yaml").write_text("llm: {}")
-        with patch("deep_agent.aegra.eval_routes._has_postgres_dataset", AsyncMock(return_value=False)):
+        with patch(
+            "deep_agent.aegra.eval_routes._has_postgres_dataset",
+            AsyncMock(return_value=False),
+        ):
             with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
                 await er._require_eval_files()  # should not raise
 
 
 # ── _ensure_evals_table ───────────────────────────────────────────────────────
 
+
 class TestEnsureEvalsTable:
     async def test_executes_all_ddl_statements(self):
         conn, _ = _make_conn()
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             await er._ensure_evals_table()
         assert conn.execute.call_count == len(er._EVALS_DDL_STATEMENTS)
         conn.close.assert_called_once()
@@ -290,7 +348,9 @@ class TestEnsureEvalsTable:
     async def test_closes_on_ddl_failure(self):
         conn, _ = _make_conn()
         conn.execute.side_effect = [Exception("DDL failed")]
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             with pytest.raises(Exception, match="DDL failed"):
                 await er._ensure_evals_table()
         conn.close.assert_called_once()
@@ -298,7 +358,9 @@ class TestEnsureEvalsTable:
     async def test_ensure_once_idempotent(self):
         er._table_ensured = False
         conn, _ = _make_conn()
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             await er._ensure_evals_table_once()
             await er._ensure_evals_table_once()
         # Second call must not hit DB
@@ -308,6 +370,7 @@ class TestEnsureEvalsTable:
 
 # ── _atomic_set_in_progress ───────────────────────────────────────────────────
 
+
 class TestAtomicSetInProgress:
     async def test_returns_existing_when_in_progress(self):
         er._table_ensured = True
@@ -316,7 +379,9 @@ class TestAtomicSetInProgress:
         cursor = _make_cursor(rows=[existing_row], description=cols)
         conn, _ = _make_conn(cursor)
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             doc, is_new = await er._atomic_set_in_progress("abc123", force=False)
 
         assert is_new is False
@@ -329,7 +394,9 @@ class TestAtomicSetInProgress:
         cursor = _make_cursor(rows=[("in_progress",)], description=cols)
         conn, _ = _make_conn(cursor)
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             doc, is_new = await er._atomic_set_in_progress("abc123", force=True)
 
         assert doc is None
@@ -338,7 +405,13 @@ class TestAtomicSetInProgress:
 
     async def test_inserts_new_row_when_no_existing(self):
         er._table_ensured = True
-        cols = [_col("org"), _col("name"), _col("config_hash"), _col("eval_status"), _col("id")]
+        cols = [
+            _col("org"),
+            _col("name"),
+            _col("config_hash"),
+            _col("eval_status"),
+            _col("id"),
+        ]
         new_row = ("default", "agent", "abc123", "in_progress", 42)
 
         select_cursor = _make_cursor(rows=[None], description=cols)
@@ -350,7 +423,9 @@ class TestAtomicSetInProgress:
         conn.__aenter__ = AsyncMock(return_value=conn)
         conn.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             doc, is_new = await er._atomic_set_in_progress("abc123", force=False)
 
         assert is_new is True
@@ -360,9 +435,13 @@ class TestAtomicSetInProgress:
 
 # ── eval_status endpoint ──────────────────────────────────────────────────────
 
+
 class TestEvalStatus:
     async def test_returns_no_dataset_when_none_configured(self, tmp_path):
-        with patch("deep_agent.aegra.eval_routes._has_postgres_dataset", AsyncMock(return_value=False)):
+        with patch(
+            "deep_agent.aegra.eval_routes._has_postgres_dataset",
+            AsyncMock(return_value=False),
+        ):
             with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
                 result = await er.eval_status()
         assert result["eval_status"] == "no_dataset"
@@ -374,8 +453,13 @@ class TestEvalStatus:
         cursor.fetchone = AsyncMock(return_value=None)
         conn, _ = _make_conn(cursor)
 
-        with patch("deep_agent.aegra.eval_routes._has_postgres_dataset", AsyncMock(return_value=True)):
-            with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._has_postgres_dataset",
+            AsyncMock(return_value=True),
+        ):
+            with patch(
+                "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+            ):
                 result = await er.eval_status()
 
         assert result["eval_status"] == "not_started"
@@ -390,8 +474,13 @@ class TestEvalStatus:
         # first execute is UPDATE (stale cleanup), second is SELECT
         conn.execute = AsyncMock(side_effect=[cursor, cursor])
 
-        with patch("deep_agent.aegra.eval_routes._has_postgres_dataset", AsyncMock(return_value=True)):
-            with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._has_postgres_dataset",
+            AsyncMock(return_value=True),
+        ):
+            with patch(
+                "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+            ):
                 result = await er.eval_status()
 
         assert result["eval_status"] == "completed"
@@ -401,6 +490,7 @@ class TestEvalStatus:
 
 
 # ── eval_results endpoint ─────────────────────────────────────────────────────
+
 
 class TestEvalResults:
     async def test_404_when_no_results(self):
@@ -414,7 +504,9 @@ class TestEvalResults:
         mock_request = MagicMock()
         mock_request.query_params = {}
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             with pytest.raises(HTTPException) as exc:
                 await er.eval_results(mock_request)
         assert exc.value.status_code == 404
@@ -430,7 +522,9 @@ class TestEvalResults:
         mock_request = MagicMock()
         mock_request.query_params = {}
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             result = await er.eval_results(mock_request)
 
         assert result["eval_status"] == "completed"
@@ -446,7 +540,9 @@ class TestEvalResults:
         mock_request = MagicMock()
         mock_request.query_params = {"completed_at": "2025-01-01T00:00:00"}
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             result = await er.eval_results(mock_request)
 
         assert result["eval_status"] == "completed"
@@ -455,13 +551,19 @@ class TestEvalResults:
 
 # ── eval_history endpoint ─────────────────────────────────────────────────────
 
+
 class TestEvalHistory:
     async def test_returns_runs_and_total(self):
         er._table_ensured = True
         now = datetime(2025, 1, 1, tzinfo=UTC)
         cols = [
-            _col("eval_score"), _col("pass"), _col("fail"), _col("error"),
-            _col("config_hash"), _col("created_at"), _col("completed_at"),
+            _col("eval_score"),
+            _col("pass"),
+            _col("fail"),
+            _col("error"),
+            _col("config_hash"),
+            _col("created_at"),
+            _col("completed_at"),
             _col("total_count"),
         ]
         rows = [
@@ -474,7 +576,9 @@ class TestEvalHistory:
         mock_request = MagicMock()
         mock_request.query_params = {"limit": "10"}
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             result = await er.eval_history(mock_request)
 
         assert result["total"] == 3
@@ -491,7 +595,9 @@ class TestEvalHistory:
         mock_request = MagicMock()
         mock_request.query_params = {"limit": "9999"}
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             result = await er.eval_history(mock_request)
 
         # Query should have been called with limit=100, not 9999
@@ -501,6 +607,7 @@ class TestEvalHistory:
 
 
 # ── eval_trends endpoint ──────────────────────────────────────────────────────
+
 
 class TestEvalTrends:
     async def test_aggregates_by_metric(self):
@@ -514,7 +621,9 @@ class TestEvalTrends:
         mock_request = MagicMock()
         mock_request.query_params = {}
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             result = await er.eval_trends(mock_request)
 
         assert "custom:tool_eval" in result["metrics"]
@@ -532,7 +641,9 @@ class TestEvalTrends:
         mock_request = MagicMock()
         mock_request.query_params = {}
 
-        with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
             result = await er.eval_trends(mock_request)
 
         assert result["metrics"] == {}
@@ -541,6 +652,7 @@ class TestEvalTrends:
 
 
 # ── _fire_eval_run ────────────────────────────────────────────────────────────
+
 
 class TestFireEvalRun:
     async def test_noop_when_no_url(self, caplog):
@@ -559,7 +671,10 @@ class TestFireEvalRun:
         mock_client.post = AsyncMock(return_value=mock_resp)
 
         with patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"):
-            with patch("deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=mock_client):
+            with patch(
+                "deep_agent.aegra.eval_routes.httpx.AsyncClient",
+                return_value=mock_client,
+            ):
                 await er._fire_eval_run("hash123", auth_token="tok")
 
         call_kwargs = mock_client.post.call_args
@@ -576,7 +691,10 @@ class TestFireEvalRun:
         mock_client.post = AsyncMock(return_value=mock_resp)
 
         with patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"):
-            with patch("deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=mock_client):
+            with patch(
+                "deep_agent.aegra.eval_routes.httpx.AsyncClient",
+                return_value=mock_client,
+            ):
                 await er._fire_eval_run("hash123", auth_token="Bearer already")
 
         headers = mock_client.post.call_args[1]["headers"]
@@ -589,7 +707,10 @@ class TestFireEvalRun:
         mock_client.post = AsyncMock(side_effect=Exception("connection refused"))
 
         with patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"):
-            with patch("deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=mock_client):
+            with patch(
+                "deep_agent.aegra.eval_routes.httpx.AsyncClient",
+                return_value=mock_client,
+            ):
                 await er._fire_eval_run("hash123")
 
         assert "eval_runner_call_failed" in caplog.text
@@ -597,13 +718,17 @@ class TestFireEvalRun:
 
 # ── trigger_eval endpoint ─────────────────────────────────────────────────────
 
+
 class TestTriggerEval:
     async def test_400_when_no_eval_cases(self, tmp_path):
         from fastapi import HTTPException
 
         mock_request = MagicMock()
         with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
-            with patch("deep_agent.aegra.eval_routes._has_postgres_dataset", AsyncMock(return_value=False)):
+            with patch(
+                "deep_agent.aegra.eval_routes._has_postgres_dataset",
+                AsyncMock(return_value=False),
+            ):
                 with pytest.raises(HTTPException) as exc:
                     await er.trigger_eval(mock_request)
         assert exc.value.status_code == 400
@@ -623,8 +748,13 @@ class TestTriggerEval:
         mock_request = MagicMock()
         mock_request.headers = {}
 
-        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"}):
-            with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch.dict(
+            "os.environ",
+            {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"},
+        ):
+            with patch(
+                "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+            ):
                 result = await er.trigger_eval(mock_request)
 
         assert result["cached"] is True
@@ -652,21 +782,34 @@ class TestTriggerEval:
         conn = AsyncMock()
         conn.__aenter__ = AsyncMock(return_value=conn)
         conn.__aexit__ = AsyncMock(return_value=False)
-        conn.execute = AsyncMock(side_effect=[
-            cache_cursor,           # SELECT completed cached
-            select_for_existing,    # SELECT in_progress check
-            insert_cursor,          # INSERT new row
-        ])
+        conn.execute = AsyncMock(
+            side_effect=[
+                cache_cursor,  # SELECT completed cached
+                select_for_existing,  # SELECT in_progress check
+                insert_cursor,  # INSERT new row
+            ]
+        )
 
         mock_request = MagicMock()
         mock_request.headers = {"authorization": "Bearer tok"}
 
-        with patch("deep_agent.aegra.eval_routes._require_eval_files", new_callable=AsyncMock):
-            with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"}):
-                with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
-                    with patch("deep_agent.aegra.eval_routes._fire_eval_run", new_callable=AsyncMock):
-                        with patch("deep_agent.aegra.eval_routes.asyncio.create_task"):
-                            result = await er.trigger_eval(mock_request)
+        with patch(
+            "deep_agent.aegra.eval_routes._require_eval_files", new_callable=AsyncMock
+        ):
+            with patch.dict(
+                "os.environ",
+                {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"},
+            ):
+                with patch(
+                    "deep_agent.aegra.eval_routes._pg_conn",
+                    AsyncMock(return_value=conn),
+                ):
+                    with patch(
+                        "deep_agent.aegra.eval_routes._fire_eval_run",
+                        new_callable=AsyncMock,
+                        return_value=None,
+                    ):
+                        result = await er.trigger_eval(mock_request)
 
         assert result["eval_status"] == "in_progress"
         assert result["queued"] is True
@@ -695,8 +838,13 @@ class TestTriggerEval:
         mock_request = MagicMock()
         mock_request.headers = {}
 
-        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"}):
-            with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
+        with patch.dict(
+            "os.environ",
+            {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"},
+        ):
+            with patch(
+                "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+            ):
                 result = await er.trigger_eval(mock_request)
 
         assert result["eval_status"] == "in_progress"
@@ -706,13 +854,17 @@ class TestTriggerEval:
 
 # ── force_trigger_eval endpoint ───────────────────────────────────────────────
 
+
 class TestForceTriggerEval:
     async def test_400_when_no_eval_cases(self, tmp_path):
         from fastapi import HTTPException
 
         mock_request = MagicMock()
         with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
-            with patch("deep_agent.aegra.eval_routes._has_postgres_dataset", AsyncMock(return_value=False)):
+            with patch(
+                "deep_agent.aegra.eval_routes._has_postgres_dataset",
+                AsyncMock(return_value=False),
+            ):
                 with pytest.raises(HTTPException) as exc:
                     await er.force_trigger_eval(mock_request)
         assert exc.value.status_code == 400
@@ -739,10 +891,22 @@ class TestForceTriggerEval:
         mock_request = MagicMock()
         mock_request.headers = {}
 
-        with patch("deep_agent.aegra.eval_routes._require_eval_files", new_callable=AsyncMock):
-            with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"}):
-                with patch("deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)):
-                    with patch("deep_agent.aegra.eval_routes.asyncio.create_task"):
+        with patch(
+            "deep_agent.aegra.eval_routes._require_eval_files", new_callable=AsyncMock
+        ):
+            with patch.dict(
+                "os.environ",
+                {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"},
+            ):
+                with patch(
+                    "deep_agent.aegra.eval_routes._pg_conn",
+                    AsyncMock(return_value=conn),
+                ):
+                    with patch(
+                        "deep_agent.aegra.eval_routes._fire_eval_run",
+                        new_callable=AsyncMock,
+                        return_value=None,
+                    ):
                         result = await er.force_trigger_eval(mock_request)
 
         assert result["eval_status"] == "in_progress"
@@ -751,6 +915,7 @@ class TestForceTriggerEval:
 
 
 # ── _pg_conn ──────────────────────────────────────────────────────────────────
+
 
 class TestPgConn:
     async def test_returns_connection(self):
@@ -763,13 +928,17 @@ class TestPgConn:
             mock_psycopg.AsyncConnection.connect = AsyncMock(return_value=mock_conn)
             with patch("deep_agent.src.settings.settings", mock_settings):
                 # _pg_conn imports psycopg lazily; patch at module level
-                with patch("deep_agent.aegra.eval_routes._pg_conn", new=AsyncMock(return_value=mock_conn)):
+                with patch(
+                    "deep_agent.aegra.eval_routes._pg_conn",
+                    new=AsyncMock(return_value=mock_conn),
+                ):
                     conn = await er._pg_conn()
         # Just confirm the function is callable and returns something
         assert conn is not None
 
 
 # ── get_thread_tool_calls endpoint ────────────────────────────────────────────
+
 
 class TestGetThreadToolCalls:
     async def test_returns_tool_calls(self):
@@ -793,14 +962,20 @@ class TestGetThreadToolCalls:
 
 # ── _collect_subagent_tool_calls_via_remote_graph ─────────────────────────────
 
+
 class TestCollectSubagentViaRemoteGraph:
     async def test_returns_tool_calls_from_subgraph(self):
         mock_snapshot = MagicMock()
         mock_task = MagicMock()
         mock_substate = MagicMock()
-        mock_substate.values = {"messages": [
-            {"type": "ai", "tool_calls": [{"name": "calculate_bmi", "args": {"h": 175}}]},
-        ]}
+        mock_substate.values = {
+            "messages": [
+                {
+                    "type": "ai",
+                    "tool_calls": [{"name": "calculate_bmi", "args": {"h": 175}}],
+                },
+            ]
+        }
         mock_substate.tasks = []
         mock_task.state = mock_substate
         mock_snapshot.tasks = [mock_task]
@@ -814,17 +989,25 @@ class TestCollectSubagentViaRemoteGraph:
         assert any(tc["tool_name"] == "calculate_bmi" for tc in result)
 
     async def test_falls_back_to_postgres_on_error(self):
-        with patch("langgraph.pregel.remote.RemoteGraph", side_effect=Exception("SDK unavailable")):
+        with patch(
+            "langgraph.pregel.remote.RemoteGraph",
+            side_effect=Exception("SDK unavailable"),
+        ):
             with patch(
                 "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_from_postgres",
-                new=AsyncMock(return_value=[{"tool_name": "fallback_tool", "arguments": {}}]),
+                new=AsyncMock(
+                    return_value=[{"tool_name": "fallback_tool", "arguments": {}}]
+                ),
             ):
-                result = await er._collect_subagent_tool_calls_via_remote_graph("thread-y")
+                result = await er._collect_subagent_tool_calls_via_remote_graph(
+                    "thread-y"
+                )
 
         assert result[0]["tool_name"] == "fallback_tool"
 
 
 # ── eval_run endpoint ─────────────────────────────────────────────────────────
+
 
 def _make_http_client(run_state: dict, interrupt_state: dict | None = None):
     """Build a mock httpx.AsyncClient for eval_run tests."""
@@ -852,7 +1035,9 @@ class TestEvalRun:
         }
         client = _make_http_client(run_state)
 
-        with patch("deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client):
+        with patch(
+            "deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client
+        ):
             with patch(
                 "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_via_remote_graph",
                 new=AsyncMock(return_value=[]),
@@ -870,7 +1055,9 @@ class TestEvalRun:
                 {
                     "type": "ai",
                     "content": "Calculating...",
-                    "tool_calls": [{"name": "calculate_bmi", "args": {"height_cm": 175}}],
+                    "tool_calls": [
+                        {"name": "calculate_bmi", "args": {"height_cm": 175}}
+                    ],
                 },
                 {"type": "tool", "content": "22.9 Normal"},
                 {"type": "ai", "content": "Your BMI is 22.9"},
@@ -878,7 +1065,9 @@ class TestEvalRun:
         }
         client = _make_http_client(run_state)
 
-        with patch("deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client):
+        with patch(
+            "deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client
+        ):
             with patch(
                 "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_via_remote_graph",
                 new=AsyncMock(return_value=[]),
@@ -915,7 +1104,9 @@ class TestEvalRun:
         client.__aexit__ = AsyncMock(return_value=False)
         client.post = AsyncMock(side_effect=[thread_resp, pre_resp, post_resp])
 
-        with patch("deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client):
+        with patch(
+            "deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client
+        ):
             with patch(
                 "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_via_remote_graph",
                 new=AsyncMock(return_value=[]),
@@ -932,7 +1123,9 @@ class TestEvalRun:
         run_state = {"messages": [{"type": "ai", "content": "ok", "tool_calls": []}]}
         client = _make_http_client(run_state)
 
-        with patch("deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client):
+        with patch(
+            "deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client
+        ):
             with patch(
                 "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_via_remote_graph",
                 new=AsyncMock(return_value=[]),
@@ -947,7 +1140,9 @@ class TestEvalRun:
         run_state = {"messages": [{"type": "ai", "content": "ok", "tool_calls": []}]}
         client = _make_http_client(run_state)
 
-        with patch("deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client):
+        with patch(
+            "deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client
+        ):
             with patch(
                 "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_via_remote_graph",
                 new=AsyncMock(return_value=[]),
