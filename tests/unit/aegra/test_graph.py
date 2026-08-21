@@ -615,7 +615,9 @@ class TestGuardianActivationGate:
             "tools": [],
         }
         mock_config.resolve_tools.return_value = []
-        mock_config.resolve_agent_middleware.return_value = MagicMock(skills_enabled=True)
+        mock_config.resolve_agent_middleware.return_value = MagicMock(
+            skills_enabled=True
+        )
         guardrail_cfg = MagicMock()
         guardrail_cfg.enabled = guardrails_enabled
         mock_config.get_guardrails_config.return_value = guardrail_cfg
@@ -685,12 +687,19 @@ class TestGuardianActivationGate:
         with contextlib.ExitStack() as stack:
             for p in self._base_patches(mock_config, mock_settings):
                 stack.enter_context(p)
-            stack.enter_context(patch("deepagents.create_deep_agent", return_value=mock_compiled))
+            stack.enter_context(
+                patch("deepagents.create_deep_agent", return_value=mock_compiled)
+            )
             mock_wrap = stack.enter_context(
-                patch("deep_agent.src.guardrails.tool_proxy.wrap_tools", return_value=[])
+                patch(
+                    "deep_agent.src.guardrails.tool_proxy.wrap_tools", return_value=[]
+                )
             )
             mock_safety_cls = stack.enter_context(
-                patch("deep_agent.aegra.safety.SafetyAwareRunnable", return_value=mock_safety)
+                patch(
+                    "deep_agent.aegra.safety.SafetyAwareRunnable",
+                    return_value=mock_safety,
+                )
             )
 
             from deep_agent.aegra.graph import agent
@@ -719,7 +728,9 @@ class TestGuardianActivationGate:
         with contextlib.ExitStack() as stack:
             for p in self._base_patches(mock_config, mock_settings):
                 stack.enter_context(p)
-            stack.enter_context(patch("deepagents.create_deep_agent", return_value=mock_compiled))
+            stack.enter_context(
+                patch("deepagents.create_deep_agent", return_value=mock_compiled)
+            )
             mock_wrap = stack.enter_context(
                 patch("deep_agent.src.guardrails.tool_proxy.wrap_tools")
             )
@@ -753,7 +764,9 @@ class TestGuardianActivationGate:
         with contextlib.ExitStack() as stack:
             for p in self._base_patches(mock_config, mock_settings):
                 stack.enter_context(p)
-            stack.enter_context(patch("deepagents.create_deep_agent", return_value=mock_compiled))
+            stack.enter_context(
+                patch("deepagents.create_deep_agent", return_value=mock_compiled)
+            )
             mock_wrap = stack.enter_context(
                 patch("deep_agent.src.guardrails.tool_proxy.wrap_tools")
             )
