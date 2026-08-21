@@ -32,8 +32,8 @@ What this does:
    | `POSTGRES_DB` | `template_agent` |
    | `POSTGRES_USER` | `postgres` |
    | `POSTGRES_PASSWORD` | `postgres` |
-   | `AI_PLATFORM_AGENT_ORG` | `demo` |
-   | `AI_PLATFORM_AGENT_NAME` | `template-agent` |
+   | `DEPLOYED_AGENT_ORG` | `demo` |
+   | `DEPLOYED_AGENT_NAME` | `template-agent` |
    | `AGENT_CONFIG_DIR` | `../config/agent` |
 
 Any variables already set in `../.env` (the root `.env`) are sourced first, so

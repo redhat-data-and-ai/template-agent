@@ -38,8 +38,8 @@ local: venv ## Run via venv — fast local dev, requires make local in parent di
 	@echo "Press Ctrl+C to stop"
 	@trap 'lsof -ti :8099 | xargs kill -INT 2>/dev/null || true; sleep 1; lsof -ti :8099 | xargs kill -9 2>/dev/null || true; exit 130' INT TERM; \
 	set -a; [ -f ../.env ] && . ../.env 2>/dev/null; set +a; \
-	AI_PLATFORM_AGENT_ORG=demo \
-	AI_PLATFORM_AGENT_NAME=template-agent \
+	DEPLOYED_AGENT_ORG=demo \
+	DEPLOYED_AGENT_NAME=template-agent \
 	POSTGRES_HOST=localhost \
 	POSTGRES_PORT=5432 \
 	POSTGRES_DB=template_agent \

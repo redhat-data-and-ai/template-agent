@@ -22,5 +22,8 @@ data:
   # Observability
   LANGFUSE_TRACING_ENVIRONMENT: "production"
 
+  # UI origin — used as postMessage target for MCP OAuth callbacks
+  UI_ORIGIN: ""
+
   # Redis
   REDIS_URL: "redis://redis:6379/0"

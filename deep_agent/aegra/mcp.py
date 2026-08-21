@@ -210,21 +210,23 @@ async def refresh_access_token(
 
     logger.info("Refreshing SSO access token (%.0fs remaining)", remaining)
     try:
-        async with httpx.AsyncClient() as client:
-            resp: httpx.Response = await client.post(
-                token_url,
-                data={
-                    "grant_type": "refresh_token",
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "refresh_token": refresh_token,
-                },
-            )
-            resp.raise_for_status()
-            new_token: str = resp.json()["access_token"]
-            new_remaining: float = _jwt_exp(new_token) - time.time()
-            logger.info("SSO token refreshed (%.0fs lifetime)", new_remaining)
-            return new_token
+        from deep_agent.aegra.auth import EVAL_TOKEN_REFRESH_ENABLED, _oidc_refresh
+        new_token, new_rt = await _oidc_refresh(refresh_token)
+        new_remaining: float = _jwt_exp(new_token) - time.time()
+        logger.info("SSO token refreshed (%.0fs lifetime)", new_remaining)
+
+        _current_access_token.set(new_token)
+        if new_rt != refresh_token:
+            _current_refresh_token.set(new_rt)
+            if EVAL_TOKEN_REFRESH_ENABLED:
+                sub = _current_user_id.get()
+                if sub:
+                    from deep_agent.aegra.mcp_crypto import encrypt_secret
+                    from deep_agent.aegra.redis import cache_get, cache_set
+                    if cache_get(f"eval:active:{sub}"):
+                        cache_set(f"eval:refresh:{sub}", encrypt_secret(new_rt), 3600)
+
+        return new_token
     except Exception:
         logger.error("Token refresh failed — using original token", exc_info=True)
         return access_token

@@ -33,9 +33,9 @@ spec:
                   key: AGENT_CONFIG_DIR
             - name: AGENT_HOST
               value: "http://agent:5002"
-            - name: AI_PLATFORM_AGENT_ORG
+            - name: DEPLOYED_AGENT_ORG
               value: "default"
-            - name: AI_PLATFORM_AGENT_NAME
+            - name: DEPLOYED_AGENT_NAME
               value: "template-agent"
             - name: POSTGRES_HOST
               valueFrom:

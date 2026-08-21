@@ -26,8 +26,8 @@ POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "")
 if not POSTGRES_PASSWORD:
     log.warning("POSTGRES_PASSWORD not set — connection may fail")
 
-AGENT_ORG = os.environ.get("AI_PLATFORM_AGENT_ORG", "default")
-AGENT_NAME = os.environ.get("AI_PLATFORM_AGENT_NAME", "agent")
+AGENT_ORG = os.environ.get("DEPLOYED_AGENT_ORG", "default")
+AGENT_NAME = os.environ.get("DEPLOYED_AGENT_NAME", "agent")
 
 
 _HASH_EXTENSIONS = {".md", ".yaml", ".json"}
@@ -269,6 +269,14 @@ def load_results_since(run_started_at: datetime) -> dict[str, Any]:
     Finds all run_ids produced after run_started_at (parallel tag runs each
     write their own run_id), fetches every row for those runs, and returns a
     dict with 'turns', 'summary', and 'ls_run_ids'. Returns {} on any failure.
+
+    Each agent deployment has its own Postgres DB so results from other agents
+    cannot appear here. The agentpod's _atomic_set_in_progress prevents most
+    concurrent runs, but with KEDA max>1 eval-runner pods two near-simultaneous
+    triggers could slip through the SELECT+INSERT gap and mix their results.
+    Accepted risk — concurrent triggers are rare and KEDA is typically max=1 in
+    production. If this becomes a problem, add org/name columns to
+    evaluation_results and backfill after each gather (see git history).
     """
     try:
         import psycopg2.extras

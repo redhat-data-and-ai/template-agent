@@ -16,6 +16,15 @@ spec:
             limits:
               memory: "2Gi"
               cpu: "2000m"
+          env:
+            - name: EVAL_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: EVAL_INTERNAL_TOKEN
+                  optional: true
+            - name: EVAL_TOKEN_REFRESH_ENABLED
+              value: "true"
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false

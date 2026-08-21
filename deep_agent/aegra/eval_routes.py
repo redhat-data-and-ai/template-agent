@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -23,11 +24,134 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-_AGENT_ORG = os.environ.get("AI_PLATFORM_AGENT_ORG", "default")
-_AGENT_NAME = os.environ.get("AI_PLATFORM_AGENT_NAME", "agent")
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _require_bearer(
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> str:
+    """Reject requests that carry no Bearer token.
+
+    Both /v1/eval/run and /v1/eval/thread-tool-calls/{thread_id} invoke the
+    production agent or read checkpoint blobs that may contain user PII.
+    Callers (run_eval.py subprocess) always forward the session token; any
+    request without one is unauthenticated and must be rejected.
+    """
+    if creds is None or not creds.credentials:
+        raise HTTPException(status_code=401, detail="Bearer token required")
+    return creds.credentials
+
+_AGENT_ORG = os.environ.get("DEPLOYED_AGENT_ORG", "default")
+_AGENT_NAME = os.environ.get("DEPLOYED_AGENT_NAME", "agent")
+
+
+async def _check_dcr_auth(request: Request) -> list[dict]:
+    """Pre-flight check: return list of MCP servers that need authentication.
+
+    Checks servers where enabled=true, auth=true, auth_mode in ("dcr", "oauth").
+    For each:
+      A) checks Redis token exists
+      B) does a lightweight ping to validate the token is still accepted
+
+    Returns list of dicts with {name, connect_url} for servers needing auth.
+    Empty list means all required auth is in place.
+    """
+    from deep_agent.src.agent.config import agent_config
+    from deep_agent.aegra.mcp_token_store import McpTokenStore
+    from deep_agent.src.settings import settings as _settings
+
+    user_id: str = _extract_sub(request) or ""
+    log.info("dcr_auth_check: user_id=%r", user_id)
+    if not user_id:
+        return []  # no user identity — can't check per-user tokens
+
+    mcp_servers: dict = agent_config.get_mcp_servers()
+    # Must match settings.agent_deployment_id used by mcp_oauth_handlers when storing tokens
+    agent_name: str = _settings.agent_deployment_id
+    log.info("dcr_auth_check: agent_name=%r", agent_name)
+
+    dcr_servers = {
+        name: cfg
+        for name, cfg in mcp_servers.items()
+        if cfg.get("enabled", True)
+        and cfg.get("auth", False)
+        and cfg.get("auth_mode", "") in ("dcr", "oauth")
+    }
+    log.info("dcr_auth_check: dcr_servers=%s", list(dcr_servers.keys()))
+
+    if not dcr_servers:
+        return []
+
+    store = McpTokenStore(_settings.database_uri)
+    missing: list[dict] = []
+
+    for name, cfg in dcr_servers.items():
+        token = await store.get_token(agent_name, user_id, name)
+        needs_auth = token is None
+        log.info("dcr_auth_check: mcp=%r token_found=%s", name, token is not None)
+
+        # B) Token expiry check — re-auth if expired OR expiring within the
+        # eval minimum TTL window so the token doesn't expire mid-run.
+        if not needs_auth and token:
+            from datetime import timedelta, timezone
+            min_ttl = timedelta(minutes=_EVAL_TOKEN_MIN_TTL_MINUTES)
+            if token.expires_at and token.expires_at < datetime.now(timezone.utc) + min_ttl:
+                log.info(
+                    "dcr_auth_check: mcp=%r token expires at %s (within %d-min buffer)",
+                    name, token.expires_at, _EVAL_TOKEN_MIN_TTL_MINUTES,
+                )
+                needs_auth = True
+
+        if needs_auth:
+            missing.append({
+                "name": name,
+                "connect_url": f"/mcp/{name}/connect",
+            })
+
+    log.info("dcr_auth_check: missing=%s", [m["name"] for m in missing])
+    return missing
+
+# Minimum token TTL required before starting an eval. If the token expires
+# sooner than this, the user is asked to re-authenticate upfront rather than
+# having the MCP call fail mid-run.
+_EVAL_TOKEN_MIN_TTL_MINUTES: int = int(
+    os.environ.get("EVAL_TOKEN_MIN_TTL_MINUTES", "30")
+)
+
+# ── Eval token refresh helpers (feature-flagged) ──────────────────────────────
+_EVAL_TOKEN_REFRESH_ENABLED: bool = (
+    os.environ.get("EVAL_TOKEN_REFRESH_ENABLED", "false").lower() == "true"
+)
+_EVAL_INTERNAL_TOKEN: str = os.environ.get("EVAL_INTERNAL_TOKEN", "")
+_EVAL_KEY_TTL = 3600  # 60-min safety-net; explicit cleanup via /evals/internal/cleanup
+
+
+def _extract_sub(request: Request) -> str | None:
+    """Extract sub from the Bearer JWT in the request without signature verification."""
+    from deep_agent.aegra.auth import _decode_sub_unverified
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    return _decode_sub_unverified(auth[7:])
+
+
+def _write_eval_redis(sub: str, refresh_token: str, org: str, name: str) -> None:
+    """Write the three eval Redis keys at trigger time. Best-effort."""
+    if not _EVAL_TOKEN_REFRESH_ENABLED or not sub:
+        return
+    try:
+        from deep_agent.aegra.mcp_crypto import encrypt_secret
+        from deep_agent.aegra.redis import cache_set
+        cache_set(f"eval:active:{sub}", "1", _EVAL_KEY_TTL)
+        if refresh_token:
+            cache_set(f"eval:refresh:{sub}", encrypt_secret(refresh_token), _EVAL_KEY_TTL)
+        cache_set(f"eval:trigger_sub:{org}:{name}", sub, _EVAL_KEY_TTL)
+    except Exception:
+        pass  # never block the eval trigger
 _EVAL_RUNNER_URL = os.environ.get("EVAL_RUNNER_URL", "")
 
 
@@ -74,7 +198,7 @@ _INTERNAL_TOOLS = {
     "execute_command",  # shell
     "compact_conversation",  # memory management
 }
-MAX_HITL_APPROVALS = 10
+MAX_HITL_APPROVALS = 50
 AGENT_BASE_URL = "http://localhost:5002"
 ASSISTANT_ID = "agent"
 
@@ -324,7 +448,10 @@ def _detect_interrupt(run_state: dict) -> bool:
 
 
 @router.get("/thread-tool-calls/{thread_id}")
-async def get_thread_tool_calls(thread_id: str) -> dict[str, Any]:
+async def get_thread_tool_calls(
+    thread_id: str,
+    _token: str = Depends(_require_bearer),
+) -> dict[str, Any]:
     """Return all subagent tool calls for a completed thread.
 
     Reads directly from Postgres checkpoint_blobs across all subagent namespaces
@@ -335,7 +462,10 @@ async def get_thread_tool_calls(thread_id: str) -> dict[str, Any]:
 
 
 @router.post("/run", response_model=EvalRunResponse)
-async def eval_run(body: EvalRunRequest) -> EvalRunResponse:
+async def eval_run(
+    body: EvalRunRequest,
+    _token: str = Depends(_require_bearer),
+) -> EvalRunResponse:
     """Run one conversation turn for eval purposes.
 
     Returns ALL tool calls from the full state including MCP tools called
@@ -462,8 +592,8 @@ async def _pg_conn() -> Any:
 
 async def _ensure_evals_table() -> None:
     conn = await _pg_conn()
-    await conn.set_autocommit(True)
     try:
+        await conn.set_autocommit(True)
         for stmt in _EVALS_DDL_STATEMENTS:
             try:
                 await conn.execute(stmt)
@@ -538,6 +668,7 @@ async def _atomic_set_in_progress(
     now = datetime.now(UTC)
 
     async with await _pg_conn() as conn:
+        # Check for an existing in_progress run first (cheap read before locking).
         row = await conn.execute(
             "SELECT * FROM evals WHERE org=%s AND name=%s AND config_hash=%s "
             "AND eval_status='in_progress' ORDER BY created_at DESC LIMIT 1",
@@ -549,15 +680,35 @@ async def _atomic_set_in_progress(
                 return None, False
             return _pg_row_to_dict(existing, row), False
 
+        # Atomic insert — only succeeds if no in_progress row exists at insert
+        # time, closing the SELECT+INSERT TOCTOU window when two pods race.
         cur = await conn.execute(
             """INSERT INTO evals
                (org, name, config_hash, eval_status, eval_score, pass, fail, error,
                 results_detail, force_reeval, created_at, updated_at, completed_at)
-               VALUES (%s,%s,%s,'in_progress',NULL,0,0,0,NULL,%s,%s,%s,NULL)
+               SELECT %(org)s,%(name)s,%(config_hash)s,'in_progress',
+                      NULL,0,0,0,NULL,%(force)s,%(now)s,%(now)s,NULL
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM evals
+                   WHERE org=%(org)s AND name=%(name)s AND config_hash=%(config_hash)s
+                   AND eval_status='in_progress'
+               )
                RETURNING *""",
-            (_AGENT_ORG, _AGENT_NAME, config_hash, force, now, now),
+            {"org": _AGENT_ORG, "name": _AGENT_NAME, "config_hash": config_hash,
+             "force": force, "now": now},
         )
         new_row = await cur.fetchone()
+        if new_row is None:
+            # Another pod inserted in_progress between our SELECT and this INSERT
+            row2 = await conn.execute(
+                "SELECT * FROM evals WHERE org=%s AND name=%s AND config_hash=%s "
+                "AND eval_status='in_progress' ORDER BY created_at DESC LIMIT 1",
+                (_AGENT_ORG, _AGENT_NAME, config_hash),
+            )
+            existing2 = await row2.fetchone()
+            if existing2 is not None:
+                return _pg_row_to_dict(existing2, row2), False
+            return None, False
         doc = _pg_row_to_dict(new_row, cur)
         doc.pop("id", None)
         return doc, True
@@ -618,6 +769,8 @@ async def _fire_eval_run(
                 if auth_token.startswith("Bearer ")
                 else f"Bearer {auth_token}"
             )
+        if _EVAL_INTERNAL_TOKEN:
+            headers["X-Internal-Token"] = _EVAL_INTERNAL_TOKEN
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 f"{_EVAL_RUNNER_URL}/evals/run",
@@ -629,9 +782,15 @@ async def _fire_eval_run(
                 headers=headers,
             )
             if resp.status_code >= 400:
-                msg = f"Eval runner returned {resp.status_code}: {resp.text[:200]}"
-                log.warning(msg)
-                await _mark_eval_error(config_hash, msg, row_created_at)
+                log.warning(
+                    "eval_runner_error status=%d — check eval-runner logs for details",
+                    resp.status_code,
+                )
+                await _mark_eval_error(
+                    config_hash,
+                    f"Eval runner returned {resp.status_code}",
+                    row_created_at,
+                )
             else:
                 log.info("eval_runner_called status=%s", resp.status_code)
     except Exception as exc:
@@ -771,6 +930,13 @@ async def trigger_eval(request: Request) -> dict[str, Any]:
             doc.pop("id", None)
             return {"cached": True, **doc}
 
+    # Cache miss — check DCR auth before inserting in_progress row so a failed
+    # auth check does not leave a stuck in_progress record.
+    missing_auth = await _check_dcr_auth(request)
+    if missing_auth:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=403, content={"message": "Connect required MCP servers before running eval", "auth_required": missing_auth})
+
     record, is_new = await _atomic_set_in_progress(config_hash, force=False)
     if not is_new:
         return {"eval_status": "in_progress", "message": "evaluation already running"}
@@ -780,6 +946,11 @@ async def trigger_eval(request: Request) -> dict[str, Any]:
 @eval_mgmt_router.post("/force-trigger")
 async def force_trigger_eval(request: Request) -> dict[str, Any]:
     """Force a fresh eval run, bypassing cache."""
+    missing_auth = await _check_dcr_auth(request)
+    if missing_auth:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=403, content={"message": "Connect required MCP servers before running eval", "auth_required": missing_auth})
+
     await _require_eval_files()
 
     config_hash = _get_config_hash()
@@ -798,6 +969,8 @@ async def _queue_eval_run(
     forced: bool = False,
 ) -> dict[str, Any]:
     auth_token = request.headers.get("authorization", "")
+    sub = _extract_sub(request)
+    _write_eval_redis(sub, request.headers.get("x-refresh-token", ""), _AGENT_ORG, _AGENT_NAME)
     row_ts = record.get("created_at") if record else None
     asyncio.create_task(_fire_eval_run(config_hash, auth_token, row_ts))
     result: dict[str, Any] = {
@@ -812,7 +985,7 @@ async def _queue_eval_run(
     return result
 
 
-_EVAL_STALE_TIMEOUT_MINUTES = int(os.environ.get("EVAL_STALE_TIMEOUT_MINUTES", "300"))
+_EVAL_STALE_TIMEOUT_MINUTES = int(os.environ.get("EVAL_STALE_TIMEOUT_MINUTES", "30"))
 
 
 @eval_mgmt_router.get("/status")
@@ -822,7 +995,7 @@ async def eval_status() -> dict[str, Any]:
     Returns {"eval_status": "no_dataset"} immediately when no dataset is
     configured, without creating or querying the evals table.
 
-    Auto-expires in_progress rows older than EVAL_STALE_TIMEOUT_MINUTES (default 30)
+    Auto-expires in_progress rows older than EVAL_STALE_TIMEOUT_MINUTES (default 10)
     so a crashed eval run does not leave the UI stuck in Evaluating forever.
     """
     has_pg = await _has_postgres_dataset()
@@ -922,7 +1095,10 @@ async def eval_results(request: Request) -> dict[str, Any]:
 @eval_mgmt_router.get("/history")
 async def eval_history(request: Request) -> dict[str, Any]:
     """Return historical completed eval runs (scalars only, no results_detail)."""
-    limit = min(int(request.query_params.get("limit", "20")), 100)
+    try:
+        limit = min(int(request.query_params.get("limit", "20")), 100)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="'limit' must be a positive integer")
     await _ensure_evals_table_once()
 
     try:
@@ -968,7 +1144,10 @@ async def eval_history(request: Request) -> dict[str, Any]:
 @eval_mgmt_router.get("/trends")
 async def eval_trends(request: Request) -> dict[str, Any]:
     """Return per-metric score trends across historical eval runs."""
-    limit = min(int(request.query_params.get("limit", "20")), 100)
+    try:
+        limit = min(int(request.query_params.get("limit", "20")), 100)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="'limit' must be a positive integer")
     await _ensure_evals_table_once()
 
     try:
@@ -1144,3 +1323,43 @@ async def get_dataset() -> dict[str, Any]:
             else str(created_at)
         ),
     }
+
+
+@eval_mgmt_router.post("/internal/cleanup")
+async def cleanup_eval_redis(request: Request) -> dict[str, Any]:
+    """Delete eval Redis keys when an eval run completes.
+
+    Called by the eval pod via POST with X-Internal-Token header.
+    Returns 200 always — best-effort, never blocks the eval pod.
+    Security: constant-time token comparison prevents timing attacks.
+    """
+    if not _EVAL_TOKEN_REFRESH_ENABLED:
+        return {"status": "disabled"}
+
+    provided = request.headers.get("x-internal-token", "")
+    if not _EVAL_INTERNAL_TOKEN or not hmac.compare_digest(
+        provided.encode(), _EVAL_INTERNAL_TOKEN.encode()
+    ):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="invalid internal token")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    org = body.get("org", _AGENT_ORG)
+    name = body.get("name", _AGENT_NAME)
+
+    try:
+        from deep_agent.aegra.redis import cache_delete, cache_get
+        sub = cache_get(f"eval:trigger_sub:{org}:{name}")
+        cache_delete(f"eval:trigger_sub:{org}:{name}")
+        if sub:
+            cache_delete(f"eval:active:{sub}")
+            cache_delete(f"eval:access:{sub}")
+        log.info("eval_redis_cleanup org=%s name=%s keys_deleted=%d", org, name, 3 if sub else 1)
+    except Exception as exc:
+        log.warning("eval_redis_cleanup failed (TTL will handle): %s", exc)
+
+    return {"status": "ok"}

@@ -328,7 +328,7 @@ def _collect_from_events(
                 # Extract just the text content so ragas gets clean output, not metadata.
                 if name and name not in _INTERNAL_TOOLS:
                     output = data.get("data", {}).get("output", "")
-                    if output:
+                    if output is not None and output != "":
                         if isinstance(output, dict):
                             # LangChain ToolMessage: extract text from content list
                             content = output.get("content", "")
@@ -351,6 +351,8 @@ def _collect_from_events(
                             )
                         elif isinstance(output, str):
                             text = output
+                        elif isinstance(output, (int, float)):
+                            text = str(output)
                         else:
                             text = ""  # don't stringify unknown output types
                         if text.strip():
@@ -667,7 +669,9 @@ def _populate_group(  # pragma: no cover
             scored_response = result["response"] or _AGENT_ERROR_RESPONSE
             hint = "post-approval" if result.get("was_interrupted") else "direct"
 
-        turn["response"] = scored_response
+        # Normalize whitespace — collapse \n and extra spaces so the LLM judge
+        # scores on content correctness, not on line-break formatting differences.
+        turn["response"] = " ".join(scored_response.split())
 
         # Merge orchestrator + subagent tool calls (subagent fetch only for tool_use evals)
         all_tool_calls = list(result["tool_calls_made"])

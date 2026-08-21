@@ -17,6 +17,8 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import functools
+import hmac
 import logging
 import os
 import subprocess
@@ -42,6 +44,24 @@ log = logging.getLogger(__name__)
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 AGENT_URL = os.environ.get("AGENT_HOST", "http://localhost:5002")
+_EVAL_TOKEN_REFRESH_ENABLED = os.environ.get("EVAL_TOKEN_REFRESH_ENABLED", "false").lower() == "true"
+_EVAL_INTERNAL_TOKEN = os.environ.get("EVAL_INTERNAL_TOKEN", "")
+
+
+def _call_cleanup_endpoint(org: str, name: str) -> None:
+    """Notify the agent pod to delete eval Redis keys. Best-effort — never raises."""
+    if not _EVAL_TOKEN_REFRESH_ENABLED or not _EVAL_INTERNAL_TOKEN:
+        return
+    try:
+        import httpx as _httpx
+        _httpx.post(
+            f"{AGENT_URL.rstrip('/')}/evals/internal/cleanup",
+            json={"org": org, "name": name},
+            headers={"x-internal-token": _EVAL_INTERNAL_TOKEN},
+            timeout=5,
+        )
+    except Exception:
+        pass  # 60-min TTL is the fallback
 
 
 # Derive eval file paths from AGENT_CONFIG_DIR so no separate env vars needed.
@@ -84,8 +104,8 @@ EVAL_OUTPUT_DIR = Path(
     os.environ.get("EVAL_OUTPUT_DIR", tempfile.gettempdir() + "/eval_output")
 )
 
-AGENT_ORG = os.environ.get("AI_PLATFORM_AGENT_ORG", "default")
-AGENT_NAME = os.environ.get("AI_PLATFORM_AGENT_NAME", "agent")
+AGENT_ORG = os.environ.get("DEPLOYED_AGENT_ORG", "default")
+AGENT_NAME = os.environ.get("DEPLOYED_AGENT_NAME", "agent")
 
 
 AGENT_CONFIG_HASH = os.environ.get("AGENT_CONFIG_HASH") or _compute_config_hash(
@@ -117,7 +137,7 @@ _latest_result: dict[str, Any] | None = None
 # ── Eval runner ───────────────────────────────────────────────────────────────
 
 
-def _find_eval_files(pattern: str | None) -> list[Path]:
+async def _find_eval_files(pattern: str | None) -> list[Path]:
     """Return one temp file per tag (parallel all) or one file for a specific pattern.
 
     Data source resolution order:
@@ -128,8 +148,11 @@ def _find_eval_files(pattern: str | None) -> list[Path]:
     them concurrently via asyncio.gather while keeping conversations sequential
     within each tag subprocess.
     """
-    # Try Postgres first
-    cases = fetch_dataset_cases(AGENT_ORG, AGENT_NAME)
+    # Try Postgres first — run blocking psycopg2 I/O in the default thread pool
+    # so the event loop is not stalled during the DB round-trip.
+    cases = await asyncio.get_running_loop().run_in_executor(
+        None, functools.partial(fetch_dataset_cases, AGENT_ORG, AGENT_NAME)
+    )
     if cases:
         log.info(
             "Loaded %d eval cases from Postgres (org=%s name=%s)",
@@ -160,9 +183,14 @@ def _find_eval_files(pattern: str | None) -> list[Path]:
                 groups[tag].append(c)
         if not groups:
             log.warning(
-                "No tags found in eval cases — running full file as single batch"
+                "No tags found in Postgres eval cases — writing untagged cases to temp file"
             )
-            return [EVAL_CASES_PATH]
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yaml", prefix="eval_untagged_", delete=False
+            )
+            yaml.dump(cases, tmp, default_flow_style=False, allow_unicode=True)
+            tmp.close()
+            return [Path(tmp.name)]
         log.info("Splitting cases into %d tag batches: %s", len(groups), list(groups))
         files: list[Path] = []
         for tag, filtered in groups.items():
@@ -478,45 +506,48 @@ async def _run_eval(
         bool(auth_token),
     )
 
+    system_yaml: Path | None = None
+    run_output: Path | None = None
     tmp_files: list[Path] = []
     try:
-        system_yaml = _system_yaml_path()
-        eval_files = _find_eval_files(pattern)
-        # Track temp files created by _find_eval_files (tag-filtered) for cleanup
-        tmp_files = [f for f in eval_files if f.parent != EVAL_CASES_PATH.parent]
-    except FileNotFoundError as exc:
-        log.error("eval_setup_failed: %s", exc)
-        _status.update({"state": "error", "run_id": run_id})
-        return
+        try:
+            system_yaml = _system_yaml_path()
+            eval_files = await _find_eval_files(pattern)
+            # Track temp files created by _find_eval_files (tag-filtered) for cleanup
+            tmp_files = [f for f in eval_files if f.parent != EVAL_CASES_PATH.parent]
+        except FileNotFoundError as exc:
+            log.error("eval_setup_failed: %s", exc)
+            _status.update({"state": "error", "run_id": run_id})
+            return
 
-    EVAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    run_output = EVAL_OUTPUT_DIR / run_id
-    run_output.mkdir(parents=True, exist_ok=True)
+        EVAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        run_output = EVAL_OUTPUT_DIR / run_id
+        run_output.mkdir(parents=True, exist_ok=True)
 
-    sem = asyncio.Semaphore(EVAL_MAX_CONCURRENCY)
+        sem = asyncio.Semaphore(EVAL_MAX_CONCURRENCY)
 
-    async def _run_one(eval_file: Path) -> int:
-        async with sem:
-            log.info("Running %s", eval_file.name)
-            rc = await _run_eval_pattern(eval_file, system_yaml, run_output, auth_token)
-            log.info("%s → exit code %d", eval_file.name, rc)
-            return rc
+        async def _run_one(eval_file: Path) -> int:
+            async with sem:
+                log.info("Running %s", eval_file.name)
+                rc = await _run_eval_pattern(eval_file, system_yaml, run_output, auth_token)
+                log.info("%s → exit code %d", eval_file.name, rc)
+                return rc
 
-    run_started_at = datetime.now(timezone.utc)
-    try:
+        run_started_at = datetime.now(timezone.utc)
         await asyncio.gather(*[_run_one(f) for f in eval_files])
     finally:
-        # Clean up per-run temp files (tag-filtered eval YAMLs and system config)
+        # Always clean up temp files — even when _find_eval_files raises early
         for tmp in tmp_files:
             tmp.unlink(missing_ok=True)
-        system_yaml.unlink(missing_ok=True)
-        # Clean up eval output directory (populated YAMLs, CSVs, reports)
-        try:
-            import shutil
-
-            shutil.rmtree(run_output, ignore_errors=True)
-        except Exception:
-            pass
+        if system_yaml is not None:
+            system_yaml.unlink(missing_ok=True)
+        # Clean up eval output directory only if it was created
+        if run_output is not None:
+            try:
+                import shutil
+                shutil.rmtree(run_output, ignore_errors=True)
+            except Exception:
+                pass
 
     total_pass, total_fail, total_error = 0, 0, 0
     eval_status, eval_score = _score_from_counts(total_pass, total_fail, total_error)
@@ -534,9 +565,6 @@ async def _run_eval(
         "output_dir": str(run_output),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-
-    _latest_result = result
-    _status.update({"state": "completed", "run_id": run_id})
 
     # Build rich results_detail from the evaluation_results PostgreSQL table
     results_detail = dict(result)
@@ -572,6 +600,11 @@ async def _run_eval(
         )
         results_detail.update(result)
 
+    # Only expose result after DB recompute so _latest_result never shows
+    # the pre-DB placeholder zeros or the always-"error" initial state.
+    _latest_result = result
+    _status.update({"state": "completed", "run_id": run_id})
+
     # Log after DB recompute so values are accurate
     log.info(
         "Eval complete: status=%s score=%.3f pass=%d fail=%d error=%d",
@@ -601,6 +634,8 @@ async def _run_eval(
             type(exc).__name__,
         )
 
+    _call_cleanup_endpoint(org or AGENT_ORG, name or AGENT_NAME)
+
 
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 # eval_cases.yaml and system.yaml are pre-written to the PVC by agent-engine
@@ -622,6 +657,37 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="eval-runner", version="2.0.0", lifespan=_lifespan)
+
+_SKIP_AUTH_PATHS = {"/health", "/metrics"}
+
+if not _EVAL_INTERNAL_TOKEN:
+    log.warning(
+        "EVAL_INTERNAL_TOKEN is not set — all non-health requests will be rejected (503). "
+        "Set this env var to allow the agent pod to communicate with the eval runner."
+    )
+
+
+@app.middleware("http")
+async def _internal_token_middleware(request: Request, call_next):
+    """Validate X-Internal-Token on all endpoints except /health and /metrics.
+
+    When EVAL_INTERNAL_TOKEN is not set the eval runner is considered
+    misconfigured and rejects all non-health requests with 503 rather than
+    silently allowing unauthenticated access.
+    """
+    if request.url.path in _SKIP_AUTH_PATHS:
+        return await call_next(request)
+    if not _EVAL_INTERNAL_TOKEN:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "eval runner auth not configured — set EVAL_INTERNAL_TOKEN"},
+        )
+    provided = request.headers.get("x-internal-token", "")
+    if not hmac.compare_digest(provided.encode(), _EVAL_INTERNAL_TOKEN.encode()):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "invalid internal token"})
+    return await call_next(request)
 
 
 class EvalRunBody(BaseModel):
@@ -663,7 +729,7 @@ async def _trigger(
     # File-existence guards removed: _find_eval_files queries Postgres first and
     # _get_system_yaml_content auto-generates system.yaml when absent on disk.
     # Missing-dataset errors surface via FileNotFoundError from _find_eval_files.
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     config_hash = body.config_hash if body else None
     org = body.org if body else None
     name = body.name if body else None

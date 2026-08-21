@@ -26,9 +26,11 @@ dependencies = [
     "langchain-mcp-adapters==0.2.2",
     "mcp>=1.28.1,<2",
     "langfuse>=4.9.0",
+    "langgraph==1.2.9",
     "langgraph-checkpoint-postgres==3.0.5",
     "langgraph-sdk>=0.1.51",
-    "aegra-cli",
+    "aegra-api==0.9.24",
+    "aegra-cli==0.9.24",
     "psycopg[binary,pool]==3.3.3",
     "psycopg2-binary==2.9.11",
     "motor==3.6.0",
@@ -50,6 +52,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.52b1,<1.0.0",
     "litellm>=1.40.0",
     "aiokafka>=0.10.0",
+    "msgpack>=1.2.1",
 ]
 
 [project.optional-dependencies]

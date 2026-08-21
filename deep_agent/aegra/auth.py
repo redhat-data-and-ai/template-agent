@@ -23,8 +23,11 @@ Optional env vars:
     USER_ID_ENCRYPTION_KEY: 32-byte hex key for user ID encryption
 """
 
+import asyncio
+import base64
 import hashlib
 import hmac
+import json as _json
 import os
 from typing import Any
 
@@ -65,6 +68,47 @@ ENABLE_USER_ID_ENCRYPTION = (
 USER_ID_ENCRYPTION_KEY = os.environ.get("USER_ID_ENCRYPTION_KEY", "")
 
 _jwks_client: jwt.PyJWKClient | None = None
+
+# ── Eval token refresh (off by default) ──────────────────────────────────────
+EVAL_TOKEN_REFRESH_ENABLED: bool = (
+    os.environ.get("EVAL_TOKEN_REFRESH_ENABLED", "false").lower() == "true"
+)
+_EVAL_ACTIVE_TTL = 3600   # 60-min safety-net TTL; explicit cleanup via /evals/internal/cleanup
+_EVAL_REFRESH_TTL = 3600
+_EVAL_ACCESS_TTL = 270    # 5-min token − 30s MCP buffer
+
+
+def _decode_sub_unverified(token: str) -> str | None:
+    """Extract sub from a JWT without signature verification."""
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False})
+        sub = payload.get("sub")
+        return str(sub) if sub else None
+    except Exception:
+        return None
+
+
+async def _oidc_refresh(refresh_token: str) -> tuple[str, str]:
+    """Exchange a refresh token for a new (access_token, refresh_token) pair.
+
+    Shared by auth.py (expired-token path) and mcp.py (proactive refresh).
+    Returns the new refresh token so callers can persist it — required when
+    Keycloak refresh-token rotation is enabled (invalidates old RT on use).
+    """
+    token_url = f"{SSO_ISSUER_URL.rstrip('/')}/protocol/openid-connect/token"
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            token_url,
+            data={
+                "grant_type": "refresh_token",
+                "client_id": SSO_CLIENT_ID,
+                "client_secret": SSO_CLIENT_SECRET,
+                "refresh_token": refresh_token,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["access_token"], data.get("refresh_token", refresh_token)
 
 
 def encrypt_user_id(user_id: str) -> str:
@@ -176,18 +220,104 @@ async def authenticate(headers: dict) -> dict:
         raise PermissionError("Missing or invalid Authorization header")
 
     access_token = auth_header[7:]
-    payload = _decode_token(access_token)
-
-    user_id = payload["sub"]
     refresh_token = headers.get("x-refresh-token", "")
 
+    try:
+        payload = _decode_token(access_token)
+    except jwt.ExpiredSignatureError:
+        # ── Expired token: refresh if this is an active eval run ─────────────
+        if not EVAL_TOKEN_REFRESH_ENABLED:
+            raise PermissionError("Token expired")
+
+        from deep_agent.aegra.redis import (
+            cache_get, cache_set, distributed_lock, get_redis_client,
+        )
+        if get_redis_client() is None:
+            raise PermissionError("Token expired")
+
+        sub = _decode_sub_unverified(access_token)
+        if not sub:
+            raise PermissionError("Token expired and sub unreadable")
+
+        if not await asyncio.to_thread(cache_get, f"eval:active:{sub}"):
+            raise PermissionError("Token expired — no active eval for this user")
+
+        from deep_agent.aegra.mcp_crypto import decrypt_secret, encrypt_secret
+
+        # Cache hit: another thread already refreshed — reuse without OIDC call
+        enc_cached = await asyncio.to_thread(cache_get, f"eval:access:{sub}")
+        if enc_cached:
+            try:
+                cached = decrypt_secret(enc_cached) or ""
+                p = _decode_token(cached)
+                enc_rt = await asyncio.to_thread(cache_get, f"eval:refresh:{sub}") or ""
+                stored_rt = decrypt_secret(enc_rt) if enc_rt else ""
+                return _make_user(p, cached, stored_rt)
+            except Exception:
+                pass  # cached token also expired — fall through to lock path
+
+        # Lock: only one thread calls OIDC; others poll the cache
+        async with distributed_lock(f"eval:refresh_lock:{sub}", ttl_seconds=10, wait_seconds=12) as state:
+            if state == "held":
+                enc_rt = await asyncio.to_thread(cache_get, f"eval:refresh:{sub}")
+                if not enc_rt:
+                    raise PermissionError("Token expired — no refresh token stored")
+                stored_rt = decrypt_secret(enc_rt) or ""
+                if not stored_rt:
+                    raise PermissionError("Token expired — refresh token could not be decrypted")
+                try:
+                    new_access, new_rt = await _oidc_refresh(stored_rt)
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 400:
+                        raise PermissionError(
+                            "Eval refresh token expired or rotated — re-trigger eval"
+                        ) from exc
+                    raise
+                await asyncio.to_thread(cache_set, f"eval:access:{sub}", encrypt_secret(new_access), _EVAL_ACCESS_TTL)
+                await asyncio.to_thread(cache_set, f"eval:refresh:{sub}", encrypt_secret(new_rt), _EVAL_REFRESH_TTL)
+                logger.info("eval_token_refreshed")
+                return _make_user(_decode_token(new_access), new_access, new_rt)
+            else:
+                # Lock loser: poll until winner writes the cache
+                for _ in range(6):
+                    await asyncio.sleep(0.5)
+                    enc_polled = await asyncio.to_thread(cache_get, f"eval:access:{sub}")
+                    if enc_polled:
+                        try:
+                            polled = decrypt_secret(enc_polled) or ""
+                            p = _decode_token(polled)
+                            enc_rt = await asyncio.to_thread(cache_get, f"eval:refresh:{sub}") or ""
+                            stored_rt = decrypt_secret(enc_rt) if enc_rt else ""
+                            return _make_user(p, polled, stored_rt)
+                        except Exception:
+                            break
+                raise PermissionError("Token expired — refresh in progress, please retry")
+
+    user_id = payload["sub"]
+
+    # Valid token: keep Redis refresh token current while eval is active
+    if EVAL_TOKEN_REFRESH_ENABLED and refresh_token:
+        from deep_agent.aegra.mcp_crypto import encrypt_secret
+        from deep_agent.aegra.redis import cache_get, cache_set, get_redis_client
+        if get_redis_client() is not None:
+            active = await asyncio.to_thread(cache_get, f"eval:active:{user_id}")
+            if active:
+                await asyncio.to_thread(
+                    cache_set, f"eval:refresh:{user_id}", encrypt_secret(refresh_token), _EVAL_REFRESH_TTL
+                )
+
+    return _make_user(payload, access_token, refresh_token)
+
+
+def _make_user(payload: dict[str, Any], access_token: str, refresh_token: str) -> dict[str, Any]:
+    uid = payload["sub"]
     return {
-        "identity": user_id,
+        "identity": uid,
         "display_name": payload.get("name", payload.get("preferred_username", "")),
         "permissions": payload.get("realm_access", {}).get("roles", []),
         "is_authenticated": True,
         "email": payload.get("email", ""),
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "encrypted_id": encrypt_user_id(user_id),
+        "encrypted_id": encrypt_user_id(uid),
     }

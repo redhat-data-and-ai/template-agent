@@ -137,6 +137,14 @@ spec:
                   name: agent-secrets
                   key: VLLM_API_KEY
                   optional: true
+            - name: EVAL_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: EVAL_INTERNAL_TOKEN
+                  optional: true
+            - name: EVAL_TOKEN_REFRESH_ENABLED
+              value: "true"
             - name: REDIS_URL
               valueFrom:
                 configMapKeyRef:
