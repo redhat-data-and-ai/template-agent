@@ -12,7 +12,9 @@ RUN pip install --no-cache-dir \
     "uvicorn[standard]" \
     httpx \
     pyyaml \
-    psycopg2-binary
+    psycopg2-binary \
+    "msgpack>=1.2.1" \
+    "setuptools>=78.1.1"
 
 COPY src/ ./
 COPY entrypoint.sh /app/entrypoint.sh
