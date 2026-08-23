@@ -606,12 +606,19 @@ async def _pg_conn() -> Any:
 
 
 async def _ensure_evals_table() -> None:
+    import psycopg.errors
+
     conn = await _pg_conn()
     try:
         await conn.set_autocommit(True)
+        await conn.execute("SET statement_timeout = '5s'")
         for stmt in _EVALS_DDL_STATEMENTS:
             try:
                 await conn.execute(stmt)
+            except psycopg.errors.UniqueViolation:
+                # Concurrent workers racing to create the same index/object — the
+                # object now exists, which is the desired state. Safe to continue.
+                log.debug("DDL skipped (already exists): %.120s", stmt.strip())
             except Exception as exc:
                 log.warning(
                     "evals DDL statement failed: %s | stmt: %.120s", exc, stmt.strip()
@@ -651,6 +658,7 @@ async def _run_ddl_once(
     conn = await _pg_conn()
     try:
         await conn.set_autocommit(True)
+        await conn.execute("SET statement_timeout = '5s'")
         await conn.execute(ddl)
         for stmt in migrations:
             try:
@@ -942,10 +950,16 @@ async def trigger_eval(request: Request) -> dict[str, Any]:
         if existing:
             doc = _pg_row_to_dict(existing, row)
             doc.pop("id", None)
-            return {"cached": True, **doc}
+            return {**doc, "cached": True}
 
-    # Cache miss — check DCR auth before inserting in_progress row so a failed
-    # auth check does not leave a stuck in_progress record.
+    # Pre-flight checks before inserting in_progress row — failures here surface
+    # immediately to the UI without leaving a stuck record in Postgres.
+    if not _EVAL_RUNNER_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="EVAL_RUNNER_URL not set — eval runner is not deployed",
+        )
+
     missing_auth = await _check_dcr_auth(request)
     if missing_auth:
         raise HTTPException(
@@ -965,6 +979,12 @@ async def trigger_eval(request: Request) -> dict[str, Any]:
 @eval_mgmt_router.post("/force-trigger")
 async def force_trigger_eval(request: Request) -> dict[str, Any]:
     """Force a fresh eval run, bypassing cache."""
+    if not _EVAL_RUNNER_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="EVAL_RUNNER_URL not set — eval runner is not deployed",
+        )
+
     missing_auth = await _check_dcr_auth(request)
     if missing_auth:
         raise HTTPException(
@@ -1028,7 +1048,7 @@ async def eval_status() -> dict[str, Any]:
     Returns {"eval_status": "no_dataset"} immediately when no dataset is
     configured, without creating or querying the evals table.
 
-    Auto-expires in_progress rows older than EVAL_STALE_TIMEOUT_MINUTES (default 10)
+    Auto-expires in_progress rows older than EVAL_STALE_TIMEOUT_MINUTES (default 30)
     so a crashed eval run does not leave the UI stuck in Evaluating forever.
     """
     has_pg = await _has_postgres_dataset()

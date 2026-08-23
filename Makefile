@@ -117,6 +117,7 @@ local:
 	@echo "API available at: http://localhost:5002"
 	@echo "Press Ctrl+C to stop the server (Postgres/Redis keep running — use 'make local-down' to stop them)"
 	@trap 'lsof -ti :5002 | xargs kill -INT 2>/dev/null || true; sleep 2; lsof -ti :5002 | xargs kill -9 2>/dev/null || true; exit 130' INT TERM; \
+	set -a; [ -f .env ] && . .env 2>/dev/null; set +a; \
 	REDIS_BROKER_ENABLED=true \
 		POSTGRES_HOST=localhost \
 		POSTGRES_PORT=5432 \

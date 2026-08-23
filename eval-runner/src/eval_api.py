@@ -39,6 +39,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpcore").setLevel(logging.ERROR)
 log = logging.getLogger(__name__)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -518,6 +520,12 @@ async def _run_eval(
         except FileNotFoundError as exc:
             log.error("eval_setup_failed: %s", exc)
             _status.update({"state": "error", "run_id": run_id})
+            write_eval_result(
+                passed=0, failed=0, errors=1,
+                eval_score=0.0, ls_run_ids=None,
+                results_detail={"error": str(exc)},
+                config_hash=config_hash, org=org or AGENT_ORG, name=name or AGENT_NAME,
+            )
             return
 
         EVAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

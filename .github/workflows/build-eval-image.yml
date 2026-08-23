@@ -5,11 +5,9 @@ on:
     tags:
       - '*'
     branches:
-      # - main
-      - deep-agent
-      - feat/agent_evaluation_lightspeed
+      - main
   pull_request:
-    branches: [ deep-agent, feat/agent_evaluation_lightspeed ]
+    branches: [ main ]
     paths:
       - 'eval-runner/**'
       - 'eval-runner/Containerfile'

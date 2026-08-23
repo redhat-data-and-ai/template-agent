@@ -1,6 +1,6 @@
 ## Eval runner Makefile
 ##
-## Builds and runs the eval runner sidecar.
+## Builds and runs the eval runner service (separate pod, not a sidecar).
 ## Requires the root stack (pgvector + template-agent) to be running first.
 ##
 ##   make local        - Run via venv (fast, no container build)

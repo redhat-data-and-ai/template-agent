@@ -19,6 +19,8 @@ services:
       - POSTGRES_DB=template_agent
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+      - EVAL_TOKEN_REFRESH_ENABLED=${EVAL_TOKEN_REFRESH_ENABLED:-true}
+      - EVAL_INTERNAL_TOKEN=${EVAL_INTERNAL_TOKEN:-}
     env_file:
       - ../.env
     volumes:

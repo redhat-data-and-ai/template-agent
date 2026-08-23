@@ -120,6 +120,8 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
       - ENABLE_OTEL_TRACES=${ENABLE_OTEL_TRACES:-false}
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://jaeger:4317}
+      # Eval runner — service name resolves correctly on the shared container network
+      - EVAL_RUNNER_URL=http://eval-runner:8099
     depends_on:
       pgvector:
         condition: service_healthy
