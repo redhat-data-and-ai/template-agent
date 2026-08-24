@@ -32,7 +32,9 @@ def _raw_yaml() -> dict[str, Any]:
     """Return the parsed tag_metrics.yaml, reading the file at most once."""
     global _raw_yaml_cache
     if _raw_yaml_cache is None:
-        _raw_yaml_cache = yaml.safe_load(_TAG_METRICS_FILE.read_text(encoding="utf-8")) or {}
+        _raw_yaml_cache = (
+            yaml.safe_load(_TAG_METRICS_FILE.read_text(encoding="utf-8")) or {}
+        )
     return _raw_yaml_cache
 
 
@@ -76,7 +78,7 @@ def get_defaults_for_tag(tag: str) -> dict[str, Any]:
 # ── Keyword normalization ─────────────────────────────────────────────────────
 
 
-def _normalize_keywords(keywords: list | str) -> list[list[str]]:
+def _normalize_keywords(keywords: Any) -> list[list[str]]:
     """Normalize keywords to list[list[str]] (the format lightspeed-eval expects)."""
     if isinstance(keywords, str):
         return [[kw.strip()] for kw in keywords.split(",") if kw.strip()]

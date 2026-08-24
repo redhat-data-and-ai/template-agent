@@ -105,16 +105,41 @@ jobs:
           echo "digest=$(jq -r '.container_digest' eval-info/last-good-eval.json)"   >> $GITHUB_OUTPUT
           echo "available=true" >> $GITHUB_OUTPUT
 
+      - name: Build release body section
+        if: steps.ctx.outputs.is_tag == 'true'
+        id: body
+        run: |
+          AVAILABLE="${{ steps.eval.outputs.available }}"
+          IMAGE="${{ steps.eval.outputs.image }}"
+          DIGEST="${{ steps.eval.outputs.digest }}"
+
+          if [ "$AVAILABLE" = "true" ]; then
+            BODY="## Eval Runner Image
+
+          \`\`\`bash
+          docker pull ${IMAGE}
+          \`\`\`
+
+          **Digest:** \`${DIGEST}\`"
+          else
+            BODY="## Eval Runner Image ⚠️ build unavailable
+
+          No successful eval build found for this release commit."
+          fi
+
+          # Use multiline delimiter for GITHUB_OUTPUT
+          {
+            echo "content<<BODY_EOF"
+            echo "$BODY"
+            echo "BODY_EOF"
+          } >> $GITHUB_OUTPUT
+
       - name: Update GitHub Release with eval-runner info (tags only)
         if: steps.ctx.outputs.is_tag == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           tag_name: ${{ steps.ctx.outputs.version }}
           append_body: true
-          body: |
-
-            ## Eval Runner Image${{ steps.eval.outputs.available != 'true' && ' ⚠️ build unavailable' || '' }}
-
-            ${{ steps.eval.outputs.available == 'true' && format('```bash\ndocker pull {0}\n```\n\n**Digest:** `{1}`', steps.eval.outputs.image, steps.eval.outputs.digest) || 'No successful eval build found for this release commit.' }}
+          body: ${{ steps.body.outputs.content }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

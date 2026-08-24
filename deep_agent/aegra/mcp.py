@@ -211,7 +211,7 @@ async def refresh_access_token(
 
     token_url: str = _get_token_endpoint()
     client_id: str = os.environ.get("SSO_CLIENT_ID", "")
-    client_secret: str = os.environ.get("SSO_CLIENT_SECRET", "")
+    client_secret: str = os.environ.get("SSO_CLIENT_SECRET", "")  # noqa: F841
     if not token_url or not client_id:
         logger.warning("Cannot refresh token — SSO_ISSUER_URL or SSO_CLIENT_ID not set")
         return access_token
@@ -219,6 +219,7 @@ async def refresh_access_token(
     logger.info("Refreshing SSO access token (%.0fs remaining)", remaining)
     try:
         from deep_agent.aegra.auth import EVAL_TOKEN_REFRESH_ENABLED, _oidc_refresh
+
         new_token, new_rt = await _oidc_refresh(refresh_token)
         new_remaining: float = _jwt_exp(new_token) - time.time()
         logger.info("SSO token refreshed (%.0fs lifetime)", new_remaining)
@@ -231,8 +232,11 @@ async def refresh_access_token(
                 if sub:
                     from deep_agent.aegra.mcp_crypto import encrypt_secret
                     from deep_agent.aegra.redis import cache_get, cache_set
+
                     if cache_get(f"eval:active:{sub}"):
-                        cache_set(f"eval:refresh:{sub}", encrypt_secret(new_rt), 3600)
+                        encrypted_rt = encrypt_secret(new_rt)
+                        if encrypted_rt:
+                            cache_set(f"eval:refresh:{sub}", encrypted_rt, 3600)
 
         return new_token
     except Exception:

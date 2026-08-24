@@ -25,7 +25,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,7 +34,7 @@ from typing import Any
 import yaml
 from eval_cases import get_metric_thresholds, load_cases
 from eval_postgres import _compute_config_hash, fetch_dataset_cases, fetch_judge_model
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -46,7 +46,9 @@ log = logging.getLogger(__name__)
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 AGENT_URL = os.environ.get("AGENT_HOST", "http://localhost:5002")
-_EVAL_TOKEN_REFRESH_ENABLED = os.environ.get("EVAL_TOKEN_REFRESH_ENABLED", "false").lower() == "true"
+_EVAL_TOKEN_REFRESH_ENABLED = (
+    os.environ.get("EVAL_TOKEN_REFRESH_ENABLED", "false").lower() == "true"
+)
 _EVAL_INTERNAL_TOKEN = os.environ.get("EVAL_INTERNAL_TOKEN", "")
 
 
@@ -56,6 +58,7 @@ def _call_cleanup_endpoint(org: str, name: str) -> None:
         return
     try:
         import httpx as _httpx
+
         _httpx.post(
             f"{AGENT_URL.rstrip('/')}/evals/internal/cleanup",
             json={"org": org, "name": name},
@@ -139,7 +142,7 @@ _latest_result: dict[str, Any] | None = None
 # ── Eval runner ───────────────────────────────────────────────────────────────
 
 
-async def _find_eval_files(pattern: str | None) -> list[Path]:
+def _find_eval_files(pattern: str | None) -> list[Path]:
     """Return one temp file per tag (parallel all) or one file for a specific pattern.
 
     Data source resolution order:
@@ -150,11 +153,8 @@ async def _find_eval_files(pattern: str | None) -> list[Path]:
     them concurrently via asyncio.gather while keeping conversations sequential
     within each tag subprocess.
     """
-    # Try Postgres first — run blocking psycopg2 I/O in the default thread pool
-    # so the event loop is not stalled during the DB round-trip.
-    cases = await asyncio.get_running_loop().run_in_executor(
-        None, functools.partial(fetch_dataset_cases, AGENT_ORG, AGENT_NAME)
-    )
+    # Try Postgres first (blocking psycopg2 I/O — called from thread pool in _run_eval).
+    cases = fetch_dataset_cases(AGENT_ORG, AGENT_NAME)
     if cases:
         log.info(
             "Loaded %d eval cases from Postgres (org=%s name=%s)",
@@ -391,10 +391,12 @@ def _get_system_yaml_content() -> str:
             provider,
             judge_model,
         )
-        return yaml.dump(
-            _default_system_yaml(judge_model, provider),
-            default_flow_style=False,
-            allow_unicode=True,
+        return str(
+            yaml.dump(
+                _default_system_yaml(judge_model, provider),
+                default_flow_style=False,
+                allow_unicode=True,
+            )
         )
 
     config = yaml.safe_load(EVAL_SYSTEM_CONFIG.read_text())
@@ -417,7 +419,7 @@ def _get_system_yaml_content() -> str:
                 "POSTGRES_PASSWORD", backend.get("password", "")
             )
 
-    return yaml.dump(config, default_flow_style=False, allow_unicode=True)
+    return str(yaml.dump(config, default_flow_style=False, allow_unicode=True))
 
 
 def _system_yaml_path() -> Path:
@@ -514,17 +516,25 @@ async def _run_eval(
     try:
         try:
             system_yaml = _system_yaml_path()
-            eval_files = await _find_eval_files(pattern)
+            loop = asyncio.get_running_loop()
+            eval_files = await loop.run_in_executor(
+                None, functools.partial(_find_eval_files, pattern)
+            )
             # Track temp files created by _find_eval_files (tag-filtered) for cleanup
             tmp_files = [f for f in eval_files if f.parent != EVAL_CASES_PATH.parent]
         except FileNotFoundError as exc:
             log.error("eval_setup_failed: %s", exc)
             _status.update({"state": "error", "run_id": run_id})
             write_eval_result(
-                passed=0, failed=0, errors=1,
-                eval_score=0.0, ls_run_ids=None,
+                passed=0,
+                failed=0,
+                errors=1,
+                eval_score=0.0,
+                ls_run_ids=None,
                 results_detail={"error": str(exc)},
-                config_hash=config_hash, org=org or AGENT_ORG, name=name or AGENT_NAME,
+                config_hash=config_hash,
+                org=org or AGENT_ORG,
+                name=name or AGENT_NAME,
             )
             return
 
@@ -537,7 +547,9 @@ async def _run_eval(
         async def _run_one(eval_file: Path) -> int:
             async with sem:
                 log.info("Running %s", eval_file.name)
-                rc = await _run_eval_pattern(eval_file, system_yaml, run_output, auth_token)
+                rc = await _run_eval_pattern(
+                    eval_file, system_yaml, run_output, auth_token
+                )
                 log.info("%s → exit code %d", eval_file.name, rc)
                 return rc
 
@@ -553,6 +565,7 @@ async def _run_eval(
         if run_output is not None:
             try:
                 import shutil
+
                 shutil.rmtree(run_output, ignore_errors=True)
             except Exception:
                 pass
@@ -676,7 +689,9 @@ if not _EVAL_INTERNAL_TOKEN:
 
 
 @app.middleware("http")
-async def _internal_token_middleware(request: Request, call_next):
+async def _internal_token_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """Validate X-Internal-Token on all endpoints except /health and /metrics.
 
     When EVAL_INTERNAL_TOKEN is not set the eval runner is considered
@@ -687,14 +702,20 @@ async def _internal_token_middleware(request: Request, call_next):
         return await call_next(request)
     if not _EVAL_INTERNAL_TOKEN:
         from fastapi.responses import JSONResponse
+
         return JSONResponse(
             status_code=503,
-            content={"detail": "eval runner auth not configured — set EVAL_INTERNAL_TOKEN"},
+            content={
+                "detail": "eval runner auth not configured — set EVAL_INTERNAL_TOKEN"
+            },
         )
     provided = request.headers.get("x-internal-token", "")
     if not hmac.compare_digest(provided.encode(), _EVAL_INTERNAL_TOKEN.encode()):
         from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=401, content={"detail": "invalid internal token"})
+
+        return JSONResponse(
+            status_code=401, content={"detail": "invalid internal token"}
+        )
     return await call_next(request)
 
 

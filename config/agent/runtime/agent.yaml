@@ -269,7 +269,7 @@ platform:
 # OPA (Authorization)                                                  [env-var]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 opa:
-  enabled: true
+  enabled: false
   url: http://opa:8181/v1/data/agent/authz
   timeout: 2.0
   max_retries: 3
