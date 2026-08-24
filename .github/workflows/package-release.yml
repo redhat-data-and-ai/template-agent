@@ -1,7 +1,7 @@
 name: Package Release
 
-# Triggered when the agent build completes.
-# Agent success = gate. Eval is waited on; uses last good on failure.
+# Updates the GitHub release created by build-base-image with eval-runner image info.
+# Triggered when the agent build completes — waits for eval build then appends eval info.
 on:
   workflow_run:
     workflows: ["Build and Push Base Image"]
@@ -10,7 +10,6 @@ on:
 permissions:
   contents: write
   actions: read
-  packages: write
 
 jobs:
   package:
@@ -18,13 +17,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout at agent build commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 0
-          fetch-tags: true
-
       - name: Determine build context
         id: ctx
         run: |
@@ -32,23 +24,16 @@ jobs:
           HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
           SHORT_SHA="${HEAD_SHA::7}"
 
-          # Use head_branch as primary discriminator.
-          # For a tag push, GitHub sets head_branch to the tag name (e.g. v1.7.7).
-          # For a branch push, it's the branch name (e.g. deep-agent).
-          # Only fall through to git tag detection when head_branch looks like a semver tag.
           if echo "$HEAD_BRANCH" | grep -qE '^v?[0-9]+\.[0-9]+'; then
-            TAG="$HEAD_BRANCH"
-            echo "is_tag=true"        >> $GITHUB_OUTPUT
-            echo "version=${TAG}"     >> $GITHUB_OUTPUT
+            echo "is_tag=true"            >> $GITHUB_OUTPUT
+            echo "version=${HEAD_BRANCH}" >> $GITHUB_OUTPUT
           else
             echo "is_tag=false"                         >> $GITHUB_OUTPUT
             echo "version=${HEAD_BRANCH}-${SHORT_SHA}"  >> $GITHUB_OUTPUT
           fi
-          echo "head_sha=${HEAD_SHA}"       >> $GITHUB_OUTPUT
-          echo "head_branch=${HEAD_BRANCH}" >> $GITHUB_OUTPUT
-          echo "Detected: head_branch=${HEAD_BRANCH}, is_tag=$(echo $HEAD_BRANCH | grep -qE '^v?[0-9]+\.[0-9]+' && echo true || echo false)"
+          echo "head_sha=${HEAD_SHA}" >> $GITHUB_OUTPUT
 
-      - name: Download agent artifact from this run
+      - name: Download agent info artifact
         uses: actions/download-artifact@v4
         with:
           name: last-good-agent
@@ -59,21 +44,22 @@ jobs:
       - name: Read agent info
         id: agent
         run: |
-          cat agent-info/last-good-agent.json
-          echo "image=$(jq -r '.container_image' agent-info/last-good-agent.json)"  >> $GITHUB_OUTPUT
-          echo "digest=$(jq -r '.container_digest' agent-info/last-good-agent.json)" >> $GITHUB_OUTPUT
-          echo "signed=$(jq -r '.signed' agent-info/last-good-agent.json)"           >> $GITHUB_OUTPUT
+          cat agent-info/release-info.json
+          echo "image=$(jq -r '.container_image' agent-info/release-info.json)"  >> $GITHUB_OUTPUT
+          echo "digest=$(jq -r '.container_digest' agent-info/release-info.json)" >> $GITHUB_OUTPUT
+          echo "signed=$(jq -r '.signed' agent-info/release-info.json)"           >> $GITHUB_OUTPUT
 
-      - name: Wait for eval workflow on same commit
+      - name: Wait for eval build on same commit (tags only)
+        if: steps.ctx.outputs.is_tag == 'true'
         id: eval-wait
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
-          TIMEOUT=1800
+          HEAD_SHA="${{ steps.ctx.outputs.head_sha }}"
+          TIMEOUT=900
           INTERVAL=30
           ELAPSED=0
-          echo "Waiting for eval workflow on commit ${HEAD_SHA}..."
+          echo "Waiting for eval build on commit ${HEAD_SHA}..."
           while [ $ELAPSED -lt $TIMEOUT ]; do
             RUN=$(gh api \
               "repos/${{ github.repository }}/actions/workflows/build-eval-image.yml/runs?head_sha=${HEAD_SHA}&per_page=1" \
@@ -82,7 +68,6 @@ jobs:
               STATUS=$(echo "$RUN" | jq -r '.status')
               CONCLUSION=$(echo "$RUN" | jq -r '.conclusion')
               RUN_ID=$(echo "$RUN" | jq -r '.id')
-              echo "Eval run ${RUN_ID}: status=${STATUS} conclusion=${CONCLUSION}"
               if [ "$STATUS" = "completed" ]; then
                 echo "conclusion=${CONCLUSION}" >> $GITHUB_OUTPUT
                 echo "run_id=${RUN_ID}"         >> $GITHUB_OUTPUT
@@ -92,56 +77,17 @@ jobs:
             sleep $INTERVAL
             ELAPSED=$((ELAPSED + INTERVAL))
           done
-          echo "::warning::Eval timed out — using last good eval artifact"
           echo "conclusion=timed_out" >> $GITHUB_OUTPUT
           echo "run_id="              >> $GITHUB_OUTPUT
 
-      - name: Find last good eval run id
-        id: eval-run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          CONCLUSION="${{ steps.eval-wait.outputs.conclusion }}"
-          CURRENT_RUN_ID="${{ steps.eval-wait.outputs.run_id }}"
-
-          if [ "$CONCLUSION" = "success" ]; then
-            # Verify current run actually has the artifact before trusting it
-            HAS_ARTIFACT=$(gh api \
-              "repos/${{ github.repository }}/actions/runs/${CURRENT_RUN_ID}/artifacts" \
-              --jq '[.artifacts[] | select(.name == "last-good-eval")] | length')
-            if [ "${HAS_ARTIFACT:-0}" -gt 0 ]; then
-              echo "run_id=${CURRENT_RUN_ID}" >> $GITHUB_OUTPUT
-              echo "is_current=true"          >> $GITHUB_OUTPUT
-              exit 0
-            fi
-            echo "::warning::Eval succeeded but artifact missing — falling back to last good"
-          fi
-
-          # Search across all branches and tags for the most recent successful eval run
-          # that actually has the last-good-eval artifact uploaded
-          FOUND_RUN_ID=""
-          RUN_IDS=$(gh api \
-            "repos/${{ github.repository }}/actions/workflows/build-eval-image.yml/runs?status=success&per_page=20" \
-            --jq "[.workflow_runs[] | select(.id != ${CURRENT_RUN_ID:-0})] | .[].id")
-          for RID in $RUN_IDS; do
-            HAS=$(gh api "repos/${{ github.repository }}/actions/runs/${RID}/artifacts" \
-              --jq '[.artifacts[] | select(.name == "last-good-eval")] | length')
-            if [ "${HAS:-0}" -gt 0 ]; then
-              FOUND_RUN_ID="$RID"
-              echo "Found last good eval run with artifact: ${RID}"
-              break
-            fi
-          done
-          echo "run_id=${FOUND_RUN_ID}" >> $GITHUB_OUTPUT
-          echo "is_current=false"       >> $GITHUB_OUTPUT
-
-      - name: Download eval artifact
+      - name: Download eval artifact (tags only)
+        if: steps.ctx.outputs.is_tag == 'true' && steps.eval-wait.outputs.conclusion == 'success'
         id: eval-download
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: last-good-eval
-          run-id: ${{ steps.eval-run.outputs.run_id }}
+          run-id: ${{ steps.eval-wait.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: eval-info
 
@@ -149,157 +95,26 @@ jobs:
         id: eval
         run: |
           if [ ! -f eval-info/last-good-eval.json ]; then
-            echo "::warning::No eval artifact found — eval info will be empty"
-            echo "image="           >> $GITHUB_OUTPUT
-            echo "digest="          >> $GITHUB_OUTPUT
-            echo "sha="             >> $GITHUB_OUTPUT
-            echo "signed=false"     >> $GITHUB_OUTPUT
-            echo "is_current=false" >> $GITHUB_OUTPUT
+            echo "image="       >> $GITHUB_OUTPUT
+            echo "digest="      >> $GITHUB_OUTPUT
+            echo "available=false" >> $GITHUB_OUTPUT
             exit 0
           fi
           cat eval-info/last-good-eval.json
           echo "image=$(jq -r '.container_image' eval-info/last-good-eval.json)"    >> $GITHUB_OUTPUT
           echo "digest=$(jq -r '.container_digest' eval-info/last-good-eval.json)"   >> $GITHUB_OUTPUT
-          echo "sha=$(jq -r '.git_sha' eval-info/last-good-eval.json)"               >> $GITHUB_OUTPUT
-          echo "signed=$(jq -r '.signed // false' eval-info/last-good-eval.json)"    >> $GITHUB_OUTPUT
-          echo "is_current=${{ steps.eval-run.outputs.is_current }}"                 >> $GITHUB_OUTPUT
+          echo "available=true" >> $GITHUB_OUTPUT
 
-      - name: Re-tag eval image with release version (tags only)
-        if: steps.ctx.outputs.is_tag == 'true' && steps.eval.outputs.image != ''
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          EVAL_IMAGE="${{ steps.eval.outputs.image }}"
-          RELEASE_TAG="ghcr.io/${{ github.repository }}-eval:${{ steps.ctx.outputs.version }}"
-          docker pull "${EVAL_IMAGE}"
-          docker tag  "${EVAL_IMAGE}" "${RELEASE_TAG}"
-          docker push "${RELEASE_TAG}"
-          echo "Re-tagged ${EVAL_IMAGE} → ${RELEASE_TAG}"
-
-      - name: Create combined release-info.json
-        run: |
-          mkdir -p deployment
-          cat > deployment/release-info.json <<EOF
-          {
-            "version": "${{ steps.ctx.outputs.version }}",
-            "git_ref": "${{ github.event.workflow_run.head_branch }}",
-            "git_sha": "${{ steps.ctx.outputs.head_sha }}",
-            "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "agent": {
-              "container_image": "${{ steps.agent.outputs.image }}",
-              "container_digest": "${{ steps.agent.outputs.digest }}",
-              "signed": ${{ steps.agent.outputs.signed }}
-            },
-            "eval_runner": {
-              "container_image": "${{ steps.ctx.outputs.is_tag == 'true' && steps.eval.outputs.image != '' && format('ghcr.io/{0}-eval:{1}', github.repository, steps.ctx.outputs.version) || steps.eval.outputs.image }}",
-              "container_digest": "${{ steps.eval.outputs.digest }}",
-              "git_sha": "${{ steps.eval.outputs.sha }}",
-              "is_current_commit": ${{ steps.eval.outputs.is_current || false }}
-            }
-          }
-          EOF
-          cat deployment/release-info.json
-
-      - name: Create deployment packages
-        id: packages
-        run: |
-          cd deployment
-          zip -r ../deployment.zip . -x "*.git*"
-          cd ..
-
-          HAS_EVAL="false"
-          EVAL_IMAGE=""
-          EVAL_DIGEST=""
-
-          if [ -f eval-info/last-good-eval.json ]; then
-            EVAL_IMAGE=$(jq -r '.container_image' eval-info/last-good-eval.json)
-            EVAL_DIGEST=$(jq -r '.container_digest' eval-info/last-good-eval.json)
-            HAS_EVAL="true"
-          fi
-
-          sha256sum deployment.zip > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-          echo "has_eval=${HAS_EVAL}"         >> $GITHUB_OUTPUT
-          echo "eval_image=${EVAL_IMAGE}"     >> $GITHUB_OUTPUT
-          echo "eval_digest=${EVAL_DIGEST}"   >> $GITHUB_OUTPUT
-
-      - name: Upload combined package as artifact (branch builds)
-        if: steps.ctx.outputs.is_tag == 'false'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release-package-${{ steps.ctx.outputs.version }}
-          path: |
-            deployment.zip
-            SHA256SUMS.txt
-          retention-days: 30
-
-      - name: Create GitHub Release without eval zip (tags only)
-        if: steps.ctx.outputs.is_tag == 'true' && steps.packages.outputs.has_eval == 'false'
+      - name: Update GitHub Release with eval-runner info (tags only)
+        if: steps.ctx.outputs.is_tag == 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           tag_name: ${{ steps.ctx.outputs.version }}
-          files: |
-            deployment.zip
-            SHA256SUMS.txt
+          append_body: true
           body: |
-            ## Agent Image
 
-            ```bash
-            docker pull ${{ steps.agent.outputs.image }}
-            ```
+            ## Eval Runner Image${{ steps.eval.outputs.available != 'true' && ' ⚠️ build unavailable' || '' }}
 
-            **Digest:** `${{ steps.agent.outputs.digest }}`
-            **Signed:** ${{ steps.agent.outputs.signed == 'true' && 'Yes' || 'No' }}
-
-            ## Eval Runner Image ⚠️ no eval build available
-
-            No successful eval build found for this release.
-
-            ## Artifacts
-
-            | File | Description |
-            |------|-------------|
-            | `deployment.zip` | Agent + eval runner deployment manifests + release-info.json |
-            | `SHA256SUMS.txt` | SHA-256 checksums |
-          draft: false
-          prerelease: ${{ contains(steps.ctx.outputs.version, 'alpha') || contains(steps.ctx.outputs.version, 'beta') || contains(steps.ctx.outputs.version, 'rc') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create GitHub Release with eval image (tags only)
-        if: steps.ctx.outputs.is_tag == 'true' && steps.packages.outputs.has_eval == 'true'
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        with:
-          tag_name: ${{ steps.ctx.outputs.version }}
-          files: |
-            deployment.zip
-            SHA256SUMS.txt
-          body: |
-            ## Agent Image
-
-            ```bash
-            docker pull ${{ steps.agent.outputs.image }}
-            ```
-
-            **Digest:** `${{ steps.agent.outputs.digest }}`
-            **Signed:** ${{ steps.agent.outputs.signed == 'true' && 'Yes' || 'No' }}
-
-            ## Eval Runner Image${{ steps.eval.outputs.is_current != 'true' && ' ⚠️ previous successful build' || '' }}
-
-            ```bash
-            docker pull ghcr.io/${{ github.repository }}-eval:${{ steps.ctx.outputs.version }}
-            ```
-
-            **Digest:** `${{ steps.eval.outputs.digest }}`
-            **Signed:** ${{ steps.eval.outputs.signed == 'true' && 'Yes' || 'No' }}
-            ${{ steps.eval.outputs.is_current != 'true' && format('> Built from commit `{0}` — eval build failed or timed out on this release commit.', steps.eval.outputs.sha) || '> Built from this release commit.' }}
-
-            ## Artifacts
-
-            | File | Description |
-            |------|-------------|
-            | `deployment.zip` | Agent + eval runner deployment manifests + release-info.json |
-            | `SHA256SUMS.txt` | SHA-256 checksums |
-          draft: false
-          prerelease: ${{ contains(steps.ctx.outputs.version, 'alpha') || contains(steps.ctx.outputs.version, 'beta') || contains(steps.ctx.outputs.version, 'rc') }}
+            ${{ steps.eval.outputs.available == 'true' && format('```bash\ndocker pull {0}\n```\n\n**Digest:** `{1}`', steps.eval.outputs.image, steps.eval.outputs.digest) || 'No successful eval build found for this release commit.' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -329,6 +329,15 @@ jobs:
           path: ${{ steps.version.outputs.package_name }}
           retention-days: 30
 
+      - name: Upload agent info artifact (for package-release workflow)
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: last-good-agent
+          path: deployment/release-info.json
+          retention-days: 30
+
       - name: Build summary
         if: github.event_name != 'pull_request'
         continue-on-error: true
