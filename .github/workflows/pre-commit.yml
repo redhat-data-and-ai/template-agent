@@ -6,8 +6,13 @@ on:
   pull_request:
     branches: [ main ]
 
+# Least privilege for this workflow (no PR comments from gitleaks-action)
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: "3.12"
+  GITLEAKS_VERSION: "8.28.0"
 
 jobs:
   pre-commit:
@@ -18,8 +23,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        # Full history so gitleaks can scan the tree/history in CI
+        # Full history so gitleaks can scan all commits in CI
         fetch-depth: 0
+        # Do not persist GITHUB_TOKEN in local git config for later steps
+        persist-credentials: false
 
     - name: Install uv
       uses: astral-sh/setup-uv@v3
@@ -38,9 +45,14 @@ jobs:
         source .venv/bin/activate && pre-commit run --all-files
 
     # The gitleaks pre-commit hook runs `gitleaks git --pre-commit --staged`,
-    # which only scans staged changes. A clean CI checkout has nothing staged,
-    # so run a full-tree detect here as well.
-    - name: Gitleaks full-tree scan
-      uses: gitleaks/gitleaks-action@v2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # which only scans staged changes. A clean CI checkout has nothing staged.
+    # Use the open-source CLI (no GITLEAKS_LICENSE) and scan full git history.
+    - name: Install Gitleaks
+      run: |
+        curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+          | tar -xz gitleaks
+        sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+        gitleaks version
+
+    - name: Gitleaks full history scan
+      run: gitleaks git --log-opts="--all" --redact --verbose
