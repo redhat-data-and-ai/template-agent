@@ -364,7 +364,9 @@ class TestEnsureEvalsTable:
         conn, _ = _make_conn()
         # statement_timeout call succeeds, first DDL raises UniqueViolation, rest succeed
         unique_err = psycopg.errors.UniqueViolation()
-        conn.execute.side_effect = [AsyncMock(), unique_err] + [AsyncMock()] * (len(er._EVALS_DDL_STATEMENTS) - 1)
+        conn.execute.side_effect = [AsyncMock(), unique_err] + [AsyncMock()] * (
+            len(er._EVALS_DDL_STATEMENTS) - 1
+        )
         with patch(
             "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
         ):
@@ -743,7 +745,8 @@ class TestTriggerEval:
         mock_request = MagicMock()
         with patch.object(er, "_EVAL_RUNNER_URL", ""):
             with patch(
-                "deep_agent.aegra.eval_routes._require_eval_files", new_callable=AsyncMock
+                "deep_agent.aegra.eval_routes._require_eval_files",
+                new_callable=AsyncMock,
             ):
                 with pytest.raises(HTTPException) as exc:
                     await er.trigger_eval(mock_request)
@@ -754,13 +757,14 @@ class TestTriggerEval:
         from fastapi import HTTPException
 
         mock_request = MagicMock()
-        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
-            with patch(
-                "deep_agent.aegra.eval_routes._has_postgres_dataset",
-                AsyncMock(return_value=False),
-            ):
-                with pytest.raises(HTTPException) as exc:
-                    await er.trigger_eval(mock_request)
+        with patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"):
+            with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
+                with patch(
+                    "deep_agent.aegra.eval_routes._has_postgres_dataset",
+                    AsyncMock(return_value=False),
+                ):
+                    with pytest.raises(HTTPException) as exc:
+                        await er.trigger_eval(mock_request)
         assert exc.value.status_code == 400
 
     async def test_returns_cached_when_exists(self, tmp_path):
@@ -778,14 +782,16 @@ class TestTriggerEval:
         mock_request = MagicMock()
         mock_request.headers = {}
 
-        with patch.dict(
-            "os.environ",
-            {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"},
-        ):
-            with patch(
-                "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        with patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"):
+            with patch.dict(
+                "os.environ",
+                {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"},
             ):
-                result = await er.trigger_eval(mock_request)
+                with patch(
+                    "deep_agent.aegra.eval_routes._pg_conn",
+                    AsyncMock(return_value=conn),
+                ):
+                    result = await er.trigger_eval(mock_request)
 
         assert result["cached"] is True
         er._table_ensured = False
@@ -869,14 +875,16 @@ class TestTriggerEval:
         mock_request = MagicMock()
         mock_request.headers = {}
 
-        with patch.dict(
-            "os.environ",
-            {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"},
-        ):
-            with patch(
-                "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        with patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"):
+            with patch.dict(
+                "os.environ",
+                {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"},
             ):
-                result = await er.trigger_eval(mock_request)
+                with patch(
+                    "deep_agent.aegra.eval_routes._pg_conn",
+                    AsyncMock(return_value=conn),
+                ):
+                    result = await er.trigger_eval(mock_request)
 
         assert result["eval_status"] == "in_progress"
         assert "queued" not in result
@@ -1203,20 +1211,28 @@ class TestWriteEvalRedis:
         """_write_eval_redis does nothing when EVAL_TOKEN_REFRESH_ENABLED is false."""
         with patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", False):
             # Should return early without touching Redis
-            with patch("deep_agent.aegra.redis.cache_set", side_effect=AssertionError("should not call")):
+            with patch(
+                "deep_agent.aegra.redis.cache_set",
+                side_effect=AssertionError("should not call"),
+            ):
                 er._write_eval_redis("user123", "tok", "demo", "agent")
 
     def test_noop_when_sub_empty(self):
         """_write_eval_redis does nothing when sub is empty string."""
         with patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True):
-            with patch("deep_agent.aegra.redis.cache_set", side_effect=AssertionError("should not call")):
+            with patch(
+                "deep_agent.aegra.redis.cache_set",
+                side_effect=AssertionError("should not call"),
+            ):
                 er._write_eval_redis("", "tok", "demo", "agent")
 
     def test_writes_active_and_sub_keys(self):
         """When enabled and sub is set, writes active + trigger_sub keys."""
         with patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True):
-            with patch("deep_agent.aegra.redis.cache_set") as mock_set, \
-                 patch("deep_agent.aegra.mcp_crypto.encrypt_secret", return_value=None):
+            with (
+                patch("deep_agent.aegra.redis.cache_set") as mock_set,
+                patch("deep_agent.aegra.mcp_crypto.encrypt_secret", return_value=None),
+            ):
                 er._write_eval_redis("u1", "", "demo", "agent")
         keys = [call.args[0] for call in mock_set.call_args_list]
         assert any("eval:active:u1" in k for k in keys)
@@ -1225,8 +1241,12 @@ class TestWriteEvalRedis:
     def test_encrypts_refresh_token_when_present(self):
         """Refresh token is encrypted and stored when non-empty."""
         with patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True):
-            with patch("deep_agent.aegra.redis.cache_set") as mock_set, \
-                 patch("deep_agent.aegra.mcp_crypto.encrypt_secret", return_value="enc-tok") as mock_enc:
+            with (
+                patch("deep_agent.aegra.redis.cache_set") as mock_set,
+                patch(
+                    "deep_agent.aegra.mcp_crypto.encrypt_secret", return_value="enc-tok"
+                ) as mock_enc,
+            ):
                 er._write_eval_redis("u1", "my-refresh", "demo", "agent")
         mock_enc.assert_called_once_with("my-refresh")
         keys = [call.args[0] for call in mock_set.call_args_list]
@@ -1244,10 +1264,13 @@ class TestInternalCleanupEndpoint:
     async def test_401_when_token_missing(self):
         """Returns 401 when X-Internal-Token header is absent."""
         from fastapi import HTTPException
+
         mock_request = MagicMock()
         mock_request.headers = {}
-        with patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True), \
-             patch.object(er, "_EVAL_INTERNAL_TOKEN", "secret"):
+        with (
+            patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True),
+            patch.object(er, "_EVAL_INTERNAL_TOKEN", "secret"),
+        ):
             with pytest.raises(HTTPException) as exc:
                 await er.cleanup_eval_redis(mock_request)
         assert exc.value.status_code == 401
@@ -1255,10 +1278,13 @@ class TestInternalCleanupEndpoint:
     async def test_401_when_token_wrong(self):
         """Returns 401 when X-Internal-Token does not match."""
         from fastapi import HTTPException
+
         mock_request = MagicMock()
         mock_request.headers = {"x-internal-token": "wrong"}
-        with patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True), \
-             patch.object(er, "_EVAL_INTERNAL_TOKEN", "correct"):
+        with (
+            patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True),
+            patch.object(er, "_EVAL_INTERNAL_TOKEN", "correct"),
+        ):
             with pytest.raises(HTTPException) as exc:
                 await er.cleanup_eval_redis(mock_request)
         assert exc.value.status_code == 401
@@ -1268,9 +1294,11 @@ class TestInternalCleanupEndpoint:
         mock_request = MagicMock()
         mock_request.headers = {"x-internal-token": "secret"}
         mock_request.json = AsyncMock(return_value={"org": "demo", "name": "agent"})
-        with patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True), \
-             patch.object(er, "_EVAL_INTERNAL_TOKEN", "secret"), \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None), \
-             patch("deep_agent.aegra.redis.cache_delete"):
+        with (
+            patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True),
+            patch.object(er, "_EVAL_INTERNAL_TOKEN", "secret"),
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_delete"),
+        ):
             result = await er.cleanup_eval_redis(mock_request)
         assert "status" in result

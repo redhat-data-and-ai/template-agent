@@ -906,6 +906,12 @@ async def _require_eval_files() -> None:
 @eval_mgmt_router.post("/trigger")
 async def trigger_eval(request: Request) -> dict[str, Any]:
     """Cache-first eval trigger. Returns cached result or sets in_progress."""
+    if not _EVAL_RUNNER_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="EVAL_RUNNER_URL not set — eval runner is not deployed",
+        )
+
     await _require_eval_files()
 
     config_hash = _get_config_hash()
@@ -954,12 +960,6 @@ async def trigger_eval(request: Request) -> dict[str, Any]:
 
     # Pre-flight checks before inserting in_progress row — failures here surface
     # immediately to the UI without leaving a stuck record in Postgres.
-    if not _EVAL_RUNNER_URL:
-        raise HTTPException(
-            status_code=503,
-            detail="EVAL_RUNNER_URL not set — eval runner is not deployed",
-        )
-
     missing_auth = await _check_dcr_auth(request)
     if missing_auth:
         raise HTTPException(
