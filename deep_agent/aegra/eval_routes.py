@@ -24,6 +24,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -962,9 +963,9 @@ async def trigger_eval(request: Request) -> dict[str, Any]:
     # immediately to the UI without leaving a stuck record in Postgres.
     missing_auth = await _check_dcr_auth(request)
     if missing_auth:
-        raise HTTPException(
+        return JSONResponse(
             status_code=403,
-            detail={
+            content={
                 "message": "Connect required MCP servers before running eval",
                 "auth_required": missing_auth,
             },
@@ -987,9 +988,9 @@ async def force_trigger_eval(request: Request) -> dict[str, Any]:
 
     missing_auth = await _check_dcr_auth(request)
     if missing_auth:
-        raise HTTPException(
+        return JSONResponse(
             status_code=403,
-            detail={
+            content={
                 "message": "Connect required MCP servers before running eval",
                 "auth_required": missing_auth,
             },
