@@ -904,8 +904,8 @@ async def _require_eval_files() -> None:
             )
 
 
-@eval_mgmt_router.post("/trigger")
-async def trigger_eval(request: Request) -> dict[str, Any]:
+@eval_mgmt_router.post("/trigger", response_model=None)
+async def trigger_eval(request: Request) -> Any:
     """Cache-first eval trigger. Returns cached result or sets in_progress."""
     if not _EVAL_RUNNER_URL:
         raise HTTPException(
@@ -977,8 +977,8 @@ async def trigger_eval(request: Request) -> dict[str, Any]:
     return await _queue_eval_run(config_hash, request, record)
 
 
-@eval_mgmt_router.post("/force-trigger")
-async def force_trigger_eval(request: Request) -> dict[str, Any]:
+@eval_mgmt_router.post("/force-trigger", response_model=None)
+async def force_trigger_eval(request: Request) -> Any:
     """Force a fresh eval run, bypassing cache."""
     if not _EVAL_RUNNER_URL:
         raise HTTPException(
