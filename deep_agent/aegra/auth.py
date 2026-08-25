@@ -172,33 +172,24 @@ async def authenticate(headers: dict) -> dict:
         logger.warning("Auth bypass active (development mode)")
         return _build_dev_user()
 
-    # Agent-level access control via X-Internal-Secret or X-Gitlab-Token.
-    # When INTERNAL_API_SECRET is configured, the secret header MUST be present and valid.
-    # This ensures only authorized callers can access this specific agent.
-    auth_header = headers.get("authorization", "")
-
     if INTERNAL_API_SECRET:
-        request_secret = headers.get("x-internal-secret", "") or headers.get(
-            "x-gitlab-token", ""
-        )
-        if not request_secret:
-            raise PermissionError(
-                "Agent access token required. Provide X-Internal-Secret or X-Gitlab-Token header."
-            )
-        elif request_secret != INTERNAL_API_SECRET:
-            raise PermissionError("Invalid agent access token")
-        else:
-            # Valid secret — check if Bearer is also present for identity
+        request_secret = headers.get("x-internal-secret", "")
+        if request_secret and request_secret != INTERNAL_API_SECRET:
+            raise PermissionError("Invalid internal secret")
+        if request_secret == INTERNAL_API_SECRET:
+            auth_header = headers.get("authorization", "")
             if not auth_header.startswith("Bearer "):
-                # GitLab webhook path — trust X-User-* headers from gateway
+                user_id = headers.get("x-user-sub", "")
                 email = headers.get("x-user-email", "")
-                if not email:
-                    raise PermissionError("X-User-Email header required for identity")
-                name = headers.get("x-user-name", "Internal Service")
-                user_id = headers.get("x-user-sub", email.split("@")[0])
+                if not user_id and not email:
+                    raise PermissionError("X-User-Sub or X-User-Email required")
+                if not user_id:
+                    user_id = email.split("@")[0]
                 return {
                     "identity": user_id,
-                    "display_name": name,
+                    "display_name": headers.get(
+                        "x-user-name", email.split("@")[0] if email else ""
+                    ),
                     "permissions": ["read", "write"],
                     "is_authenticated": True,
                     "email": email,
@@ -206,8 +197,8 @@ async def authenticate(headers: dict) -> dict:
                     "refresh_token": "",
                     "encrypted_id": encrypt_user_id(user_id),
                 }
-            # Both secret + Bearer present — Bearer validated below for identity
 
+    auth_header = headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
         raise PermissionError("Missing or invalid Authorization header")
 
