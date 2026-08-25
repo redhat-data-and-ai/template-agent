@@ -55,6 +55,7 @@ SSO_CLIENT_SECRET = os.environ.get("SSO_CLIENT_SECRET", "")
 SSO_JWKS_URI = os.environ.get("SSO_JWKS_URI", "")
 SSO_JWT_ALGORITHMS = os.environ.get("SSO_JWT_ALGORITHMS", "RS256,ES256").split(",")
 SSO_JWT_AUDIENCE = os.environ.get("SSO_JWT_AUDIENCE", "")
+INTERNAL_API_SECRET = os.environ.get("INTERNAL_API_SECRET", "")
 
 DEV_USERNAME = os.environ.get("SSO_DEV_USERNAME", "John Doe")
 DEV_USER_ID = os.environ.get("SSO_DEV_USER_ID", "dev-user")
@@ -171,7 +172,43 @@ async def authenticate(headers: dict) -> dict:
         logger.warning("Auth bypass active (development mode)")
         return _build_dev_user()
 
+    # Agent-level access control via X-Internal-Secret or X-Gitlab-Token.
+    # When INTERNAL_API_SECRET is configured, the secret header MUST be present and valid.
+    # This ensures only authorized callers can access this specific agent.
     auth_header = headers.get("authorization", "")
+
+    if INTERNAL_API_SECRET:
+        request_secret = headers.get("x-internal-secret", "") or headers.get(
+            "x-gitlab-token", ""
+        )
+        if not request_secret:
+            # No secret provided but agent requires one — only allow if Bearer token present
+            # (direct SSO access without agent-level secret)
+            if not auth_header.startswith("Bearer "):
+                raise PermissionError("Missing or invalid Authorization header")
+        elif request_secret != INTERNAL_API_SECRET:
+            raise PermissionError("Invalid agent access token")
+        else:
+            # Valid secret — check if Bearer is also present for identity
+            if not auth_header.startswith("Bearer "):
+                # GitLab webhook path — trust X-User-* headers from gateway
+                email = headers.get("x-user-email", "")
+                if not email:
+                    raise PermissionError("X-User-Email header required for identity")
+                name = headers.get("x-user-name", "Internal Service")
+                user_id = headers.get("x-user-sub", email.split("@")[0])
+                return {
+                    "identity": user_id,
+                    "display_name": name,
+                    "permissions": ["read", "write"],
+                    "is_authenticated": True,
+                    "email": email,
+                    "access_token": "",
+                    "refresh_token": "",
+                    "encrypted_id": encrypt_user_id(user_id),
+                }
+            # Both secret + Bearer present — Bearer validated below for identity
+
     if not auth_header.startswith("Bearer "):
         raise PermissionError("Missing or invalid Authorization header")
 
