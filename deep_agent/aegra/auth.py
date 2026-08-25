@@ -182,10 +182,9 @@ async def authenticate(headers: dict) -> dict:
             "x-gitlab-token", ""
         )
         if not request_secret:
-            # No secret provided but agent requires one — only allow if Bearer token present
-            # (direct SSO access without agent-level secret)
-            if not auth_header.startswith("Bearer "):
-                raise PermissionError("Missing or invalid Authorization header")
+            raise PermissionError(
+                "Agent access token required. Provide X-Internal-Secret or X-Gitlab-Token header."
+            )
         elif request_secret != INTERNAL_API_SECRET:
             raise PermissionError("Invalid agent access token")
         else:
