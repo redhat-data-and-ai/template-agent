@@ -354,9 +354,10 @@ def _create_auth_placeholder_tool(
     """Create a stub tool that triggers NeedsAuthorization when called.
 
     When an MCP server requires OAuth/DCR but the user hasn't authenticated yet,
-    we inject this placeholder. When the LLM calls it, NeedsAuthorization fires,
-    which mcp_tool_auth wraps into a LangGraph interrupt, and the UI shows the
-    connect button.
+    we inject this placeholder. When the LLM calls it, the stub tries to resolve
+    a token (including refresh). Failed refresh raises NeedsAuthorization, which
+    mcp_tool_auth wraps into a LangGraph interrupt so the UI shows the connect
+    button.
     """
     from langchain_core.tools import StructuredTool
     from pydantic import BaseModel
@@ -379,12 +380,17 @@ def _create_auth_placeholder_tool(
             resolver = get_mcp_credential_resolver()
             cfg = _get_server_configs().get(mcp_name, {})
             try:
-                if await resolver.has_valid_token(user_id, mcp_name, cfg):
-                    return (
-                        f"Successfully connected to {mcp_name}. "
-                        f"The tools are now available — please ask the user to "
-                        f"repeat their request so the updated tools can be loaded."
-                    )
+                # Resolve (and refresh if needed) instead of has_valid_token().
+                # A leftover refresh token must not skip re-auth after refresh fails.
+                await resolver.resolve(user_id, mcp_name, cfg)
+                invalidate_mcp_tool_cache(user_id)
+                return (
+                    f"Successfully connected to {mcp_name}. "
+                    f"The tools are now available — please ask the user to "
+                    f"repeat their request so the updated tools can be loaded."
+                )
+            except NeedsAuthorization:
+                raise
             except Exception:
                 pass
 

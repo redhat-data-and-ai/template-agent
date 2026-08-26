@@ -765,13 +765,13 @@ class TestCreateAuthPlaceholderTool:
             assert exc_info.value.mcp_name == "jira-mcp"
 
     @pytest.mark.asyncio
-    async def test_require_auth_returns_success_when_token_valid(self):
-        """Calling the placeholder with a valid token returns success message."""
+    async def test_require_auth_returns_success_when_resolve_succeeds(self):
+        """Calling the placeholder after a usable token is resolved returns success."""
         tool = _create_auth_placeholder_tool(
             "jira-mcp", {"description": "JIRA services"}
         )
         mock_resolver = MagicMock()
-        mock_resolver.has_valid_token = AsyncMock(return_value=True)
+        mock_resolver.resolve = AsyncMock(return_value="fresh-access-token")
         with (
             patch("deep_agent.aegra.mcp._current_user_id") as mock_ctx,
             patch(
@@ -786,17 +786,58 @@ class TestCreateAuthPlaceholderTool:
             mock_ctx.get.return_value = "user-1"
             result = await tool.coroutine(query="list my tickets")
         assert "Successfully connected to jira-mcp" in result
+        mock_resolver.resolve.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_require_auth_raises_when_token_invalid(self):
-        """Calling the placeholder with no valid token raises NeedsAuthorization."""
+    async def test_require_auth_raises_when_refresh_failed(self):
+        """A leftover refresh token must not skip re-auth after refresh fails."""
         from deep_agent.aegra.mcp_auth import NeedsAuthorization
 
         tool = _create_auth_placeholder_tool(
             "jira-mcp", {"description": "JIRA services"}
         )
         mock_resolver = MagicMock()
-        mock_resolver.has_valid_token = AsyncMock(return_value=False)
+        # has_valid_token is True whenever a refresh token remains in Redis —
+        # that must not hide a failed refresh from the UI.
+        mock_resolver.has_valid_token = AsyncMock(return_value=True)
+        mock_resolver.resolve = AsyncMock(
+            side_effect=NeedsAuthorization(
+                "jira-mcp", "http://localhost/mcp/jira-mcp/connect"
+            )
+        )
+        mock_resolver.connect_url.return_value = "http://localhost/mcp/jira-mcp/connect"
+        with (
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_ctx,
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={"jira-mcp": {"auth_mode": "oauth"}},
+            ),
+            patch(
+                "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
+                return_value=mock_resolver,
+            ),
+        ):
+            mock_ctx.get.return_value = "user-1"
+            with pytest.raises(NeedsAuthorization) as exc_info:
+                await tool.coroutine(query="list my tickets")
+        assert exc_info.value.mcp_name == "jira-mcp"
+        assert exc_info.value.connect_url == "http://localhost/mcp/jira-mcp/connect"
+        mock_resolver.resolve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_require_auth_raises_when_token_invalid(self):
+        """Calling the placeholder with no usable token raises NeedsAuthorization."""
+        from deep_agent.aegra.mcp_auth import NeedsAuthorization
+
+        tool = _create_auth_placeholder_tool(
+            "jira-mcp", {"description": "JIRA services"}
+        )
+        mock_resolver = MagicMock()
+        mock_resolver.resolve = AsyncMock(
+            side_effect=NeedsAuthorization(
+                "jira-mcp", "http://localhost/mcp/jira-mcp/connect"
+            )
+        )
         mock_resolver.connect_url.return_value = "http://localhost/mcp/jira-mcp/connect"
         with (
             patch("deep_agent.aegra.mcp._current_user_id") as mock_ctx,
@@ -810,5 +851,6 @@ class TestCreateAuthPlaceholderTool:
             ),
         ):
             mock_ctx.get.return_value = "user-1"
-            with pytest.raises(NeedsAuthorization):
+            with pytest.raises(NeedsAuthorization) as exc_info:
                 await tool.coroutine(query="list my tickets")
+        assert exc_info.value.connect_url == "http://localhost/mcp/jira-mcp/connect"
