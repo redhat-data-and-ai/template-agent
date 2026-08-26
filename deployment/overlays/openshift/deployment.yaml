@@ -27,7 +27,7 @@ spec:
       containers:
         - name: agent
           image: agent:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5002
               name: http

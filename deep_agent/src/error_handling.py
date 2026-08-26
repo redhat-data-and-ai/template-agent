@@ -232,7 +232,7 @@ class CircuitBreaker:
         """True when the circuit is open (calls should be skipped)."""
         failures, state, last_ts = self._read_state()
         if state == "open":
-            if time.monotonic() - last_ts >= self.reset_timeout:
+            if time.time() - last_ts >= self.reset_timeout:
                 self._write_state(failures, "half-open", last_ts)
                 logger.info(
                     "Circuit '%s' half-open — allowing probe request", self.name
@@ -264,7 +264,7 @@ class CircuitBreaker:
         """Record a failed call. Opens circuit if threshold exceeded."""
         failures, _, _ = self._read_state()
         failures += 1
-        now = time.monotonic()
+        now = time.time()
 
         new_state = "open" if failures >= self.threshold else "closed"
         self._write_state(failures, new_state, now)

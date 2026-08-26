@@ -13,7 +13,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 from deep_agent.src.exceptions import AppException, ErrorCodes
@@ -114,22 +114,35 @@ class Settings(BaseSettings):
     ENABLE_OTEL_METRICS: bool = Field(default=False)
     ENABLE_OTEL_TRACES: bool = Field(default=False)
     OTEL_SERVICE_NAME: str = Field(default="template-agent")
-    OTEL_EXPORTER_OTLP_ENDPOINT: str = Field(
-        default="",
+    OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = Field(
+        default=None,
         description="OTLP gRPC metrics endpoint (OpenShift: otel-gateway:4327)",
     )
-    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: str = Field(
-        default="",
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: Optional[str] = Field(
+        default=None,
         description="OTLP gRPC traces endpoint (local/dev-loop: Jaeger :4317)",
     )
-    OTEL_AUTH_TOKEN: str = Field(default="", repr=False)
+    OTEL_AUTH_TOKEN: Optional[str] = Field(default=None, repr=False)
     OTEL_METRIC_EXPORT_INTERVAL_MILLIS: int = Field(default=10000)
 
     # ── PII Middleware ────────────────────────────────────────────────────
-    PII_HASH_KEY: str = Field(default="", repr=False)
+    PII_HASH_KEY: Optional[str] = Field(default=None, repr=False)
     PII_TOKEN_MAP_TTL_DAYS: int = Field(default=7, ge=1, le=365)
 
-    def resolved_otel_traces_endpoint(self) -> str:
+    @field_validator(
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_AUTH_TOKEN",
+        "PII_HASH_KEY",
+        mode="before",
+    )
+    @classmethod
+    def _empty_str_to_none(cls, v: object) -> object:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    def resolved_otel_traces_endpoint(self) -> str | None:
         """Return the configured OTLP traces exporter endpoint."""
         return self.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 

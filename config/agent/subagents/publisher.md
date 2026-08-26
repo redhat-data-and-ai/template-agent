@@ -7,7 +7,7 @@ description: >
   report content and a recipient email address as input.
 model: gemini-2.5-pro
 tools:
-  - send_email
+  - template_send_email
 skills:
   - email-formatter
 ---
