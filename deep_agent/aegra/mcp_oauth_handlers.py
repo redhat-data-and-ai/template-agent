@@ -285,6 +285,17 @@ async def handle_mcp_oauth_callback(
             resp = await client.post(token_endpoint, data=data, timeout=30)
             resp.raise_for_status()
             body: dict[str, Any] = resp.json()
+            if body.get("ok") is False:
+                error_msg = body.get("error", "unknown error")
+                logger.error(
+                    "OAuth token exchange failed for '%s': %s",
+                    mcp_name,
+                    error_msg,
+                )
+                return HTMLResponse(
+                    _callback_html(error=f"Authentication failed: {error_msg}"),
+                    status_code=502,
+                )
     except Exception:
         logger.error("OAuth token exchange failed for '%s'", mcp_name, exc_info=True)
         return HTMLResponse(
@@ -294,6 +305,15 @@ async def handle_mcp_oauth_callback(
 
     access_token = body.get("access_token")
     if not access_token:
+        authed_user = body.get("authed_user")
+        if isinstance(authed_user, dict):
+            access_token = authed_user.get("access_token")
+    if not access_token:
+        logger.error(
+            "Token response missing access_token for '%s': keys=%s",
+            mcp_name,
+            list(body.keys()),
+        )
         return HTMLResponse(
             _callback_html(error="Token response missing access_token"),
             status_code=502,

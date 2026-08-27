@@ -244,6 +244,212 @@ class TestHandleMcpOauthCallback:
         assert b"Connected" in response.body
         assert b"mcp_oauth_done" in response.body
 
+    async def test_ok_false_returns_error_with_message(self):
+        state_payload = json.dumps(
+            {
+                "user_id": "user-1",
+                "mcp_name": "oauth-mcp",
+                "code_verifier": "test-verifier",
+            }
+        )
+        server_cfg = {
+            "enabled": True,
+            "auth_mode": "oauth",
+            "oauth": {
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+            },
+        }
+        token_response = MagicMock()
+        token_response.json.return_value = {"ok": False, "error": "invalid_code"}
+        token_response.raise_for_status = MagicMock()
+
+        mock_ctx = AsyncMock(post=AsyncMock(return_value=token_response))
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.cache_get",
+                return_value=state_payload,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
+                return_value=server_cfg,
+            ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient",
+            ) as mock_client_cls,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.mcp_httpx_verify",
+                return_value=True,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.McpTokenStore",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.resolve_oauth_client_secret",
+                return_value="csecret",
+            ),
+        ):
+            mock_settings.oauth_callback_url = (
+                "https://agent.example.com/mcp/oauth/callback"
+            )
+            mock_settings.agent_deployment_id = "test-agent"
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            response = await handle_mcp_oauth_callback(
+                code="auth-code", state="valid-state", request=_mock_request()
+            )
+
+        assert response.status_code == 502
+        assert b"invalid_code" in response.body
+
+    async def test_authed_user_access_token_fallback(self):
+        state_payload = json.dumps(
+            {
+                "user_id": "user-1",
+                "mcp_name": "oauth-mcp",
+                "code_verifier": "test-verifier",
+            }
+        )
+        server_cfg = {
+            "enabled": True,
+            "auth_mode": "oauth",
+            "oauth": {
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+            },
+        }
+        token_response = MagicMock()
+        token_response.json.return_value = {
+            "ok": True,
+            "authed_user": {
+                "access_token": "xoxp-nested-token",
+                "scope": "chat:write",
+            },
+        }
+        token_response.raise_for_status = MagicMock()
+
+        mock_ctx = AsyncMock(post=AsyncMock(return_value=token_response))
+        mock_store = MagicMock()
+        mock_store.upsert_token = AsyncMock()
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.cache_get",
+                return_value=state_payload,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
+                return_value=server_cfg,
+            ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient",
+            ) as mock_client_cls,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.mcp_httpx_verify",
+                return_value=True,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.McpTokenStore",
+                return_value=mock_store,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.resolve_oauth_client_secret",
+                return_value="csecret",
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.get_mcp_credential_resolver",
+            ) as mock_resolver,
+            patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache"),
+            patch("deep_agent.aegra.graph.invalidate_graph_cache"),
+        ):
+            mock_settings.oauth_callback_url = (
+                "https://agent.example.com/mcp/oauth/callback"
+            )
+            mock_settings.agent_deployment_id = "test-agent"
+            mock_settings.database_uri = "sqlite:///test.db"
+            mock_settings.ui_origin = "https://ui.example.com"
+
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_resolver.return_value.invalidate_cache = MagicMock()
+
+            response = await handle_mcp_oauth_callback(
+                code="auth-code", state="valid-state", request=_mock_request()
+            )
+
+        assert response.status_code == 200
+        assert b"Connected" in response.body
+        mock_store.upsert_token.assert_awaited_once()
+        call_kwargs = mock_store.upsert_token.call_args[1]
+        assert call_kwargs["access_token"] == "xoxp-nested-token"
+
+    async def test_missing_access_token_everywhere_returns_error(self):
+        state_payload = json.dumps(
+            {
+                "user_id": "user-1",
+                "mcp_name": "oauth-mcp",
+                "code_verifier": "test-verifier",
+            }
+        )
+        server_cfg = {
+            "enabled": True,
+            "auth_mode": "oauth",
+            "oauth": {
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+            },
+        }
+        token_response = MagicMock()
+        token_response.json.return_value = {"token_type": "bearer", "expires_in": 3600}
+        token_response.raise_for_status = MagicMock()
+
+        mock_ctx = AsyncMock(post=AsyncMock(return_value=token_response))
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.cache_get",
+                return_value=state_payload,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
+                return_value=server_cfg,
+            ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient",
+            ) as mock_client_cls,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.mcp_httpx_verify",
+                return_value=True,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.McpTokenStore",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.resolve_oauth_client_secret",
+                return_value="csecret",
+            ),
+        ):
+            mock_settings.oauth_callback_url = (
+                "https://agent.example.com/mcp/oauth/callback"
+            )
+            mock_settings.agent_deployment_id = "test-agent"
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            response = await handle_mcp_oauth_callback(
+                code="auth-code", state="valid-state", request=_mock_request()
+            )
+
+        assert response.status_code == 502
+        assert b"missing access_token" in response.body
+
 
 class TestMcpOauthCallbackRoute:
     def test_callback_route_returns_error_without_params(self):

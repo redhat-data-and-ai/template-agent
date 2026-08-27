@@ -152,6 +152,7 @@ class Settings(BaseSettings):
 
     # ── Google Cloud ──────────────────────────────────────────────────
     GOOGLE_APPLICATION_CREDENTIALS_CONTENT: Optional[str] = Field(default=None)
+    GOOGLE_CLOUD_PROJECT: Optional[str] = Field(default=None)
 
     # ── vLLM / OpenAI-compatible ─────────────────────────────────────
     VLLM_BASE_URL: Optional[str] = Field(default=None)
