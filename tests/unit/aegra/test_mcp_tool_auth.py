@@ -111,6 +111,19 @@ class TestSafeAinvoke:
         assert isinstance(result, ToolMessage)
         assert "google_search_docs" in result.content
 
+    @pytest.mark.asyncio
+    async def test_reraises_graph_bubble_up(self):
+        """GraphBubbleUp (including GraphInterrupt) must not be swallowed."""
+        from langgraph.errors import GraphInterrupt
+
+        tool = _make_mock_tool()
+        tool.ainvoke = AsyncMock(side_effect=GraphInterrupt())
+
+        wrapped = _wrap_single_tool(tool)
+
+        with pytest.raises(GraphInterrupt):
+            await wrapped.ainvoke({"id": "call_5"})
+
 
 class TestWrapMcpToolsForAuth:
     def test_wraps_all_tools(self):

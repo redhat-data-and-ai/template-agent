@@ -87,6 +87,7 @@ def _make_safe_ainvoke(target_tool: Any) -> Any:
     async def safe_ainvoke(tool_input: Any, config: Any = None, **kwargs: Any) -> Any:
         """Wrap ainvoke to catch auth interrupts and MCP errors."""
         from langchain_core.messages import ToolMessage
+        from langgraph.errors import GraphBubbleUp
 
         try:
             return await original_ainvoke(tool_input, config, **kwargs)
@@ -97,6 +98,8 @@ def _make_safe_ainvoke(target_tool: Any) -> Any:
             )
             interrupt(_mcp_auth_interrupt_payload(exc))
             return await original_ainvoke(tool_input, config, **kwargs)
+        except GraphBubbleUp:
+            raise
         except Exception as exc:
             tool_name = getattr(target_tool, "name", "unknown")
             tool_call_id = ""
