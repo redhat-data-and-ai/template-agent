@@ -115,8 +115,11 @@ class TestSafeAinvoke:
 class TestWrapMcpToolsForAuth:
     def test_wraps_all_tools(self):
         tools = [_make_mock_tool(name=f"tool_{i}") for i in range(3)]
+        original_ainvokes = [t.ainvoke for t in tools]
         wrapped = wrap_mcp_tools_for_auth(tools)
         assert len(wrapped) == 3
+        for i, tool in enumerate(wrapped):
+            assert tool.ainvoke is not original_ainvokes[i]
 
     def test_empty_list(self):
         assert wrap_mcp_tools_for_auth([]) == []
