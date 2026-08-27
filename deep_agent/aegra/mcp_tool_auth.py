@@ -81,8 +81,37 @@ def wrap_mcp_tools_for_auth(tools: list[Any]) -> list[Any]:
 
 
 def _wrap_single_tool(tool: Any) -> Any:
+    original_ainvoke = tool.ainvoke
     coroutine = getattr(tool, "coroutine", None)
     func = getattr(tool, "func", None)
+
+    async def safe_ainvoke(input: Any, config: Any = None, **kwargs: Any) -> Any:
+        """Wrap ainvoke to catch auth interrupts and MCP errors."""
+        from langchain_core.messages import ToolMessage
+
+        try:
+            return await original_ainvoke(input, config, **kwargs)
+        except NeedsAuthorization as exc:
+            logger.info(
+                "MCP auth required for '%s' — interrupting run",
+                exc.mcp_name,
+            )
+            interrupt(_mcp_auth_interrupt_payload(exc))
+            return await original_ainvoke(input, config, **kwargs)
+        except Exception as exc:
+            tool_name = getattr(tool, "name", "unknown")
+            tool_call_id = ""
+            if isinstance(input, dict):
+                tool_call_id = str(input.get("id", ""))
+            logger.warning("MCP tool '%s' failed: %s", tool_name, exc)
+            return ToolMessage(
+                content=f"[TOOL_ERROR] {tool_name} failed: {exc}",
+                name=tool_name,
+                tool_call_id=tool_call_id,
+                status="error",
+            )
+
+    object.__setattr__(tool, "ainvoke", safe_ainvoke)
 
     if inspect.iscoroutinefunction(coroutine):
 
