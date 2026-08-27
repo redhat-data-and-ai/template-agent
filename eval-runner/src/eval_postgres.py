@@ -26,10 +26,6 @@ POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "")
 if not POSTGRES_PASSWORD:
     log.warning("POSTGRES_PASSWORD not set — connection may fail")
 
-AGENT_ORG = os.environ.get("DEPLOYED_AGENT_ORG", "default")
-AGENT_NAME = os.environ.get("DEPLOYED_AGENT_NAME", "agent")
-
-
 _HASH_EXTENSIONS = {".md", ".yaml", ".json"}
 _HASH_EXCLUDE_DIRS = {"evals", "deployment"}
 
@@ -68,8 +64,6 @@ def _get_config_hash() -> str:
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS evals (
     id              SERIAL PRIMARY KEY,
-    org             TEXT NOT NULL,
-    name            TEXT NOT NULL,
     config_hash     TEXT NOT NULL,
     eval_status     TEXT NOT NULL DEFAULT 'in_progress',
     eval_score      FLOAT,
@@ -84,7 +78,7 @@ CREATE TABLE IF NOT EXISTS evals (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at    TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS evals_org_name_hash ON evals (org, name, config_hash);
+CREATE INDEX IF NOT EXISTS evals_config_hash ON evals (config_hash);
 CREATE INDEX IF NOT EXISTS evals_status ON evals (eval_status);
 
 CREATE TABLE IF NOT EXISTS evaluation_results (
@@ -183,17 +177,8 @@ def write_eval_result(
     judge_model: str = "",
     results_detail: dict[str, Any] | None = None,
     config_hash: str | None = None,
-    org: str | None = None,
-    name: str | None = None,
 ) -> None:
-    """Persist completed eval results to PostgreSQL.
-
-    Uses (config_hash, org, name) passed from the agentpod trigger response
-    via the UI — no local hash computation needed. Falls back to module-level
-    defaults if not provided (local dev without UI).
-    """
-    effective_org = org or AGENT_ORG
-    effective_name = name or AGENT_NAME
+    """Persist completed eval results to PostgreSQL."""
     effective_hash = config_hash or _get_config_hash()
     try:
         conn = _get_conn()
@@ -216,7 +201,7 @@ def write_eval_result(
                             completed_at  = %s
                         WHERE id = (
                             SELECT id FROM evals
-                            WHERE org = %s AND name = %s AND config_hash = %s
+                            WHERE config_hash = %s
                               AND eval_status IN ('in_progress', 'error')
                             ORDER BY created_at DESC
                             LIMIT 1
@@ -233,8 +218,6 @@ def write_eval_result(
                             json.dumps(results_detail) if results_detail else None,
                             now,
                             now,
-                            effective_org,
-                            effective_name,
                             effective_hash,
                         ),
                     )
@@ -253,10 +236,8 @@ def write_eval_result(
             )
         else:
             log.warning(
-                "eval_postgres_no_matching_record org=%s name=%s config_hash=%s "
+                "eval_postgres_no_matching_record config_hash=%s "
                 "(check AGENT_CONFIG_DIR env var — CWD may resolve wrong directory)",
-                effective_org,
-                effective_name,
                 effective_hash,
             )
     except Exception as exc:
@@ -525,53 +506,29 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
     return cases
 
 
-def fetch_dataset_cases(org: str, name: str) -> list[dict] | None:
-    """Fetch eval cases from eval_datasets and convert to eval_cases.yaml format.
+def fetch_dataset() -> tuple[list[dict] | None, str | None]:
+    """Fetch eval cases and judge_model from eval_datasets in one query.
 
-    Returns None if no dataset is stored for this org+name, or on error.
+    Returns (cases, judge_model) — either may be None if no dataset stored or on error.
     """
     try:
         conn = _get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT dataset FROM eval_datasets WHERE org=%s AND name=%s",
-                    (org, name),
-                )
+                cur.execute("SELECT dataset, judge_model FROM eval_datasets LIMIT 1")
                 row = cur.fetchone()
         finally:
             conn.close()
 
         if not row:
-            return None
+            return None, None
 
-        raw = row[0]
+        raw, judge_model = row
         dataset = json.loads(raw) if isinstance(raw, str) else raw
         cases = _dataset_to_eval_cases(dataset)
-        log.info(
-            "fetch_dataset_cases: org=%s name=%s → %d cases", org, name, len(cases)
-        )
-        return cases or None
+        log.info("fetch_dataset: %d cases judge_model=%s", len(cases), judge_model)
+        return (cases or None), (str(judge_model) if judge_model else None)
 
     except Exception as exc:
-        log.warning("fetch_dataset_cases failed: %s", exc)
-        return None
-
-
-def fetch_judge_model(org: str, name: str) -> str | None:
-    """Return the judge_model stored in eval_datasets, or None."""
-    try:
-        conn = _get_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT judge_model FROM eval_datasets WHERE org=%s AND name=%s",
-                    (org, name),
-                )
-                row = cur.fetchone()
-        finally:
-            conn.close()
-        return str(row[0]) if row and row[0] else None
-    except Exception as exc:
-        log.warning("fetch_judge_model failed: %s", exc)
-        return None
+        log.warning("fetch_dataset failed: %s", exc)
+        return None, None

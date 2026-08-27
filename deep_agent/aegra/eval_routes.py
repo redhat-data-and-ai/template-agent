@@ -46,10 +46,6 @@ def _require_bearer(
     return str(creds.credentials)
 
 
-_AGENT_ORG = os.environ.get("DEPLOYED_AGENT_ORG", "default")
-_AGENT_NAME = os.environ.get("DEPLOYED_AGENT_NAME", "agent")
-
-
 async def _check_dcr_auth(request: Request) -> list[dict]:
     """Pre-flight check: return list of MCP servers that need authentication.
 
@@ -150,7 +146,7 @@ def _extract_sub(request: Request) -> str | None:
     return _decode_sub_unverified(auth[7:])
 
 
-def _write_eval_redis(sub: str, refresh_token: str, org: str, name: str) -> None:
+def _write_eval_redis(sub: str, refresh_token: str) -> None:
     """Write the three eval Redis keys at trigger time. Best-effort."""
     if not _EVAL_TOKEN_REFRESH_ENABLED or not sub:
         return
@@ -163,7 +159,7 @@ def _write_eval_redis(sub: str, refresh_token: str, org: str, name: str) -> None
             encrypted = encrypt_secret(refresh_token)
             if encrypted:
                 cache_set(f"eval:refresh:{sub}", encrypted, _EVAL_KEY_TTL)
-        cache_set(f"eval:trigger_sub:{org}:{name}", sub, _EVAL_KEY_TTL)
+        cache_set("eval:trigger_sub", sub, _EVAL_KEY_TTL)
     except Exception:
         pass  # never block the eval trigger
 
@@ -572,8 +568,6 @@ _EVALS_DDL_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS evals (
         id              SERIAL PRIMARY KEY,
-        org             TEXT NOT NULL,
-        name            TEXT NOT NULL,
         config_hash     TEXT NOT NULL,
         eval_status     TEXT NOT NULL DEFAULT 'in_progress',
         eval_score      FLOAT,
@@ -589,9 +583,8 @@ _EVALS_DDL_STATEMENTS = [
         completed_at    TIMESTAMPTZ
     )
     """,
-    "CREATE INDEX IF NOT EXISTS evals_org_name_hash ON evals (org, name, config_hash)",
+    "CREATE INDEX IF NOT EXISTS evals_config_hash ON evals (config_hash)",
     "CREATE INDEX IF NOT EXISTS evals_status ON evals (eval_status)",
-    "CREATE INDEX IF NOT EXISTS evals_history ON evals (org, name, eval_status, completed_at DESC)",
     "ALTER TABLE evals ADD COLUMN IF NOT EXISTS ls_run_ids TEXT[]",
     "ALTER TABLE evals DROP COLUMN IF EXISTS ls_run_id",
     "DROP INDEX IF EXISTS evals_ls_run_id",
@@ -694,9 +687,9 @@ async def _atomic_set_in_progress(
     async with await _pg_conn() as conn:
         # Check for an existing in_progress run first (cheap read before locking).
         row = await conn.execute(
-            "SELECT * FROM evals WHERE org=%s AND name=%s AND config_hash=%s "
+            "SELECT * FROM evals WHERE config_hash=%s "
             "AND eval_status='in_progress' ORDER BY created_at DESC LIMIT 1",
-            (_AGENT_ORG, _AGENT_NAME, config_hash),
+            (config_hash,),
         )
         existing = await row.fetchone()
         if existing is not None:
@@ -708,19 +701,17 @@ async def _atomic_set_in_progress(
         # time, closing the SELECT+INSERT TOCTOU window when two pods race.
         cur = await conn.execute(
             """INSERT INTO evals
-               (org, name, config_hash, eval_status, eval_score, pass, fail, error,
+               (config_hash, eval_status, eval_score, pass, fail, error,
                 results_detail, force_reeval, created_at, updated_at, completed_at)
-               SELECT %(org)s,%(name)s,%(config_hash)s,'in_progress',
+               SELECT %(config_hash)s,'in_progress',
                       NULL,0,0,0,NULL,%(force)s,%(now)s,%(now)s,NULL
                WHERE NOT EXISTS (
                    SELECT 1 FROM evals
-                   WHERE org=%(org)s AND name=%(name)s AND config_hash=%(config_hash)s
+                   WHERE config_hash=%(config_hash)s
                    AND eval_status='in_progress'
                )
                RETURNING *""",
             {
-                "org": _AGENT_ORG,
-                "name": _AGENT_NAME,
                 "config_hash": config_hash,
                 "force": force,
                 "now": now,
@@ -730,9 +721,9 @@ async def _atomic_set_in_progress(
         if new_row is None:
             # Another pod inserted in_progress between our SELECT and this INSERT
             row2 = await conn.execute(
-                "SELECT * FROM evals WHERE org=%s AND name=%s AND config_hash=%s "
+                "SELECT * FROM evals WHERE config_hash=%s "
                 "AND eval_status='in_progress' ORDER BY created_at DESC LIMIT 1",
-                (_AGENT_ORG, _AGENT_NAME, config_hash),
+                (config_hash,),
             )
             existing2 = await row2.fetchone()
             if existing2 is not None:
@@ -762,12 +753,10 @@ async def _mark_eval_error(config_hash: str, reason: str, created_at: datetime) 
             await conn.execute(
                 "UPDATE evals SET eval_status='error', completed_at=NOW(), updated_at=NOW(), "
                 "results_detail=%s::jsonb "
-                "WHERE org=%s AND name=%s AND config_hash=%s "
+                "WHERE config_hash=%s "
                 "AND eval_status='in_progress' AND created_at=%s",
                 (
                     json.dumps({"error": reason}),
-                    _AGENT_ORG,
-                    _AGENT_NAME,
                     config_hash,
                     created_at,
                 ),
@@ -803,11 +792,7 @@ async def _fire_eval_run(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 f"{_EVAL_RUNNER_URL}/evals/run",
-                json={
-                    "config_hash": config_hash,
-                    "org": _AGENT_ORG,
-                    "name": _AGENT_NAME,
-                },
+                json={"config_hash": config_hash},
                 headers=headers,
             )
             if resp.status_code >= 400:
@@ -825,12 +810,9 @@ async def _fire_eval_run(
 _DATASETS_DDL = """
     CREATE TABLE IF NOT EXISTS eval_datasets (
         id          SERIAL PRIMARY KEY,
-        org         TEXT NOT NULL,
-        name        TEXT NOT NULL,
         dataset     JSONB NOT NULL,
         judge_model TEXT,
-        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CONSTRAINT eval_datasets_org_name_uq UNIQUE (org, name)
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
 """
 # Migration for tables created before judge_model was added
@@ -851,14 +833,13 @@ async def _ensure_datasets_table_once() -> None:
 
 
 async def _has_postgres_dataset() -> bool:
-    """Return True if eval_datasets has a row with at least one case for this org+name."""
+    """Return True if eval_datasets has a row with at least one case."""
     try:
         await _ensure_datasets_table_once()
         async with await _pg_conn() as conn:
             row = await conn.execute(
-                "SELECT 1 FROM eval_datasets WHERE org=%s AND name=%s "
-                "AND jsonb_array_length(dataset->'cases') > 0 LIMIT 1",
-                (_AGENT_ORG, _AGENT_NAME),
+                "SELECT 1 FROM eval_datasets "
+                "WHERE jsonb_array_length(dataset->'cases') > 0 LIMIT 1",
             )
             return await row.fetchone() is not None
     except Exception as exc:
@@ -920,10 +901,10 @@ async def trigger_eval(request: Request) -> Any:
     await _ensure_evals_table_once()
     async with await _pg_conn() as conn:
         row = await conn.execute(
-            "SELECT * FROM evals WHERE org=%s AND name=%s AND config_hash=%s "
+            "SELECT * FROM evals WHERE config_hash=%s "
             "AND eval_status='completed' AND completed_at > NOW() - INTERVAL '24 hours' "
             "ORDER BY completed_at DESC LIMIT 1",
-            (_AGENT_ORG, _AGENT_NAME, config_hash),
+            (config_hash,),
         )
         existing = await row.fetchone()
         if existing:
@@ -934,8 +915,7 @@ async def trigger_eval(request: Request) -> Any:
             #    file — the cached result is stale regardless of config_hash match).
             try:
                 ds_row = await conn.execute(
-                    "SELECT created_at FROM eval_datasets WHERE org=%s AND name=%s",
-                    (_AGENT_ORG, _AGENT_NAME),
+                    "SELECT created_at FROM eval_datasets LIMIT 1",
                 )
                 ds = await ds_row.fetchone()
                 if ds is None:
@@ -1015,9 +995,7 @@ async def _queue_eval_run(
 ) -> dict[str, Any]:
     auth_token = request.headers.get("authorization", "")
     sub = _extract_sub(request)
-    _write_eval_redis(
-        sub or "", request.headers.get("x-refresh-token", ""), _AGENT_ORG, _AGENT_NAME
-    )
+    _write_eval_redis(sub or "", request.headers.get("x-refresh-token", ""))
     row_ts = record.get("created_at") if record else None
 
     error_msg = await _fire_eval_run(config_hash, auth_token, row_ts)
@@ -1031,8 +1009,6 @@ async def _queue_eval_run(
         "eval_status": "in_progress",
         "queued": True,
         "config_hash": config_hash,
-        "org": _AGENT_ORG,
-        "name": _AGENT_NAME,
     }
     if forced:
         result["forced"] = True
@@ -1067,14 +1043,12 @@ async def eval_status() -> dict[str, Any]:
         async with await _pg_conn() as conn:
             await conn.execute(
                 "UPDATE evals SET eval_status='error', completed_at=NOW(), updated_at=NOW() "
-                "WHERE org=%s AND name=%s AND eval_status='in_progress' "
+                "WHERE eval_status='in_progress' "
                 "AND created_at < NOW() - make_interval(mins => %s)",
-                (_AGENT_ORG, _AGENT_NAME, _EVAL_STALE_TIMEOUT_MINUTES),
+                (_EVAL_STALE_TIMEOUT_MINUTES,),
             )
             row = await conn.execute(
-                "SELECT * FROM evals WHERE org=%s AND name=%s "
-                "ORDER BY created_at DESC LIMIT 1",
-                (_AGENT_ORG, _AGENT_NAME),
+                "SELECT * FROM evals ORDER BY created_at DESC LIMIT 1",
             )
             result = await row.fetchone()
             if not result:
@@ -1113,17 +1087,15 @@ async def eval_results(request: Request) -> dict[str, Any]:
         async with await _pg_conn() as conn:
             if completed_at:
                 row = await conn.execute(
-                    "SELECT * FROM evals WHERE org=%s AND name=%s "
-                    "AND eval_status='completed' AND completed_at=%s "
+                    "SELECT * FROM evals "
+                    "WHERE eval_status='completed' AND completed_at=%s "
                     "LIMIT 1",
-                    (_AGENT_ORG, _AGENT_NAME, completed_at),
+                    (completed_at,),
                 )
             else:
                 row = await conn.execute(
-                    "SELECT * FROM evals WHERE org=%s AND name=%s "
-                    "AND eval_status='completed' "
+                    "SELECT * FROM evals WHERE eval_status='completed' "
                     "ORDER BY completed_at DESC LIMIT 1",
-                    (_AGENT_ORG, _AGENT_NAME),
                 )
             result = await row.fetchone()
             if not result:
@@ -1164,9 +1136,9 @@ async def eval_history(request: Request) -> dict[str, Any]:
                 "       created_at, completed_at, "
                 "       COUNT(*) OVER() AS total_count "
                 "FROM evals "
-                "WHERE org=%s AND name=%s AND eval_status='completed' "
+                "WHERE eval_status='completed' "
                 "ORDER BY completed_at DESC LIMIT %s",
-                (_AGENT_ORG, _AGENT_NAME, limit),
+                (limit,),
             )
             cols = [d.name for d in cur.description]
             runs = []
@@ -1214,10 +1186,10 @@ async def eval_trends(request: Request) -> dict[str, Any]:
                 "SELECT results_detail->'summary'->'summary_stats'->'by_metric' as by_metric, "
                 "       eval_score, completed_at "
                 "FROM evals "
-                "WHERE org=%s AND name=%s AND eval_status='completed' "
+                "WHERE eval_status='completed' "
                 "  AND results_detail IS NOT NULL "
                 "ORDER BY completed_at DESC LIMIT %s",
-                (_AGENT_ORG, _AGENT_NAME, limit),
+                (limit,),
             )
 
             metrics: dict[str, list[dict]] = {}
@@ -1321,32 +1293,22 @@ class DatasetUpsertRequest(BaseModel):
 async def upsert_dataset(body: DatasetUpsertRequest) -> dict[str, Any]:
     """Upsert the eval dataset for this agent.
 
-    Only one row is kept per (org, name) — the latest submission replaces the
-    previous one via ON CONFLICT ... DO UPDATE.
+    Only one row is kept — DELETE + INSERT ensures the latest submission always wins.
     """
     await _ensure_datasets_table_once()
     now = datetime.now(UTC)
     dataset_json = json.dumps({"cases": body.cases})
 
     async with await _pg_conn() as conn:
+        await conn.execute("DELETE FROM eval_datasets")
         await conn.execute(
-            """
-            INSERT INTO eval_datasets (org, name, dataset, judge_model, created_at)
-            VALUES (%s, %s, %s::jsonb, %s, %s)
-            ON CONFLICT (org, name)
-            DO UPDATE SET dataset = EXCLUDED.dataset,
-                          judge_model = EXCLUDED.judge_model,
-                          created_at = EXCLUDED.created_at
-            """,
-            (_AGENT_ORG, _AGENT_NAME, dataset_json, body.judge_model, now),
+            "INSERT INTO eval_datasets (dataset, judge_model, created_at) "
+            "VALUES (%s::jsonb, %s, %s)",
+            (dataset_json, body.judge_model, now),
         )
 
     log.info(
-        "Dataset upserted: org=%s name=%s cases=%d judge_model=%s",
-        _AGENT_ORG,
-        _AGENT_NAME,
-        len(body.cases),
-        body.judge_model,
+        "Dataset upserted: cases=%d judge_model=%s", len(body.cases), body.judge_model
     )
     return {"status": "ok", "case_count": len(body.cases)}
 
@@ -1360,8 +1322,7 @@ async def get_dataset() -> dict[str, Any]:
 
     async with await _pg_conn() as conn:
         row = await conn.execute(
-            "SELECT dataset, judge_model, created_at FROM eval_datasets WHERE org=%s AND name=%s",
-            (_AGENT_ORG, _AGENT_NAME),
+            "SELECT dataset, judge_model, created_at FROM eval_datasets LIMIT 1",
         )
         result = await row.fetchone()
 
@@ -1403,27 +1364,14 @@ async def cleanup_eval_redis(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="invalid internal token")
 
     try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    org = body.get("org", _AGENT_ORG)
-    name = body.get("name", _AGENT_NAME)
-
-    try:
         from deep_agent.aegra.redis import cache_delete, cache_get
 
-        sub = cache_get(f"eval:trigger_sub:{org}:{name}")
-        cache_delete(f"eval:trigger_sub:{org}:{name}")
+        sub = cache_get("eval:trigger_sub")
+        cache_delete("eval:trigger_sub")
         if sub:
             cache_delete(f"eval:active:{sub}")
             cache_delete(f"eval:access:{sub}")
-        log.info(
-            "eval_redis_cleanup org=%s name=%s keys_deleted=%d",
-            org,
-            name,
-            3 if sub else 1,
-        )
+        log.info("eval_redis_cleanup keys_deleted=%d", 3 if sub else 1)
     except Exception as exc:
         log.warning("eval_redis_cleanup failed (TTL will handle): %s", exc)
 

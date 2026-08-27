@@ -33,7 +33,7 @@ from typing import Any
 
 import yaml
 from eval_cases import get_metric_thresholds, load_cases
-from eval_postgres import _compute_config_hash, fetch_dataset_cases, fetch_judge_model
+from eval_postgres import _compute_config_hash, fetch_dataset
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -52,7 +52,7 @@ _EVAL_TOKEN_REFRESH_ENABLED = (
 _EVAL_INTERNAL_TOKEN = os.environ.get("EVAL_INTERNAL_TOKEN", "")
 
 
-def _call_cleanup_endpoint(org: str, name: str) -> None:
+def _call_cleanup_endpoint() -> None:
     """Notify the agent pod to delete eval Redis keys. Best-effort — never raises."""
     if not _EVAL_TOKEN_REFRESH_ENABLED or not _EVAL_INTERNAL_TOKEN:
         return
@@ -61,7 +61,7 @@ def _call_cleanup_endpoint(org: str, name: str) -> None:
 
         _httpx.post(
             f"{AGENT_URL.rstrip('/')}/evals/internal/cleanup",
-            json={"org": org, "name": name},
+            json={},
             headers={"x-internal-token": _EVAL_INTERNAL_TOKEN},
             timeout=5,
         )
@@ -109,10 +109,6 @@ EVAL_OUTPUT_DIR = Path(
     os.environ.get("EVAL_OUTPUT_DIR", tempfile.gettempdir() + "/eval_output")
 )
 
-AGENT_ORG = os.environ.get("DEPLOYED_AGENT_ORG", "default")
-AGENT_NAME = os.environ.get("DEPLOYED_AGENT_NAME", "agent")
-
-
 AGENT_CONFIG_HASH = os.environ.get("AGENT_CONFIG_HASH") or _compute_config_hash(
     _agent_config_dir
 )
@@ -122,11 +118,9 @@ EVAL_MAX_CONCURRENCY = int(os.environ.get("EVAL_MAX_CONCURRENCY", "3"))
 ALL_PATTERNS = ["tool_use", "structured_output", "hitl", "multi_agent"]
 
 log.info(
-    "eval_api config: agent_url=%s org=%s name=%s config_hash=%s "
+    "eval_api config: agent_url=%s config_hash=%s "
     "eval_cases=%s eval_system=%s max_concurrency=%d",
     AGENT_URL,
-    AGENT_ORG,
-    AGENT_NAME,
     AGENT_CONFIG_HASH,
     EVAL_CASES_PATH,
     EVAL_SYSTEM_CONFIG,
@@ -142,26 +136,18 @@ _latest_result: dict[str, Any] | None = None
 # ── Eval runner ───────────────────────────────────────────────────────────────
 
 
-def _find_eval_files(pattern: str | None) -> list[Path]:
+def _find_eval_files(pattern: str | None, cases: list[dict] | None) -> list[Path]:
     """Return one temp file per tag (parallel all) or one file for a specific pattern.
 
-    Data source resolution order:
-    1. Postgres eval_datasets table (always tried first — Postgres is source of truth)
-    2. eval_cases.yaml from config dir (dev-mode fallback when Postgres is empty)
+    Receives pre-fetched cases from fetch_dataset() — no additional DB call.
+    Falls back to eval_cases.yaml when cases is None (dev-mode).
 
     When pattern is None every tag gets its own temp file so _run_eval can run
     them concurrently via asyncio.gather while keeping conversations sequential
     within each tag subprocess.
     """
-    # Try Postgres first (blocking psycopg2 I/O — called from thread pool in _run_eval).
-    cases = fetch_dataset_cases(AGENT_ORG, AGENT_NAME)
     if cases:
-        log.info(
-            "Loaded %d eval cases from Postgres (org=%s name=%s)",
-            len(cases),
-            AGENT_ORG,
-            AGENT_NAME,
-        )
+        log.info("Loaded %d eval cases from Postgres", len(cases))
     else:
         # Dev-mode fallback: use config file if Postgres has no dataset
         if not EVAL_CASES_PATH.exists():
@@ -376,24 +362,24 @@ from eval_postgres import (  # noqa: E402 — after constants are set
 )
 
 
-def _get_system_yaml_content() -> str:
+def _get_system_yaml_content(judge_model: str | None = None) -> str:
     """Return system.yaml content with postgres credentials filled from env vars.
 
     If system.yaml is missing on disk, auto-generates a default using:
-    1. judge_model stored in eval_datasets (user's UI selection)
+    1. judge_model passed in (fetched alongside dataset in one DB call)
     2. model: field from PROMPT.md frontmatter
     """
     if not EVAL_SYSTEM_CONFIG.exists():
-        judge_model = fetch_judge_model(AGENT_ORG, AGENT_NAME) or _read_prompt_model()
-        provider = _detect_provider(judge_model)
+        resolved_model = judge_model or _read_prompt_model()
+        provider = _detect_provider(resolved_model)
         log.info(
             "system.yaml not found — generating default with provider=%s model=%s",
             provider,
-            judge_model,
+            resolved_model,
         )
         return str(
             yaml.dump(
-                _default_system_yaml(judge_model, provider),
+                _default_system_yaml(resolved_model, provider),
                 default_flow_style=False,
                 allow_unicode=True,
             )
@@ -422,9 +408,9 @@ def _get_system_yaml_content() -> str:
     return str(yaml.dump(config, default_flow_style=False, allow_unicode=True))
 
 
-def _system_yaml_path() -> Path:
+def _system_yaml_path(judge_model: str | None = None) -> Path:
     """Write system.yaml with env-injected credentials to a temp file and return its path."""
-    content = _get_system_yaml_content()
+    content = _get_system_yaml_content(judge_model)
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".yaml", prefix="eval_system_", delete=False
     )
@@ -495,8 +481,6 @@ def _score_from_counts(passed: int, failed: int, errors: int) -> tuple[str, floa
 async def _run_eval(
     pattern: str | None,
     config_hash: str | None = None,
-    org: str | None = None,
-    name: str | None = None,
     auth_token: str = "",
     run_id: str = "",
 ) -> None:
@@ -515,10 +499,12 @@ async def _run_eval(
     tmp_files: list[Path] = []
     try:
         try:
-            system_yaml = _system_yaml_path()
             loop = asyncio.get_running_loop()
+            # Single DB call to get both dataset cases and judge_model
+            cases, judge_model = await loop.run_in_executor(None, fetch_dataset)
+            system_yaml = _system_yaml_path(judge_model)
             eval_files = await loop.run_in_executor(
-                None, functools.partial(_find_eval_files, pattern)
+                None, functools.partial(_find_eval_files, pattern, cases)
             )
             # Track temp files created by _find_eval_files (tag-filtered) for cleanup
             tmp_files = [f for f in eval_files if f.parent != EVAL_CASES_PATH.parent]
@@ -533,8 +519,6 @@ async def _run_eval(
                 ls_run_ids=None,
                 results_detail={"error": str(exc)},
                 config_hash=config_hash,
-                org=org or AGENT_ORG,
-                name=name or AGENT_NAME,
             )
             return
 
@@ -575,8 +559,6 @@ async def _run_eval(
 
     result: dict[str, Any] = {
         "run_id": run_id,
-        "org": AGENT_ORG,
-        "name": AGENT_NAME,
         "config_hash": AGENT_CONFIG_HASH,
         "eval_status": eval_status,
         "eval_score": eval_score,
@@ -646,8 +628,6 @@ async def _run_eval(
             ls_run_ids=results_detail.get("ls_run_ids"),
             results_detail=results_detail,
             config_hash=config_hash,
-            org=org,
-            name=name,
         )
     except Exception as exc:
         log.error(
@@ -655,7 +635,7 @@ async def _run_eval(
             type(exc).__name__,
         )
 
-    _call_cleanup_endpoint(org or AGENT_ORG, name or AGENT_NAME)
+    _call_cleanup_endpoint()
 
 
 # ── FastAPI app ────────────────────────────────────────────────────────────────
@@ -720,11 +700,9 @@ async def _internal_token_middleware(
 
 
 class EvalRunBody(BaseModel):
-    """Request body for POST /evals/run — carries agent identity from the trigger response."""
+    """Request body for POST /evals/run."""
 
     config_hash: str | None = None
-    org: str | None = None
-    name: str | None = None
 
 
 def _extract_token(request: Request) -> str:
@@ -760,19 +738,15 @@ async def _trigger(
     # Missing-dataset errors surface via FileNotFoundError from _find_eval_files.
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     config_hash = body.config_hash if body else None
-    org = body.org if body else None
-    name = body.name if body else None
     log.info(
-        "Eval triggered: run_id=%s pattern=%s org=%s name=%s config_hash=%s auth_token_present=%s",
+        "Eval triggered: run_id=%s pattern=%s config_hash=%s auth_token_present=%s",
         run_id,
         pattern or "all",
-        org,
-        name,
         config_hash,
         bool(auth_token),
     )
     _status.update({"state": "running", "run_id": run_id})
-    background.add_task(_run_eval, pattern, config_hash, org, name, auth_token, run_id)
+    background.add_task(_run_eval, pattern, config_hash, auth_token, run_id)
     return {
         "run_id": run_id,
         "status": "started",

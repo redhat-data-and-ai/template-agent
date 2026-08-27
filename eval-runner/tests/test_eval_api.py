@@ -93,8 +93,7 @@ def cases_file(tmp_path: Path) -> Generator[Path, None, None]:
 
 
 def test_find_eval_files_specific_pattern(cases_file: Path) -> None:
-    with patch("eval_api.fetch_dataset_cases", return_value=[]):
-        files = eval_api._find_eval_files("tool_use")
+    files = eval_api._find_eval_files("tool_use", None)
     try:
         assert len(files) == 1
         assert files[0].exists()
@@ -106,8 +105,7 @@ def test_find_eval_files_specific_pattern(cases_file: Path) -> None:
 
 
 def test_find_eval_files_all_patterns_splits_by_tag(cases_file: Path) -> None:
-    with patch("eval_api.fetch_dataset_cases", return_value=[]):
-        files = eval_api._find_eval_files(None)
+    files = eval_api._find_eval_files(None, None)
     try:
         assert len(files) == 2  # one per tag
     finally:
@@ -116,23 +114,21 @@ def test_find_eval_files_all_patterns_splits_by_tag(cases_file: Path) -> None:
 
 
 def test_find_eval_files_pattern_not_found_raises(cases_file: Path) -> None:
-    with patch("eval_api.fetch_dataset_cases", return_value=[]):
-        with pytest.raises(FileNotFoundError, match="multi_agent"):
-            eval_api._find_eval_files("multi_agent")
+    with pytest.raises(FileNotFoundError, match="multi_agent"):
+        eval_api._find_eval_files("multi_agent", None)
 
 
 def test_find_eval_files_missing_cases_raises(tmp_path: Path) -> None:
     orig = eval_api.EVAL_CASES_PATH
     eval_api.EVAL_CASES_PATH = tmp_path / "nonexistent.yaml"
     try:
-        with patch("eval_api.fetch_dataset_cases", return_value=[]):
-            with pytest.raises(FileNotFoundError):
-                eval_api._find_eval_files(None)
+        with pytest.raises(FileNotFoundError):
+            eval_api._find_eval_files(None, None)
     finally:
         eval_api.EVAL_CASES_PATH = orig
 
 
-def test_find_eval_files_no_tags_returns_full_file(tmp_path: Path) -> None:
+def test_find_eval_files_no_tags_writes_single_temp_file(tmp_path: Path) -> None:
     cases = [
         {"conversation_group_id": "c1", "turns": [{"query": "Q", "turn_id": "t1"}]}
     ]
@@ -141,11 +137,13 @@ def test_find_eval_files_no_tags_returns_full_file(tmp_path: Path) -> None:
     orig = eval_api.EVAL_CASES_PATH
     eval_api.EVAL_CASES_PATH = p
     try:
-        with patch("eval_api.fetch_dataset_cases", return_value=[]):
-            files = eval_api._find_eval_files(None)
-        assert files == [p]
+        files = eval_api._find_eval_files(None, None)
+        assert len(files) == 1
+        assert files[0].exists()
     finally:
         eval_api.EVAL_CASES_PATH = orig
+        for f in files:
+            f.unlink(missing_ok=True)
 
 
 # ── _get_system_yaml_content ──────────────────────────────────────────────────
@@ -216,13 +214,10 @@ def test_get_system_yaml_missing_file_auto_generates(
     eval_api.EVAL_SYSTEM_CONFIG = tmp_path / "nonexistent.yaml"
     try:
         with (
-            patch("eval_api.fetch_judge_model", return_value=None),
-            patch(
-                "eval_api._read_prompt_model", return_value=("vertex", "gemini-2.5-pro")
-            ),
+            patch("eval_api._read_prompt_model", return_value="gemini-2.5-pro"),
             patch("eval_api._detect_provider", return_value="vertex"),
         ):
-            content = eval_api._get_system_yaml_content()
+            content = eval_api._get_system_yaml_content(judge_model=None)
         assert "gemini-2.5-pro" in content
         assert "judge" in content
     finally:
@@ -364,7 +359,7 @@ async def test_run_eval_completes_with_db_summary(
     with patch("eval_api._run_eval_pattern", new_callable=AsyncMock, return_value=0):
         with patch("eval_api.load_results_since", return_value=db_data):
             with patch("eval_api.write_eval_result") as mock_write:
-                with patch("eval_api.fetch_dataset_cases", return_value=[]):
+                with patch("eval_api.fetch_dataset", return_value=(None, None)):
                     await eval_api._run_eval(
                         "tool_use", auth_token="user-tok", run_id="test-run-1"
                     )
@@ -387,7 +382,7 @@ async def test_run_eval_setup_failure_sets_error(
     eval_api.EVAL_CASES_PATH = tmp_path / "missing.yaml"
     eval_api._status = {"state": "idle", "run_id": None}
 
-    with patch("eval_api.fetch_dataset_cases", return_value=[]):
+    with patch("eval_api.fetch_dataset", return_value=(None, None)):
         await eval_api._run_eval(None, run_id="test-run-2")
 
     assert eval_api._status["state"] == "error"
@@ -406,7 +401,7 @@ async def test_run_eval_write_failure_still_completes(
             with patch(
                 "eval_api.write_eval_result", side_effect=RuntimeError("db down")
             ):
-                with patch("eval_api.fetch_dataset_cases", return_value=[]):
+                with patch("eval_api.fetch_dataset", return_value=(None, None)):
                     await eval_api._run_eval(None, run_id="test-run-3")
 
     assert eval_api._status["state"] == "completed"
@@ -436,9 +431,12 @@ def api_client(tmp_path: Path) -> Generator[TestClient, None, None]:
     eval_api._status = {"state": "idle", "run_id": None}
     eval_api._latest_result = None
 
-    with patch("eval_api.ensure_table"):
-        with TestClient(eval_api.app) as client:
-            yield client
+    with patch("eval_api._EVAL_INTERNAL_TOKEN", "test-token"):
+        with patch("eval_api.ensure_table"):
+            with TestClient(
+                eval_api.app, headers={"x-internal-token": "test-token"}
+            ) as client:
+                yield client
 
     eval_api.EVAL_CASES_PATH = orig_cases
     eval_api.EVAL_SYSTEM_CONFIG = orig_system
@@ -502,16 +500,14 @@ def test_run_all_with_body_fields(api_client: TestClient) -> None:
     with patch("eval_api._run_eval") as mock_run_eval:
         resp = api_client.post(
             "/evals/run",
-            json={"config_hash": "abc", "org": "myorg", "name": "myagent"},
+            json={"config_hash": "abc"},
         )
     assert resp.status_code == 202
     assert "run_id" in resp.json()
     mock_run_eval.assert_called_once()
-    pattern, config_hash, org, name, auth_token, run_id = mock_run_eval.call_args[0]
+    pattern, config_hash, auth_token, run_id = mock_run_eval.call_args[0]
     assert pattern is None
     assert config_hash == "abc"
-    assert org == "myorg"
-    assert name == "myagent"
     assert auth_token == ""
     assert run_id == resp.json()["run_id"]
 

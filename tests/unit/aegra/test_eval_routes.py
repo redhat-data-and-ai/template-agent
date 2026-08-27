@@ -393,8 +393,8 @@ class TestEnsureEvalsTable:
 class TestAtomicSetInProgress:
     async def test_returns_existing_when_in_progress(self):
         er._table_ensured = True
-        cols = [_col("org"), _col("name"), _col("config_hash"), _col("eval_status")]
-        existing_row = ("default", "agent", "abc123", "in_progress")
+        cols = [_col("config_hash"), _col("eval_status")]
+        existing_row = ("abc123", "in_progress")
         cursor = _make_cursor(rows=[existing_row], description=cols)
         conn, _ = _make_conn(cursor)
 
@@ -425,13 +425,11 @@ class TestAtomicSetInProgress:
     async def test_inserts_new_row_when_no_existing(self):
         er._table_ensured = True
         cols = [
-            _col("org"),
-            _col("name"),
             _col("config_hash"),
             _col("eval_status"),
             _col("id"),
         ]
-        new_row = ("default", "agent", "abc123", "in_progress", 42)
+        new_row = ("abc123", "in_progress", 42)
 
         select_cursor = _make_cursor(rows=[None], description=cols)
         select_cursor.fetchone = AsyncMock(return_value=None)
@@ -1215,7 +1213,7 @@ class TestWriteEvalRedis:
                 "deep_agent.aegra.redis.cache_set",
                 side_effect=AssertionError("should not call"),
             ):
-                er._write_eval_redis("user123", "tok", "demo", "agent")
+                er._write_eval_redis("user123", "tok")
 
     def test_noop_when_sub_empty(self):
         """_write_eval_redis does nothing when sub is empty string."""
@@ -1224,7 +1222,7 @@ class TestWriteEvalRedis:
                 "deep_agent.aegra.redis.cache_set",
                 side_effect=AssertionError("should not call"),
             ):
-                er._write_eval_redis("", "tok", "demo", "agent")
+                er._write_eval_redis("", "tok")
 
     def test_writes_active_and_sub_keys(self):
         """When enabled and sub is set, writes active + trigger_sub keys."""
@@ -1233,10 +1231,10 @@ class TestWriteEvalRedis:
                 patch("deep_agent.aegra.redis.cache_set") as mock_set,
                 patch("deep_agent.aegra.mcp_crypto.encrypt_secret", return_value=None),
             ):
-                er._write_eval_redis("u1", "", "demo", "agent")
+                er._write_eval_redis("u1", "")
         keys = [call.args[0] for call in mock_set.call_args_list]
         assert any("eval:active:u1" in k for k in keys)
-        assert any("eval:trigger_sub:demo:agent" in k for k in keys)
+        assert any("eval:trigger_sub" in k for k in keys)
 
     def test_encrypts_refresh_token_when_present(self):
         """Refresh token is encrypted and stored when non-empty."""
@@ -1247,7 +1245,7 @@ class TestWriteEvalRedis:
                     "deep_agent.aegra.mcp_crypto.encrypt_secret", return_value="enc-tok"
                 ) as mock_enc,
             ):
-                er._write_eval_redis("u1", "my-refresh", "demo", "agent")
+                er._write_eval_redis("u1", "my-refresh")
         mock_enc.assert_called_once_with("my-refresh")
         keys = [call.args[0] for call in mock_set.call_args_list]
         assert any("eval:refresh:u1" in k for k in keys)
@@ -1293,7 +1291,7 @@ class TestInternalCleanupEndpoint:
         """Returns 200 when correct token is provided."""
         mock_request = MagicMock()
         mock_request.headers = {"x-internal-token": "secret"}
-        mock_request.json = AsyncMock(return_value={"org": "demo", "name": "agent"})
+        mock_request.json = AsyncMock(return_value={})
         with (
             patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True),
             patch.object(er, "_EVAL_INTERNAL_TOKEN", "secret"),

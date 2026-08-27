@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir \
 
 COPY src/ ./
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && \
+    chown 65532:0 /app && chmod g+w /app
 
 USER 65532
 

@@ -125,8 +125,6 @@ def test_write_eval_result_success(
                 errors=0,
                 eval_score=0.8,
                 ls_run_ids=["run1"],
-                org="test",
-                name="agent",
             )
     cursor.execute.assert_called_once()
     args = cursor.execute.call_args[0][1]
@@ -162,19 +160,17 @@ def test_write_eval_result_handles_db_error(caplog: pytest.LogCaptureFixture) ->
     assert "eval_postgres_write_failed" in caplog.text
 
 
-def test_write_eval_result_uses_defaults_when_org_omitted(
+def test_write_eval_result_uses_default_config_hash(
     mock_psycopg2_conn: tuple[MagicMock, MagicMock],
 ) -> None:
-    """org/name/hash should fall back to module-level defaults."""
+    """config_hash should fall back to _get_config_hash() when not provided."""
     conn, cursor = mock_psycopg2_conn
     cursor.fetchone.return_value = (1,)
     with patch("eval_postgres._get_conn", return_value=conn):
         eval_postgres.write_eval_result(passed=1, failed=0, errors=0, eval_score=1.0)
     cursor.execute.assert_called_once()
     args = cursor.execute.call_args[0][1]
-    assert args[9] == eval_postgres.AGENT_ORG
-    assert args[10] == eval_postgres.AGENT_NAME
-    assert args[11] == eval_postgres._get_config_hash()
+    assert args[9] == eval_postgres._get_config_hash()
 
 
 def test_write_eval_result_serialises_results_detail(
@@ -207,13 +203,9 @@ def test_write_eval_result_passes_explicit_config_hash(
             errors=0,
             eval_score=1.0,
             config_hash="abc123",
-            org="myorg",
-            name="myagent",
         )
     args = cursor.execute.call_args[0][1]
-    assert args[9] == "myorg"
-    assert args[10] == "myagent"
-    assert args[11] == "abc123"
+    assert args[9] == "abc123"
 
 
 # ── load_results_since ────────────────────────────────────────────────────────
