@@ -11,6 +11,7 @@
 #   OPA_POLICY_GIT_AUTH_USER  - Git username for private repos (optional)
 #   OPA_POLICY_GIT_AUTH_TOKEN - Git token/password for private repos (optional)
 #   OPA_POLICY_GIT_SSL_VERIFY - Verify SSL certificates (default: true, set to false for self-signed certs)
+#   OPA_POLICY_OVERRIDES_DIR  - Override subdirectory in repo (e.g. overrides/healthcare-agent)
 #   OPA_POLL_INTERVAL         - Seconds between polls (default: 2)
 
 set -e
@@ -26,6 +27,8 @@ POLICY_GIT_SUBDIR="${OPA_POLICY_GIT_SUBDIR:-}"
 POLICY_GIT_AUTH_USER="${OPA_POLICY_GIT_AUTH_USER:-}"
 POLICY_GIT_AUTH_TOKEN="${OPA_POLICY_GIT_AUTH_TOKEN:-}"
 POLICY_GIT_SSL_VERIFY="${OPA_POLICY_GIT_SSL_VERIFY:-true}"
+POLICY_OVERRIDES_DIR="${OPA_POLICY_OVERRIDES_DIR:-}"
+MERGED_POLICY_DIR="/tmp/merged-policies"
 OPA_PID=""
 USE_GIT=false
 GIT_POLICY_DIR=""
@@ -72,7 +75,7 @@ sync_git_repo() {
         log_info "Cloning policy repository: $POLICY_GIT_REPO (branch: $POLICY_GIT_BRANCH)"
 
         if [ -n "$POLICY_GIT_SUBDIR" ]; then
-            # Use sparse checkout for subdirectory
+            # Use sparse checkout for subdirectory (+ optional overrides)
             log_info "Using sparse checkout for subdirectory: $POLICY_GIT_SUBDIR"
             mkdir -p "$GIT_CLONE_DIR"
             cd "$GIT_CLONE_DIR" || return 1
@@ -93,6 +96,10 @@ sync_git_repo() {
 
             git config core.sparseCheckout true
             echo "$POLICY_GIT_SUBDIR/*" > .git/info/sparse-checkout
+            if [ -n "$POLICY_OVERRIDES_DIR" ]; then
+                echo "$POLICY_OVERRIDES_DIR/*" >> .git/info/sparse-checkout
+                log_info "Also sparse-checking out overrides: $POLICY_OVERRIDES_DIR"
+            fi
 
             git_output=$(git fetch --depth 1 origin "$POLICY_GIT_BRANCH" 2>&1) || {
                 log_error "Failed to fetch from git repository"
@@ -122,6 +129,14 @@ sync_git_repo() {
     else
         log_info "Updating policy repository from remote"
         cd "$GIT_CLONE_DIR" || return 1
+
+        # Re-write sparse-checkout in case POLICY_OVERRIDES_DIR changed
+        if [ -n "$POLICY_GIT_SUBDIR" ]; then
+            echo "$POLICY_GIT_SUBDIR/*" > .git/info/sparse-checkout
+            if [ -n "$POLICY_OVERRIDES_DIR" ]; then
+                echo "$POLICY_OVERRIDES_DIR/*" >> .git/info/sparse-checkout
+            fi
+        fi
 
         git_output=$(git fetch origin "$POLICY_GIT_BRANCH" --depth 1 2>&1) || {
             log_error "Failed to fetch updates from git repository"
@@ -156,6 +171,23 @@ sync_git_repo() {
     local git_count
     git_count=$(find "$GIT_POLICY_DIR" -name "*.rego" -type f 2>/dev/null | wc -l)
     log_info "Found $git_count policy file(s) in git repository"
+
+    # Merge base + overrides if overrides dir is configured
+    if [ -n "$POLICY_OVERRIDES_DIR" ]; then
+        local overrides_path="$GIT_CLONE_DIR/$POLICY_OVERRIDES_DIR"
+        rm -rf "$MERGED_POLICY_DIR"
+        mkdir -p "$MERGED_POLICY_DIR"
+        cp -a "$GIT_POLICY_DIR"/. "$MERGED_POLICY_DIR"/
+        if [ -d "$overrides_path" ]; then
+            local override_count
+            override_count=$(find "$overrides_path" -name "*.rego" -o -name "*.json" -type f 2>/dev/null | wc -l)
+            log_info "Merging $override_count override file(s) from $POLICY_OVERRIDES_DIR"
+            cp -a "$overrides_path"/. "$MERGED_POLICY_DIR"/
+        else
+            log_warn "Override directory not found in repo: $POLICY_OVERRIDES_DIR — using base policies only"
+        fi
+        GIT_POLICY_DIR="$MERGED_POLICY_DIR"
+    fi
 
     return 0
 }

@@ -196,3 +196,16 @@ def version() -> dict[str, str]:
     from deep_agent.aegra import __version__
 
     return {"service": "template-agent", "version": __version__}
+
+
+@app.get("/compliance")
+def compliance() -> dict[str, Any]:
+    """Return the latest OPA compliance evaluation result."""
+    from deep_agent.src.opa.config import is_opa_enabled
+
+    if not is_opa_enabled():
+        return {"status": "disabled"}
+
+    from deep_agent.src.opa.service import get_compliance_state
+
+    return get_compliance_state()

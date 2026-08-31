@@ -22,11 +22,16 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from deep_agent.src.opa.config import get_opa_max_retries
-from deep_agent.src.opa.service import evaluate_message, evaluate_trajectory
+from deep_agent.src.opa.service import (
+    evaluate_message,
+    evaluate_trajectory,
+    update_compliance_state,
+)
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
+
 
 _BLOCKED_TOOL_MESSAGE = "Tool call blocked by OPA policy."
 _BLOCKED_MODEL_MESSAGE = "I'm unable to respond to that request. Please try rephrasing."
@@ -88,6 +93,7 @@ class OPAMiddleware(AgentMiddleware):
             if isinstance(m, BaseMessage) and not m.additional_kwargs.get("opa_retry")
         ]
         opa = await evaluate_trajectory(trajectory)
+        update_compliance_state(opa)
         logger.debug(
             "OPA abefore_model result: allowed=%s reason_count=%d",
             opa.allowed,
@@ -136,6 +142,7 @@ class OPAMiddleware(AgentMiddleware):
                 return result
 
             opa = await evaluate_message("llm_response", agent_message=text)
+            update_compliance_state(opa)
             logger.debug(
                 "OPA awrap_model_call result: allowed=%s reason_count=%d",
                 opa.allowed,
@@ -217,6 +224,7 @@ class OPAMiddleware(AgentMiddleware):
             return result
 
         opa = await evaluate_message("tool_response", result=tool_content)
+        update_compliance_state(opa)
         logger.debug(
             "OPA awrap_tool_call result: allowed=%s reason_count=%d",
             opa.allowed,
