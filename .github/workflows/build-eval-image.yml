@@ -36,9 +36,11 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Install cosign
+        if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -46,6 +48,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata (tags, labels)
+        if: github.event_name != 'pull_request'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -145,6 +148,7 @@ jobs:
           retention-days: 30
 
       - name: Push multi-platform image
+        if: github.event_name != 'pull_request'
         id: push
         uses: docker/build-push-action@v5
         with:
@@ -158,6 +162,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       - name: Sign eval image with cosign
+        if: github.event_name != 'pull_request'
         id: sign
         continue-on-error: true
         run: |
@@ -175,6 +180,7 @@ jobs:
           exit 1
 
       - name: Attest eval build provenance
+        if: github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
@@ -183,6 +189,7 @@ jobs:
           push-to-registry: true
 
       - name: Record last-good-eval build
+        if: github.event_name != 'pull_request'
         run: |
           cat > /tmp/last-good-eval.json <<EOF
           {
@@ -197,6 +204,7 @@ jobs:
           cat /tmp/last-good-eval.json
 
       - name: Upload last-good-eval artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: last-good-eval
@@ -204,6 +212,7 @@ jobs:
           retention-days: 90
 
       - name: Build summary
+        if: github.event_name != 'pull_request'
         run: |
           echo "### Eval Runner Image Built Successfully!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
