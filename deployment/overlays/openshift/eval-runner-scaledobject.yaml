@@ -1,31 +1,5 @@
-# Requires the KEDA HTTP Add-on operator (http.keda.sh) to be installed.
-# InterceptorRoute (v1beta1): routes /evals and /health through the KEDA
-# interceptor, which triggers scaling from 0 on incoming traffic.
-# ScaledObject caps the eval-runner at max 1 replica.
----
-apiVersion: http.keda.sh/v1beta1
-kind: InterceptorRoute
-metadata:
-  name: eval-runner
-  labels:
-    app: eval-runner
-    component: eval-runner
-spec:
-  rules:
-    - hosts:
-        - eval-runner
-      paths:
-        - value: /evals
-        - value: /health
-  target:
-    service: eval-runner
-    port: 8099
-  scalingMetric:
-    concurrency:
-      targetValue: 5
----
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
 metadata:
   name: eval-runner
   labels:
@@ -33,12 +7,15 @@ metadata:
     component: eval-runner
 spec:
   scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
     name: eval-runner
-  minReplicaCount: 0
-  maxReplicaCount: 1
-  scaledownPeriod: 300
-  triggers:
-    - type: http
-      metadata:
-        service: eval-runner
-        port: "8099"
+  minReplicas: 1
+  maxReplicas: 1
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80

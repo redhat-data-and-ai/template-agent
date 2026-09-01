@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: eval-runner
 spec:
-  replicas: 0
+  replicas: 1
   template:
     spec:
       terminationGracePeriodSeconds: 60
