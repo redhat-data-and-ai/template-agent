@@ -60,6 +60,8 @@ jobs:
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
+          elif [[ "${{ github.ref }}" == refs/pull/* ]]; then
+            VERSION="pr-${{ github.event.pull_request.number }}-${GITHUB_SHA::7}"
           else
             VERSION="${GITHUB_REF#refs/heads/}-${GITHUB_SHA::7}"
           fi
