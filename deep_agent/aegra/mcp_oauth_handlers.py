@@ -128,19 +128,9 @@ async def handle_mcp_connect(
 ) -> dict[str, str]:
     """Start the OAuth authorization flow for *mcp_name*."""
     server_cfg = _get_mcp_server_config(mcp_name)
+    _require_interactive_oauth(mcp_name, server_cfg)
     auth_mode = server_cfg.get("auth_mode", "sso")
-    if auth_mode not in ("oauth", "dcr"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"MCP '{mcp_name}' does not use OAuth/DCR authentication",
-        )
-
     oauth_cfg = server_cfg.get("oauth") or {}
-    if oauth_cfg.get("grant_type") == "client_credentials":
-        raise HTTPException(
-            status_code=400,
-            detail=f"MCP '{mcp_name}' uses client_credentials grant — manual authorization is not required",
-        )
 
     for field in ("authorization_endpoint", "token_endpoint"):
         if not oauth_cfg.get(field):
@@ -358,12 +348,86 @@ async def handle_mcp_oauth_callback(
     return HTMLResponse(_callback_html(mcp_name=mcp_name, opener_origin=opener_origin))
 
 
+def _interactive_oauth_servers() -> list[tuple[str, dict[str, Any]]]:
+    """Enabled OAuth/DCR servers that require a user authorization-code flow."""
+    servers = agent_config.get_mcp_servers()
+    allowed_auth_modes = {"oauth", "dcr"} if settings.MCP_DCR_ENABLED else {"oauth"}
+    result: list[tuple[str, dict[str, Any]]] = []
+    for name, cfg in sorted(servers.items()):
+        if not isinstance(cfg, dict) or not cfg.get("enabled"):
+            continue
+        if cfg.get("auth_mode") not in allowed_auth_modes:
+            continue
+        if (cfg.get("oauth") or {}).get("grant_type") == "client_credentials":
+            continue
+        result.append((name, cfg))
+    return result
+
+
+def _require_interactive_oauth(mcp_name: str, server_cfg: dict[str, Any]) -> None:
+    """Reject MCP servers that cannot be user-connected or disconnected."""
+    auth_mode = server_cfg.get("auth_mode", "sso")
+    if auth_mode not in ("oauth", "dcr"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"MCP '{mcp_name}' does not use OAuth/DCR authentication",
+        )
+    if (server_cfg.get("oauth") or {}).get("grant_type") == "client_credentials":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"MCP '{mcp_name}' uses client_credentials grant — "
+                "manual authorization is not required"
+            ),
+        )
+
+
 async def handle_mcp_status(user_id: str, mcp_name: str) -> dict[str, Any]:
     """Return whether the user has a usable token for *mcp_name*."""
     server_cfg = _get_mcp_server_config(mcp_name)
     resolver = get_mcp_credential_resolver()
     connected = await resolver.has_valid_token(user_id, mcp_name, server_cfg)
     return {"mcp_name": mcp_name, "connected": connected}
+
+
+async def handle_mcp_connections(user_id: str) -> dict[str, Any]:
+    """Return OAuth/DCR MCP connection status for the current user."""
+    resolver = get_mcp_credential_resolver()
+    connections: list[dict[str, Any]] = []
+    for mcp_name, server_cfg in _interactive_oauth_servers():
+        description = server_cfg.get("description")
+        connected = await resolver.has_valid_token(user_id, mcp_name, server_cfg)
+        connections.append(
+            {
+                "mcp_name": mcp_name,
+                "auth_mode": server_cfg.get("auth_mode"),
+                "description": description if isinstance(description, str) else "",
+                "connected": connected,
+            }
+        )
+    return {"connections": connections}
+
+
+async def handle_mcp_disconnect(user_id: str, mcp_name: str) -> dict[str, Any]:
+    """Clear stored OAuth tokens for *mcp_name* for the current user."""
+    server_cfg = _get_mcp_server_config(mcp_name)
+    if server_cfg.get("auth_mode") == "dcr" and not settings.MCP_DCR_ENABLED:
+        raise HTTPException(status_code=403, detail="DCR is disabled")
+    _require_interactive_oauth(mcp_name, server_cfg)
+
+    store = McpTokenStore(settings.database_uri)
+    await store.delete_token(settings.agent_deployment_id, user_id, mcp_name)
+    get_mcp_credential_resolver().invalidate_cache(user_id, mcp_name)
+    from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
+
+    invalidate_mcp_tool_cache(user_id=user_id)
+    try:
+        from deep_agent.aegra.graph import invalidate_graph_cache
+
+        invalidate_graph_cache()
+    except Exception:
+        logger.debug("Graph cache invalidation skipped", exc_info=True)
+    return {"mcp_name": mcp_name, "connected": False}
 
 
 def _callback_html(
