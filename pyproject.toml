@@ -16,11 +16,11 @@ readme = "README.md"
 keywords = ["mcp", "template", "server"]
 requires-python = ">=3.12.2"
 dependencies = [
-    "deepagents==0.7.6",
-    "pydantic==2.13.4",
+    "deepagents==0.7.11",
+    "pydantic==2.13.5",
     "pydantic-settings==2.15.0",
-    "python-dotenv==1.2.2",
-    "langchain-google-genai==4.3.4",
+    "python-dotenv==1.2.3",
+    "langchain-google-genai==4.3.7",
     "langchain-google-vertexai==3.2.4",
     "langchain-openai>=0.3.0",
     "langchain-mcp-adapters==0.3.2",
@@ -58,7 +58,7 @@ dev = [
     "pytest-asyncio==1.4.0",
     "pytest-cov==6.2.1",
     "pytest-mock>=3.14.0",
-    "ruff==0.16.3",
+    "ruff==0.16.5",
     "mypy==1.16.1",
     "pre-commit==4.6.2",
     "httpx==0.28.1",
