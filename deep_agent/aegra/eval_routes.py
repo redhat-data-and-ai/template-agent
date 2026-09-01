@@ -46,7 +46,7 @@ def _require_bearer(
     return str(creds.credentials)
 
 
-async def _check_dcr_auth(request: Request) -> list[dict]:
+async def _check_mcp_auth(request: Request) -> list[dict]:
     """Pre-flight check: return list of MCP servers that need authentication.
 
     Checks servers where enabled=true, auth=true, auth_mode in ("dcr", "oauth").
@@ -62,14 +62,14 @@ async def _check_dcr_auth(request: Request) -> list[dict]:
     from deep_agent.src.settings import settings as _settings
 
     user_id: str = _extract_sub(request) or ""
-    log.info("dcr_auth_check: user_id=%r", user_id)
+    log.info("mcp_auth_check: user_id=%r", user_id)
     if not user_id:
         return []  # no user identity — can't check per-user tokens
 
     mcp_servers: dict = agent_config.get_mcp_servers()
     # Must match settings.agent_deployment_id used by mcp_oauth_handlers when storing tokens
     agent_name: str = _settings.agent_deployment_id
-    log.info("dcr_auth_check: agent_name=%r", agent_name)
+    log.info("mcp_auth_check: agent_name=%r", agent_name)
 
     dcr_servers = {
         name: cfg
@@ -78,7 +78,7 @@ async def _check_dcr_auth(request: Request) -> list[dict]:
         and cfg.get("auth", False)
         and cfg.get("auth_mode", "") in ("dcr", "oauth")
     }
-    log.info("dcr_auth_check: dcr_servers=%s", list(dcr_servers.keys()))
+    log.info("mcp_auth_check: dcr_servers=%s", list(dcr_servers.keys()))
 
     if not dcr_servers:
         return []
@@ -89,7 +89,7 @@ async def _check_dcr_auth(request: Request) -> list[dict]:
     for name, cfg in dcr_servers.items():
         token = await store.get_token(agent_name, user_id, name)
         needs_auth = token is None
-        log.info("dcr_auth_check: mcp=%r token_found=%s", name, token is not None)
+        log.info("mcp_auth_check: mcp=%r token_found=%s", name, token is not None)
 
         # B) Token expiry check — re-auth if expired OR expiring within the
         # eval minimum TTL window so the token doesn't expire mid-run.
@@ -102,7 +102,7 @@ async def _check_dcr_auth(request: Request) -> list[dict]:
                 and token.expires_at < datetime.now(timezone.utc) + min_ttl
             ):
                 log.info(
-                    "dcr_auth_check: mcp=%r token expires at %s (within %d-min buffer)",
+                    "mcp_auth_check: mcp=%r token expires at %s (within %d-min buffer)",
                     name,
                     token.expires_at,
                     _EVAL_TOKEN_MIN_TTL_MINUTES,
@@ -117,7 +117,7 @@ async def _check_dcr_auth(request: Request) -> list[dict]:
                 }
             )
 
-    log.info("dcr_auth_check: missing=%s", [m["name"] for m in missing])
+    log.info("mcp_auth_check: missing=%s", [m["name"] for m in missing])
     return missing
 
 
@@ -941,7 +941,7 @@ async def trigger_eval(request: Request) -> Any:
 
     # Pre-flight checks before inserting in_progress row — failures here surface
     # immediately to the UI without leaving a stuck record in Postgres.
-    missing_auth = await _check_dcr_auth(request)
+    missing_auth = await _check_mcp_auth(request)
     if missing_auth:
         return JSONResponse(
             status_code=403,
@@ -966,7 +966,7 @@ async def force_trigger_eval(request: Request) -> Any:
             detail="EVAL_RUNNER_URL not set — eval runner is not deployed",
         )
 
-    missing_auth = await _check_dcr_auth(request)
+    missing_auth = await _check_mcp_auth(request)
     if missing_auth:
         return JSONResponse(
             status_code=403,
