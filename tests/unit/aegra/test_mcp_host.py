@@ -1019,6 +1019,64 @@ class TestRouteWiring:
         mock_status.assert_awaited_once_with("user-1", "charts")
 
     @pytest.mark.asyncio
+    async def test_mcp_connections_route(self):
+        from deep_agent.aegra import mcp_routes
+
+        request = MagicMock()
+        request.headers = {}
+        payload = {
+            "connections": [
+                {
+                    "mcp_name": "charts",
+                    "auth_mode": "oauth",
+                    "description": "Charts",
+                    "connected": True,
+                }
+            ]
+        }
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_routes._authenticated_user_id",
+                new_callable=AsyncMock,
+                return_value="user-1",
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.handle_mcp_connections",
+                new_callable=AsyncMock,
+                return_value=payload,
+            ) as mock_connections,
+        ):
+            response = await mcp_routes.mcp_connections(request)
+
+        assert response.status_code == 200
+        mock_connections.assert_awaited_once_with("user-1")
+
+    @pytest.mark.asyncio
+    async def test_mcp_disconnect_route(self):
+        from deep_agent.aegra import mcp_routes
+
+        request = MagicMock()
+        request.headers = {}
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_routes._authenticated_user_id",
+                new_callable=AsyncMock,
+                return_value="user-1",
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.handle_mcp_disconnect",
+                new_callable=AsyncMock,
+                return_value={"mcp_name": "charts", "connected": False},
+            ) as mock_disconnect,
+        ):
+            response = await mcp_routes.mcp_disconnect("charts", request)
+
+        assert response.status_code == 200
+        mock_disconnect.assert_awaited_once_with("user-1", "charts")
+
+    @pytest.mark.asyncio
     async def test_mcp_oauth_callback_route(self):
         from deep_agent.aegra import mcp_routes
         from fastapi.responses import HTMLResponse
@@ -1042,7 +1100,7 @@ class TestRouteWiring:
 
         with (
             patch(
-                "deep_agent.aegra.mcp_routes.agent_config.get_mcp_servers",
+                "deep_agent.aegra.mcp_oauth_handlers.agent_config.get_mcp_servers",
                 return_value={
                     "charts": {"enabled": True, "auth_mode": "oauth"},
                     "off": {"enabled": False, "auth_mode": "oauth"},
@@ -1050,11 +1108,13 @@ class TestRouteWiring:
                     "dcr": {"enabled": True, "auth_mode": "dcr"},
                 },
             ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
             patch(
                 "deep_agent.aegra.mcp_routes.agent_config.get_name",
                 return_value="demo-agent",
             ),
         ):
+            mock_settings.MCP_DCR_ENABLED = True
             info = await mcp_routes.get_agent_info()
 
         assert info["name"] == "demo-agent"

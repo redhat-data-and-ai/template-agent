@@ -1,4 +1,4 @@
-"""HTTP routes for per-MCP OAuth/DCR connect, callback, status, and Apps host proxy."""
+"""HTTP routes for per-MCP OAuth/DCR connect, callback, status, disconnect, and Apps host proxy."""
 
 from __future__ import annotations
 
@@ -97,6 +97,16 @@ async def mcp_oauth_callback(
     return await handle_mcp_oauth_callback(code, state, request)
 
 
+@router.get("/mcp/oauth/connections")
+async def mcp_connections(request: Request) -> JSONResponse:
+    """Return OAuth/DCR MCP connection status for the current user."""
+    from deep_agent.aegra.mcp_oauth_handlers import handle_mcp_connections
+
+    user_id = await _authenticated_user_id(request)
+    result = await handle_mcp_connections(user_id)
+    return JSONResponse(content=result)
+
+
 @router.get("/mcp/{mcp_name}/status")
 async def mcp_status(mcp_name: str, request: Request) -> JSONResponse:
     """Return whether the current user has a valid token for the MCP."""
@@ -107,20 +117,22 @@ async def mcp_status(mcp_name: str, request: Request) -> JSONResponse:
     return JSONResponse(content=result)
 
 
+@router.delete("/mcp/{mcp_name}/disconnect")
+async def mcp_disconnect(mcp_name: str, request: Request) -> JSONResponse:
+    """Clear stored OAuth tokens for an MCP server for the current user."""
+    from deep_agent.aegra.mcp_oauth_handlers import handle_mcp_disconnect
+
+    user_id = await _authenticated_user_id(request)
+    result = await handle_mcp_disconnect(user_id, mcp_name)
+    return JSONResponse(content=result)
+
+
 @router.get("/info")
 async def get_agent_info() -> dict[str, Any]:
     """Return agent identity metadata from config."""
-    servers = agent_config.get_mcp_servers()
-    from deep_agent.src.settings import settings
+    from deep_agent.aegra.mcp_oauth_handlers import _interactive_oauth_servers
 
-    allowed_auth_modes = {"oauth", "dcr"} if settings.MCP_DCR_ENABLED else {"oauth"}
-    oauth_mcps = sorted(
-        name
-        for name, cfg in servers.items()
-        if cfg.get("enabled")
-        and cfg.get("auth_mode") in allowed_auth_modes
-        and (cfg.get("oauth") or {}).get("grant_type") != "client_credentials"
-    )
+    oauth_mcps = [name for name, _ in _interactive_oauth_servers()]
     return {"name": agent_config.get_name(), "oauth_mcps": oauth_mcps}
 
 
