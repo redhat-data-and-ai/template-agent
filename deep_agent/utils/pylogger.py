@@ -198,7 +198,6 @@ def _setup_logger(logger_name: str, level: str) -> None:
 
 def _configure_third_party_loggers(log_level: str) -> None:
     """Apply structured logging to selected third-party loggers."""
-    logging.getLogger().handlers.clear()
     for name in THIRD_PARTY_LOGGERS:
         _setup_logger(name, log_level)
 
@@ -261,79 +260,3 @@ def get_python_logger(log_level: str = "INFO") -> structlog.BoundLogger:
 
     _configure_third_party_loggers(log_level)
     return structlog.get_logger()
-
-
-def get_uvicorn_log_config(log_level: str = "INFO") -> dict[str, Any]:
-    """Return a Uvicorn-compatible logging config that integrates with structlog."""
-    log_level = log_level.upper()
-    renderer = _get_renderer()
-
-    default_formatter = {
-        "()": "structlog.stdlib.ProcessorFormatter",
-        "processor": renderer,
-        "foreign_pre_chain": [
-            structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            _inject_request_context,
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.UnicodeDecoder(),
-        ],
-    }
-
-    def make_logger_config(names: list[str], level: str) -> dict[str, Any]:
-        return {
-            name: {
-                "handlers": ["default"],
-                "level": level,
-                "propagate": False,
-            }
-            for name in names
-        }
-
-    passthrough_formatter = {"format": "%(message)s"}
-
-    uvicorn_loggers = ["uvicorn", "uvicorn.error", "uvicorn.asgi", "uvicorn.protocols"]
-    access_loggers = ["uvicorn.access"]
-
-    return {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "formatters": {
-            "default": default_formatter,
-            "access": default_formatter,
-            "passthrough": passthrough_formatter,
-        },
-        "handlers": {
-            "default": {
-                "formatter": "default",
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stdout",
-            },
-            "access": {
-                "formatter": "access",
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stdout",
-            },
-            "passthrough": {
-                "formatter": "passthrough",
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stdout",
-            },
-        },
-        "loggers": {
-            "": {
-                "handlers": ["passthrough"],
-                "level": log_level,
-                "propagate": False,
-            },
-            **make_logger_config(uvicorn_loggers, log_level),
-            **make_logger_config(access_loggers, log_level),
-            **make_logger_config(
-                list(THIRD_PARTY_LOGGERS - ERROR_ONLY_LOGGERS - SILENT_LOGGERS),
-                log_level,
-            ),
-            **make_logger_config(list(ERROR_ONLY_LOGGERS), "ERROR"),
-            **make_logger_config(list(SILENT_LOGGERS), "CRITICAL"),
-        },
-    }
