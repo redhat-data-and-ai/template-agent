@@ -20,12 +20,28 @@ def requested_scopes(oauth_cfg: dict[str, Any]) -> list[str]:
 
 
 def parse_token_scopes(body: dict[str, Any]) -> list[str] | None:
-    """Parse granted scopes from an OAuth token response body."""
+    """Parse granted scopes from an OAuth token response body.
+
+    Handles standard OAuth (top-level ``scope``) and Slack-style responses
+    where scopes live under ``authed_user.scope`` as a comma-separated string.
+    """
     scope_raw = body.get("scope")
+    if not scope_raw:
+        authed_user = body.get("authed_user")
+        if isinstance(authed_user, dict):
+            scope_raw = authed_user.get("scope")
     if isinstance(scope_raw, str) and scope_raw:
-        return scope_raw.split()
+        sep = "," if "," in scope_raw else " "
+        return [s.strip() for s in scope_raw.split(sep) if s.strip()]
     if isinstance(scope_raw, list):
-        return [str(s) for s in scope_raw if s]
+        scopes: list[str] = []
+        for s in scope_raw:
+            raw = str(s).strip()
+            if not raw:
+                continue
+            sep = "," if "," in raw else " "
+            scopes.extend(part.strip() for part in raw.split(sep) if part.strip())
+        return scopes or None
     return None
 
 

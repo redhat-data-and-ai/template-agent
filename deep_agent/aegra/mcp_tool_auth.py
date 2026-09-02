@@ -80,6 +80,42 @@ def wrap_mcp_tools_for_auth(tools: list[Any]) -> list[Any]:
     return wrapped
 
 
+def _make_safe_ainvoke(target_tool: Any) -> Any:
+    """Build an ainvoke wrapper that catches MCP errors for *target_tool*."""
+    original_ainvoke = target_tool.ainvoke
+
+    async def safe_ainvoke(tool_input: Any, config: Any = None, **kwargs: Any) -> Any:
+        """Wrap ainvoke to catch auth interrupts and MCP errors."""
+        from langchain_core.messages import ToolMessage
+        from langgraph.errors import GraphBubbleUp
+
+        try:
+            return await original_ainvoke(tool_input, config, **kwargs)
+        except NeedsAuthorization as exc:
+            logger.info(
+                "MCP auth required for '%s' — interrupting run",
+                exc.mcp_name,
+            )
+            interrupt(_mcp_auth_interrupt_payload(exc))
+            return await original_ainvoke(tool_input, config, **kwargs)
+        except GraphBubbleUp:
+            raise
+        except Exception as exc:
+            tool_name = getattr(target_tool, "name", "unknown")
+            tool_call_id = ""
+            if isinstance(tool_input, dict):
+                tool_call_id = str(tool_input.get("id", ""))
+            logger.warning("MCP tool '%s' failed: %s", tool_name, exc)
+            return ToolMessage(
+                content=f"[TOOL_ERROR] {tool_name} failed: {exc}",
+                name=tool_name,
+                tool_call_id=tool_call_id,
+                status="error",
+            )
+
+    return safe_ainvoke
+
+
 def _wrap_single_tool(tool: Any) -> Any:
     coroutine = getattr(tool, "coroutine", None)
     func = getattr(tool, "func", None)
@@ -99,10 +135,12 @@ def _wrap_single_tool(tool: Any) -> Any:
                     interrupt(_mcp_auth_interrupt_payload(exc))
 
         try:
-            return tool.model_copy(update={"coroutine": wrapped_coroutine})
+            wrapped = tool.model_copy(update={"coroutine": wrapped_coroutine})
         except Exception:
             tool.coroutine = wrapped_coroutine
-            return tool
+            wrapped = tool
+        object.__setattr__(wrapped, "ainvoke", _make_safe_ainvoke(wrapped))
+        return wrapped
 
     if func is not None and inspect.isfunction(func):
 
@@ -115,9 +153,12 @@ def _wrap_single_tool(tool: Any) -> Any:
                     interrupt(_mcp_auth_interrupt_payload(exc))
 
         try:
-            return tool.model_copy(update={"func": wrapped_func})
+            wrapped = tool.model_copy(update={"func": wrapped_func})
         except Exception:
             tool.func = wrapped_func
-            return tool
+            wrapped = tool
+        object.__setattr__(wrapped, "ainvoke", _make_safe_ainvoke(wrapped))
+        return wrapped
 
+    object.__setattr__(tool, "ainvoke", _make_safe_ainvoke(tool))
     return tool

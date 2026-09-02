@@ -882,3 +882,356 @@ class TestBuildFallbackMiddleware:
         with patch.dict(sys.modules, {"langchain.agents.middleware": None}):
             result = _build_fallback_middleware(spec)
         assert result == []
+
+
+class TestGuardianActivationGate:
+    """Guardian wrapping requires BOTH guardrail config.enabled AND GUARDIAN_API_BASE."""
+
+    def _guardrail_cfg(self, enabled: bool) -> MagicMock:
+        cfg = MagicMock()
+        cfg.enabled = enabled
+        return cfg
+
+    # ── default subagent ────────────────────────────────────────────────────
+
+    def test_default_subagent_wraps_tools_when_guardian_active(self):
+        """Both enabled=True and GUARDIAN_API_BASE set → wrap_tools called."""
+        mock_tool = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = "http://guardian.internal"
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
+                return_value={
+                    "analyst": {
+                        "model": "gemini-2.5-flash",
+                        "description": "A",
+                        "body": "P",
+                        "tools": ["t"],
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_guardrails_config",
+                return_value=self._guardrail_cfg(enabled=True),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
+                return_value=[mock_tool],
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch(
+                "deep_agent.src.guardrails.tool_proxy.wrap_tools",
+                return_value=[mock_tool],
+            ) as mock_wrap,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa_cls,
+        ):
+            load_subagents(tools=[mock_tool])
+
+        mock_wrap.assert_called_once_with([mock_tool])
+        assert mock_sa_cls.call_args.kwargs["tools"] == [mock_tool]
+
+    def test_default_subagent_skips_wrapping_when_config_disabled(self):
+        """enabled=False + GUARDIAN_API_BASE set → wrap_tools not called."""
+        mock_tool = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = "http://guardian.internal"
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
+                return_value={
+                    "analyst": {
+                        "model": "gemini-2.5-flash",
+                        "description": "A",
+                        "body": "P",
+                        "tools": ["t"],
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_guardrails_config",
+                return_value=self._guardrail_cfg(enabled=False),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
+                return_value=[mock_tool],
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch("deep_agent.src.guardrails.tool_proxy.wrap_tools") as mock_wrap,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ),
+        ):
+            load_subagents(tools=[mock_tool])
+
+        mock_wrap.assert_not_called()
+
+    def test_default_subagent_skips_wrapping_when_api_base_absent(self):
+        """enabled=True + no GUARDIAN_API_BASE → wrap_tools not called."""
+        mock_tool = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = ""
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
+                return_value={
+                    "analyst": {
+                        "model": "gemini-2.5-flash",
+                        "description": "A",
+                        "body": "P",
+                        "tools": ["t"],
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_guardrails_config",
+                return_value=self._guardrail_cfg(enabled=True),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
+                return_value=[mock_tool],
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch("deep_agent.src.guardrails.tool_proxy.wrap_tools") as mock_wrap,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ),
+        ):
+            load_subagents(tools=[mock_tool])
+
+        mock_wrap.assert_not_called()
+
+    # ── compiled subagent ────────────────────────────────────────────────────
+
+    def test_compiled_subagent_wraps_and_applies_safety_when_guardian_active(self):
+        """Both enabled=True and GUARDIAN_API_BASE set → wrap_tools + SafetyAwareRunnable."""
+        mock_graph = MagicMock()
+        mock_safety = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = "http://guardian.internal"
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
+                return_value={
+                    "analyst": {
+                        "type": "compiled",
+                        "model": "gemini-2.5-pro",
+                        "description": "A",
+                        "body": "P",
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_guardrails_config",
+                return_value=self._guardrail_cfg(enabled=True),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.backend.get_configured_backend",
+                return_value=MagicMock(),
+            ),
+            patch("deepagents.create_deep_agent", return_value=mock_graph),
+            patch(
+                "deep_agent.src.infrastructure.subagents.CompiledSubAgent",
+                return_value=MagicMock(),
+            ) as mock_compiled_sa_cls,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch("deep_agent.src.pii.get_scrubber", return_value=None),
+            patch(
+                "deep_agent.src.guardrails.tool_proxy.wrap_tools", return_value=[]
+            ) as mock_wrap,
+            patch(
+                "deep_agent.aegra.safety.SafetyAwareRunnable", return_value=mock_safety
+            ) as mock_safety_cls,
+        ):
+            load_subagents(tools=[])
+
+        mock_wrap.assert_called_once()
+        mock_safety_cls.assert_called_once_with(mock_graph)
+        assert mock_compiled_sa_cls.call_args.kwargs["runnable"] is mock_safety
+
+    def test_compiled_subagent_skips_guardian_when_config_disabled(self):
+        """enabled=False + GUARDIAN_API_BASE set → no wrap_tools or SafetyAwareRunnable."""
+        mock_graph = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = "http://guardian.internal"
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
+                return_value={
+                    "analyst": {
+                        "type": "compiled",
+                        "model": "gemini-2.5-pro",
+                        "description": "A",
+                        "body": "P",
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_guardrails_config",
+                return_value=self._guardrail_cfg(enabled=False),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.backend.get_configured_backend",
+                return_value=MagicMock(),
+            ),
+            patch("deepagents.create_deep_agent", return_value=mock_graph),
+            patch(
+                "deep_agent.src.infrastructure.subagents.CompiledSubAgent",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch("deep_agent.src.pii.get_scrubber", return_value=None),
+            patch("deep_agent.src.guardrails.tool_proxy.wrap_tools") as mock_wrap,
+            patch("deep_agent.aegra.safety.SafetyAwareRunnable") as mock_safety_cls,
+        ):
+            load_subagents(tools=[])
+
+        mock_wrap.assert_not_called()
+        mock_safety_cls.assert_not_called()
+
+    def test_compiled_subagent_skips_guardian_when_api_base_absent(self):
+        """enabled=True + no GUARDIAN_API_BASE → no wrap_tools or SafetyAwareRunnable."""
+        mock_graph = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.GUARDIAN_API_BASE = ""
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
+                return_value={
+                    "analyst": {
+                        "type": "compiled",
+                        "model": "gemini-2.5-pro",
+                        "description": "A",
+                        "body": "P",
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_guardrails_config",
+                return_value=self._guardrail_cfg(enabled=True),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.backend.get_configured_backend",
+                return_value=MagicMock(),
+            ),
+            patch("deepagents.create_deep_agent", return_value=mock_graph),
+            patch(
+                "deep_agent.src.infrastructure.subagents.CompiledSubAgent",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
+            patch("deep_agent.src.settings.settings", mock_settings),
+            patch("deep_agent.src.pii.get_scrubber", return_value=None),
+            patch("deep_agent.src.guardrails.tool_proxy.wrap_tools") as mock_wrap,
+            patch("deep_agent.aegra.safety.SafetyAwareRunnable") as mock_safety_cls,
+        ):
+            load_subagents(tools=[])
+
+        mock_wrap.assert_not_called()
+        mock_safety_cls.assert_not_called()

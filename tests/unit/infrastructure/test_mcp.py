@@ -319,8 +319,8 @@ def _reset_mcp_cache() -> None:
     """Clear MCP tool cache between tests."""
     from deep_agent.aegra import mcp
 
-    mcp._cached_tools = []
-    mcp._cached_tools_ts = 0.0
+    mcp._cached_tools.clear()
+    mcp._cached_tools_ts.clear()
 
 
 class TestGetMCPTools:
@@ -643,6 +643,86 @@ class TestGetMCPTools:
                 "jira-mcp-prod", mock_servers["jira-mcp-prod"]
             )
 
+    @pytest.mark.asyncio
+    async def test_cache_is_per_user(self):
+        """Different users should not share cached MCP tools."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "srv": {
+                "url": "http://srv/mcp/",
+                "enabled": True,
+                "auth": False,
+                "timeout": 5,
+            }
+        }
+        tool_a = MagicMock()
+        tool_a.name = "tool_a"
+        tool_b = MagicMock()
+        tool_b.name = "tool_b"
+
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_cfg,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_conn,
+        ):
+            mock_cfg.return_value = mock_servers
+
+            mock_conn.return_value = [tool_a]
+            result_a = await get_mcp_tools(user_id="user-a")
+            assert [t.name for t in result_a] == ["tool_a"]
+
+            mock_conn.return_value = [tool_b]
+            result_b = await get_mcp_tools(user_id="user-b")
+            assert [t.name for t in result_b] == ["tool_b"]
+
+            result_a_cached = await get_mcp_tools(user_id="user-a")
+            assert [t.name for t in result_a_cached] == ["tool_a"]
+
+    @pytest.mark.asyncio
+    async def test_invalidate_cache_per_user(self):
+        """Invalidating one user's cache should not affect another's."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "srv": {
+                "url": "http://srv/mcp/",
+                "enabled": True,
+                "auth": False,
+                "timeout": 5,
+            }
+        }
+        tool = MagicMock()
+        tool.name = "shared_tool"
+
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_cfg,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_conn,
+        ):
+            mock_cfg.return_value = mock_servers
+            mock_conn.return_value = [tool]
+
+            await get_mcp_tools(user_id="user-a")
+            await get_mcp_tools(user_id="user-a", server_names=["srv"])
+            await get_mcp_tools(user_id="user-b")
+
+            from deep_agent.aegra import mcp
+
+            assert "user-a:" in mcp._cached_tools
+            assert "user-a:srv" in mcp._cached_tools
+            assert "user-b:" in mcp._cached_tools
+            assert "user-a:" in mcp._cached_tools_ts
+            assert "user-a:srv" in mcp._cached_tools_ts
+            assert "user-b:" in mcp._cached_tools_ts
+
+            from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
+
+            invalidate_mcp_tool_cache(user_id="user-a")
+
+            assert "user-a:" not in mcp._cached_tools
+            assert "user-a:srv" not in mcp._cached_tools
+            assert "user-a:" not in mcp._cached_tools_ts
+            assert "user-a:srv" not in mcp._cached_tools_ts
+            assert "user-b:" in mcp._cached_tools
+            assert "user-b:" in mcp._cached_tools_ts
+
 
 class TestCreateAuthPlaceholderTool:
     """Tests for _create_auth_placeholder_tool function."""
@@ -685,13 +765,13 @@ class TestCreateAuthPlaceholderTool:
             assert exc_info.value.mcp_name == "jira-mcp"
 
     @pytest.mark.asyncio
-    async def test_require_auth_returns_success_when_token_valid(self):
-        """Calling the placeholder with a valid token returns success message."""
+    async def test_require_auth_returns_success_when_resolve_succeeds(self):
+        """Calling the placeholder after a usable token is resolved returns success."""
         tool = _create_auth_placeholder_tool(
             "jira-mcp", {"description": "JIRA services"}
         )
         mock_resolver = MagicMock()
-        mock_resolver.has_valid_token = AsyncMock(return_value=True)
+        mock_resolver.resolve = AsyncMock(return_value="fresh-access-token")
         with (
             patch("deep_agent.aegra.mcp._current_user_id") as mock_ctx,
             patch(
@@ -706,17 +786,58 @@ class TestCreateAuthPlaceholderTool:
             mock_ctx.get.return_value = "user-1"
             result = await tool.coroutine(query="list my tickets")
         assert "Successfully connected to jira-mcp" in result
+        mock_resolver.resolve.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_require_auth_raises_when_token_invalid(self):
-        """Calling the placeholder with no valid token raises NeedsAuthorization."""
+    async def test_require_auth_raises_when_refresh_failed(self):
+        """A leftover refresh token must not skip re-auth after refresh fails."""
         from deep_agent.aegra.mcp_auth import NeedsAuthorization
 
         tool = _create_auth_placeholder_tool(
             "jira-mcp", {"description": "JIRA services"}
         )
         mock_resolver = MagicMock()
-        mock_resolver.has_valid_token = AsyncMock(return_value=False)
+        # has_valid_token is True whenever a refresh token remains in Redis —
+        # that must not hide a failed refresh from the UI.
+        mock_resolver.has_valid_token = AsyncMock(return_value=True)
+        mock_resolver.resolve = AsyncMock(
+            side_effect=NeedsAuthorization(
+                "jira-mcp", "http://localhost/mcp/jira-mcp/connect"
+            )
+        )
+        mock_resolver.connect_url.return_value = "http://localhost/mcp/jira-mcp/connect"
+        with (
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_ctx,
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={"jira-mcp": {"auth_mode": "oauth"}},
+            ),
+            patch(
+                "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
+                return_value=mock_resolver,
+            ),
+        ):
+            mock_ctx.get.return_value = "user-1"
+            with pytest.raises(NeedsAuthorization) as exc_info:
+                await tool.coroutine(query="list my tickets")
+        assert exc_info.value.mcp_name == "jira-mcp"
+        assert exc_info.value.connect_url == "http://localhost/mcp/jira-mcp/connect"
+        mock_resolver.resolve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_require_auth_raises_when_token_invalid(self):
+        """Calling the placeholder with no usable token raises NeedsAuthorization."""
+        from deep_agent.aegra.mcp_auth import NeedsAuthorization
+
+        tool = _create_auth_placeholder_tool(
+            "jira-mcp", {"description": "JIRA services"}
+        )
+        mock_resolver = MagicMock()
+        mock_resolver.resolve = AsyncMock(
+            side_effect=NeedsAuthorization(
+                "jira-mcp", "http://localhost/mcp/jira-mcp/connect"
+            )
+        )
         mock_resolver.connect_url.return_value = "http://localhost/mcp/jira-mcp/connect"
         with (
             patch("deep_agent.aegra.mcp._current_user_id") as mock_ctx,
@@ -730,5 +851,6 @@ class TestCreateAuthPlaceholderTool:
             ),
         ):
             mock_ctx.get.return_value = "user-1"
-            with pytest.raises(NeedsAuthorization):
+            with pytest.raises(NeedsAuthorization) as exc_info:
                 await tool.coroutine(query="list my tickets")
+        assert exc_info.value.connect_url == "http://localhost/mcp/jira-mcp/connect"

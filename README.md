@@ -106,7 +106,8 @@ Configuration is split between **secrets/endpoints** (`.env`) and **operational 
 | `POSTGRES_PASSWORD` | `postgres` | Database password |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis URL (required for OAuth/DCR MCPs) |
 | `REDIS_BROKER_ENABLED` | `true` | Enable Redis-backed SSE broker |
-| `GOOGLE_APPLICATION_CREDENTIALS_CONTENT` | — | Google service account JSON (required) |
+| `GOOGLE_APPLICATION_CREDENTIALS_CONTENT` | — | Inline service account JSON (used when set; ADC is the fallback) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to ADC file (used when CONTENT is unset; set automatically in discover-agent-deploy compose) |
 | `ENABLE_AUTH` | `false` in `.env.example` | SSO/OIDC authentication |
 | `SSO_ISSUER_URL` | — | OIDC issuer (Keycloak, Okta, etc.) |
 | `SSO_CLIENT_ID` | — | OIDC client ID |
