@@ -1694,7 +1694,9 @@ class TestGetEvalModels:
     async def test_returns_models(self):
         with patch(
             "deep_agent.aegra.eval_routes._collect_agent_models",
-            return_value=[{"model": "gpt-4", "source": "orchestrator", "default": True}],
+            return_value=[
+                {"model": "gpt-4", "source": "orchestrator", "default": True}
+            ],
         ):
             result = await er.get_eval_models()
         assert "models" in result

@@ -297,7 +297,8 @@ class TestIsConnectionError:
 
     def test_true_for_connection_attempts_failed(self):
         assert (
-            mcp_mod._is_connection_error(Exception("connection attempts failed")) is True
+            mcp_mod._is_connection_error(Exception("connection attempts failed"))
+            is True
         )
 
     def test_false_for_unrelated_error(self):

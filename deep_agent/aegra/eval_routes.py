@@ -479,7 +479,9 @@ async def _verify_thread_ownership(thread_id: str, request: Request) -> None:
     """Raise 403 unless the authenticated user owns the thread."""
     sub = _extract_sub(request)
     if not sub:
-        raise HTTPException(status_code=403, detail="Could not identify user from token")
+        raise HTTPException(
+            status_code=403, detail="Could not identify user from token"
+        )
 
     try:
         async with await _pg_conn() as conn:

@@ -688,6 +688,7 @@ app = FastAPI(title="eval-runner", version="2.0.0", lifespan=_lifespan)
 
 _SKIP_AUTH_PATHS = {"/health", "/metrics"}
 
+
 @app.middleware("http")
 async def _internal_token_middleware(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]

@@ -92,7 +92,9 @@ class TestResolveJwksUri:
 
 class TestDecodeSubUnverified:
     def test_valid_jwt_returns_sub(self):
-        token = pyjwt.encode({"sub": "user-42", "exp": 9999999999}, "secret", algorithm="HS256")
+        token = pyjwt.encode(
+            {"sub": "user-42", "exp": 9999999999}, "secret", algorithm="HS256"
+        )
         assert _decode_sub_unverified(token) == "user-42"
 
     def test_jwt_without_sub_returns_none(self):
@@ -170,8 +172,13 @@ class TestGetJwksClient:
 
         auth_mod._jwks_client = None
         mock_client = MagicMock()
-        with patch("deep_agent.aegra.auth._resolve_jwks_uri", return_value="https://jwks.example.com"):
-            with patch("deep_agent.aegra.auth.jwt.PyJWKClient", return_value=mock_client) as mock_cls:
+        with patch(
+            "deep_agent.aegra.auth._resolve_jwks_uri",
+            return_value="https://jwks.example.com",
+        ):
+            with patch(
+                "deep_agent.aegra.auth.jwt.PyJWKClient", return_value=mock_client
+            ) as mock_cls:
                 first = auth_mod._get_jwks_client()
                 second = auth_mod._get_jwks_client()
 
@@ -183,7 +190,9 @@ class TestGetJwksClient:
         import deep_agent.aegra.auth as auth_mod
 
         auth_mod._jwks_client = None
-        with patch("deep_agent.aegra.auth._resolve_jwks_uri", side_effect=Exception("no URI")):
+        with patch(
+            "deep_agent.aegra.auth._resolve_jwks_uri", side_effect=Exception("no URI")
+        ):
             with pytest.raises(RuntimeError, match="JWKS initialization failed"):
                 auth_mod._get_jwks_client()
         auth_mod._jwks_client = None
@@ -200,7 +209,9 @@ class TestDecodeToken:
         expected_payload = {"sub": "u1", "exp": 9999999999, "iss": "https://sso"}
 
         with (
-            patch("deep_agent.aegra.auth._get_jwks_client", return_value=mock_jwks_client),
+            patch(
+                "deep_agent.aegra.auth._get_jwks_client", return_value=mock_jwks_client
+            ),
             patch("deep_agent.aegra.auth.jwt.decode", return_value=expected_payload),
         ):
             result = _decode_token("some-jwt")
@@ -216,9 +227,13 @@ class TestDecodeToken:
         mock_jwks_client.get_signing_key_from_jwt.return_value = mock_key
 
         with (
-            patch("deep_agent.aegra.auth._get_jwks_client", return_value=mock_jwks_client),
+            patch(
+                "deep_agent.aegra.auth._get_jwks_client", return_value=mock_jwks_client
+            ),
             patch("deep_agent.aegra.auth.SSO_JWT_AUDIENCE", ""),
-            patch("deep_agent.aegra.auth.jwt.decode", return_value={"sub": "u1"}) as mock_decode,
+            patch(
+                "deep_agent.aegra.auth.jwt.decode", return_value={"sub": "u1"}
+            ) as mock_decode,
         ):
             _decode_token("tok")
 
@@ -235,9 +250,13 @@ class TestDecodeToken:
         mock_jwks_client.get_signing_key_from_jwt.return_value = mock_key
 
         with (
-            patch("deep_agent.aegra.auth._get_jwks_client", return_value=mock_jwks_client),
+            patch(
+                "deep_agent.aegra.auth._get_jwks_client", return_value=mock_jwks_client
+            ),
             patch("deep_agent.aegra.auth.SSO_JWT_AUDIENCE", "my-aud"),
-            patch("deep_agent.aegra.auth.jwt.decode", return_value={"sub": "u1"}) as mock_decode,
+            patch(
+                "deep_agent.aegra.auth.jwt.decode", return_value={"sub": "u1"}
+            ) as mock_decode,
         ):
             _decode_token("tok")
 
@@ -437,7 +456,9 @@ class TestAuthenticate:
                 side_effect=pyjwt.ExpiredSignatureError(),
             ),
             patch("deep_agent.aegra.redis.get_redis_client", return_value=MagicMock()),
-            patch("deep_agent.aegra.auth._decode_sub_unverified", return_value="user-x"),
+            patch(
+                "deep_agent.aegra.auth._decode_sub_unverified", return_value="user-x"
+            ),
             patch("deep_agent.aegra.redis.cache_get", return_value=None),
         ):
             with pytest.raises(PermissionError, match="no active eval"):
