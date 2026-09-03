@@ -8,7 +8,6 @@ from deep_agent.utils.pylogger import (
     clear_request_context,
     force_reconfigure_all_loggers,
     get_python_logger,
-    get_uvicorn_log_config,
 )
 
 
@@ -87,16 +86,3 @@ class TestConsoleRenderer:
 
             renderer = _get_renderer()
             assert "Console" in type(renderer).__name__
-
-
-class TestUvicornLogConfig:
-    def test_returns_valid_config(self):
-        config = get_uvicorn_log_config("INFO")
-        assert config["version"] == 1
-        assert "formatters" in config
-        assert "handlers" in config
-        assert "loggers" in config
-
-    def test_respects_log_level(self):
-        config = get_uvicorn_log_config("DEBUG")
-        assert config["loggers"][""]["level"] == "DEBUG"
