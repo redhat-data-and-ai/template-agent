@@ -57,7 +57,7 @@ def reset_mcp_crypto_cache() -> None:
 
 def encrypt_secret(plaintext: str | None) -> str | None:
     """Encrypt a secret value for Redis/Postgres storage."""
-    if plaintext is None:
+    if not plaintext:
         return None
     return cast(str, _get_fernet_primary().encrypt(plaintext.encode()).decode())
 
@@ -68,7 +68,7 @@ def decrypt_secret(ciphertext: str | None) -> str | None:
     Tries ``MCP_TOKEN_ENCRYPTION_KEY`` first, then ``MCP_TOKEN_ENCRYPTION_KEY_PREVIOUS``
     when set, so ciphertext can be read during key rotation.
     """
-    if ciphertext is None:
+    if not ciphertext:
         return None
 
     keys: list[Fernet] = [_get_fernet_primary()]

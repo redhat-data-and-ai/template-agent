@@ -25,7 +25,7 @@ from deep_agent.aegra.mcp_oauth_scopes import (
     validate_granted_scopes,
 )
 from deep_agent.aegra.mcp_token_store import McpTokenStore
-from deep_agent.aegra.redis import cache_get, cache_set
+from deep_agent.aegra.redis import cache_get, cache_set, distributed_lock
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -33,6 +33,8 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 _OAUTH_STATE_TTL_SECONDS = 300
+_DCR_LOCK_TTL_SECONDS = 90
+_DCR_LOCK_WAIT_SECONDS = 45.0
 
 
 def _callback_redirect_uri(request: Request) -> str:
@@ -123,6 +125,252 @@ async def _register_dcr_client(
     return client_id, client_secret
 
 
+def _is_invalid_client_error(status_code: int, response_text: str) -> bool:
+    """Return True only when the OAuth error payload explicitly indicates invalid_client.
+
+    A bare 403 (e.g. user-specific permission denial) must NOT be treated as
+    an invalid client — that would delete the shared DCR client and break all
+    users.  We parse the JSON ``error`` field per RFC 6749 section 5.2 and
+    fall back to substring matching for non-JSON bodies.
+    """
+    try:
+        body = json.loads(response_text)
+        if isinstance(body, dict):
+            return body.get("error") == "invalid_client"
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return "invalid_client" in response_text.lower()
+
+
+class DcrClientManager:
+    """Centralized manager for DCR client lifecycle: validate, re-register, cache.
+
+    ALL rotation paths (proactive validation and reactive token-endpoint
+    errors) are serialized through a Redis distributed lock so that
+    concurrent workers/processes cannot race to register different clients.
+    """
+
+    def __init__(self, store: McpTokenStore | None = None) -> None:
+        """Initialize with an optional token store (defaults to Postgres-backed)."""
+        self._store = store or McpTokenStore(settings.database_uri)
+
+    async def ensure_valid_client(
+        self,
+        agent_name: str,
+        mcp_name: str,
+        oauth_cfg: dict[str, Any],
+        server_cfg: dict[str, Any],
+    ) -> tuple[str, str | None]:
+        """Return a valid (client_id, client_secret), re-registering if stale.
+
+        All callers that need DCR credentials should go through this single
+        method instead of fetching from the store directly.
+        """
+        async with distributed_lock(
+            f"dcr_rotation:{agent_name}:{mcp_name}",
+            ttl_seconds=_DCR_LOCK_TTL_SECONDS,
+            wait_seconds=_DCR_LOCK_WAIT_SECONDS,
+        ) as lock_state:
+            if lock_state == "timeout":
+                logger.warning(
+                    "Timed out waiting for DCR rotation lock for '%s' — "
+                    "falling back to stored client",
+                    mcp_name,
+                )
+                return await self._get_or_raise(agent_name, mcp_name)
+
+            if lock_state == "no_redis":
+                logger.error(
+                    "Redis unavailable — cannot safely rotate DCR client for '%s'",
+                    mcp_name,
+                )
+                return await self._get_or_raise(agent_name, mcp_name)
+
+            return await self._rotate_if_needed(
+                agent_name, mcp_name, oauth_cfg, server_cfg
+            )
+
+    async def handle_token_endpoint_error(
+        self,
+        agent_name: str,
+        mcp_name: str,
+        oauth_cfg: dict[str, Any],
+        server_cfg: dict[str, Any],
+        status_code: int,
+        response_text: str,
+        rejected_client_id: str | None = None,
+    ) -> tuple[str, str | None] | None:
+        """React to a token-endpoint error that may signal an invalid DCR client.
+
+        *rejected_client_id* is the client_id that the token endpoint rejected.
+        Under the lock we check whether storage already holds a **different**
+        client (another worker already rotated) and return it instead of
+        performing a redundant A→B→C chain.
+
+        Returns fresh (client_id, client_secret) if re-registration succeeded,
+        the already-rotated credentials if another worker beat us, or None when
+        the error is unrelated to client validity.
+        """
+        if not _is_invalid_client_error(status_code, response_text):
+            return None
+
+        logger.warning(
+            "Token endpoint returned invalid_client for agent '%s' MCP '%s' "
+            "(HTTP %s) — acquiring lock to rotate DCR client",
+            agent_name,
+            mcp_name,
+            status_code,
+        )
+
+        async with distributed_lock(
+            f"dcr_rotation:{agent_name}:{mcp_name}",
+            ttl_seconds=_DCR_LOCK_TTL_SECONDS,
+            wait_seconds=_DCR_LOCK_WAIT_SECONDS,
+        ) as lock_state:
+            if lock_state == "timeout":
+                logger.warning(
+                    "Timed out waiting for DCR rotation lock during error "
+                    "handling for '%s'",
+                    mcp_name,
+                )
+                return None
+
+            if lock_state == "no_redis":
+                logger.error(
+                    "Redis unavailable — cannot safely rotate DCR client "
+                    "for '%s' after token-endpoint error",
+                    mcp_name,
+                )
+                return None
+
+            if rejected_client_id:
+                current = await self._store.get_client(agent_name, mcp_name)
+                if current is not None and current.client_id != rejected_client_id:
+                    logger.info(
+                        "DCR client already rotated for '%s' "
+                        "(rejected=%s, current=%s) — skipping",
+                        mcp_name,
+                        rejected_client_id,
+                        current.client_id,
+                    )
+                    return current.client_id, current.client_secret
+
+            await self._store.delete_client(agent_name, mcp_name)
+            return await _register_dcr_client(
+                agent_name, mcp_name, oauth_cfg, server_cfg
+            )
+
+    async def _get_or_raise(
+        self, agent_name: str, mcp_name: str
+    ) -> tuple[str, str | None]:
+        """Return the stored client or raise if missing (lock-timeout fallback)."""
+        client = await self._store.get_client(agent_name, mcp_name)
+        if client is not None:
+            return client.client_id, client.client_secret
+        raise HTTPException(
+            status_code=503,
+            detail=f"DCR rotation in progress for '{mcp_name}', please retry",
+        )
+
+    async def _rotate_if_needed(
+        self,
+        agent_name: str,
+        mcp_name: str,
+        oauth_cfg: dict[str, Any],
+        server_cfg: dict[str, Any],
+    ) -> tuple[str, str | None]:
+        """Check stored client validity; delete and re-register if stale."""
+        client = await self._store.get_client(agent_name, mcp_name)
+
+        if client is not None:
+            is_valid = await self._validate_client(
+                client.client_id, oauth_cfg, server_cfg
+            )
+            if is_valid:
+                return client.client_id, client.client_secret
+
+            logger.warning(
+                "DCR client_id expired/rejected for agent '%s' MCP '%s' "
+                "— deleting and re-registering",
+                agent_name,
+                mcp_name,
+            )
+            await self._store.delete_client(agent_name, mcp_name)
+
+        return await _register_dcr_client(agent_name, mcp_name, oauth_cfg, server_cfg)
+
+    @staticmethod
+    async def _validate_client(
+        client_id: str,
+        oauth_cfg: dict[str, Any],
+        server_cfg: dict[str, Any],
+    ) -> bool:
+        """Probe the authorization endpoint to check if the client_id is still accepted.
+
+        Returns True only when the server responds with 200 or 302 (the
+        expected flow for a valid client).  Any 4xx rejection — whether
+        ``invalid_client``, ``invalid_request`` (unregistered redirect_uri),
+        or any other client error — is treated as an invalid client.  5xx
+        and network errors are assumed transient (benefit of the doubt).
+        """
+        auth_endpoint = oauth_cfg.get("authorization_endpoint")
+        if not auth_endpoint:
+            return True
+
+        try:
+            async with httpx.AsyncClient(
+                verify=mcp_httpx_verify(server_cfg)
+            ) as http_client:
+                resp = await http_client.get(
+                    auth_endpoint,
+                    params={
+                        "response_type": "code",
+                        "client_id": client_id,
+                        "redirect_uri": settings.oauth_callback_url,
+                    },
+                    follow_redirects=False,
+                    timeout=10,
+                )
+                if resp.status_code in (200, 302):
+                    return True
+                if 400 <= resp.status_code < 500:
+                    logger.info(
+                        "DCR client validation probe rejected client_id '%s' "
+                        "(HTTP %s): %s",
+                        client_id,
+                        resp.status_code,
+                        resp.text[:200],
+                    )
+                    return False
+                if resp.status_code == 500:
+                    logger.info(
+                        "DCR client validation probe got 500 for client_id '%s' "
+                        "— treating as rejected: %s",
+                        client_id,
+                        resp.text[:200],
+                    )
+                    return False
+                return True
+        except Exception:
+            logger.debug(
+                "DCR client validation probe failed for client_id '%s'",
+                client_id,
+                exc_info=True,
+            )
+            return True
+
+
+_default_dcr_manager: DcrClientManager | None = None
+
+
+def get_dcr_client_manager() -> DcrClientManager:
+    """Return the process-wide DCR client manager singleton."""
+    global _default_dcr_manager  # noqa: PLW0603
+    if _default_dcr_manager is None:
+        _default_dcr_manager = DcrClientManager()
+    return _default_dcr_manager
+
+
 async def handle_mcp_connect(
     user_id: str, mcp_name: str, *, caller_origin: str | None = None
 ) -> dict[str, str]:
@@ -142,15 +390,12 @@ async def handle_mcp_connect(
     redirect_uri = settings.oauth_callback_url
     current_agent_name = settings.agent_deployment_id
 
-    store = McpTokenStore(settings.database_uri)
+    client_id: str | None = None
     if auth_mode == "dcr":
-        client = await store.get_client(current_agent_name, mcp_name)
-        if client is None:
-            await _register_dcr_client(
-                current_agent_name, mcp_name, oauth_cfg, server_cfg
-            )
-            client = await store.get_client(current_agent_name, mcp_name)
-        client_id = client.client_id if client else None
+        manager = get_dcr_client_manager()
+        client_id, _ = await manager.ensure_valid_client(
+            current_agent_name, mcp_name, oauth_cfg, server_cfg
+        )
     else:
         client_id = oauth_cfg.get("client_id")
 
@@ -246,13 +491,16 @@ async def handle_mcp_oauth_callback(
     store = McpTokenStore(settings.database_uri)
     auth_mode = server_cfg.get("auth_mode", "sso")
     current_agent_name = settings.agent_deployment_id
-    if auth_mode == "oauth":
+    client_id: str | None = None
+    client_secret: str | None = None
+    if auth_mode == "dcr":
+        manager = get_dcr_client_manager()
+        client_id, client_secret = await manager.ensure_valid_client(
+            current_agent_name, mcp_name, oauth_cfg, server_cfg
+        )
+    else:
         client_id = oauth_cfg.get("client_id")
         client_secret = resolve_oauth_client_secret(oauth_cfg, mcp_name)
-    else:
-        client = await store.get_client(current_agent_name, mcp_name)
-        client_id = client.client_id if client else None
-        client_secret = client.client_secret if client else None
 
     if not client_id:
         return HTMLResponse(

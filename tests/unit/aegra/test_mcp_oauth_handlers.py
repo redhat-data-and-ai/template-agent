@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,13 +14,17 @@ from starlette.testclient import TestClient
 
 from deep_agent.aegra.http_app import app
 from deep_agent.aegra.mcp_oauth_handlers import (
+    DcrClientManager,
     _callback_html,
+    _is_invalid_client_error,
     _register_dcr_client,
+    get_dcr_client_manager,
     handle_mcp_connect,
     handle_mcp_connections,
     handle_mcp_disconnect,
     handle_mcp_oauth_callback,
 )
+from deep_agent.aegra.mcp_token_store import McpOAuthClient, McpTokenStore
 
 
 @pytest.mark.asyncio
@@ -770,3 +776,707 @@ class TestCallbackHtml:
         result = _callback_html(error='<script>alert("xss")</script>')
         assert "<script>" not in result
         assert "&lt;script&gt;" in result
+
+
+_serialization_lock = asyncio.Lock()
+
+
+@asynccontextmanager
+async def _mock_distributed_lock_held(*args, **kwargs):
+    """Stub distributed_lock that serializes via a real asyncio.Lock."""
+    async with _serialization_lock:
+        yield "held"
+
+
+@asynccontextmanager
+async def _mock_distributed_lock_timeout(*args, **kwargs):
+    """Stub distributed_lock that always yields 'timeout'."""
+    yield "timeout"
+
+
+@asynccontextmanager
+async def _mock_distributed_lock_no_redis(*args, **kwargs):
+    """Stub distributed_lock that always yields 'no_redis'."""
+    yield "no_redis"
+
+
+@pytest.fixture
+def dcr_store():
+    """Return a mock McpTokenStore for DcrClientManager tests."""
+    store = MagicMock(spec=McpTokenStore)
+    store.get_client = AsyncMock()
+    store.delete_client = AsyncMock(return_value=True)
+    store.upsert_client = AsyncMock()
+    return store
+
+
+@pytest.fixture
+def dcr_manager(dcr_store):
+    """Return a DcrClientManager backed by the mock store."""
+    return DcrClientManager(store=dcr_store)
+
+
+_DCR_OAUTH_CFG = {
+    "authorization_endpoint": "https://auth.example.com/authorize",
+    "token_endpoint": "https://auth.example.com/token",
+    "registration_endpoint": "https://auth.example.com/register",
+}
+_DCR_SERVER_CFG = {"enabled": True, "auth_mode": "dcr", "oauth": _DCR_OAUTH_CFG}
+
+
+class TestIsInvalidClientError:
+    """Tests for the _is_invalid_client_error helper."""
+
+    def test_json_invalid_client(self):
+        assert _is_invalid_client_error(400, '{"error": "invalid_client"}') is True
+
+    def test_json_invalid_grant_not_matched(self):
+        assert _is_invalid_client_error(400, '{"error": "invalid_grant"}') is False
+
+    def test_bare_403_not_matched(self):
+        assert _is_invalid_client_error(403, "Forbidden") is False
+
+    def test_403_with_invalid_client_in_body(self):
+        assert _is_invalid_client_error(403, '{"error": "invalid_client"}') is True
+
+    def test_bare_401_not_matched(self):
+        assert _is_invalid_client_error(401, "Unauthorized") is False
+
+    def test_401_with_invalid_client_in_body(self):
+        assert _is_invalid_client_error(401, '{"error": "invalid_client"}') is True
+
+    def test_non_json_with_invalid_client_substring(self):
+        assert _is_invalid_client_error(400, "error=invalid_client") is True
+
+    def test_500_not_matched(self):
+        assert _is_invalid_client_error(500, "Internal Server Error") is False
+
+
+@pytest.mark.asyncio
+class TestDcrClientManagerEnsureValidClient:
+    async def test_returns_existing_valid_client(self, dcr_manager, dcr_store):
+        dcr_store.get_client.return_value = McpOAuthClient(
+            agent_name="agent", mcp_name="mcp", client_id="cid", client_secret="csec"
+        )
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+                _mock_distributed_lock_held,
+            ),
+            patch.object(
+                DcrClientManager, "_validate_client", new=AsyncMock(return_value=True)
+            ),
+        ):
+            cid, secret = await dcr_manager.ensure_valid_client(
+                "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert cid == "cid"
+        assert secret == "csec"
+        dcr_store.delete_client.assert_not_awaited()
+
+    async def test_reregisters_when_client_invalid(self, dcr_manager, dcr_store):
+        dcr_store.get_client.return_value = McpOAuthClient(
+            agent_name="agent", mcp_name="mcp", client_id="stale-cid"
+        )
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+                _mock_distributed_lock_held,
+            ),
+            patch.object(
+                DcrClientManager, "_validate_client", new=AsyncMock(return_value=False)
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._register_dcr_client",
+                new=AsyncMock(return_value=("new-cid", "new-sec")),
+            ) as mock_register,
+        ):
+            cid, secret = await dcr_manager.ensure_valid_client(
+                "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert cid == "new-cid"
+        assert secret == "new-sec"
+        dcr_store.delete_client.assert_awaited_once_with("agent", "mcp")
+        mock_register.assert_awaited_once()
+
+    async def test_registers_when_no_client_exists(self, dcr_manager, dcr_store):
+        dcr_store.get_client.return_value = None
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+                _mock_distributed_lock_held,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._register_dcr_client",
+                new=AsyncMock(return_value=("fresh-cid", "fresh-sec")),
+            ) as mock_register,
+        ):
+            cid, secret = await dcr_manager.ensure_valid_client(
+                "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert cid == "fresh-cid"
+        assert secret == "fresh-sec"
+        dcr_store.delete_client.assert_not_awaited()
+        mock_register.assert_awaited_once()
+
+    async def test_lock_timeout_falls_back_to_stored_client(
+        self, dcr_manager, dcr_store
+    ):
+        dcr_store.get_client.return_value = McpOAuthClient(
+            agent_name="agent", mcp_name="mcp", client_id="cid", client_secret="csec"
+        )
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+            _mock_distributed_lock_timeout,
+        ):
+            cid, secret = await dcr_manager.ensure_valid_client(
+                "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert cid == "cid"
+        assert secret == "csec"
+
+    async def test_no_redis_falls_back_to_stored_client(self, dcr_manager, dcr_store):
+        """When Redis is unavailable, fail closed — return stored client, no rotation."""
+        dcr_store.get_client.return_value = McpOAuthClient(
+            agent_name="agent", mcp_name="mcp", client_id="cid", client_secret="csec"
+        )
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+            _mock_distributed_lock_no_redis,
+        ):
+            cid, secret = await dcr_manager.ensure_valid_client(
+                "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert cid == "cid"
+        assert secret == "csec"
+        dcr_store.delete_client.assert_not_awaited()
+
+    async def test_no_redis_raises_503_when_no_stored_client(
+        self, dcr_manager, dcr_store
+    ):
+        """When Redis is unavailable and no stored client exists, raise 503."""
+        dcr_store.get_client.return_value = None
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+                _mock_distributed_lock_no_redis,
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await dcr_manager.ensure_valid_client(
+                "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert exc_info.value.status_code == 503
+
+    async def test_serialized_registration_deduplicates(self, dcr_manager, dcr_store):
+        """Second caller under the lock sees the client persisted by the first."""
+        register_count = 0
+
+        async def registering_register(*args, **kwargs):
+            nonlocal register_count
+            register_count += 1
+            dcr_store.get_client.return_value = McpOAuthClient(
+                agent_name="agent",
+                mcp_name="mcp",
+                client_id="cid",
+                client_secret="sec",
+            )
+            await asyncio.sleep(0.01)
+            return ("cid", "sec")
+
+        dcr_store.get_client.return_value = None
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+                _mock_distributed_lock_held,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._register_dcr_client",
+                new=registering_register,
+            ),
+            patch.object(
+                DcrClientManager, "_validate_client", new=AsyncMock(return_value=True)
+            ),
+        ):
+            await asyncio.gather(
+                dcr_manager.ensure_valid_client(
+                    "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+                ),
+                dcr_manager.ensure_valid_client(
+                    "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+                ),
+            )
+
+        assert register_count == 1
+
+
+@pytest.mark.asyncio
+class TestDcrClientManagerHandleTokenEndpointError:
+    async def test_invalid_client_json_triggers_reregistration(
+        self, dcr_manager, dcr_store
+    ):
+        dcr_store.get_client.return_value = McpOAuthClient(
+            agent_name="agent", mcp_name="mcp", client_id="old-cid"
+        )
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+                _mock_distributed_lock_held,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._register_dcr_client",
+                new=AsyncMock(return_value=("new-cid", "new-sec")),
+            ),
+        ):
+            result = await dcr_manager.handle_token_endpoint_error(
+                "agent",
+                "mcp",
+                _DCR_OAUTH_CFG,
+                _DCR_SERVER_CFG,
+                400,
+                '{"error": "invalid_client"}',
+                rejected_client_id="old-cid",
+            )
+
+        assert result == ("new-cid", "new-sec")
+        dcr_store.delete_client.assert_awaited_once_with("agent", "mcp")
+
+    async def test_skips_rotation_when_another_worker_already_rotated(
+        self, dcr_manager, dcr_store
+    ):
+        """If storage already holds a different client, skip re-registration."""
+        dcr_store.get_client.return_value = McpOAuthClient(
+            agent_name="agent",
+            mcp_name="mcp",
+            client_id="already-rotated",
+            client_secret="sec-b",
+        )
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+                _mock_distributed_lock_held,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._register_dcr_client",
+                new=AsyncMock(return_value=("should-not-be-called", "x")),
+            ) as mock_register,
+        ):
+            result = await dcr_manager.handle_token_endpoint_error(
+                "agent",
+                "mcp",
+                _DCR_OAUTH_CFG,
+                _DCR_SERVER_CFG,
+                400,
+                '{"error": "invalid_client"}',
+                rejected_client_id="old-cid",
+            )
+
+        assert result == ("already-rotated", "sec-b")
+        dcr_store.delete_client.assert_not_awaited()
+        mock_register.assert_not_awaited()
+
+    async def test_bare_401_does_not_trigger_rotation(self, dcr_manager, dcr_store):
+        result = await dcr_manager.handle_token_endpoint_error(
+            "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG, 401, "Unauthorized"
+        )
+
+        assert result is None
+        dcr_store.delete_client.assert_not_awaited()
+
+    async def test_bare_403_does_not_trigger_rotation(self, dcr_manager, dcr_store):
+        result = await dcr_manager.handle_token_endpoint_error(
+            "agent", "mcp", _DCR_OAUTH_CFG, _DCR_SERVER_CFG, 403, "Forbidden"
+        )
+
+        assert result is None
+        dcr_store.delete_client.assert_not_awaited()
+
+    async def test_403_with_invalid_client_body_triggers_rotation(
+        self, dcr_manager, dcr_store
+    ):
+        dcr_store.get_client.return_value = McpOAuthClient(
+            agent_name="agent", mcp_name="mcp", client_id="old-cid"
+        )
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+                _mock_distributed_lock_held,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._register_dcr_client",
+                new=AsyncMock(return_value=("new-cid", "new-sec")),
+            ),
+        ):
+            result = await dcr_manager.handle_token_endpoint_error(
+                "agent",
+                "mcp",
+                _DCR_OAUTH_CFG,
+                _DCR_SERVER_CFG,
+                403,
+                '{"error": "invalid_client"}',
+                rejected_client_id="old-cid",
+            )
+
+        assert result == ("new-cid", "new-sec")
+        dcr_store.delete_client.assert_awaited_once()
+
+    async def test_400_other_error_returns_none(self, dcr_manager, dcr_store):
+        result = await dcr_manager.handle_token_endpoint_error(
+            "agent",
+            "mcp",
+            _DCR_OAUTH_CFG,
+            _DCR_SERVER_CFG,
+            400,
+            '{"error": "invalid_grant"}',
+        )
+
+        assert result is None
+        dcr_store.delete_client.assert_not_awaited()
+
+    async def test_500_returns_none(self, dcr_manager, dcr_store):
+        result = await dcr_manager.handle_token_endpoint_error(
+            "agent",
+            "mcp",
+            _DCR_OAUTH_CFG,
+            _DCR_SERVER_CFG,
+            500,
+            "Internal Server Error",
+        )
+
+        assert result is None
+        dcr_store.delete_client.assert_not_awaited()
+
+    async def test_lock_timeout_returns_none(self, dcr_manager, dcr_store):
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+            _mock_distributed_lock_timeout,
+        ):
+            result = await dcr_manager.handle_token_endpoint_error(
+                "agent",
+                "mcp",
+                _DCR_OAUTH_CFG,
+                _DCR_SERVER_CFG,
+                400,
+                '{"error": "invalid_client"}',
+            )
+
+        assert result is None
+        dcr_store.delete_client.assert_not_awaited()
+
+    async def test_no_redis_returns_none(self, dcr_manager, dcr_store):
+        """When Redis is unavailable, fail closed — do not rotate."""
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.distributed_lock",
+            _mock_distributed_lock_no_redis,
+        ):
+            result = await dcr_manager.handle_token_endpoint_error(
+                "agent",
+                "mcp",
+                _DCR_OAUTH_CFG,
+                _DCR_SERVER_CFG,
+                400,
+                '{"error": "invalid_client"}',
+            )
+
+        assert result is None
+        dcr_store.delete_client.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+class TestDcrClientManagerValidateClient:
+    async def test_returns_true_on_302_redirect(self):
+        mock_response = MagicMock()
+        mock_response.status_code = 302
+        mock_response.text = ""
+
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient"
+        ) as mock_client:
+            mock_ctx = AsyncMock(get=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await DcrClientManager._validate_client(
+                "cid", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert result is True
+
+    async def test_returns_false_on_invalid_client_response(self):
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "error: invalid_client"
+
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient"
+        ) as mock_client:
+            mock_ctx = AsyncMock(get=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await DcrClientManager._validate_client(
+                "expired-cid", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert result is False
+
+    async def test_returns_true_when_no_authorization_endpoint(self):
+        result = await DcrClientManager._validate_client("cid", {}, _DCR_SERVER_CFG)
+        assert result is True
+
+    async def test_returns_false_on_400_invalid_request(self):
+        """400 with 'invalid_request' (e.g. unregistered redirect_uri) should be invalid."""
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = '{"error":"invalid_request","error_description":"Unregistered redirect_uri"}'
+
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient"
+        ) as mock_client:
+            mock_ctx = AsyncMock(get=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await DcrClientManager._validate_client(
+                "bogus-uuid", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert result is False
+
+    async def test_returns_false_on_401(self):
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient"
+        ) as mock_client:
+            mock_ctx = AsyncMock(get=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await DcrClientManager._validate_client(
+                "bad-cid", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert result is False
+
+    async def test_returns_false_on_500_server_error(self):
+        """500 errors are treated as invalid client (e.g. Atlassian returns 500 for unknown client_id)."""
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient"
+        ) as mock_client:
+            mock_ctx = AsyncMock(get=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await DcrClientManager._validate_client(
+                "cid", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert result is False
+
+    async def test_returns_true_on_502_gateway_error(self):
+        """Non-500 5xx errors are transient — assume client is valid."""
+        mock_response = MagicMock()
+        mock_response.status_code = 502
+        mock_response.text = "Bad Gateway"
+
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient"
+        ) as mock_client:
+            mock_ctx = AsyncMock(get=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await DcrClientManager._validate_client(
+                "cid", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert result is True
+
+    async def test_returns_true_on_network_error(self):
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient"
+        ) as mock_client:
+            mock_ctx = AsyncMock(
+                get=AsyncMock(side_effect=Exception("connection refused"))
+            )
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await DcrClientManager._validate_client(
+                "cid", _DCR_OAUTH_CFG, _DCR_SERVER_CFG
+            )
+
+        assert result is True
+
+
+@pytest.mark.asyncio
+class TestHandleMcpConnectWithDcrManager:
+    async def test_dcr_connect_uses_manager(self):
+        server_cfg = {
+            "enabled": True,
+            "auth_mode": "dcr",
+            "oauth": {
+                "authorization_endpoint": "https://auth.example.com/authorize",
+                "token_endpoint": "https://auth.example.com/token",
+                "registration_endpoint": "https://auth.example.com/register",
+            },
+        }
+
+        mock_manager = MagicMock()
+        mock_manager.ensure_valid_client = AsyncMock(
+            return_value=("dcr-cid", "dcr-sec")
+        )
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
+                return_value=server_cfg,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.get_dcr_client_manager",
+                return_value=mock_manager,
+            ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
+            patch("deep_agent.aegra.mcp_oauth_handlers.cache_set", return_value=True),
+        ):
+            mock_settings.oauth_callback_url = (
+                "https://agent.example.com/mcp/oauth/callback"
+            )
+            mock_settings.agent_deployment_id = "test-agent"
+            mock_settings.MCP_DCR_ENABLED = True
+            result = await handle_mcp_connect("user-1", "dcr-mcp")
+
+        assert "authorize_url" in result
+        assert "dcr-cid" in result["authorize_url"]
+        mock_manager.ensure_valid_client.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+class TestGetDcrClientManagerSingleton:
+    async def test_returns_dcr_client_manager_instance(self):
+        import deep_agent.aegra.mcp_oauth_handlers as mod
+
+        mod._default_dcr_manager = None
+        try:
+            with patch.object(McpTokenStore, "__init__", return_value=None):
+                mgr = get_dcr_client_manager()
+            assert isinstance(mgr, DcrClientManager)
+            assert get_dcr_client_manager() is mgr
+        finally:
+            mod._default_dcr_manager = None
+
+
+@pytest.mark.asyncio
+class TestHandleMcpCallbackWithDcrManager:
+    async def test_callback_dcr_path_uses_manager(self):
+        """The DCR branch in handle_mcp_oauth_callback uses the manager."""
+        server_cfg = {
+            "enabled": True,
+            "auth_mode": "dcr",
+            "oauth": {
+                "authorization_endpoint": "https://auth.example.com/authorize",
+                "token_endpoint": "https://auth.example.com/token",
+                "registration_endpoint": "https://auth.example.com/register",
+            },
+        }
+
+        state_data = json.dumps(
+            {
+                "user_id": "user-1",
+                "mcp_name": "dcr-mcp",
+                "code_verifier": "verifier123",
+            }
+        )
+
+        mock_manager = MagicMock()
+        mock_manager.ensure_valid_client = AsyncMock(
+            return_value=("dcr-cid", "dcr-secret")
+        )
+
+        token_body = {
+            "access_token": "at-abc",
+            "refresh_token": "rt-abc",
+            "expires_in": 3600,
+        }
+
+        mock_request = MagicMock(spec=Request)
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
+                return_value=server_cfg,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.get_dcr_client_manager",
+                return_value=mock_manager,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.cache_get",
+                return_value=state_data,
+            ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.httpx.AsyncClient"
+            ) as mock_httpx,
+            patch.object(McpTokenStore, "__init__", return_value=None),
+            patch.object(McpTokenStore, "upsert_token", new=AsyncMock()),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.get_mcp_credential_resolver"
+            ) as mock_resolver,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.validate_granted_scopes",
+                return_value=["read"],
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.parse_token_scopes",
+                return_value=["read"],
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.requested_scopes",
+                return_value=["read"],
+            ),
+        ):
+            mock_settings.oauth_callback_url = (
+                "https://agent.example.com/mcp/oauth/callback"
+            )
+            mock_settings.agent_deployment_id = "test-agent"
+            mock_settings.database_uri = "postgresql://localhost/test"
+            mock_settings.MCP_DCR_ENABLED = True
+            mock_settings.ui_origin = "https://ui.example.com"
+
+            mock_resp = MagicMock()
+            mock_resp.is_success = True
+            mock_resp.status_code = 200
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.json.return_value = token_body
+
+            mock_ctx = AsyncMock()
+            mock_ctx.post = AsyncMock(return_value=mock_resp)
+            mock_httpx.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_httpx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            mock_resolver.return_value.invalidate_cache = MagicMock()
+
+            with patch(
+                "deep_agent.aegra.mcp_oauth_handlers.invalidate_mcp_tool_cache",
+                create=True,
+            ):
+                result = await handle_mcp_oauth_callback(
+                    "auth-code", "state-123", mock_request
+                )
+
+        assert result.status_code == 200
+        mock_manager.ensure_valid_client.assert_awaited_once()

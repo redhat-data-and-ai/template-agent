@@ -249,6 +249,24 @@ class McpTokenStore:
             registration_data=registration_data,
         )
 
+    async def delete_client(self, agent_name: str, mcp_name: str) -> bool:
+        """Delete the DCR client record for *(agent_name, mcp_name)* from Postgres."""
+        await self.ensure_tables()
+        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+            cur = await conn.execute(
+                "DELETE FROM mcp_oauth_clients WHERE agent_name = %s AND mcp_name = %s",
+                (agent_name, mcp_name),
+            )
+            await conn.commit()
+            deleted: bool = (cur.rowcount or 0) > 0
+            if deleted:
+                logger.info(
+                    "Deleted stale DCR client for agent '%s' MCP '%s'",
+                    agent_name,
+                    mcp_name,
+                )
+            return deleted
+
     async def get_token(
         self, agent_name: str, user_id: str, mcp_name: str
     ) -> McpOAuthToken | None:

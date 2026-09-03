@@ -14,6 +14,23 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 
+def _extract_needs_authorization(exc: BaseException) -> NeedsAuthorization | None:
+    """Unwrap NeedsAuthorization from an ExceptionGroup / TaskGroup if present."""
+    if isinstance(exc, NeedsAuthorization):
+        return exc
+    for sub in getattr(exc, "exceptions", []):
+        found = _extract_needs_authorization(sub)
+        if found is not None:
+            return found
+    for attr in ("__cause__", "__context__"):
+        chained = getattr(exc, attr, None)
+        if chained is not None and chained is not exc:
+            found = _extract_needs_authorization(chained)
+            if found is not None:
+                return found
+    return None
+
+
 def _mcp_auth_interrupt_payload(exc: NeedsAuthorization) -> str:
     return json.dumps(
         {
@@ -101,6 +118,15 @@ def _make_safe_ainvoke(target_tool: Any) -> Any:
         except GraphBubbleUp:
             raise
         except Exception as exc:
+            auth_exc = _extract_needs_authorization(exc)
+            if auth_exc is not None:
+                logger.info(
+                    "MCP auth required for '%s' (unwrapped from %s) — interrupting run",
+                    auth_exc.mcp_name,
+                    type(exc).__name__,
+                )
+                interrupt(_mcp_auth_interrupt_payload(auth_exc))
+                return await original_ainvoke(tool_input, config, **kwargs)
             tool_name = getattr(target_tool, "name", "unknown")
             tool_call_id = ""
             if isinstance(tool_input, dict):
@@ -133,6 +159,17 @@ def _wrap_single_tool(tool: Any) -> Any:
                         exc.mcp_name,
                     )
                     interrupt(_mcp_auth_interrupt_payload(exc))
+                except Exception as exc:
+                    auth_exc = _extract_needs_authorization(exc)
+                    if auth_exc is not None:
+                        logger.info(
+                            "MCP auth required for '%s' (unwrapped from %s) "
+                            "— interrupting run",
+                            auth_exc.mcp_name,
+                            type(exc).__name__,
+                        )
+                        interrupt(_mcp_auth_interrupt_payload(auth_exc))
+                    raise
 
         try:
             wrapped = tool.model_copy(update={"coroutine": wrapped_coroutine})
@@ -151,6 +188,11 @@ def _wrap_single_tool(tool: Any) -> Any:
                     return func(**kwargs)
                 except NeedsAuthorization as exc:
                     interrupt(_mcp_auth_interrupt_payload(exc))
+                except Exception as exc:
+                    auth_exc = _extract_needs_authorization(exc)
+                    if auth_exc is not None:
+                        interrupt(_mcp_auth_interrupt_payload(auth_exc))
+                    raise
 
         try:
             wrapped = tool.model_copy(update={"func": wrapped_func})

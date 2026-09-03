@@ -30,7 +30,7 @@ logger = get_python_logger()
 
 _RESOLVED_TOKEN_TTL_SECONDS = 30.0
 _TOKEN_EXPIRY_BUFFER_SECONDS = 30.0
-_TOKEN_REFRESH_LOCK_TTL_SECONDS = 30
+_TOKEN_REFRESH_LOCK_TTL_SECONDS = 120
 _TOKEN_REFRESH_LOCK_WAIT_SECONDS = 10.0
 _TOKEN_REFRESH_WAIT_POLL_SECONDS = 0.1
 _TOKEN_REFRESH_WAIT_ATTEMPTS = 50
@@ -350,6 +350,27 @@ class McpCredentialResolver:
         try:
             async with httpx.AsyncClient(verify=mcp_httpx_verify(server_cfg)) as client:
                 resp = await client.post(token_endpoint, data=data, timeout=30)
+
+                auth_mode = server_cfg.get("auth_mode", "sso")
+                if auth_mode == "dcr" and not resp.is_success:
+                    from deep_agent.aegra.mcp_oauth_handlers import (
+                        get_dcr_client_manager,
+                    )
+
+                    new_creds = (
+                        await get_dcr_client_manager().handle_token_endpoint_error(
+                            stored.agent_name,
+                            stored.mcp_name,
+                            (server_cfg.get("oauth") or {}),
+                            server_cfg,
+                            resp.status_code,
+                            resp.text,
+                            rejected_client_id=client_id,
+                        )
+                    )
+                    if new_creds is not None:
+                        return None
+
                 resp.raise_for_status()
                 body: dict[str, Any] = resp.json()
         except Exception:
@@ -398,7 +419,12 @@ class McpCredentialResolver:
     async def _resolve_client_credentials(
         self, mcp_name: str, server_cfg: dict[str, Any]
     ) -> tuple[str | None, str | None]:
-        """Return (client_id, client_secret) from config or DCR store."""
+        """Return (client_id, client_secret) from config or DCR store.
+
+        For DCR-backed servers, delegates to :class:`DcrClientManager` which
+        validates the stored credentials and re-registers automatically when
+        the MCP server rejects them.
+        """
         auth_mode = server_cfg.get("auth_mode", "sso")
         oauth_cfg = server_cfg.get("oauth") or {}
 
@@ -408,11 +434,20 @@ class McpCredentialResolver:
             )
 
         if auth_mode == "dcr":
-            current_agent_name = settings.agent_deployment_id
-            client = await self._store.get_client(current_agent_name, mcp_name)
-            if client is None:
+            from deep_agent.aegra.mcp_oauth_handlers import get_dcr_client_manager
+
+            manager = get_dcr_client_manager()
+            try:
+                return await manager.ensure_valid_client(
+                    settings.agent_deployment_id, mcp_name, oauth_cfg, server_cfg
+                )
+            except Exception:
+                logger.error(
+                    "Failed to ensure valid DCR client for '%s'",
+                    mcp_name,
+                    exc_info=True,
+                )
                 return None, None
-            return client.client_id, client.client_secret
 
         return None, None
 

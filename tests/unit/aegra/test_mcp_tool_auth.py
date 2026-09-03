@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import ToolMessage
 
 from deep_agent.aegra.mcp_auth import NeedsAuthorization
-from deep_agent.aegra.mcp_tool_auth import _wrap_single_tool, wrap_mcp_tools_for_auth
+from deep_agent.aegra.mcp_tool_auth import (
+    _extract_needs_authorization,
+    _wrap_single_tool,
+    wrap_mcp_tools_for_auth,
+)
 
 
 def _make_mock_tool(*, name: str = "gitlab_list_issues", coroutine=None):
@@ -125,6 +129,101 @@ class TestSafeAinvoke:
             await wrapped.ainvoke({"id": "call_5"})
 
 
+class TestExtractNeedsAuthorization:
+    def test_returns_bare_needs_authorization(self):
+        exc = NeedsAuthorization("mcp-x", "/connect")
+        assert _extract_needs_authorization(exc) is exc
+
+    def test_returns_none_for_unrelated_exception(self):
+        assert _extract_needs_authorization(RuntimeError("boom")) is None
+
+    def test_unwraps_from_exception_group(self):
+        inner = NeedsAuthorization("mcp-x", "/connect")
+        group = ExceptionGroup("task group", [inner])
+        assert _extract_needs_authorization(group) is inner
+
+    def test_unwraps_nested_exception_group(self):
+        inner = NeedsAuthorization("mcp-x", "/connect")
+        inner_group = ExceptionGroup("inner", [inner])
+        outer_group = ExceptionGroup("outer", [RuntimeError("other"), inner_group])
+        assert _extract_needs_authorization(outer_group) is inner
+
+    def test_unwraps_from_cause(self):
+        inner = NeedsAuthorization("mcp-x", "/connect")
+        outer = RuntimeError("wrapper")
+        outer.__cause__ = inner
+        assert _extract_needs_authorization(outer) is inner
+
+    def test_returns_none_for_empty_group(self):
+        group = ExceptionGroup("empty", [ValueError("a"), RuntimeError("b")])
+        assert _extract_needs_authorization(group) is None
+
+    def test_unwraps_from_context(self):
+        inner = NeedsAuthorization("mcp-x", "/connect")
+        outer = RuntimeError("implicit wrapper")
+        outer.__context__ = inner
+        assert _extract_needs_authorization(outer) is inner
+
+
+class TestSafeAinvokeExceptionGroupUnwrap:
+    @pytest.mark.asyncio
+    async def test_exception_group_with_needs_authorization_triggers_interrupt(self):
+        """NeedsAuthorization inside ExceptionGroup should trigger interrupt, not [TOOL_ERROR]."""
+        from langgraph.errors import GraphInterrupt
+
+        inner = NeedsAuthorization("gitlab-mcp", "/mcp/gitlab-mcp/connect")
+        group = ExceptionGroup("unhandled errors in a TaskGroup", [inner])
+
+        tool = _make_mock_tool()
+        tool.ainvoke = AsyncMock(side_effect=group)
+
+        wrapped = _wrap_single_tool(tool)
+
+        with patch(
+            "deep_agent.aegra.mcp_tool_auth.interrupt",
+            side_effect=GraphInterrupt(),
+        ) as mock_interrupt:
+            with pytest.raises(GraphInterrupt):
+                await wrapped.ainvoke({"id": "call_eg", "name": "gitlab_list_issues"})
+
+        mock_interrupt.assert_called_once()
+        payload = mock_interrupt.call_args[0][0]
+        assert "gitlab-mcp" in payload
+
+    @pytest.mark.asyncio
+    async def test_exception_group_with_needs_auth_retries_after_interrupt(self):
+        """After interrupt returns normally, safe_ainvoke retries and returns the result."""
+        inner = NeedsAuthorization("gitlab-mcp", "/mcp/gitlab-mcp/connect")
+        group = ExceptionGroup("unhandled errors in a TaskGroup", [inner])
+
+        tool = _make_mock_tool()
+        tool.ainvoke = AsyncMock(side_effect=[group, "retry-ok"])
+
+        wrapped = _wrap_single_tool(tool)
+
+        with patch(
+            "deep_agent.aegra.mcp_tool_auth.interrupt",
+            return_value=None,
+        ):
+            result = await wrapped.ainvoke({"id": "call_retry"})
+
+        assert result == "retry-ok"
+
+    @pytest.mark.asyncio
+    async def test_exception_group_without_needs_auth_returns_tool_error(self):
+        """ExceptionGroup without NeedsAuthorization should still return [TOOL_ERROR]."""
+        group = ExceptionGroup("task group", [RuntimeError("connection failed")])
+
+        tool = _make_mock_tool()
+        tool.ainvoke = AsyncMock(side_effect=group)
+
+        wrapped = _wrap_single_tool(tool)
+
+        result = await wrapped.ainvoke({"id": "call_eg2"})
+        assert isinstance(result, ToolMessage)
+        assert "[TOOL_ERROR]" in result.content
+
+
 class TestWrapMcpToolsForAuth:
     def test_wraps_all_tools(self):
         tools = [_make_mock_tool(name=f"tool_{i}") for i in range(3)]
@@ -136,3 +235,150 @@ class TestWrapMcpToolsForAuth:
 
     def test_empty_list(self):
         assert wrap_mcp_tools_for_auth([]) == []
+
+
+def _make_coroutine_tool(name, coroutine):
+    """Build a mock tool that behaves like a StructuredTool with a coroutine."""
+    tool = MagicMock()
+    tool.name = name
+    tool.coroutine = coroutine
+    tool.func = None
+    tool.args = {}
+    tool.model_copy = MagicMock(side_effect=AttributeError("no pydantic"))
+    return tool
+
+
+def _make_func_tool(name, func):
+    """Build a mock tool that behaves like a StructuredTool with a sync func."""
+    tool = MagicMock()
+    tool.name = name
+    tool.coroutine = None
+    tool.func = func
+    tool.args = {}
+    tool.model_copy = MagicMock(side_effect=AttributeError("no pydantic"))
+    return tool
+
+
+class TestWrappedCoroutineExceptionHandling:
+    """Test ExceptionGroup/NeedsAuthorization handling in wrapped_coroutine path."""
+
+    @pytest.mark.asyncio
+    async def test_needs_authorization_triggers_interrupt(self):
+        from langgraph.errors import GraphInterrupt
+
+        exc = NeedsAuthorization("mcp-x", "/connect")
+
+        async def failing_coroutine(**kwargs):
+            raise exc
+
+        tool = _make_coroutine_tool("test_tool", failing_coroutine)
+        wrapped = _wrap_single_tool(tool)
+
+        with patch(
+            "deep_agent.aegra.mcp_tool_auth.interrupt",
+            side_effect=GraphInterrupt(),
+        ) as mock_interrupt:
+            with pytest.raises(GraphInterrupt):
+                await wrapped.coroutine()
+
+        mock_interrupt.assert_called_once()
+        payload = mock_interrupt.call_args[0][0]
+        assert "mcp-x" in payload
+
+    @pytest.mark.asyncio
+    async def test_exception_group_with_needs_auth_triggers_interrupt(self):
+        from langgraph.errors import GraphInterrupt
+
+        inner = NeedsAuthorization("mcp-y", "/connect")
+        group = ExceptionGroup("task group", [inner])
+
+        async def failing_coroutine(**kwargs):
+            raise group
+
+        tool = _make_coroutine_tool("test_tool", failing_coroutine)
+        wrapped = _wrap_single_tool(tool)
+
+        with patch(
+            "deep_agent.aegra.mcp_tool_auth.interrupt",
+            side_effect=GraphInterrupt(),
+        ) as mock_interrupt:
+            with pytest.raises(GraphInterrupt):
+                await wrapped.coroutine()
+
+        mock_interrupt.assert_called_once()
+        payload = mock_interrupt.call_args[0][0]
+        assert "mcp-y" in payload
+
+    @pytest.mark.asyncio
+    async def test_exception_group_without_needs_auth_reraises(self):
+        group = ExceptionGroup("task group", [RuntimeError("unrelated")])
+
+        async def failing_coroutine(**kwargs):
+            raise group
+
+        tool = _make_coroutine_tool("test_tool", failing_coroutine)
+        wrapped = _wrap_single_tool(tool)
+
+        with pytest.raises(ExceptionGroup):
+            await wrapped.coroutine()
+
+
+class TestWrappedFuncExceptionHandling:
+    """Test ExceptionGroup/NeedsAuthorization handling in wrapped_func path."""
+
+    def test_needs_authorization_triggers_interrupt(self):
+        from langgraph.errors import GraphInterrupt
+
+        exc = NeedsAuthorization("mcp-x", "/connect")
+
+        def failing_func(**kwargs):
+            raise exc
+
+        tool = _make_func_tool("test_tool", failing_func)
+        wrapped = _wrap_single_tool(tool)
+
+        with patch(
+            "deep_agent.aegra.mcp_tool_auth.interrupt",
+            side_effect=GraphInterrupt(),
+        ) as mock_interrupt:
+            with pytest.raises(GraphInterrupt):
+                wrapped.func()
+
+        mock_interrupt.assert_called_once()
+        payload = mock_interrupt.call_args[0][0]
+        assert "mcp-x" in payload
+
+    def test_exception_group_with_needs_auth_triggers_interrupt(self):
+        from langgraph.errors import GraphInterrupt
+
+        inner = NeedsAuthorization("mcp-z", "/connect")
+        group = ExceptionGroup("task group", [inner])
+
+        def failing_func(**kwargs):
+            raise group
+
+        tool = _make_func_tool("test_tool", failing_func)
+        wrapped = _wrap_single_tool(tool)
+
+        with patch(
+            "deep_agent.aegra.mcp_tool_auth.interrupt",
+            side_effect=GraphInterrupt(),
+        ) as mock_interrupt:
+            with pytest.raises(GraphInterrupt):
+                wrapped.func()
+
+        mock_interrupt.assert_called_once()
+        payload = mock_interrupt.call_args[0][0]
+        assert "mcp-z" in payload
+
+    def test_exception_group_without_needs_auth_reraises(self):
+        group = ExceptionGroup("task group", [RuntimeError("unrelated")])
+
+        def failing_func(**kwargs):
+            raise group
+
+        tool = _make_func_tool("test_tool", failing_func)
+        wrapped = _wrap_single_tool(tool)
+
+        with pytest.raises(ExceptionGroup):
+            wrapped.func()

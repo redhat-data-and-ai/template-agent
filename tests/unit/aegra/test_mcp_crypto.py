@@ -42,6 +42,12 @@ class TestMcpCrypto:
         assert encrypt_secret(None) is None
         assert decrypt_secret(None) is None
 
+    def test_empty_string_passthrough(self, fernet_keys, monkeypatch):
+        primary, _ = fernet_keys
+        monkeypatch.setenv("MCP_TOKEN_ENCRYPTION_KEY", primary)
+        assert encrypt_secret("") is None
+        assert decrypt_secret("") is None
+
     def test_decrypt_with_previous_key(self, fernet_keys, monkeypatch):
         primary, previous = fernet_keys
         monkeypatch.setenv("MCP_TOKEN_ENCRYPTION_KEY", previous)
