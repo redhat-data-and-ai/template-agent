@@ -142,7 +142,6 @@ spec:
                 secretKeyRef:
                   name: agent-secrets
                   key: EVAL_INTERNAL_TOKEN
-                  optional: true
             - name: EVAL_TOKEN_REFRESH_ENABLED
               value: "true"
             - name: REDIS_URL

@@ -49,7 +49,12 @@ AGENT_URL = os.environ.get("AGENT_HOST", "http://localhost:5002")
 _EVAL_TOKEN_REFRESH_ENABLED = (
     os.environ.get("EVAL_TOKEN_REFRESH_ENABLED", "false").lower() == "true"
 )
-_EVAL_INTERNAL_TOKEN = os.environ.get("EVAL_INTERNAL_TOKEN", "")
+_EVAL_INTERNAL_TOKEN = os.environ["EVAL_INTERNAL_TOKEN"]
+if not _EVAL_INTERNAL_TOKEN:
+    raise RuntimeError(
+        "EVAL_INTERNAL_TOKEN is empty — the eval runner refuses to start without it. "
+        "Generate one with: openssl rand -hex 32"
+    )
 
 
 def _call_cleanup_endpoint() -> None:
@@ -97,12 +102,12 @@ def _resolve_config_dir() -> str:
 _agent_config_dir = _resolve_config_dir()
 EVAL_CASES_PATH = Path(
     os.environ.get(
-        "EVAL_CASES_PATH", f"{_agent_config_dir}/evals/lightspeed-agent/eval_cases.yaml"
+        "EVAL_CASES_PATH", f"{_agent_config_dir}/evals/lightspeed/eval_cases.yaml"
     )
 )
 EVAL_SYSTEM_CONFIG = Path(
     os.environ.get(
-        "EVAL_SYSTEM_CONFIG", f"{_agent_config_dir}/evals/lightspeed-agent/system.yaml"
+        "EVAL_SYSTEM_CONFIG", f"{_agent_config_dir}/evals/lightspeed/system.yaml"
     )
 )
 EVAL_OUTPUT_DIR = Path(
@@ -249,6 +254,23 @@ def _build_turn_metrics_metadata() -> dict:
         "ragas:faithfulness": {
             **t("ragas:faithfulness"),
             "description": "Response grounded in tool results / retrieved context",
+        },
+        "geval:delegation_compliance": {
+            "criteria": (
+                "Assess whether the orchestrator agent correctly delegated the task "
+                "to the expected sub-agent(s) via tool calls. The delegation should "
+                "match the expected tool calls in terms of which sub-agents were invoked "
+                "and what arguments were passed. Evaluate ONLY whether the right "
+                "sub-agents were called — not the quality of their responses."
+            ),
+            "evaluation_params": ["query", "response"],
+            "evaluation_steps": [
+                "Verify that the orchestrator invoked the expected sub-agent tool(s).",
+                "Check that the arguments passed to each sub-agent match the expected values.",
+                "Confirm no critical sub-agent delegation was omitted.",
+            ],
+            **t("geval:delegation_compliance"),
+            "description": "Orchestrator delegated to the correct sub-agent(s)",
         },
     }
 
@@ -539,6 +561,11 @@ async def _run_eval(
 
         run_started_at = datetime.now(timezone.utc)
         await asyncio.gather(*[_run_one(f) for f in eval_files])
+    except Exception as exc:
+        log.error("eval_run_failed: %s", exc)
+        _status.update({"state": "error", "run_id": run_id})
+        _call_cleanup_endpoint()
+        return
     finally:
         # Always clean up temp files — even when _find_eval_files raises early
         for tmp in tmp_files:
@@ -661,38 +688,15 @@ app = FastAPI(title="eval-runner", version="2.0.0", lifespan=_lifespan)
 
 _SKIP_AUTH_PATHS = {"/health", "/metrics"}
 
-if not _EVAL_INTERNAL_TOKEN:
-    log.warning(
-        "EVAL_INTERNAL_TOKEN is not set — all non-health requests will be rejected (503). "
-        "Set this env var to allow the agent pod to communicate with the eval runner."
-    )
-
-
 @app.middleware("http")
 async def _internal_token_middleware(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
-    """Validate X-Internal-Token on all endpoints except /health and /metrics.
-
-    When EVAL_INTERNAL_TOKEN is not set the eval runner is considered
-    misconfigured and rejects all non-health requests with 503 rather than
-    silently allowing unauthenticated access.
-    """
+    """Validate X-Internal-Token on all endpoints except /health and /metrics."""
     if request.url.path in _SKIP_AUTH_PATHS:
         return await call_next(request)
-    if not _EVAL_INTERNAL_TOKEN:
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse(
-            status_code=503,
-            content={
-                "detail": "eval runner auth not configured — set EVAL_INTERNAL_TOKEN"
-            },
-        )
     provided = request.headers.get("x-internal-token", "")
     if not hmac.compare_digest(provided.encode(), _EVAL_INTERNAL_TOKEN.encode()):
-        from fastapi.responses import JSONResponse
-
         return JSONResponse(
             status_code=401, content={"detail": "invalid internal token"}
         )

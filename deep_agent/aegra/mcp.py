@@ -233,10 +233,12 @@ async def refresh_access_token(
                     from deep_agent.aegra.mcp_crypto import encrypt_secret
                     from deep_agent.aegra.redis import cache_get, cache_set
 
-                    if cache_get(f"eval:active:{sub}"):
+                    if await asyncio.to_thread(cache_get, f"eval:active:{sub}"):
                         encrypted_rt = encrypt_secret(new_rt)
                         if encrypted_rt:
-                            cache_set(f"eval:refresh:{sub}", encrypted_rt, 3600)
+                            await asyncio.to_thread(
+                                cache_set, f"eval:refresh:{sub}", encrypted_rt, 3600
+                            )
 
         return new_token
     except Exception:

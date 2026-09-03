@@ -462,6 +462,7 @@ def _detect_interrupt(run_state: dict) -> bool:
 @router.get("/thread-tool-calls/{thread_id}")
 async def get_thread_tool_calls(
     thread_id: str,
+    request: Request,
     _token: str = Depends(_require_bearer),
 ) -> dict[str, Any]:
     """Return all subagent tool calls for a completed thread.
@@ -469,8 +470,34 @@ async def get_thread_tool_calls(
     Reads directly from Postgres checkpoint_blobs across all subagent namespaces
     since LangGraph's HTTP API only exposes subgraph state during interrupts.
     """
+    await _verify_thread_ownership(thread_id, request)
     tool_calls = await _collect_subagent_tool_calls_from_postgres(thread_id)
     return {"thread_id": thread_id, "tool_calls": tool_calls}
+
+
+async def _verify_thread_ownership(thread_id: str, request: Request) -> None:
+    """Raise 403 unless the authenticated user owns the thread."""
+    sub = _extract_sub(request)
+    if not sub:
+        raise HTTPException(status_code=403, detail="Could not identify user from token")
+
+    try:
+        async with await _pg_conn() as conn:
+            row = await conn.execute(
+                "SELECT 1 FROM thread WHERE thread_id = %s AND user_id = %s",
+                (thread_id, sub),
+            )
+            if await row.fetchone() is None:
+                raise HTTPException(
+                    status_code=403, detail="Thread not owned by authenticated user"
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("Thread ownership check failed: %s", exc)
+        raise HTTPException(
+            status_code=403, detail="Could not verify thread ownership"
+        ) from exc
 
 
 @router.post("/run", response_model=EvalRunResponse)
@@ -863,7 +890,7 @@ async def _require_eval_files() -> None:
     if not has_pg:
         is_dev = os.environ.get("ENVIRONMENT", "development").lower() == "development"
         config_dir = os.environ.get("CONFIG_PATH", "config/agent")
-        eval_cases = Path(f"{config_dir}/evals/lightspeed-agent/eval_cases.yaml")
+        eval_cases = Path(f"{config_dir}/evals/lightspeed/eval_cases.yaml")
         if is_dev and eval_cases.exists():
             log.info(
                 "Dev mode: no Postgres dataset — eval runner will use eval_cases.yaml from config. "
@@ -1031,7 +1058,7 @@ async def eval_status() -> dict[str, Any]:
     has_pg = await _has_postgres_dataset()
     if not has_pg:
         config_dir = os.environ.get("CONFIG_PATH", "config/agent")
-        eval_cases = Path(f"{config_dir}/evals/lightspeed-agent/eval_cases.yaml")
+        eval_cases = Path(f"{config_dir}/evals/lightspeed/eval_cases.yaml")
         if not eval_cases.exists():
             return {
                 "eval_status": "no_dataset",
@@ -1371,7 +1398,8 @@ async def cleanup_eval_redis(request: Request) -> dict[str, Any]:
         if sub:
             cache_delete(f"eval:active:{sub}")
             cache_delete(f"eval:access:{sub}")
-        log.info("eval_redis_cleanup keys_deleted=%d", 3 if sub else 1)
+            cache_delete(f"eval:refresh:{sub}")
+        log.info("eval_redis_cleanup keys_deleted=%d", 4 if sub else 1)
     except Exception as exc:
         log.warning("eval_redis_cleanup failed (TTL will handle): %s", exc)
 

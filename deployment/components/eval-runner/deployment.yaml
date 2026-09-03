@@ -17,10 +17,21 @@ spec:
         app: eval-runner
         component: eval-runner
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: eval-runner
           image: eval-runner:latest
           imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8099
               name: http
@@ -63,7 +74,6 @@ spec:
                 secretKeyRef:
                   name: agent-secrets
                   key: EVAL_INTERNAL_TOKEN
-                  optional: true
           startupProbe:
             httpGet:
               path: /health
@@ -91,6 +101,8 @@ spec:
             - name: agent-config
               mountPath: /agent-config
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
 
           resources:
             requests:
@@ -101,6 +113,9 @@ spec:
               cpu: "1000m"
 
       volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
         - name: agent-config
           persistentVolumeClaim:
             claimName: agent-source-data

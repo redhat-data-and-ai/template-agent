@@ -96,7 +96,7 @@ async def _oidc_refresh(refresh_token: str) -> tuple[str, str]:
     Keycloak refresh-token rotation is enabled (invalidates old RT on use).
     """
     token_url = f"{SSO_ISSUER_URL.rstrip('/')}/protocol/openid-connect/token"
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, pool=2.0)) as client:
         resp = await client.post(
             token_url,
             data={
@@ -262,7 +262,7 @@ async def authenticate(headers: dict) -> dict:
 
         # Lock: only one thread calls OIDC; others poll the cache
         async with distributed_lock(
-            f"eval:refresh_lock:{sub}", ttl_seconds=10, wait_seconds=12
+            f"eval:refresh_lock:{sub}", ttl_seconds=30, wait_seconds=12
         ) as state:
             if state == "held":
                 enc_rt = await asyncio.to_thread(

@@ -9,6 +9,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: eval-runner
+          imagePullPolicy: IfNotPresent
           resources:
             requests:
               memory: "512Mi"
@@ -22,11 +23,11 @@ spec:
                 secretKeyRef:
                   name: agent-secrets
                   key: EVAL_INTERNAL_TOKEN
-                  optional: true
             - name: EVAL_TOKEN_REFRESH_ENABLED
               value: "true"
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]

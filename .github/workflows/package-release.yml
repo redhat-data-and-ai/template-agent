@@ -23,9 +23,10 @@ jobs:
     steps:
       - name: Determine build context
         id: ctx
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
-          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
-          HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
           SHORT_SHA="${HEAD_SHA::7}"
 
           # Version tags: dev-1.0.7 (not v2.1.3 or vYYYY.MM.DD-rc.N)

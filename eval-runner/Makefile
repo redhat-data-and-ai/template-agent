@@ -19,7 +19,7 @@ COMPOSE = podman-compose -f compose.yaml
 .venv/.installed:
 	@test -d .venv || uv venv .venv --python 3.12
 	@uv pip install -q --python .venv/bin/python \
-		"lightspeed-evaluation @ git+https://github.com/lightspeed-core/lightspeed-evaluation.git@v0.7.0" \
+		"lightspeed-evaluation @ git+https://github.com/lightspeed-core/lightspeed-evaluation.git@v0.8.0" \
 		fastapi "uvicorn[standard]" httpx pyyaml psycopg2-binary
 	@touch .venv/.installed
 
@@ -28,7 +28,7 @@ venv: .venv/.installed
 test: venv ## Run unit tests with coverage
 	@uv pip install -q --python .venv/bin/python \
 		pytest pytest-asyncio pytest-cov httpx
-	@PYTHONPATH=src .venv/bin/pytest tests/ --cov=src --cov-report=term-missing --cov-fail-under=90 -v
+	@EVAL_INTERNAL_TOKEN=test-token PYTHONPATH=src .venv/bin/pytest tests/ --cov=src --cov-report=term-missing --cov-fail-under=90 -v
 
 # ── Local (venv) ─────────────────────────────────────────────────────────────
 
@@ -78,8 +78,8 @@ deploy: ## Deploy eval runner to OpenShift (requires: NAMESPACE)
 	echo "Applying eval-runner manifests..."; \
 	oc apply -f deployment/overlays/openshift/eval-runner-imagestream.yaml; \
 	oc apply -f deployment/overlays/openshift/eval-runner-buildconfig.yaml; \
-	oc apply -f deployment/overlays/openshift/eval-runner-service.yaml; \
-	oc apply -f deployment/overlays/openshift/eval-runner-networkpolicy.yaml; \
+	oc apply -f deployment/components/eval-runner/service.yaml; \
+	oc apply -f deployment/components/eval-runner/networkpolicy.yaml; \
 	echo "Building eval-runner image..."; \
 	oc start-build eval-runner --from-dir=. \
 		--exclude='(^|/)\.venv(/|$$)' \

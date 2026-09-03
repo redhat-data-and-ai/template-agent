@@ -52,7 +52,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.52b1,<1.0.0",
     "litellm>=1.40.0",
     "aiokafka>=0.10.0",
-    "msgpack>=1.2.1",
+    "msgpack==1.2.1",
 ]
 
 [project.optional-dependencies]

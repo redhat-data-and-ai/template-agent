@@ -414,10 +414,10 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
             is_last_turn = i == len(all_turns)
             if tag_defaults.get("hitl") and is_last_turn:
                 turn_data["hitl"] = True
-                if not turn.get("expectedIntent"):
-                    turn_data["expected_intent"] = (
-                        "request approval before taking action"
-                    )
+                turn_data["expected_intent"] = (
+                    turn.get("expectedIntent")
+                    or "request approval before taking action"
+                )
             elif turn.get("expectedIntent"):
                 turn_data["expected_intent"] = turn["expectedIntent"]
                 # Auto-add intent_eval when user specifies an expected intent
@@ -426,7 +426,9 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
             # expectedKeywords: list of AND-rows; each row is comma-separated OR values.
             # Filter blank rows, auto-add keywords_eval metric when present.
             raw_kw = [
-                r.strip() for r in turn.get("expectedKeywords", []) if str(r).strip()
+                str(r).strip()
+                for r in turn.get("expectedKeywords", [])
+                if str(r).strip()
             ]
             if raw_kw:
                 turn_data["expected_keywords"] = [
@@ -438,7 +440,7 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
                 tool_calls = []
                 for c in turn["expectedToolCalls"]:
                     args = {
-                        a["key"]: (a["value"].strip() or ".*")
+                        a["key"]: (str(a.get("value", "")).strip() or ".*")
                         for a in c.get("arguments", [])
                         if a.get("key")
                     }

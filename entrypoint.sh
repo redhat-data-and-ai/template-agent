@@ -8,7 +8,7 @@ CA_PEM=""
 if [ -n "$CUSTOM_CA_PATH" ] && [ -f "$CUSTOM_CA_PATH" ]; then
   CA_PEM="$CUSTOM_CA_PATH"
 elif [ -n "$CUSTOM_CA_URL" ]; then
-  if curl -so /tmp/custom-ca.pem "$CUSTOM_CA_URL"; then
+  if curl -fso /tmp/custom-ca.pem "$CUSTOM_CA_URL"; then
     CA_PEM="/tmp/custom-ca.pem"
     echo "INFO: Successfully fetched CA from $CUSTOM_CA_URL" >&2
   else

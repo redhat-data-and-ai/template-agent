@@ -201,7 +201,9 @@ openshift:
 	echo "Creating BuildConfig and ImageStream..."; \
 	oc apply -f deployment/overlays/openshift/buildconfig.yaml; \
 	oc apply -f deployment/overlays/openshift/imagestream.yaml; \
-	echo "Building container image from source..."; \
+	oc apply -f deployment/overlays/openshift/eval-runner-buildconfig.yaml; \
+	oc apply -f deployment/overlays/openshift/eval-runner-imagestream.yaml; \
+	echo "Building agent container image from source..."; \
 	oc start-build agent --from-dir=. \
 		--exclude='(^|/)\.venv(/|$$)' \
 		--exclude='(^|/)__pycache__(/|$$)' \
@@ -212,15 +214,20 @@ openshift:
 		--exclude='(^|/)\.ruff_cache(/|$$)' \
 		--exclude='.*\.log$$' \
 		--follow || (mv deployment/overlays/openshift/kustomization.yaml.bak deployment/overlays/openshift/kustomization.yaml 2>/dev/null; exit 1); \
+	echo "Building eval-runner container image from source..."; \
+	oc start-build eval-runner --from-dir=eval-runner --follow || \
+		(mv deployment/overlays/openshift/kustomization.yaml.bak deployment/overlays/openshift/kustomization.yaml 2>/dev/null; exit 1); \
 	echo "Deploying resources to OpenShift..."; \
 	oc apply -k deployment/overlays/openshift/ || (mv deployment/overlays/openshift/kustomization.yaml.bak deployment/overlays/openshift/kustomization.yaml 2>/dev/null; exit 1); \
 	rm -f deployment/overlays/openshift/kustomization.yaml.bak; \
 	echo "Deployment complete!"; \
 	echo "Checking deployment status..."; \
 	oc get pods -l app=agent; \
+	oc get pods -l app=eval-runner; \
 	echo ""; \
 	echo "Useful commands:"; \
 	echo "  View logs: oc logs -l app=agent --tail=100"; \
+	echo "  View eval logs: oc logs -l app=eval-runner --tail=100"; \
 	echo "  Get route: oc get route agent"; \
 	echo "  Check status: oc get pods,svc,route -l app=agent"
 

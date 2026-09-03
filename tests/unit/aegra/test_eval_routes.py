@@ -320,7 +320,7 @@ class TestRequireEvalCases:
         assert exc_info.value.status_code == 400
 
     async def test_passes_when_present(self, tmp_path):
-        evals_dir = tmp_path / "evals" / "lightspeed-agent"
+        evals_dir = tmp_path / "evals" / "lightspeed"
         evals_dir.mkdir(parents=True)
         (evals_dir / "eval_cases.yaml").write_text("cases: []")
         (evals_dir / "system.yaml").write_text("llm: {}")
@@ -766,7 +766,7 @@ class TestTriggerEval:
         assert exc.value.status_code == 400
 
     async def test_returns_cached_when_exists(self, tmp_path):
-        evals_dir = tmp_path / "evals" / "lightspeed-agent"
+        evals_dir = tmp_path / "evals" / "lightspeed"
         evals_dir.mkdir(parents=True)
         (evals_dir / "eval_cases.yaml").write_text("cases: []")
         (evals_dir / "system.yaml").write_text("llm: {}")
@@ -795,7 +795,7 @@ class TestTriggerEval:
         er._table_ensured = False
 
     async def test_queues_new_run_when_not_cached(self, tmp_path):
-        evals_dir = tmp_path / "evals" / "lightspeed-agent"
+        evals_dir = tmp_path / "evals" / "lightspeed"
         evals_dir.mkdir(parents=True)
         (evals_dir / "eval_cases.yaml").write_text("cases: []")
         (evals_dir / "system.yaml").write_text("llm: {}")
@@ -851,7 +851,7 @@ class TestTriggerEval:
         er._table_ensured = False
 
     async def test_returns_in_progress_when_already_running(self, tmp_path):
-        evals_dir = tmp_path / "evals" / "lightspeed-agent"
+        evals_dir = tmp_path / "evals" / "lightspeed"
         evals_dir.mkdir(parents=True)
         (evals_dir / "eval_cases.yaml").write_text("cases: []")
         (evals_dir / "system.yaml").write_text("llm: {}")
@@ -918,7 +918,7 @@ class TestForceTriggerEval:
         assert exc.value.status_code == 400
 
     async def test_force_queues_new_run(self, tmp_path):
-        evals_dir = tmp_path / "evals" / "lightspeed-agent"
+        evals_dir = tmp_path / "evals" / "lightspeed"
         evals_dir.mkdir(parents=True)
         (evals_dir / "eval_cases.yaml").write_text("cases: []")
         (evals_dir / "system.yaml").write_text("llm: {}")
@@ -972,18 +972,19 @@ class TestPgConn:
         mock_settings = MagicMock()
         mock_settings.database_uri = "postgresql://localhost/test"
 
-        with patch("deep_agent.aegra.eval_routes.psycopg", create=True) as mock_psycopg:
-            mock_psycopg.AsyncConnection = MagicMock()
-            mock_psycopg.AsyncConnection.connect = AsyncMock(return_value=mock_conn)
-            with patch("deep_agent.src.settings.settings", mock_settings):
-                # _pg_conn imports psycopg lazily; patch at module level
-                with patch(
-                    "deep_agent.aegra.eval_routes._pg_conn",
-                    new=AsyncMock(return_value=mock_conn),
-                ):
-                    conn = await er._pg_conn()
-        # Just confirm the function is callable and returns something
-        assert conn is not None
+        mock_psycopg = MagicMock()
+        mock_psycopg.AsyncConnection.connect = AsyncMock(return_value=mock_conn)
+
+        with (
+            patch.dict("sys.modules", {"psycopg": mock_psycopg}),
+            patch("deep_agent.src.settings.settings", mock_settings),
+        ):
+            conn = await er._pg_conn()
+
+        mock_psycopg.AsyncConnection.connect.assert_awaited_once_with(
+            "postgresql://localhost/test"
+        )
+        assert conn is mock_conn
 
 
 # ── get_thread_tool_calls endpoint ────────────────────────────────────────────
@@ -992,21 +993,94 @@ class TestPgConn:
 class TestGetThreadToolCalls:
     async def test_returns_tool_calls(self):
         expected = [{"tool_name": "calculate_bmi", "arguments": {"height_cm": 175}}]
-        with patch(
-            "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_from_postgres",
-            new=AsyncMock(return_value=expected),
+        mock_request = MagicMock()
+        with (
+            patch(
+                "deep_agent.aegra.eval_routes._verify_thread_ownership",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_from_postgres",
+                new=AsyncMock(return_value=expected),
+            ),
         ):
-            result = await er.get_thread_tool_calls("thread-123")
+            result = await er.get_thread_tool_calls("thread-123", mock_request)
         assert result["thread_id"] == "thread-123"
         assert result["tool_calls"] == expected
 
     async def test_returns_empty_on_no_calls(self):
-        with patch(
-            "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_from_postgres",
-            new=AsyncMock(return_value=[]),
+        mock_request = MagicMock()
+        with (
+            patch(
+                "deep_agent.aegra.eval_routes._verify_thread_ownership",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_from_postgres",
+                new=AsyncMock(return_value=[]),
+            ),
         ):
-            result = await er.get_thread_tool_calls("thread-abc")
+            result = await er.get_thread_tool_calls("thread-abc", mock_request)
         assert result["tool_calls"] == []
+
+
+class TestVerifyThreadOwnership:
+    async def test_raises_403_when_no_sub(self):
+        from fastapi import HTTPException
+
+        mock_request = MagicMock()
+        with patch("deep_agent.aegra.eval_routes._extract_sub", return_value=None):
+            with pytest.raises(HTTPException) as exc:
+                await er._verify_thread_ownership("thread-1", mock_request)
+        assert exc.value.status_code == 403
+
+    async def test_raises_403_when_not_owned(self):
+        from fastapi import HTTPException
+
+        mock_request = MagicMock()
+        cursor = _make_cursor(rows=[None])
+        cursor.fetchone = AsyncMock(return_value=None)
+        conn, _ = _make_conn(cursor)
+
+        with (
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user-a"),
+            patch(
+                "deep_agent.aegra.eval_routes._pg_conn",
+                AsyncMock(return_value=conn),
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await er._verify_thread_ownership("thread-1", mock_request)
+        assert exc.value.status_code == 403
+
+    async def test_passes_when_owned(self):
+        mock_request = MagicMock()
+        cursor = _make_cursor(rows=[(1,)])
+        conn, _ = _make_conn(cursor)
+
+        with (
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user-a"),
+            patch(
+                "deep_agent.aegra.eval_routes._pg_conn",
+                AsyncMock(return_value=conn),
+            ),
+        ):
+            await er._verify_thread_ownership("thread-1", mock_request)
+
+    async def test_raises_403_on_db_error(self):
+        from fastapi import HTTPException
+
+        mock_request = MagicMock()
+        with (
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user-a"),
+            patch(
+                "deep_agent.aegra.eval_routes._pg_conn",
+                AsyncMock(side_effect=Exception("db down")),
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await er._verify_thread_ownership("thread-1", mock_request)
+        assert exc.value.status_code == 403
 
 
 # ── _collect_subagent_tool_calls_via_remote_graph ─────────────────────────────
@@ -1300,3 +1374,847 @@ class TestInternalCleanupEndpoint:
         ):
             result = await er.cleanup_eval_redis(mock_request)
         assert "status" in result
+
+
+class TestRequireBearer:
+    async def test_returns_token_when_valid(self):
+        creds = MagicMock()
+        creds.credentials = "my-token"
+        result = er._require_bearer(creds)
+        assert result == "my-token"
+
+    async def test_raises_401_when_none(self):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            er._require_bearer(None)
+        assert exc.value.status_code == 401
+
+    async def test_raises_401_when_empty_credentials(self):
+        from fastapi import HTTPException
+
+        creds = MagicMock()
+        creds.credentials = ""
+        with pytest.raises(HTTPException) as exc:
+            er._require_bearer(creds)
+        assert exc.value.status_code == 401
+
+
+class TestCheckMcpAuth:
+    async def test_empty_when_no_user_identity(self):
+        mock_request = MagicMock()
+        mock_request.headers = {}
+        with patch("deep_agent.aegra.eval_routes._extract_sub", return_value=None):
+            result = await er._check_mcp_auth(mock_request)
+        assert result == []
+
+    async def test_empty_when_no_dcr_servers(self):
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok"}
+        mock_config = MagicMock()
+        mock_config.get_mcp_servers.return_value = {
+            "s1": {"enabled": True, "auth": False, "auth_mode": "sso"},
+        }
+        with (
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user1"),
+            patch(
+                "deep_agent.src.agent.config.agent_config",
+                mock_config,
+            ),
+            patch(
+                "deep_agent.src.settings.settings",
+                MagicMock(
+                    database_uri="postgresql://x",
+                    agent_deployment_id="agent1",
+                ),
+            ),
+        ):
+            result = await er._check_mcp_auth(mock_request)
+        assert result == []
+
+    async def test_returns_missing_when_token_none(self):
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok"}
+        mock_store = AsyncMock()
+        mock_store.get_token = AsyncMock(return_value=None)
+        mock_config = MagicMock()
+        mock_config.get_mcp_servers.return_value = {
+            "mcp1": {
+                "enabled": True,
+                "auth": True,
+                "auth_mode": "dcr",
+                "url": "http://mcp1",
+            },
+        }
+        with (
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user1"),
+            patch(
+                "deep_agent.src.agent.config.agent_config",
+                mock_config,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_token_store.McpTokenStore",
+                return_value=mock_store,
+            ),
+            patch(
+                "deep_agent.src.settings.settings",
+                MagicMock(
+                    database_uri="postgresql://x",
+                    agent_deployment_id="agent1",
+                ),
+            ),
+        ):
+            result = await er._check_mcp_auth(mock_request)
+        assert len(result) == 1
+        assert result[0]["name"] == "mcp1"
+
+    async def test_returns_missing_when_token_expiring_soon(self):
+        from datetime import datetime, timedelta, timezone
+
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok"}
+        expiring_token = MagicMock()
+        expiring_token.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        mock_store = AsyncMock()
+        mock_store.get_token = AsyncMock(return_value=expiring_token)
+        mock_config = MagicMock()
+        mock_config.get_mcp_servers.return_value = {
+            "mcp1": {
+                "enabled": True,
+                "auth": True,
+                "auth_mode": "oauth",
+                "url": "http://mcp1",
+            },
+        }
+        with (
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user1"),
+            patch(
+                "deep_agent.src.agent.config.agent_config",
+                mock_config,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_token_store.McpTokenStore",
+                return_value=mock_store,
+            ),
+            patch(
+                "deep_agent.src.settings.settings",
+                MagicMock(
+                    database_uri="postgresql://x",
+                    agent_deployment_id="agent1",
+                ),
+            ),
+            patch.object(er, "_EVAL_TOKEN_MIN_TTL_MINUTES", 30),
+        ):
+            result = await er._check_mcp_auth(mock_request)
+        assert len(result) == 1
+        assert result[0]["name"] == "mcp1"
+
+    async def test_returns_empty_when_token_valid(self):
+        from datetime import datetime, timedelta, timezone
+
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok"}
+        valid_token = MagicMock()
+        valid_token.expires_at = datetime.now(timezone.utc) + timedelta(hours=2)
+        mock_store = AsyncMock()
+        mock_store.get_token = AsyncMock(return_value=valid_token)
+        mock_config = MagicMock()
+        mock_config.get_mcp_servers.return_value = {
+            "mcp1": {
+                "enabled": True,
+                "auth": True,
+                "auth_mode": "dcr",
+                "url": "http://mcp1",
+            },
+        }
+        with (
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user1"),
+            patch(
+                "deep_agent.src.agent.config.agent_config",
+                mock_config,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_token_store.McpTokenStore",
+                return_value=mock_store,
+            ),
+            patch(
+                "deep_agent.src.settings.settings",
+                MagicMock(
+                    database_uri="postgresql://x",
+                    agent_deployment_id="agent1",
+                ),
+            ),
+            patch.object(er, "_EVAL_TOKEN_MIN_TTL_MINUTES", 30),
+        ):
+            result = await er._check_mcp_auth(mock_request)
+        assert result == []
+
+
+class TestExtractSub:
+    def test_returns_sub_from_valid_bearer(self):
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer some-jwt"}
+        with patch(
+            "deep_agent.aegra.auth._decode_sub_unverified", return_value="user-abc"
+        ):
+            result = er._extract_sub(mock_request)
+        assert result == "user-abc"
+
+    def test_returns_none_when_no_auth_header(self):
+        mock_request = MagicMock()
+        mock_request.headers = MagicMock()
+        mock_request.headers.get = MagicMock(return_value="")
+        result = er._extract_sub(mock_request)
+        assert result is None
+
+    def test_returns_none_when_not_bearer(self):
+        mock_request = MagicMock()
+        mock_request.headers = MagicMock()
+        mock_request.headers.get = MagicMock(return_value="Basic abc123")
+        result = er._extract_sub(mock_request)
+        assert result is None
+
+
+class TestMarkEvalError:
+    async def test_updates_postgres(self):
+        now = datetime(2025, 1, 1, tzinfo=UTC)
+        conn, _ = _make_conn()
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            await er._mark_eval_error("hash1", "some error", now)
+        conn.execute.assert_called_once()
+
+    async def test_swallows_exception(self, caplog):
+        now = datetime(2025, 1, 1, tzinfo=UTC)
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn",
+            AsyncMock(side_effect=Exception("pg down")),
+        ):
+            await er._mark_eval_error("hash1", "err", now)
+        assert "Could not mark eval as error" in caplog.text
+
+
+class TestQueueEvalRun:
+    async def test_success_path(self):
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok", "x-refresh-token": "rt"}
+        record = {"created_at": datetime(2025, 1, 1, tzinfo=UTC)}
+        with (
+            patch(
+                "deep_agent.aegra.eval_routes._fire_eval_run",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user1"),
+            patch("deep_agent.aegra.eval_routes._write_eval_redis"),
+        ):
+            result = await er._queue_eval_run("hash1", mock_request, record)
+        assert result["eval_status"] == "in_progress"
+        assert result["queued"] is True
+        assert "forced" not in result
+
+    async def test_success_forced(self):
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "", "x-refresh-token": ""}
+        record = {"created_at": datetime(2025, 1, 1, tzinfo=UTC)}
+        with (
+            patch(
+                "deep_agent.aegra.eval_routes._fire_eval_run",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value=None),
+            patch("deep_agent.aegra.eval_routes._write_eval_redis"),
+        ):
+            result = await er._queue_eval_run(
+                "hash1", mock_request, record, forced=True
+            )
+        assert result["forced"] is True
+
+    async def test_error_rolls_back_and_raises(self):
+        from fastapi import HTTPException
+
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok", "x-refresh-token": ""}
+        record = {"created_at": datetime(2025, 1, 1, tzinfo=UTC)}
+        with (
+            patch(
+                "deep_agent.aegra.eval_routes._fire_eval_run",
+                new_callable=AsyncMock,
+                return_value="runner unreachable",
+            ),
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="u1"),
+            patch("deep_agent.aegra.eval_routes._write_eval_redis"),
+            patch(
+                "deep_agent.aegra.eval_routes._mark_eval_error",
+                new_callable=AsyncMock,
+            ) as mock_mark,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await er._queue_eval_run("hash1", mock_request, record)
+        assert exc.value.status_code == 503
+        mock_mark.assert_called_once()
+
+
+class TestCollectAgentModels:
+    def test_reads_prompt_md_model(self, tmp_path):
+        (tmp_path / "PROMPT.md").write_text("---\nmodel: gpt-4\n---\nContent")
+        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
+            result = er._collect_agent_models()
+        assert any(m["model"] == "gpt-4" for m in result)
+        assert any(m["default"] is True for m in result)
+
+    def test_reads_subagent_models(self, tmp_path):
+        (tmp_path / "PROMPT.md").write_text("---\nmodel: gpt-4\n---\nContent")
+        sub_dir = tmp_path / "subagents"
+        sub_dir.mkdir()
+        (sub_dir / "analyst.md").write_text("---\nmodel: claude-3\n---\nContent")
+        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
+            result = er._collect_agent_models()
+        assert len(result) == 2
+        assert any(m["model"] == "claude-3" for m in result)
+
+    def test_deduplicates_models(self, tmp_path):
+        (tmp_path / "PROMPT.md").write_text("---\nmodel: gpt-4\n---\nContent")
+        sub_dir = tmp_path / "subagents"
+        sub_dir.mkdir()
+        (sub_dir / "a.md").write_text("---\nmodel: gpt-4\n---\nContent")
+        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
+            result = er._collect_agent_models()
+        assert len(result) == 1
+
+    def test_handles_missing_files(self, tmp_path):
+        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
+            result = er._collect_agent_models()
+        assert result == []
+
+
+class TestGetEvalModels:
+    async def test_returns_models(self):
+        with patch(
+            "deep_agent.aegra.eval_routes._collect_agent_models",
+            return_value=[{"model": "gpt-4", "source": "orchestrator", "default": True}],
+        ):
+            result = await er.get_eval_models()
+        assert "models" in result
+        assert len(result["models"]) == 1
+
+
+class TestUpsertDataset:
+    async def test_upserts_dataset(self):
+        er._datasets_table_ensured = True
+        conn, _ = _make_conn()
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            body = er.DatasetUpsertRequest(
+                cases=[{"query": "test", "expected": "ok"}],
+                judge_model="gpt-4",
+            )
+            result = await er.upsert_dataset(body)
+        assert result["status"] == "ok"
+        assert result["case_count"] == 1
+        assert conn.execute.call_count == 2
+        er._datasets_table_ensured = False
+
+
+class TestGetDataset:
+    async def test_returns_dataset(self):
+        er._datasets_table_ensured = True
+        now = datetime(2025, 1, 1, tzinfo=UTC)
+        dataset = {"cases": [{"query": "hi"}]}
+        cursor = _make_cursor(
+            rows=[(dataset, "gpt-4", now)],
+        )
+        conn, _ = _make_conn(cursor)
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er.get_dataset()
+        assert result["dataset"] == dataset
+        assert result["judge_model"] == "gpt-4"
+        er._datasets_table_ensured = False
+
+    async def test_404_when_no_dataset(self):
+        from fastapi import HTTPException
+
+        er._datasets_table_ensured = True
+        cursor = _make_cursor(rows=[])
+        conn, _ = _make_conn(cursor)
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await er.get_dataset()
+        assert exc.value.status_code == 404
+        er._datasets_table_ensured = False
+
+    async def test_parses_string_dataset(self):
+        er._datasets_table_ensured = True
+        now = datetime(2025, 1, 1, tzinfo=UTC)
+        dataset_str = '{"cases": [{"query": "hi"}]}'
+        cursor = _make_cursor(
+            rows=[(dataset_str, None, now)],
+        )
+        conn, _ = _make_conn(cursor)
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er.get_dataset()
+        assert result["dataset"]["cases"][0]["query"] == "hi"
+        er._datasets_table_ensured = False
+
+
+class TestHasPostgresDataset:
+    async def test_returns_true_when_exists(self):
+        er._datasets_table_ensured = True
+        cursor = _make_cursor(rows=[(1,)])
+        conn, _ = _make_conn(cursor)
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er._has_postgres_dataset()
+        assert result is True
+        er._datasets_table_ensured = False
+
+    async def test_returns_false_when_empty(self):
+        er._datasets_table_ensured = True
+        cursor = _make_cursor(rows=[])
+        conn, _ = _make_conn(cursor)
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er._has_postgres_dataset()
+        assert result is False
+        er._datasets_table_ensured = False
+
+    async def test_returns_false_on_exception(self):
+        er._datasets_table_ensured = True
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn",
+            AsyncMock(side_effect=Exception("pg down")),
+        ):
+            result = await er._has_postgres_dataset()
+        assert result is False
+        er._datasets_table_ensured = False
+
+
+class TestEnsureDatasetsTableOnce:
+    async def test_idempotent(self):
+        er._datasets_table_ensured = False
+        conn, _ = _make_conn()
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            await er._ensure_datasets_table_once()
+            first_count = conn.execute.call_count
+            await er._ensure_datasets_table_once()
+            assert conn.execute.call_count == first_count
+        er._datasets_table_ensured = False
+
+
+class TestRunDdlOnce:
+    async def test_runs_ddl_and_sets_flag(self):
+        er._datasets_table_ensured = False
+        conn, _ = _make_conn()
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            await er._run_ddl_once(
+                "CREATE TABLE test (id INT)",
+                ["ALTER TABLE test ADD COLUMN name TEXT"],
+                "_datasets_table_ensured",
+                "test",
+            )
+        assert er._datasets_table_ensured is True
+        er._datasets_table_ensured = False
+
+    async def test_does_not_set_flag_on_failure(self):
+        er._datasets_table_ensured = False
+        conn, _ = _make_conn()
+        conn.execute = AsyncMock(side_effect=Exception("DDL error"))
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            with pytest.raises(Exception, match="DDL error"):
+                await er._run_ddl_once(
+                    "CREATE TABLE bad",
+                    [],
+                    "_datasets_table_ensured",
+                    "test",
+                )
+        assert er._datasets_table_ensured is False
+
+    async def test_skips_when_flag_already_set(self):
+        er._datasets_table_ensured = True
+        conn, _ = _make_conn()
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            await er._run_ddl_once(
+                "CREATE TABLE test (id INT)",
+                [],
+                "_datasets_table_ensured",
+                "test",
+            )
+        conn.execute.assert_not_called()
+        er._datasets_table_ensured = False
+
+    async def test_migration_failure_logged_not_raised(self):
+        er._datasets_table_ensured = False
+        conn, _ = _make_conn()
+        ok_result = AsyncMock()
+        conn.execute = AsyncMock(
+            side_effect=[ok_result, ok_result, Exception("migration err")]
+        )
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            await er._run_ddl_once(
+                "CREATE TABLE test (id INT)",
+                ["ALTER OK", "ALTER FAIL"],
+                "_datasets_table_ensured",
+                "test",
+            )
+        assert er._datasets_table_ensured is True
+        er._datasets_table_ensured = False
+
+
+class TestEvalStatusUndefinedTable:
+    async def test_returns_no_dataset_on_undefined_table(self):
+        import psycopg.errors
+
+        er._table_ensured = True
+        conn = AsyncMock()
+        conn.__aenter__ = AsyncMock(return_value=conn)
+        conn.__aexit__ = AsyncMock(return_value=False)
+        conn.execute = AsyncMock(side_effect=psycopg.errors.UndefinedTable())
+
+        with (
+            patch(
+                "deep_agent.aegra.eval_routes._has_postgres_dataset",
+                AsyncMock(return_value=True),
+            ),
+            patch(
+                "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+            ),
+        ):
+            result = await er.eval_status()
+        assert result["eval_status"] == "no_dataset"
+        assert er._table_ensured is False
+        er._table_ensured = False
+
+
+class TestEvalResultsUndefinedTable:
+    async def test_404_on_undefined_table(self):
+        import psycopg.errors
+
+        from fastapi import HTTPException
+
+        er._table_ensured = True
+        conn = AsyncMock()
+        conn.__aenter__ = AsyncMock(return_value=conn)
+        conn.__aexit__ = AsyncMock(return_value=False)
+        conn.execute = AsyncMock(side_effect=psycopg.errors.UndefinedTable())
+
+        mock_request = MagicMock()
+        mock_request.query_params = {}
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await er.eval_results(mock_request)
+        assert exc.value.status_code == 404
+        assert er._table_ensured is False
+        er._table_ensured = False
+
+
+class TestEvalHistoryUndefinedTable:
+    async def test_returns_empty_on_undefined_table(self):
+        import psycopg.errors
+
+        er._table_ensured = True
+        conn = AsyncMock()
+        conn.__aenter__ = AsyncMock(return_value=conn)
+        conn.__aexit__ = AsyncMock(return_value=False)
+        conn.execute = AsyncMock(side_effect=psycopg.errors.UndefinedTable())
+
+        mock_request = MagicMock()
+        mock_request.query_params = {"limit": "10"}
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er.eval_history(mock_request)
+        assert result == {"runs": [], "total": 0}
+        assert er._table_ensured is False
+        er._table_ensured = False
+
+
+class TestEvalTrendsErrors:
+    async def test_invalid_limit_returns_400(self):
+        from fastapi import HTTPException
+
+        mock_request = MagicMock()
+        mock_request.query_params = {"limit": "not-a-number"}
+        with pytest.raises(HTTPException) as exc:
+            await er.eval_trends(mock_request)
+        assert exc.value.status_code == 400
+
+    async def test_returns_empty_on_undefined_table(self):
+        import psycopg.errors
+
+        er._table_ensured = True
+        conn = AsyncMock()
+        conn.__aenter__ = AsyncMock(return_value=conn)
+        conn.__aexit__ = AsyncMock(return_value=False)
+        conn.execute = AsyncMock(side_effect=psycopg.errors.UndefinedTable())
+
+        mock_request = MagicMock()
+        mock_request.query_params = {"limit": "10"}
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er.eval_trends(mock_request)
+        assert result == {"metrics": {}, "overall": []}
+        assert er._table_ensured is False
+        er._table_ensured = False
+
+
+class TestFireEvalRunErrorStatus:
+    async def test_returns_error_on_4xx_status(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+
+        with patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"):
+            with patch(
+                "deep_agent.aegra.eval_routes.httpx.AsyncClient",
+                return_value=mock_client,
+            ):
+                result = await er._fire_eval_run("hash1")
+        assert result is not None
+        assert "400" in result
+
+    async def test_returns_error_on_5xx_status(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+
+        with patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"):
+            with patch(
+                "deep_agent.aegra.eval_routes.httpx.AsyncClient",
+                return_value=mock_client,
+            ):
+                result = await er._fire_eval_run("hash1")
+        assert result is not None
+        assert "500" in result
+
+    async def test_sends_internal_token_header(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 202
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+
+        with (
+            patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"),
+            patch.object(er, "_EVAL_INTERNAL_TOKEN", "int-tok"),
+            patch(
+                "deep_agent.aegra.eval_routes.httpx.AsyncClient",
+                return_value=mock_client,
+            ),
+        ):
+            await er._fire_eval_run("hash1")
+        headers = mock_client.post.call_args[1]["headers"]
+        assert headers["X-Internal-Token"] == "int-tok"
+
+
+class TestTriggerEvalMcpAuth:
+    async def test_returns_403_when_mcp_auth_required(self, tmp_path):
+        evals_dir = tmp_path / "evals" / "lightspeed"
+        evals_dir.mkdir(parents=True)
+        (evals_dir / "eval_cases.yaml").write_text("cases: []")
+
+        er._table_ensured = True
+        cache_cursor = _make_cursor(rows=[])
+        conn, _ = _make_conn(cache_cursor)
+
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok"}
+
+        with (
+            patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"),
+            patch(
+                "deep_agent.aegra.eval_routes._require_eval_files",
+                new_callable=AsyncMock,
+            ),
+            patch.dict(
+                "os.environ",
+                {"CONFIG_PATH": str(tmp_path), "AGENT_CONFIG_HASH": "deadbeef"},
+            ),
+            patch(
+                "deep_agent.aegra.eval_routes._pg_conn",
+                AsyncMock(return_value=conn),
+            ),
+            patch(
+                "deep_agent.aegra.eval_routes._check_mcp_auth",
+                new_callable=AsyncMock,
+                return_value=[{"name": "mcp1", "connect_url": "/mcp/mcp1/connect"}],
+            ),
+        ):
+            result = await er.trigger_eval(mock_request)
+
+        assert result.status_code == 403
+        body = json.loads(result.body)
+        assert len(body["auth_required"]) == 1
+        er._table_ensured = False
+
+
+class TestForceTriggerEvalMcpAuth:
+    async def test_returns_403_when_mcp_auth_required(self):
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok"}
+
+        with (
+            patch.object(er, "_EVAL_RUNNER_URL", "http://eval:8099"),
+            patch(
+                "deep_agent.aegra.eval_routes._check_mcp_auth",
+                new_callable=AsyncMock,
+                return_value=[{"name": "mcp1", "connect_url": "/mcp/mcp1/connect"}],
+            ),
+        ):
+            result = await er.force_trigger_eval(mock_request)
+
+        assert result.status_code == 403
+        body = json.loads(result.body)
+        assert len(body["auth_required"]) == 1
+
+
+class TestEvalHistoryInvalidLimit:
+    async def test_returns_400_on_bad_limit(self):
+        from fastapi import HTTPException
+
+        mock_request = MagicMock()
+        mock_request.query_params = {"limit": "abc"}
+        with pytest.raises(HTTPException) as exc:
+            await er.eval_history(mock_request)
+        assert exc.value.status_code == 400
+
+
+class TestAtomicSetInProgressRaceCondition:
+    async def test_returns_none_false_when_insert_and_recheck_both_fail(self):
+        er._table_ensured = True
+        select_cursor = _make_cursor(rows=[])
+        select_cursor.fetchone = AsyncMock(return_value=None)
+
+        insert_cursor = _make_cursor(rows=[])
+        insert_cursor.fetchone = AsyncMock(return_value=None)
+
+        recheck_cursor = _make_cursor(rows=[])
+        recheck_cursor.fetchone = AsyncMock(return_value=None)
+
+        conn = AsyncMock()
+        conn.__aenter__ = AsyncMock(return_value=conn)
+        conn.__aexit__ = AsyncMock(return_value=False)
+        conn.execute = AsyncMock(
+            side_effect=[select_cursor, insert_cursor, recheck_cursor]
+        )
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            doc, is_new = await er._atomic_set_in_progress("abc123", force=False)
+
+        assert doc is None
+        assert is_new is False
+        er._table_ensured = False
+
+    async def test_returns_existing_on_insert_race(self):
+        er._table_ensured = True
+        select_cursor = _make_cursor(rows=[])
+        select_cursor.fetchone = AsyncMock(return_value=None)
+
+        insert_cursor = _make_cursor(rows=[])
+        insert_cursor.fetchone = AsyncMock(return_value=None)
+
+        cols = [_col("config_hash"), _col("eval_status")]
+        race_row = ("abc123", "in_progress")
+        recheck_cursor = _make_cursor(rows=[race_row], description=cols)
+
+        conn = AsyncMock()
+        conn.__aenter__ = AsyncMock(return_value=conn)
+        conn.__aexit__ = AsyncMock(return_value=False)
+        conn.execute = AsyncMock(
+            side_effect=[select_cursor, insert_cursor, recheck_cursor]
+        )
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            doc, is_new = await er._atomic_set_in_progress("abc123", force=False)
+
+        assert doc is not None
+        assert doc["eval_status"] == "in_progress"
+        assert is_new is False
+        er._table_ensured = False
+
+
+class TestCleanupEvalRedisWithSub:
+    async def test_cleans_up_sub_keys(self):
+        mock_request = MagicMock()
+        mock_request.headers = {"x-internal-token": "secret"}
+        with (
+            patch.object(er, "_EVAL_TOKEN_REFRESH_ENABLED", True),
+            patch.object(er, "_EVAL_INTERNAL_TOKEN", "secret"),
+            patch("deep_agent.aegra.redis.cache_get", return_value="user123"),
+            patch("deep_agent.aegra.redis.cache_delete") as mock_delete,
+        ):
+            result = await er.cleanup_eval_redis(mock_request)
+        assert result["status"] == "ok"
+        delete_keys = [call.args[0] for call in mock_delete.call_args_list]
+        assert "eval:trigger_sub" in delete_keys
+        assert "eval:active:user123" in delete_keys
+        assert "eval:access:user123" in delete_keys
+        assert "eval:refresh:user123" in delete_keys
+
+
+class TestRequireEvalFilesProductionNoDataset:
+    async def test_raises_with_config_hint_when_file_exists(self, tmp_path):
+        from fastapi import HTTPException
+
+        evals_dir = tmp_path / "evals" / "lightspeed"
+        evals_dir.mkdir(parents=True)
+        (evals_dir / "eval_cases.yaml").write_text("cases: []")
+
+        with (
+            patch(
+                "deep_agent.aegra.eval_routes._has_postgres_dataset",
+                AsyncMock(return_value=False),
+            ),
+            patch.dict(
+                "os.environ",
+                {"CONFIG_PATH": str(tmp_path), "ENVIRONMENT": "production"},
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await er._require_eval_files()
+        assert exc.value.status_code == 400
+        assert "Dataset UI" in exc.value.detail
+
+    async def test_passes_when_postgres_dataset_exists(self):
+        with patch(
+            "deep_agent.aegra.eval_routes._has_postgres_dataset",
+            AsyncMock(return_value=True),
+        ):
+            await er._require_eval_files()

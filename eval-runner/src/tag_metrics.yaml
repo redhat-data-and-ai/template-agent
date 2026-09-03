@@ -20,6 +20,7 @@ metric_thresholds:
   custom:tool_eval: ~              # boolean
   geval:tone_safety: 0.8
   geval:technical_accuracy: 0.7
+  geval:delegation_compliance: 0.7
   ragas:faithfulness: 0.7
   ragas:context_precision_with_reference: 0.7
   deepeval:knowledge_retention: 0.7

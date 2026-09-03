@@ -36,8 +36,8 @@ All paths are resolved at startup:
 | Env var | Default | Description |
 |---|---|---|
 | `AGENT_CONFIG_DIR` | auto-detected | Root of the agent config PVC |
-| `EVAL_CASES_PATH` | `$AGENT_CONFIG_DIR/evals/lightspeed-agent/eval_cases.yaml` | Eval dataset |
-| `EVAL_SYSTEM_CONFIG` | `$AGENT_CONFIG_DIR/evals/lightspeed-agent/system.yaml` | Lightspeed-eval system config |
+| `EVAL_CASES_PATH` | `$AGENT_CONFIG_DIR/evals/lightspeed/eval_cases.yaml` | Eval dataset |
+| `EVAL_SYSTEM_CONFIG` | `$AGENT_CONFIG_DIR/evals/lightspeed/system.yaml` | Lightspeed-eval system config |
 | `EVAL_OUTPUT_DIR` | `$TMPDIR/eval_output` | Temp output dir for scorer reports |
 | `AGENT_HOST` | `http://localhost:5002` | Agent base URL |
 | `EVAL_MAX_CONCURRENCY` | `3` | Max tag batches running in parallel |
