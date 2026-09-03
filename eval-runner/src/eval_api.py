@@ -768,7 +768,9 @@ async def _trigger(
         bool(auth_token),
     )
     _status.update({"state": "running", "run_id": run_id})
-    background.add_task(_run_eval, pattern, config_hash, auth_token, run_id, eval_row_id)
+    background.add_task(
+        _run_eval, pattern, config_hash, auth_token, run_id, eval_row_id
+    )
     return {
         "run_id": run_id,
         "status": "started",
