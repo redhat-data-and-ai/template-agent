@@ -177,8 +177,13 @@ def write_eval_result(
     judge_model: str = "",
     results_detail: dict[str, Any] | None = None,
     config_hash: str | None = None,
+    eval_row_id: int | None = None,
 ) -> None:
-    """Persist completed eval results to PostgreSQL."""
+    """Persist completed eval results to PostgreSQL.
+
+    When eval_row_id is provided, targets that exact row to avoid
+    concurrent runs updating the wrong record.
+    """
     effective_hash = config_hash or _get_config_hash()
     try:
         conn = _get_conn()
@@ -186,41 +191,72 @@ def write_eval_result(
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE evals
-                        SET eval_status   = 'completed',
-                            ls_run_ids    = %s,
-                            eval_score    = %s,
-                            pass          = %s,
-                            fail          = %s,
-                            error         = %s,
-                            judge_model   = %s,
-                            results_detail = %s,
-                            updated_at    = %s,
-                            completed_at  = %s
-                        WHERE id = (
-                            SELECT id FROM evals
-                            WHERE config_hash = %s
-                              AND eval_status IN ('in_progress', 'error')
-                            ORDER BY created_at DESC
-                            LIMIT 1
+                    if eval_row_id is not None:
+                        cur.execute(
+                            """
+                            UPDATE evals
+                            SET eval_status   = 'completed',
+                                ls_run_ids    = %s,
+                                eval_score    = %s,
+                                pass          = %s,
+                                fail          = %s,
+                                error         = %s,
+                                judge_model   = %s,
+                                results_detail = %s,
+                                updated_at    = %s,
+                                completed_at  = %s
+                            WHERE id = %s
+                            RETURNING id
+                            """,
+                            (
+                                ls_run_ids,
+                                eval_score,
+                                passed,
+                                failed,
+                                errors,
+                                judge_model,
+                                json.dumps(results_detail) if results_detail else None,
+                                now,
+                                now,
+                                eval_row_id,
+                            ),
                         )
-                        RETURNING id
-                        """,
-                        (
-                            ls_run_ids,
-                            eval_score,
-                            passed,
-                            failed,
-                            errors,
-                            judge_model,
-                            json.dumps(results_detail) if results_detail else None,
-                            now,
-                            now,
-                            effective_hash,
-                        ),
-                    )
+                    else:
+                        cur.execute(
+                            """
+                            UPDATE evals
+                            SET eval_status   = 'completed',
+                                ls_run_ids    = %s,
+                                eval_score    = %s,
+                                pass          = %s,
+                                fail          = %s,
+                                error         = %s,
+                                judge_model   = %s,
+                                results_detail = %s,
+                                updated_at    = %s,
+                                completed_at  = %s
+                            WHERE id = (
+                                SELECT id FROM evals
+                                WHERE config_hash = %s
+                                  AND eval_status IN ('in_progress', 'error')
+                                ORDER BY created_at DESC
+                                LIMIT 1
+                            )
+                            RETURNING id
+                            """,
+                            (
+                                ls_run_ids,
+                                eval_score,
+                                passed,
+                                failed,
+                                errors,
+                                judge_model,
+                                json.dumps(results_detail) if results_detail else None,
+                                now,
+                                now,
+                                effective_hash,
+                            ),
+                        )
                     row = cur.fetchone()
         finally:
             conn.close()

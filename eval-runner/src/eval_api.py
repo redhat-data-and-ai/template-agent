@@ -505,14 +505,16 @@ async def _run_eval(
     config_hash: str | None = None,
     auth_token: str = "",
     run_id: str = "",
+    eval_row_id: int | None = None,
 ) -> None:
     """Core eval runner — invoked in background."""
     global _latest_result
 
     log.info(
-        "Eval run started: run_id=%s pattern=%s auth_token_present=%s",
+        "Eval run started: run_id=%s pattern=%s eval_row_id=%s auth_token_present=%s",
         run_id,
         pattern or "all",
+        eval_row_id,
         bool(auth_token),
     )
 
@@ -541,6 +543,7 @@ async def _run_eval(
                 ls_run_ids=None,
                 results_detail={"error": str(exc)},
                 config_hash=config_hash,
+                eval_row_id=eval_row_id,
             )
             return
 
@@ -572,6 +575,7 @@ async def _run_eval(
             ls_run_ids=None,
             results_detail={"error": str(exc)},
             config_hash=config_hash,
+            eval_row_id=eval_row_id,
         )
         _call_cleanup_endpoint()
         return
@@ -664,6 +668,7 @@ async def _run_eval(
             ls_run_ids=results_detail.get("ls_run_ids"),
             results_detail=results_detail,
             config_hash=config_hash,
+            eval_row_id=eval_row_id,
         )
     except Exception as exc:
         log.error(
@@ -717,6 +722,7 @@ class EvalRunBody(BaseModel):
     """Request body for POST /evals/run."""
 
     config_hash: str | None = None
+    eval_row_id: int | None = None
 
 
 def _extract_token(request: Request) -> str:
@@ -752,15 +758,17 @@ async def _trigger(
     # Missing-dataset errors surface via FileNotFoundError from _find_eval_files.
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     config_hash = body.config_hash if body else None
+    eval_row_id = body.eval_row_id if body else None
     log.info(
-        "Eval triggered: run_id=%s pattern=%s config_hash=%s auth_token_present=%s",
+        "Eval triggered: run_id=%s pattern=%s config_hash=%s eval_row_id=%s auth_token_present=%s",
         run_id,
         pattern or "all",
         config_hash,
+        eval_row_id,
         bool(auth_token),
     )
     _status.update({"state": "running", "run_id": run_id})
-    background.add_task(_run_eval, pattern, config_hash, auth_token, run_id)
+    background.add_task(_run_eval, pattern, config_hash, auth_token, run_id, eval_row_id)
     return {
         "run_id": run_id,
         "status": "started",

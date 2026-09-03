@@ -493,7 +493,8 @@ def test_trigger_run_id_propagates_to_status_and_background_task(
     assert response_run_id
     assert eval_api._status["state"] == "running"
     assert eval_api._status["run_id"] == response_run_id
-    assert captured["args"][-1] == response_run_id
+    # args: (pattern, config_hash, auth_token, run_id, eval_row_id)
+    assert captured["args"][3] == response_run_id
 
 
 def test_run_all_with_body_fields(api_client: TestClient) -> None:
@@ -505,11 +506,12 @@ def test_run_all_with_body_fields(api_client: TestClient) -> None:
     assert resp.status_code == 202
     assert "run_id" in resp.json()
     mock_run_eval.assert_called_once()
-    pattern, config_hash, auth_token, run_id = mock_run_eval.call_args[0]
+    pattern, config_hash, auth_token, run_id, eval_row_id = mock_run_eval.call_args[0]
     assert pattern is None
     assert config_hash == "abc"
     assert auth_token == ""
     assert run_id == resp.json()["run_id"]
+    assert eval_row_id is None
 
 
 def test_run_all_409_when_running(api_client: TestClient) -> None:

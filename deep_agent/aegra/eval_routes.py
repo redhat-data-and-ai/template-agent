@@ -759,7 +759,6 @@ async def _atomic_set_in_progress(
                 return _pg_row_to_dict(existing2, row2), False
             return None, False
         doc = _pg_row_to_dict(new_row, cur)
-        doc.pop("id", None)
         return doc, True
 
 
@@ -795,7 +794,10 @@ async def _mark_eval_error(config_hash: str, reason: str, created_at: datetime) 
 
 
 async def _fire_eval_run(
-    config_hash: str, auth_token: str = "", created_at: datetime | None = None
+    config_hash: str,
+    auth_token: str = "",
+    created_at: datetime | None = None,
+    eval_row_id: int | None = None,
 ) -> str | None:
     """Call the eval runner pod.
 
@@ -818,10 +820,13 @@ async def _fire_eval_run(
             )
         if _EVAL_INTERNAL_TOKEN:
             headers["X-Internal-Token"] = _EVAL_INTERNAL_TOKEN
+        body: dict[str, Any] = {"config_hash": config_hash}
+        if eval_row_id is not None:
+            body["eval_row_id"] = eval_row_id
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
                 f"{_EVAL_RUNNER_URL}/evals/run",
-                json={"config_hash": config_hash},
+                json=body,
                 headers=headers,
             )
             if resp.status_code >= 400:
@@ -1026,8 +1031,9 @@ async def _queue_eval_run(
     sub = _extract_sub(request)
     _write_eval_redis(sub or "", request.headers.get("x-refresh-token", ""))
     row_ts = record.get("created_at") if record else None
+    eval_row_id: int | None = record.get("id") if record else None
 
-    error_msg = await _fire_eval_run(config_hash, auth_token, row_ts)
+    error_msg = await _fire_eval_run(config_hash, auth_token, row_ts, eval_row_id)
     if error_msg:
         # Roll back the in_progress row so the UI gets a clean error on trigger,
         # not a stuck in_progress that the status poll has to recover.

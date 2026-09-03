@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import deep_agent.aegra.eval_routes as er
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -446,7 +444,7 @@ class TestAtomicSetInProgress:
             doc, is_new = await er._atomic_set_in_progress("abc123", force=False)
 
         assert is_new is True
-        assert "id" not in doc  # popped
+        assert doc["id"] == 42  # preserved for threading through eval run
         er._table_ensured = False
 
 
@@ -615,7 +613,7 @@ class TestEvalHistory:
         with patch(
             "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
         ):
-            result = await er.eval_history(mock_request)
+            await er.eval_history(mock_request)
 
         # Query should have been called with limit=100, not 9999
         call_args = conn.execute.call_args[0][1]
@@ -1911,7 +1909,6 @@ class TestEvalStatusUndefinedTable:
 class TestEvalResultsUndefinedTable:
     async def test_404_on_undefined_table(self):
         import psycopg.errors
-
         from fastapi import HTTPException
 
         er._table_ensured = True
