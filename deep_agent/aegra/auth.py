@@ -56,6 +56,7 @@ SSO_CLIENT_SECRET = os.environ.get("SSO_CLIENT_SECRET", "")
 SSO_JWKS_URI = os.environ.get("SSO_JWKS_URI", "")
 SSO_JWT_ALGORITHMS = os.environ.get("SSO_JWT_ALGORITHMS", "RS256,ES256").split(",")
 SSO_JWT_AUDIENCE = os.environ.get("SSO_JWT_AUDIENCE", "")
+INTERNAL_API_SECRET = os.environ.get("INTERNAL_API_SECRET", "")
 
 DEV_USERNAME = os.environ.get("SSO_DEV_USERNAME", "John Doe")
 DEV_USER_ID = os.environ.get("SSO_DEV_USER_ID", "dev-user")
@@ -214,6 +215,32 @@ async def authenticate(headers: dict) -> dict:
     if not ENABLE_AUTH:
         logger.warning("Auth bypass active (development mode)")
         return _build_dev_user()
+
+    if INTERNAL_API_SECRET:
+        request_secret = headers.get("x-internal-secret", "")
+        if request_secret and request_secret != INTERNAL_API_SECRET:
+            raise PermissionError("Invalid internal secret")
+        if request_secret == INTERNAL_API_SECRET:
+            auth_header = headers.get("authorization", "")
+            if not auth_header.startswith("Bearer "):
+                user_id = headers.get("x-user-sub", "")
+                email = headers.get("x-user-email", "")
+                if not user_id and not email:
+                    raise PermissionError("X-User-Sub or X-User-Email required")
+                if not user_id:
+                    user_id = email.split("@")[0]
+                return {
+                    "identity": user_id,
+                    "display_name": headers.get(
+                        "x-user-name", email.split("@")[0] if email else ""
+                    ),
+                    "permissions": ["read", "write"],
+                    "is_authenticated": True,
+                    "email": email,
+                    "access_token": "",
+                    "refresh_token": "",
+                    "encrypted_id": encrypt_user_id(user_id),
+                }
 
     auth_header = headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
