@@ -196,11 +196,13 @@ class TestHandleMcpOauthCallback:
         mock_store = MagicMock()
         mock_store.upsert_token = AsyncMock()
 
+        mock_getdel = patch(
+            "deep_agent.aegra.mcp_oauth_handlers.cache_getdel",
+            return_value=state_payload,
+        )
+
         with (
-            patch(
-                "deep_agent.aegra.mcp_oauth_handlers.cache_get",
-                return_value=state_payload,
-            ),
+            mock_getdel as patched_getdel,
             patch(
                 "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
                 return_value=server_cfg,
@@ -245,6 +247,20 @@ class TestHandleMcpOauthCallback:
         assert response.status_code == 200
         assert b"Connected" in response.body
         assert b"mcp_oauth_done" in response.body
+        patched_getdel.assert_called_once_with("mcp_oauth_state:valid-state")
+
+    async def test_replayed_state_returns_400(self):
+        """Second use of the same state must fail because GETDEL consumed it."""
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers.cache_getdel",
+            return_value=None,
+        ):
+            response = await handle_mcp_oauth_callback(
+                code="auth-code", state="already-used", request=_mock_request()
+            )
+
+        assert response.status_code == 400
+        assert b"expired or invalid" in response.body
 
     async def test_ok_false_returns_error_with_message(self):
         state_payload = json.dumps(
