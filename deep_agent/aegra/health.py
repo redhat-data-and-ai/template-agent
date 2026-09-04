@@ -52,7 +52,9 @@ async def check_database() -> dict[str, Any]:
         import psycopg
 
         t0 = time.monotonic()
-        async with await psycopg.AsyncConnection.connect(settings.database_uri) as conn:
+        async with await psycopg.AsyncConnection.connect(
+            settings.database_uri, connect_timeout=5
+        ) as conn:
             await conn.execute("SELECT 1")
         latency_ms = (time.monotonic() - t0) * 1000
 

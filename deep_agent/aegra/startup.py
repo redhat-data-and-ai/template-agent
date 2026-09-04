@@ -51,6 +51,7 @@ async def run_startup() -> dict[str, str]:
     results: dict[str, str] = {}
 
     results["config"] = await _validate_config()
+    results["pool"] = await _init_pool()
     results["aegra_db"] = await _init_aegra_db()
     results["database"] = await _ensure_database()
     _check_mcp_encryption_key()
@@ -203,7 +204,7 @@ async def _resume_interrupted_runs() -> str:
         recovered = 0
         recovered_run_ids: list[str] = []
         async with await psycopg.AsyncConnection.connect(
-            app_settings.database_uri
+            app_settings.database_uri, connect_timeout=5
         ) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -261,6 +262,23 @@ async def _resume_interrupted_runs() -> str:
         return f"ok: {recovered} reset, {len(stale)} stale — LeaseReaper will recover"
     except Exception as exc:
         logger.warning("Resume check failed: %s", exc)
+        return f"warning: {exc}"
+
+
+async def _init_pool() -> str:
+    """Initialise the shared async PostgreSQL connection pool."""
+    try:
+        from deep_agent.src.settings import settings
+
+        if not settings.POSTGRES_HOST:
+            return "skipped: no POSTGRES_HOST configured"
+
+        from deep_agent.aegra.db import init_pool
+
+        await init_pool(settings.database_uri)
+        return "ok"
+    except Exception as exc:
+        logger.warning("Connection pool init failed: %s", exc)
         return f"warning: {exc}"
 
 
