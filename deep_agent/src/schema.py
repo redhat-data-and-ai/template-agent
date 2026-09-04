@@ -7,7 +7,7 @@ for the template agent service.
 
 from typing import Any, Literal, NotRequired
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing_extensions import TypedDict
 
 
@@ -181,3 +181,84 @@ class ChatHistoryResponse(BaseModel):
     """
 
     messages: list[ChatMessage]
+
+
+# ── Projects ─────────────────────────────────────────────────
+
+
+class ProjectCreate(BaseModel):
+    """Request model for creating a project."""
+
+    project_name: str = Field(min_length=1, max_length=255)
+    project_description: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("project_name")
+    @classmethod
+    def strip_project_name(cls, value: str) -> str:
+        """Reject blank names and strip surrounding whitespace."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Project name cannot be empty or whitespace only")
+        return stripped
+
+
+class ProjectUpdate(BaseModel):
+    """Request model for updating a project."""
+
+    project_name: str | None = Field(default=None, min_length=1, max_length=255)
+    project_description: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("project_name")
+    @classmethod
+    def strip_project_name(cls, value: str | None) -> str | None:
+        """Reject blank names and strip surrounding whitespace."""
+        if value is None:
+            return value
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Project name cannot be empty or whitespace only")
+        return stripped
+
+
+class Project(BaseModel):
+    """Response model for a single project."""
+
+    project_id: str
+    project_name: str
+    project_description: str | None = None
+    username: str
+    created_at: str
+    updated_at: str
+    thread_count: int = 0
+
+
+class ProjectListResponse(BaseModel):
+    """Response model for listing projects."""
+
+    projects: list[Project]
+
+
+class ProjectDeletionResponse(BaseModel):
+    """Response model for project deletion."""
+
+    status: str
+    message: str
+    project_id: str
+    deleted_thread_ids: list[str] = []
+
+
+class ProjectAssignRequest(BaseModel):
+    """Request model for assigning a thread to a project."""
+
+    thread_id: str
+    project_id: str | None = None
+
+
+class ProjectUnassignAllResponse(BaseModel):
+    """Response model for unassigning all threads from a project."""
+
+    status: str
+    message: str
+    project_id: str
+    threads_unassigned: int
+    unassigned_thread_ids: list[str] = []

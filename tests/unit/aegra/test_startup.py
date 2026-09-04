@@ -113,12 +113,17 @@ class TestEnsureDatabase:
                 "deep_agent.aegra.mcp_token_store.McpTokenStore",
                 return_value=mock_mcp_store,
             ),
+            patch(
+                "deep_agent.src.projects.ProjectsRepository.ensure_tables",
+                new_callable=AsyncMock,
+            ) as mock_projects_ensure,
         ):
             result = await startup._ensure_database()
         assert result == "ok"
         mock_personalization.ensure_tables.assert_awaited_once()
         mock_feedback.ensure_table.assert_awaited_once()
         mock_mcp_store.ensure_tables.assert_awaited_once()
+        mock_projects_ensure.assert_awaited_once()
 
     async def test_db_failure_propagates(self):
         mock_settings = MagicMock()
@@ -139,6 +144,10 @@ class TestEnsureDatabase:
             patch(
                 "deep_agent.aegra.mcp_token_store.McpTokenStore",
                 return_value=AsyncMock(),
+            ),
+            patch(
+                "deep_agent.src.projects.ProjectsRepository.ensure_tables",
+                new_callable=AsyncMock,
             ),
         ):
             with pytest.raises(ConnectionError, match="refused"):

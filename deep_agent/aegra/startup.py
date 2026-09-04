@@ -333,9 +333,11 @@ async def _ensure_database() -> str:
             setup_tasks.append(feedback_repo.ensure_table())
 
             from deep_agent.aegra.mcp_token_store import McpTokenStore
+            from deep_agent.src.projects import ProjectsRepository
 
             mcp_token_store = McpTokenStore(settings.database_uri)
             setup_tasks.append(mcp_token_store.ensure_tables())
+            setup_tasks.append(ProjectsRepository.ensure_tables(settings.database_uri))
 
         if settings.MONGODB_URI:
             from deep_agent.src.token_budget.mongo_repository import (
