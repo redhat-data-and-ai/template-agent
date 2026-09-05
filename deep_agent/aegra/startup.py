@@ -57,7 +57,6 @@ async def run_startup() -> dict[str, str]:
     results["resume"] = await _resume_interrupted_runs()
     results["mcp_apps"] = _setup_mcp_apps_capability()
     results["cache"] = await _warm_caches()
-    results["scheduler"] = await _start_scheduler()
     results["otel"] = _setup_otel()
     results["telemetry"] = _setup_telemetry()
 
@@ -372,24 +371,6 @@ async def _warm_caches() -> str:
         return "ok"
     except Exception as exc:
         logger.warning("Cache warming failed: %s", exc)
-        return f"warning: {exc}"
-
-
-async def _start_scheduler() -> str:
-    """Start background memory scheduler if enabled."""
-    try:
-        from deep_agent.src.memory.config import memory_settings
-
-        if not memory_settings.MEMORY_CONSOLIDATION_ENABLED:
-            return "skipped: memory consolidation disabled"
-
-        from deep_agent.src.memory.scheduler import start_scheduler
-        from deep_agent.src.settings import settings
-
-        started = await start_scheduler(settings.database_uri)
-        return "ok" if started else "skipped: already running"
-    except Exception as exc:
-        logger.warning("Scheduler start failed: %s", exc)
         return f"warning: {exc}"
 
 

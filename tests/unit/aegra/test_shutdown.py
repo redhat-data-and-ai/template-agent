@@ -13,7 +13,6 @@ from deep_agent.aegra.shutdown import (
     _drain,
     _shutdown_langfuse,
     _shutdown_langfuse_sync,
-    _stop_scheduler,
     is_shutting_down,
     register_atexit,
     register_signal_handlers,
@@ -57,12 +56,6 @@ class TestRunShutdown:
                 new_callable=AsyncMock,
                 return_value="ok",
             ),
-            patch.object(
-                shutdown_mod,
-                "_stop_scheduler",
-                new_callable=AsyncMock,
-                return_value="ok",
-            ),
             patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
             patch.object(shutdown_mod, "_close_redis", return_value="ok"),
         ):
@@ -70,7 +63,6 @@ class TestRunShutdown:
 
         assert result["drain"] == "ok"
         assert result["langfuse"] == "ok"
-        assert result["scheduler"] == "ok"
         assert result["graph_cache"] == "ok"
         assert result["redis"] == "ok"
         assert is_shutting_down() is True
@@ -98,12 +90,6 @@ class TestRunShutdown:
                 new_callable=AsyncMock,
                 return_value="ok",
             ),
-            patch.object(
-                shutdown_mod,
-                "_stop_scheduler",
-                new_callable=AsyncMock,
-                return_value="ok",
-            ),
             patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
             patch.object(shutdown_mod, "_close_redis", return_value="ok"),
         ):
@@ -122,18 +108,11 @@ class TestRunShutdown:
                 new_callable=AsyncMock,
                 side_effect=Exception("langfuse boom"),
             ),
-            patch.object(
-                shutdown_mod,
-                "_stop_scheduler",
-                new_callable=AsyncMock,
-                return_value="ok",
-            ) as mock_sched,
             patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
             patch.object(shutdown_mod, "_close_redis", return_value="ok") as mock_redis,
         ):
             result = await run_shutdown()
 
-        mock_sched.assert_awaited_once()
         mock_redis.assert_called_once()
         assert shutdown_mod._shutdown_complete is True
 
@@ -202,39 +181,6 @@ class TestShutdownLangfuse:
             "deep_agent.aegra.telemetry.get_langfuse_client", return_value=mock_client
         ):
             result = await _shutdown_langfuse()
-        assert "error" in result
-
-
-class TestStopScheduler:
-    async def test_stops_scheduler(self):
-        with patch(
-            "deep_agent.src.memory.scheduler.stop_scheduler",
-            new_callable=AsyncMock,
-        ):
-            result = await _stop_scheduler()
-        assert result == "ok"
-
-    async def test_handles_timeout(self):
-        async def slow_stop():
-            await asyncio.sleep(10)
-
-        with (
-            patch(
-                "deep_agent.src.memory.scheduler.stop_scheduler",
-                side_effect=slow_stop,
-            ),
-            patch.object(shutdown_mod, "SHUTDOWN_SCHEDULER_TIMEOUT_SECONDS", 0.1),
-        ):
-            result = await _stop_scheduler()
-        assert result == "timeout"
-
-    async def test_handles_exception(self):
-        with patch(
-            "deep_agent.src.memory.scheduler.stop_scheduler",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("boom"),
-        ):
-            result = await _stop_scheduler()
         assert "error" in result
 
 

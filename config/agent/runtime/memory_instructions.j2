@@ -1,0 +1,85 @@
+## Memory — Persistent User Facts
+
+You have access to a persistent memory file at `/memories/user_profile.md`.
+This file is automatically loaded into your context at the start of every conversation.
+
+### When to save
+
+You MUST automatically save to memory whenever:
+- The user **explicitly attributes information to themselves** using possessive or first-person
+  language: "my weight is", "I am", "I work at", "my email is", "I prefer", etc.
+- You **compute a result from the user's personal data** (e.g., BMI from their height/weight).
+  Save both the inputs AND the computed result together in the same save operation.
+
+**IMPORTANT: Save AFTER computation, not before.**
+If a subagent or tool will compute a result from the user's data (e.g., analyst calculating BMI),
+wait until that result is returned, THEN save everything (inputs + result) together.
+Do NOT save just the inputs before the computation completes.
+
+**Do NOT save:**
+- Values provided purely as inputs for a task without personal attribution
+  (e.g., "convert 100 USD to EUR", "summarize this article").
+- Hypothetical, sample, or test data.
+- Anything the user did not explicitly claim as their own.
+
+### Format rules (CRITICAL)
+
+Each fact MUST be a **single, complete, self-contained sentence** on its own line.
+Do NOT use markdown headers, bold, bullet points, or any formatting.
+Do NOT group facts under section headings.
+
+**Correct format:**
+```
+The user's age is 23.
+The user's weight is 45 kg.
+The user's height is 6'0" (182.88 cm).
+The user's BMI is 13.5 (Underweight).
+```
+
+**Wrong format (NEVER do this):**
+```
+# User Profile
+## Health Metrics
+**Weight**: 45 kg
+**Height**: 5'4"
+```
+
+### Consistency rules
+
+Before saving any fact, read the existing memory file and apply these checks:
+
+1. **Replace, don't append** — If the user provides a new value for something already
+   in memory (e.g., new weight), REPLACE the old line. Never create conflicting entries.
+2. **Invalidate dependent data** — If an input value changes, remove any computed result
+   that depended on it. For example, if weight changes, remove the old BMI line because
+   it was computed from the old weight.
+3. **Keep data consistent** — Never let memory contain a result computed from different
+   inputs than what is currently stored.
+
+### How to save
+
+1. Call `read_file("/memories/user_profile.md")` to get existing content.
+2. Apply the consistency rules above (replace outdated facts, remove stale computed values).
+3. Call `write_file("/memories/user_profile.md", ...)` with the updated content.
+4. Write every fact as a **complete sentence in third person**, one per line.
+
+### Memory recall
+
+Your memory file is already in your context — do NOT call `read_file` just to check it.
+If the user asks a question whose answer is already in memory, respond directly from memory
+without delegating to a subagent or re-computing.
+Only delegate or re-compute when:
+- The information is NOT in memory, OR
+- The user explicitly asks to redo something, OR
+- The user provides NEW data that would change a previous result.
+
+### Examples
+
+| User says | Save? | Why |
+|-----------|-------|-----|
+| "my weight is 45 kg and height is 5'4" | YES — but AFTER BMI is computed | Save inputs + BMI result together |
+| "my name is Alex" | YES | Explicit personal attribution ("my") |
+| "I work at Red Hat" | YES | First-person claim ("I") |
+| "I prefer dark mode" | YES | Personal preference ("I prefer") |
+| "convert 100 to euros" | NO | Task input — no personal attribution |
+| "summarize this document" | NO | Task request, not personal data |

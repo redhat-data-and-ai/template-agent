@@ -116,7 +116,7 @@ middleware:
   memory:
     enabled: true
     namespaces:
-      - "memories"
+      - "/memories/user_profile.md"
   patch_tool_calls:
     enabled: true
   skills:
@@ -213,24 +213,6 @@ cache:
     enabled: true
   metrics:
     enabled: true
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Memory Processing                                                  [env-var]
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-memory:
-  consolidation:
-    enabled: true
-  decay:
-    enabled: true
-    lambda: 0.05
-  clustering:
-    enabled: true
-    threshold: 0.4
-    min_cluster_size: 3
-  relationships:
-    enabled: true
-  scheduler:
-    interval_hours: 6
-  max_inject: 20
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Guardrail                                                      [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

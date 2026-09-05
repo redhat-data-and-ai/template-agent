@@ -66,3 +66,15 @@ def inject_personalization(
 
     personalization_block = "\n\n---\n\n".join(sections)
     return f"{system_prompt}\n\n---\n\n{personalization_block}"
+
+
+def inject_rules(
+    system_prompt: str,
+    rules: list[str],
+) -> str:
+    """Return *system_prompt* enriched with user rules only.
+
+    Convenience wrapper around inject_personalization for callers
+    that only need rules injection (memories loaded via middleware).
+    """
+    return inject_personalization(system_prompt, [], rules)

@@ -19,7 +19,7 @@ from deep_agent.aegra.eval_routes import eval_mgmt_router
 from deep_agent.aegra.eval_routes import router as eval_router
 from deep_agent.aegra.feedback import feedback_router
 from deep_agent.aegra.mcp_routes import router as mcp_router
-from deep_agent.aegra.personalization_routes import personalization_router
+from deep_agent.aegra.personalization_routes import router as personalization_router
 from deep_agent.aegra.security_middleware import (
     RequestSizeLimitMiddleware,
     SecurityHeadersMiddleware,

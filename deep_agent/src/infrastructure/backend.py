@@ -18,6 +18,7 @@ Functions:
 from __future__ import annotations
 
 import hashlib
+import inspect
 import os
 import shutil
 import subprocess
@@ -44,6 +45,43 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _backend: LocalShellBackend | None = None
 
 
+def _backend_accepts_runtime(cls: type) -> bool:
+    """Return True if *cls.__init__* takes a positional ``runtime`` argument.
+
+    PyPI deepagents 0.7.6 uses no-arg StateBackend/StoreBackend constructors.
+    Later builds require ``ToolRuntime`` as the first argument. Detect at
+    runtime so the same code works against both.
+    """
+    try:
+        param = inspect.signature(cls).parameters.get("runtime")
+    except (TypeError, ValueError):
+        return False
+    if param is None:
+        return False
+    return param.kind in (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
+
+
+def _make_state_backend(runtime: Any) -> Any:
+    """Instantiate StateBackend, passing runtime only when the ctor requires it."""
+    from deepagents.backends.state import StateBackend
+
+    if _backend_accepts_runtime(StateBackend):
+        return StateBackend(runtime)
+    return StateBackend()
+
+
+def _make_store_backend(runtime: Any, namespace: Any) -> Any:
+    """Instantiate StoreBackend, passing runtime only when the ctor requires it."""
+    from deepagents.backends.store import StoreBackend
+
+    if _backend_accepts_runtime(StoreBackend):
+        return StoreBackend(runtime, namespace=namespace)
+    return StoreBackend(namespace=namespace)
+
+
 class ReadOnlyFilesystemBackend(FilesystemBackend):
     """FilesystemBackend that rejects all write operations."""
 
@@ -67,6 +105,113 @@ class ReadOnlyFilesystemBackend(FilesystemBackend):
             FileUploadResponse(path=p, error="Read-only backend: uploads not permitted")
             for p, _ in files
         ]
+
+
+class DeduplicatingStoreBackend:
+    """Wrapper around StoreBackend that deduplicates memory content on write.
+
+    Intercepts write/edit calls to memory files and removes near-duplicate
+    lines before persisting. All other operations are proxied unchanged.
+    """
+
+    def __init__(self, inner: Any, memory_prefix: str = "/memories/") -> None:
+        """Wrap *inner* backend, deduplicating writes under *memory_prefix*."""
+        self._inner = inner
+        self._memory_prefix = memory_prefix
+
+    def _deduplicate_content(self, content: str) -> str:
+        """Remove near-duplicate lines from memory file content."""
+        import re
+
+        from deep_agent.src.memory.clustering import cluster_memories
+
+        lines = content.strip().split("\n")
+        facts: list[str] = []
+        non_fact_lines: list[str] = []
+
+        for line in lines:
+            cleaned = re.sub(r"^[-*•]\s*", "", line).strip()
+            if cleaned:
+                facts.append(cleaned)
+            elif line.strip():
+                non_fact_lines.append(line)
+
+        if len(facts) < 2:
+            return content
+
+        clusters = cluster_memories(facts)
+        indices_to_remove: set[int] = set()
+        for group in clusters:
+            longest_idx = max(group, key=lambda i: len(facts[i]))
+            for idx in group:
+                if idx != longest_idx:
+                    indices_to_remove.add(idx)
+
+        if not indices_to_remove:
+            return content
+
+        deduped_facts = [f for i, f in enumerate(facts) if i not in indices_to_remove]
+        result_lines = non_fact_lines + [f"- {f}" for f in deduped_facts]
+        logger.debug(
+            "Deduplicated memory: %d facts → %d (removed %d)",
+            len(facts),
+            len(deduped_facts),
+            len(indices_to_remove),
+        )
+        return "\n".join(result_lines) + "\n"
+
+    def _is_memory_path(self, file_path: str) -> bool:
+        return True
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        """Write *content* to *file_path*, deduplicating memory files."""
+        if self._is_memory_path(file_path):
+            content = self._deduplicate_content(content)
+        return self._inner.write(file_path, content)
+
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
+        """Async write with memory deduplication."""
+        if self._is_memory_path(file_path):
+            content = self._deduplicate_content(content)
+        return await self._inner.awrite(file_path, content)
+
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,  # noqa: FBT001, FBT002
+    ) -> EditResult:
+        """Edit file, then deduplicate if it is a memory file."""
+        result = self._inner.edit(file_path, old_string, new_string, replace_all)
+        if self._is_memory_path(file_path) and not getattr(result, "error", None):
+            current = self._inner.read(file_path)
+            if current:
+                deduped = self._deduplicate_content(current)
+                if deduped != current:
+                    self._inner.write(file_path, deduped)
+        return result
+
+    async def aedit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,  # noqa: FBT001, FBT002
+    ) -> EditResult:
+        """Async edit with memory deduplication."""
+        result = await self._inner.aedit(file_path, old_string, new_string, replace_all)
+        if self._is_memory_path(file_path) and not getattr(result, "error", None):
+            current = await self._inner.aread(file_path)
+            if current:
+                deduped = self._deduplicate_content(current)
+                if deduped != current:
+                    await self._inner.awrite(file_path, deduped)
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        """Proxy all other methods to the inner backend."""
+        return getattr(self._inner, name)
 
 
 def _base_python() -> str:
@@ -276,16 +421,20 @@ def get_configured_backend() -> LocalShellBackend | Any:
 
 
 def _build_state_backend() -> Any:
-    """Build a StateBackend instance (thread-scoped scratch space).
+    """Build a StateBackend factory (thread-scoped scratch space).
 
     Recommended for production. Files persist across turns within a thread
     via checkpointer but are not shared across threads.
     """
     try:
-        from deepagents.backends.state import StateBackend
+        from deepagents.backends.state import StateBackend  # noqa: F401
 
         logger.info("Using StateBackend (thread-scoped scratch)")
-        return StateBackend()
+
+        def factory(runtime: Any) -> Any:
+            return _make_state_backend(runtime)
+
+        return factory
     except ImportError:
         logger.warning("StateBackend not available, falling back to LocalShellBackend")
         return get_backend()
@@ -349,7 +498,7 @@ def _build_store_backend(fs_config: Any) -> Any:
     - org: shared across all users and assistants
     """
     try:
-        from deepagents.backends.store import StoreBackend
+        from deepagents.backends.store import StoreBackend  # noqa: F401
 
         scope = getattr(fs_config.backend, "store", None)
         scope_name = scope.scope if scope else "user"
@@ -360,7 +509,11 @@ def _build_store_backend(fs_config: Any) -> Any:
             namespace = _safe_namespace_user
 
         logger.info("Using StoreBackend (scope=%s)", scope_name)
-        return StoreBackend(namespace=namespace)
+
+        def factory(runtime: Any) -> Any:
+            return _make_store_backend(runtime, namespace)
+
+        return factory
     except ImportError:
         logger.warning("StoreBackend not available, falling back to StateBackend")
         return _build_state_backend()
@@ -369,9 +522,7 @@ def _build_store_backend(fs_config: Any) -> Any:
 def _build_composite_backend(fs_config: Any) -> Any:
     """Build a CompositeBackend instance with configured routes."""
     from deepagents.backends.composite import CompositeBackend
-    from deepagents.backends.state import StateBackend
 
-    state_backend = StateBackend()
     routes: dict[str, Any] = {}
 
     for path_prefix, backend_name in fs_config.backend.routes.items():
@@ -396,22 +547,17 @@ def _build_composite_backend(fs_config: Any) -> Any:
     store_route_prefixes = [
         p for p, v in fs_config.backend.routes.items() if v == "store"
     ]
+    store_scope: str | None = None
     if store_route_prefixes:
         try:
-            from deepagents.backends.store import StoreBackend
+            from deepagents.backends.store import StoreBackend  # noqa: F401
 
             scope = getattr(fs_config.backend, "store", None)
             store_scope = scope.scope if scope else "user"
-            ns = _STORE_NAMESPACE_FACTORIES.get(store_scope, _safe_namespace_user)
-            store_backend = StoreBackend(namespace=ns)
-            for prefix in store_route_prefixes:
-                routes[prefix] = store_backend
         except ImportError:
             logger.warning(
                 "StoreBackend not available — store routes will use StateBackend"
             )
-            for prefix in store_route_prefixes:
-                routes[prefix] = state_backend
 
     known_types = {"filesystem_readonly", "local_shell", "store", "state"}
     for path_prefix, backend_name in fs_config.backend.routes.items():
@@ -420,13 +566,61 @@ def _build_composite_backend(fs_config: Any) -> Any:
                 "Unknown backend '%s' in route for '%s'", backend_name, path_prefix
             )
 
+    # Capture eager (non-store) routes for the factory closure
+    eager_routes = {k: v for k, v in routes.items() if k not in store_route_prefixes}
+
     logger.info(
         "Built CompositeBackend: %d route(s), default=StateBackend",
         len(routes),
     )
 
-    default_backend = routes.pop("/", state_backend)
-    return CompositeBackend(default=default_backend, routes=routes)
+    # --- Factory: called per-request with ToolRuntime ---
+    def factory(runtime: Any) -> Any:
+        """Build a CompositeBackend when invoked by create_deep_agent with ToolRuntime.
+
+        We instantiate StateBackend/StoreBackend here (rather than returning
+        bare classes) because CompositeBackend needs composed *instances* —
+        this factory IS the protocol-compliant callable that create_deep_agent expects.
+        Constructor signatures differ across deepagents builds: pass ToolRuntime
+        only when the installed class accepts it.
+        """
+        state_backend = _make_state_backend(runtime)
+
+        routes: dict[str, Any] = dict(eager_routes)
+
+        if store_route_prefixes:
+            try:
+                from deepagents.backends.store import StoreBackend  # noqa: F401
+
+                ns = _STORE_NAMESPACE_FACTORIES.get(
+                    store_scope or "user", _safe_namespace_user
+                )
+                store_backend = _make_store_backend(runtime, ns)
+                for prefix in store_route_prefixes:
+                    if prefix.rstrip("/").endswith("memories"):
+                        routes[prefix] = DeduplicatingStoreBackend(
+                            store_backend, memory_prefix=prefix
+                        )
+                    else:
+                        routes[prefix] = store_backend
+            except ImportError:
+                logger.warning(
+                    "StoreBackend not available — store routes will use StateBackend"
+                )
+                for prefix in store_route_prefixes:
+                    routes[prefix] = state_backend
+
+        known_types = {"filesystem_readonly", "local_shell", "store", "state"}
+        for path_prefix, backend_name in fs_config.backend.routes.items():
+            if backend_name not in known_types:
+                logger.warning(
+                    "Unknown backend '%s' in route for '%s'", backend_name, path_prefix
+                )
+
+        default_backend = routes.pop("/", state_backend)
+        return CompositeBackend(default=default_backend, routes=routes)
+
+    return factory
 
 
 def _build_filesystem_readonly_backend(root_dir: Path) -> ReadOnlyFilesystemBackend:

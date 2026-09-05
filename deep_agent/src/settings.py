@@ -168,12 +168,9 @@ class Settings(BaseSettings):
     # ── Cache ─────────────────────────────────────────────────────────
     CACHE_ENABLED: bool = Field(default=True)
 
-    # ── Memory Processing ─────────────────────────────────────────────
-    MEMORY_CONSOLIDATION_ENABLED: bool = Field(default=True)
-    MEMORY_DECAY_ENABLED: bool = Field(default=True)
-    MEMORY_CLUSTERING_ENABLED: bool = Field(default=True)
-    MEMORY_RELATIONSHIPS_ENABLED: bool = Field(default=True)
-
+    # ── Personalization ──────────────────────────────────────────────
+    MEMORY_ENABLED: bool = Field(default=True)
+    USER_RULES_ENABLED: bool = Field(default=True)
     # ── Middleware ────────────────────────────────────────────────────
     MIDDLEWARE_ENABLED: bool = Field(default=True)
 

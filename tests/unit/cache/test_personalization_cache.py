@@ -16,13 +16,13 @@ class TestPersonalizationCache:
     async def test_get_returns_none_when_disabled(self):
         disabled = CacheSettings(CACHE_ENABLED=False)
         with patch.object(personalization_cache, "cache_settings", disabled):
-            result = await personalization_cache.get_personalization("user-1")
+            result = await personalization_cache.get_rules("user-1")
             assert result is None
 
     async def test_set_is_noop_when_disabled(self):
         disabled = CacheSettings(CACHE_ENABLED=False)
         with patch.object(personalization_cache, "cache_settings", disabled):
-            await personalization_cache.set_personalization("user-1", [], [])
+            await personalization_cache.set_rules("user-1", [])
 
     async def test_cache_roundtrip(self):
         enabled = CacheSettings(CACHE_ENABLED=True, CACHE_PERSONALIZATION_ENABLED=True)
@@ -43,14 +43,12 @@ class TestPersonalizationCache:
             patch.object(personalization_cache, "cache_settings", enabled),
             patch.object(personalization_cache, "_get_redis", return_value=mock_redis),
         ):
-            memories = [{"content": "likes pizza"}]
             rules = [{"content": "be brief"}]
-            await personalization_cache.set_personalization("user-1", memories, rules)
+            await personalization_cache.set_rules("user-1", rules)
 
-            result = await personalization_cache.get_personalization("user-1")
+            result = await personalization_cache.get_rules("user-1")
             assert result is not None
-            assert result[0] == memories
-            assert result[1] == rules
+            assert result == rules
 
     async def test_get_handles_corrupt_data(self):
         enabled = CacheSettings(CACHE_ENABLED=True, CACHE_PERSONALIZATION_ENABLED=True)
@@ -62,7 +60,7 @@ class TestPersonalizationCache:
             patch.object(personalization_cache, "cache_settings", enabled),
             patch.object(personalization_cache, "_get_redis", return_value=mock_redis),
         ):
-            result = await personalization_cache.get_personalization("user-1")
+            result = await personalization_cache.get_rules("user-1")
             assert result is None
 
     async def test_invalidate(self):

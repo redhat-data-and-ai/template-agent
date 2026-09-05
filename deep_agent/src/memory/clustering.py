@@ -1,26 +1,64 @@
-"""Semantic clustering of user memories.
+"""Semantic clustering of user memories stored in LangGraph Store.
 
 Groups similar memories by content similarity using token-based
-cosine similarity (TF-IDF style, zero API calls). Assigns a
-``cluster_id`` to each memory in the database.
+TF-IDF cosine similarity (zero API calls — pure local computation).
 
-Runs as a **background job** — never in the request path.
-No embedding API calls — pure local computation.
+Can be used to:
+- Identify related memory facts for context grouping
+- Detect near-duplicates before injection into prompts
+- Present grouped memories in the personalization API
 """
 
 import math
-import uuid
+import re
 from collections import Counter, defaultdict
 
-from deep_agent.src.memory.config import memory_settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
+DEFAULT_CLUSTER_THRESHOLD = 0.4
+
+_UNIT_PATTERN = re.compile(r"(\d+)\s*(kg|cm|lbs|ft|in|bmi|mph|km|m|g|lb)\b", re.I)
+_NUMBER_PATTERN = re.compile(r"(\d+\.?\d*)")
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize text for better similarity matching.
+
+    - Lowercase
+    - Separate numbers from units (70kg → 70 kg)
+    - Normalize common word variants
+    """
+    text = text.lower()
+    text = _UNIT_PATTERN.sub(r"\1 \2", text)
+    text = re.sub(r"[^\w\s.]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+_STEM_MAP = {
+    "weighs": "weight",
+    "weigh": "weight",
+    "weighted": "weight",
+    "heights": "height",
+    "tall": "height",
+    "prefers": "prefer",
+    "preferred": "prefer",
+    "preference": "prefer",
+    "likes": "like",
+    "liked": "like",
+    "uses": "use",
+    "using": "use",
+    "used": "use",
+}
+
 
 def _tokenize(text: str) -> list[str]:
-    """Tokenize text by splitting on whitespace and lowercasing."""
-    return text.lower().split()
+    """Tokenize with normalization and lightweight stemming."""
+    normalized = _normalize_text(text)
+    tokens = normalized.split()
+    return [_STEM_MAP.get(t, t) for t in tokens]
 
 
 def _build_tfidf(documents: list[str]) -> list[dict[str, float]]:
@@ -66,7 +104,7 @@ def _cosine_sim(a: dict[str, float], b: dict[str, float]) -> float:
 
 def cluster_memories(
     contents: list[str],
-    threshold: float | None = None,
+    threshold: float = DEFAULT_CLUSTER_THRESHOLD,
 ) -> list[list[int]]:
     """Cluster memory indices by TF-IDF cosine similarity.
 
@@ -74,12 +112,11 @@ def cluster_memories(
 
     Args:
         contents: List of memory content strings.
-        threshold: Minimum similarity to merge (default from config).
+        threshold: Minimum similarity to merge (default 0.4).
 
     Returns:
         List of clusters (each a list of indices). Singletons are excluded.
     """
-    threshold = threshold or memory_settings.MEMORY_CLUSTER_THRESHOLD
     vectors = _build_tfidf(contents)
     n = len(vectors)
 
@@ -108,71 +145,58 @@ def cluster_memories(
     return [g for g in groups.values() if len(g) >= 2]
 
 
-async def cluster_user_memories(
+async def cluster_store_memories(
     database_uri: str,
-    user_id: str,
-) -> int:
-    """Assign cluster_id to similar memories for a user.
+    namespace: tuple[str, ...],
+    threshold: float = DEFAULT_CLUSTER_THRESHOLD,
+) -> list[list[str]]:
+    """Cluster memories in a LangGraph Store namespace.
 
-    Returns the number of clusters created.
+    Reads all memory items from the store, clusters them by content
+    similarity, and returns groups of related memory facts.
+
+    Args:
+        database_uri: Postgres connection URI.
+        namespace: LangGraph Store namespace tuple for the user.
+        threshold: Minimum cosine similarity to group together.
+
+    Returns:
+        List of clusters, where each cluster is a list of memory
+        content strings that are semantically related.
     """
-    import psycopg
-    from psycopg.rows import dict_row
+    import re
 
-    async with await psycopg.AsyncConnection.connect(
-        database_uri, row_factory=dict_row
-    ) as conn:
-        cur = await conn.execute(
-            "SELECT id, content FROM user_memories "
-            "WHERE user_id = %s ORDER BY created_at DESC",
-            (user_id,),
-        )
-        memories = [dict(row) for row in await cur.fetchall()]
+    from langgraph.store.postgres.aio import AsyncPostgresStore
 
-        if len(memories) < 2:
-            return 0
+    async with AsyncPostgresStore.from_conn_string(database_uri) as store:
+        await store.setup()
+        items = await store.asearch(namespace, limit=200)
 
-        contents = [m["content"] for m in memories]
-        clusters = cluster_memories(contents)
+    all_facts: list[str] = []
+    for item in items:
+        value: dict = item.value
+        content_lines: list[str] = value.get("content", [])
+        raw_text = "\n".join(content_lines)
+        for fact in re.split(r"\n+", raw_text):
+            cleaned = re.sub(r"^[-*•]\s*", "", fact).strip()
+            if cleaned:
+                all_facts.append(cleaned)
 
-        if not clusters:
-            return 0
+    if len(all_facts) < 2:
+        return []
 
-        for group in clusters:
-            cid = str(uuid.uuid4())
-            for idx in group:
-                await conn.execute(
-                    "UPDATE user_memories SET cluster_id = %s WHERE id = %s",
-                    (cid, str(memories[idx]["id"])),
-                )
+    clusters = cluster_memories(all_facts, threshold=threshold)
 
-        await conn.commit()
+    result: list[list[str]] = []
+    for group in clusters:
+        result.append([all_facts[i] for i in group])
+
+    if result:
         logger.info(
-            "Clustered user %s: %d cluster(s) from %d memories",
-            user_id[:8],
-            len(clusters),
-            len(memories),
+            "Clustered %d facts into %d groups (namespace=%s)",
+            len(all_facts),
+            len(result),
+            namespace,
         )
-        return len(clusters)
 
-
-async def cluster_all_users(database_uri: str) -> int:
-    """Run clustering across all users. Returns total clusters created."""
-    if not memory_settings.is_enabled("clustering"):
-        logger.debug("Memory clustering disabled — skipping")
-        return 0
-
-    import psycopg
-
-    async with await psycopg.AsyncConnection.connect(database_uri) as conn:
-        cur = await conn.execute("SELECT DISTINCT user_id FROM user_memories")
-        user_ids = [row[0] for row in await cur.fetchall()]
-
-    total = 0
-    for uid in user_ids:
-        total += await cluster_user_memories(database_uri, uid)
-
-    logger.info(
-        "Clustering complete: %d clusters across %d users", total, len(user_ids)
-    )
-    return total
+    return result

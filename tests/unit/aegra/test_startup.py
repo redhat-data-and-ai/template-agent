@@ -22,19 +22,12 @@ class TestRunStartup:
             patch.object(
                 startup, "_warm_caches", new_callable=AsyncMock, return_value="ok"
             ),
-            patch.object(
-                startup,
-                "_start_scheduler",
-                new_callable=AsyncMock,
-                return_value="ok",
-            ),
             patch.object(startup, "_setup_telemetry", return_value="ok"),
         ):
             result = await startup.run_startup()
         assert result["config"] == "ok"
         assert result["database"] == "ok"
         assert result["cache"] == "ok"
-        assert result["scheduler"] == "ok"
         assert result["telemetry"] == "ok"
         assert startup.is_ready() is True
 
@@ -186,15 +179,6 @@ class TestWarmCaches:
         ):
             result = await startup._warm_caches()
         assert result == "ok"
-
-
-class TestStartScheduler:
-    async def test_disabled(self):
-        mock_mem_settings = MagicMock()
-        mock_mem_settings.MEMORY_CONSOLIDATION_ENABLED = False
-        with patch("deep_agent.src.memory.config.memory_settings", mock_mem_settings):
-            result = await startup._start_scheduler()
-        assert "skipped" in result
 
 
 class TestSetupTelemetry:

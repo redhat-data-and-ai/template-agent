@@ -32,6 +32,8 @@ class TestAgentFactory:
     def _no_guardian_wrapping(self):
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = ""
+        mock_settings.MEMORY_ENABLED = False
+        mock_settings.PYTHON_LOG_LEVEL = "WARNING"
         with (
             patch("deep_agent.src.settings.settings", mock_settings),
             patch("deep_agent.src.pii.get_scrubber", return_value=None),
@@ -379,7 +381,10 @@ class TestAgentFactory:
         assert len(call_kwargs["interrupt_on"]) > 0, (
             "interrupt_on dict must not be empty"
         )
-        assert all(v is True for v in call_kwargs["interrupt_on"].values())
+        assert all(
+            v is True or (isinstance(v, dict) and "when" in v)
+            for v in call_kwargs["interrupt_on"].values()
+        )
 
     @pytest.mark.asyncio
     async def test_hitl_omits_interrupt_on_when_disabled(self):

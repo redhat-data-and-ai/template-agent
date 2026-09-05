@@ -1,19 +1,20 @@
 """Unit tests for backend module."""
 
+import inspect
 import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from deep_agent.src.infrastructure.backend import (
+    _STORE_NAMESPACE_FACTORIES,
+    _backend_accepts_runtime,
     _base_python,
     _build_env,
     _get_assistant_id_from_config,
+    _make_state_backend,
+    _make_store_backend,
     _safe_namespace_assistant,
     _safe_namespace_org,
     _safe_namespace_user,
-    _STORE_NAMESPACE_FACTORIES,
 )
 
 
@@ -206,3 +207,29 @@ class TestStoreNamespaceFactories:
 
     def test_org_maps_to_safe_namespace_org(self):
         assert _STORE_NAMESPACE_FACTORIES["org"] is _safe_namespace_org
+
+
+class TestBackendConstructorHelpers:
+    """StateBackend/StoreBackend construction across deepagents versions."""
+
+    def test_make_state_backend_returns_instance(self):
+        assert _make_state_backend(MagicMock()) is not None
+
+    def test_make_store_backend_returns_instance(self):
+        def fake_namespace(ctx: object) -> tuple[str, ...]:
+            return ("test",)
+
+        assert _make_store_backend(MagicMock(), fake_namespace) is not None
+
+    def test_accepts_runtime_matches_constructor(self):
+        from deepagents.backends.state import StateBackend
+
+        expected = "runtime" in inspect.signature(StateBackend).parameters
+        assert _backend_accepts_runtime(StateBackend) is expected
+
+    def test_accepts_runtime_false_without_runtime_param(self):
+        class NoRuntime:
+            def __init__(self) -> None:
+                pass
+
+        assert _backend_accepts_runtime(NoRuntime) is False

@@ -32,6 +32,7 @@ Aegra automatically provides:
 """
 
 import hashlib
+import json
 import os
 import sys
 import time
@@ -40,6 +41,7 @@ from typing import Any
 
 from langgraph_sdk.runtime import ServerRuntime
 
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -55,6 +57,7 @@ _startup_done = False  # noqa: E402
 
 _graph_cache: dict[str, Any] = {}
 _graph_cache_ts: dict[str, float] = {}
+_MAX_GRAPH_CACHE_SIZE = 16
 
 _SAFETY_STOP_INSTRUCTION = """
 ## Content Safety (Enforced by Framework)
@@ -74,6 +77,40 @@ def _append_safety_stop_instruction(system_prompt: str) -> str:
     their own PROMPT.md.
     """
     return system_prompt.rstrip() + "\n" + _SAFETY_STOP_INSTRUCTION
+
+
+_MEMORY_INSTRUCTIONS_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "config"
+    / "agent"
+    / "runtime"
+    / "memory_instructions.j2"
+)
+
+_memory_instructions_cache: str | None = None
+
+
+def _load_memory_instructions() -> str:
+    """Load the memory instructions J2 template (cached after first read)."""
+    global _memory_instructions_cache  # noqa: PLW0603
+    if _memory_instructions_cache is None:
+        try:
+            _memory_instructions_cache = _MEMORY_INSTRUCTIONS_PATH.read_text()
+        except FileNotFoundError:
+            logger.warning(
+                "Memory instructions template not found at %s",
+                _MEMORY_INSTRUCTIONS_PATH,
+            )
+            _memory_instructions_cache = ""
+    return _memory_instructions_cache
+
+
+def _append_memory_instructions(system_prompt: str) -> str:
+    """Append memory instructions to the system prompt when memory is enabled."""
+    instructions = _load_memory_instructions()
+    if not instructions:
+        return system_prompt
+    return system_prompt.rstrip() + "\n\n---\n\n" + instructions
 
 
 def invalidate_graph_cache() -> None:
@@ -113,6 +150,30 @@ async def _ensure_startup() -> None:  # noqa: E402
 
     await run_startup()
     _startup_done = True
+
+
+def _resolve_personalization_uid(user: Any, token: str | None) -> str | None:
+    """Extract the user ID that the BFF proxy uses for personalization.
+
+    The BFF sends ``X-User-ID: preferred_username`` while the Aegra auth
+    handler sets ``identity`` to the JWT ``sub`` (a UUID).  Rules are stored
+    under the BFF's value, so the graph builder must resolve the same ID.
+    """
+    if not token:
+        return None
+    try:
+        import base64
+
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+        return (
+            claims.get("preferred_username")
+            or claims.get("sub")
+            or getattr(user, "identity", None)
+        )
+    except Exception:
+        return None
 
 
 async def agent(runtime: ServerRuntime) -> Any:
@@ -167,51 +228,50 @@ async def agent(runtime: ServerRuntime) -> Any:
     tool_names = orchestrator_cfg.get("tools", [])
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
-    if user_identity:
+    # Resolve the personalization user ID to match what the BFF proxy
+    # sends as X-User-ID (preferred_username from JWT, not sub UUID).
+    personalization_uid = _resolve_personalization_uid(user, sso_token) or user_identity
+
+    if not personalization_uid:
+        logger.info("No user identity — skipping personalization rules")
+    elif not settings.USER_RULES_ENABLED:
+        logger.info("User rules feature disabled — skipping rule injection")
+    else:
         try:
             from deep_agent.src.cache.personalization_cache import (
-                get_personalization,
-                set_personalization,
+                get_rules,
+                set_rules,
             )
-            from deep_agent.src.memory.config import memory_settings
-            from deep_agent.src.personalization.injector import inject_personalization
+            from deep_agent.src.personalization.injector import inject_rules
             from deep_agent.src.personalization.repository import (
                 PersonalizationRepository,
             )
             from deep_agent.src.settings import settings as app_settings
 
-            repo = PersonalizationRepository(app_settings.database_uri)
-
-            cached = await get_personalization(user_identity)
+            cached = await get_rules(personalization_uid)
             if cached is not None:
-                mem_contents = [m["content"] for m in cached[0]]
-                rule_contents = [r["content"] for r in cached[1]]
+                rule_contents = [r["content"] for r in cached]
             else:
-                max_inject = memory_settings.MEMORY_MAX_INJECT
-                memories = await repo.list_top_memories(user_identity, limit=max_inject)
-                rules = await repo.list_rules(user_identity, active_only=True)
-                mem_contents = [m.content for m in memories]
+                repo = PersonalizationRepository(app_settings.database_uri)
+                rules = await repo.list_rules(personalization_uid, active_only=True)
                 rule_contents = [r.content for r in rules]
-                await set_personalization(
-                    user_identity,
-                    [{"content": m.content} for m in memories],
+                await set_rules(
+                    personalization_uid,
                     [{"content": r.content} for r in rules],
                 )
 
-            system_prompt = inject_personalization(
-                system_prompt,
-                mem_contents,
-                rule_contents,
-            )
-            if mem_contents or rule_contents:
-                logger.info(
-                    "Personalization injected: %d memories, %d rules",
-                    len(mem_contents),
+            system_prompt = inject_rules(system_prompt, rule_contents)
+            if rule_contents:
+                logger.debug(
+                    "Personalization: injected %d rule(s) for user",
                     len(rule_contents),
                 )
+            else:
+                logger.debug("Personalization: no active rules found")
         except Exception:
-            logger.debug(
-                "Personalization unavailable, continuing without", exc_info=True
+            logger.warning(
+                "Personalization unavailable, continuing without rules",
+                exc_info=True,
             )
 
     # Parse orchestrator model to support provider
@@ -281,6 +341,29 @@ async def agent(runtime: ServerRuntime) -> Any:
         model_name, middleware_overrides
     )
 
+    user_memory_enabled = settings.MEMORY_ENABLED
+    if settings.MEMORY_ENABLED and personalization_uid:
+        try:
+            from deep_agent.src.personalization.repository import (
+                PersonalizationRepository,
+            )
+            from deep_agent.src.settings import settings as app_settings
+
+            pref_repo = PersonalizationRepository(app_settings.database_uri)
+            user_prefs = await pref_repo.get_preferences(personalization_uid)
+            user_memory_enabled = user_prefs.memory_enabled
+            if not user_memory_enabled:
+                logger.info(
+                    "Memory disabled by user preference for %s", personalization_uid
+                )
+        except Exception:
+            logger.debug(
+                "Could not load user preferences, using global setting", exc_info=True
+            )
+
+    if user_memory_enabled:
+        system_prompt = _append_memory_instructions(system_prompt)
+
     hitl = getattr(resolved_mw, "human_approval", None)
 
     cache_key = _graph_fingerprint(
@@ -312,7 +395,8 @@ async def agent(runtime: ServerRuntime) -> Any:
         backend=backend,
         mcp_tool_names=frozenset(t.name for t in mcp_tools),
     )
-    memory = resolve_memory_param(resolved_mw)
+    memory = resolve_memory_param(resolved_mw) if user_memory_enabled else None
+
     if skill_paths and resolved_mw.skills_enabled:
         from deep_agent.src.agent.config.resolver import to_virtual_skill_paths
 
@@ -430,6 +514,11 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     _graph_cache[cache_key] = compiled
     _graph_cache_ts[cache_key] = time.time()
+
+    if len(_graph_cache) > _MAX_GRAPH_CACHE_SIZE:
+        oldest_key = min(_graph_cache_ts, key=_graph_cache_ts.get)  # type: ignore[arg-type]
+        _graph_cache.pop(oldest_key, None)
+        _graph_cache_ts.pop(oldest_key, None)
 
     tool_count = len(tools)
     sub_count = len(subagents) if subagents else 0
