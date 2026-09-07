@@ -1745,7 +1745,7 @@ class TestGetDataset:
         ):
             result = await er.get_dataset()
         assert result == {
-            "dataset": {"test_cases": []},
+            "dataset": {"cases": []},
             "judge_model": None,
             "created_at": None,
         }
