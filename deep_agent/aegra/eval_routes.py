@@ -1362,7 +1362,7 @@ async def get_dataset() -> dict[str, Any]:
         result = await row.fetchone()
 
     if not result:
-        raise HTTPException(status_code=404, detail="no dataset found")
+        return {"dataset": {"test_cases": []}, "judge_model": None, "created_at": None}
 
     dataset, judge_model, created_at = result
     if isinstance(dataset, str):
