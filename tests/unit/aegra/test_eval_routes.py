@@ -1736,18 +1736,19 @@ class TestGetDataset:
         assert result["judge_model"] == "gpt-4"
         er._datasets_table_ensured = False
 
-    async def test_404_when_no_dataset(self):
-        from fastapi import HTTPException
-
+    async def test_empty_dataset_returns_default(self):
         er._datasets_table_ensured = True
         cursor = _make_cursor(rows=[])
         conn, _ = _make_conn(cursor)
         with patch(
             "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
         ):
-            with pytest.raises(HTTPException) as exc:
-                await er.get_dataset()
-        assert exc.value.status_code == 404
+            result = await er.get_dataset()
+        assert result == {
+            "dataset": {"test_cases": []},
+            "judge_model": None,
+            "created_at": None,
+        }
         er._datasets_table_ensured = False
 
     async def test_parses_string_dataset(self):
