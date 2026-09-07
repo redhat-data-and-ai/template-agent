@@ -1351,8 +1351,6 @@ async def upsert_dataset(body: DatasetUpsertRequest) -> dict[str, Any]:
 @eval_mgmt_router.get("/dataset")
 async def get_dataset() -> dict[str, Any]:
     """Return the stored eval dataset for this agent."""
-    from fastapi import HTTPException
-
     await _ensure_datasets_table_once()
 
     async with await _pg_conn() as conn:
