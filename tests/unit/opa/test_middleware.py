@@ -176,8 +176,7 @@ class TestExtractText:
     def test_handles_ai_message_with_content_blocks(self):
         msg = AIMessage(content=[{"type": "text", "text": "block content"}])
         response = _model_response([msg])
-        text = self.mw._extract_text(response)
-        assert text != ""
+        assert self.mw._extract_text(response) == "block content"
 
     def test_skips_empty_ai_and_returns_earlier_nonempty(self):
         response = _model_response(
@@ -506,7 +505,8 @@ class TestExtractToolContent:
         assert "item1" in result
 
     def test_tool_message_with_none_content(self):
-        msg = ToolMessage(content="", tool_call_id="tc1")
+        msg = MagicMock(spec=ToolMessage)
+        msg.content = None
         assert self.mw._extract_tool_content(msg) == ""
 
     def test_returns_empty_for_non_tool_non_command(self):

@@ -196,9 +196,14 @@ class TestCheckInputBlocked:
         assert mw._check_input_blocked({"messages": []}) is None
 
     def test_no_human_message_returns_none(self):
-        mw = PIIMiddleware(_mock_scrubber(has_block_detector=True))
+        match = PIIMatch(
+            start=0, end=5, value="12345", rule_name="ssn", label="SSN", action="block"
+        )
+        scrubber = _mock_scrubber(has_block_detector=True, block_matches=[match])
+        mw = PIIMiddleware(scrubber)
         ai = AIMessage(content="hello")
         assert mw._check_input_blocked({"messages": [ai]}) is None
+        scrubber._block_detector.find_all.assert_not_called()
 
     def test_human_message_without_pii_returns_none(self):
         mw = PIIMiddleware(_mock_scrubber(has_block_detector=True, block_matches=[]))
@@ -259,12 +264,18 @@ class TestCheckInputBlocked:
         assert result is not None
 
     def test_empty_string_content_returns_none(self):
-        mw = PIIMiddleware(_mock_scrubber(has_block_detector=True))
+        match = PIIMatch(
+            start=0, end=5, value="12345", rule_name="ssn", label="SSN", action="block"
+        )
+        scrubber = _mock_scrubber(has_block_detector=True, block_matches=[match])
+        mw = PIIMiddleware(scrubber)
         human = HumanMessage(content="")
         assert mw._check_input_blocked({"messages": [human]}) is None
+        scrubber._block_detector.find_all.assert_not_called()
 
     def test_state_as_object_with_messages_attr(self):
-        mw = PIIMiddleware(_mock_scrubber(has_block_detector=True, block_matches=[]))
+        scrubber = _mock_scrubber(has_block_detector=True, block_matches=[])
+        mw = PIIMiddleware(scrubber)
         state = MagicMock()
         state.messages = [HumanMessage(content="hi")]
         assert mw._check_input_blocked(state) is None

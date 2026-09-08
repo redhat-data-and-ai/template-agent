@@ -1,6 +1,7 @@
 """Unit tests for PresidioDetector — Presidio-backed PII detection engine."""
 
 import pytest
+from unittest.mock import patch
 
 pytest.importorskip("presidio_analyzer")
 
@@ -84,8 +85,13 @@ class TestPresidioDetectorInit:
             provider="custom",
             strategy=ActionType.scrub,
         )
-        with pytest.raises(ValueError, match="no entity mapping"):
-            PresidioDetector([rule])
+        with patch.object(
+            type(rule),
+            "pattern_type",
+            new_callable=lambda: property(lambda self: "custom"),
+        ):
+            with pytest.raises(ValueError, match="must specify a 'regex' field"):
+                PresidioDetector([rule])
 
     def test_dynamic_fallback_for_unmapped_entity(self):
         """rule.name.upper() is tried when not in _RULE_TO_ENTITY."""
@@ -150,13 +156,13 @@ class TestFindAll:
         detector = PresidioDetector([_rule("phone")])
         matches = detector.find_all("Call me at 212-555-1234 today.")
         assert len(matches) >= 1
-        found_values = " ".join(m.value for m in matches)
-        assert "212-555-1234" in found_values or "212" in found_values
+        assert any(m.value == "212-555-1234" for m in matches)
 
     def test_detects_credit_card(self):
         detector = PresidioDetector([_rule("credit_card")])
         matches = detector.find_all("Card number is 4111111111111111.")
         assert len(matches) >= 1
+        assert any("4111111111111111" in m.value for m in matches)
 
     def test_returns_correct_pii_match_fields(self):
         detector = PresidioDetector([_rule("email", strategy="redact")])
@@ -199,6 +205,9 @@ class TestFindAll:
         detector = PresidioDetector([_rule("email"), _rule("phone")])
         text = "Contact user@example.com for info."
         matches = detector.find_all(text)
+        email_match = next((m for m in matches if m.rule_name == "email"), None)
+        assert email_match is not None
+        assert email_match.value == "user@example.com"
         starts = [m.start for m in matches]
         assert len(starts) == len(set(starts)), "Duplicate start positions found"
         for i in range(1, len(matches)):
@@ -225,6 +234,7 @@ class TestFindAll:
         matches = detector.find_all(text)
         rule_names = {m.rule_name for m in matches}
         assert "email" in rule_names
+        assert "credit_card" in rule_names
 
 
 # ---------------------------------------------------------------------------
