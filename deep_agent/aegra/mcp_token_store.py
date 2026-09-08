@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from deep_agent.aegra.db import async_connection
 from deep_agent.aegra.mcp_crypto import decrypt_secret, encrypt_secret
 from deep_agent.aegra.redis import cache_delete, cache_get, cache_set_persistent
 from deep_agent.utils.pylogger import get_python_logger
@@ -168,7 +168,7 @@ class McpTokenStore:
     async def ensure_tables(self) -> None:
         """Create MCP OAuth client table in Postgres if it does not already exist."""
         global _TABLES_ENSURED  # noqa: PLW0603
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             await conn.execute(MIGRATE_OAUTH_TABLES)
             await conn.execute(CREATE_OAUTH_CLIENTS_TABLE)
             await conn.commit()
@@ -179,9 +179,7 @@ class McpTokenStore:
     async def get_client(self, agent_name: str, mcp_name: str) -> McpOAuthClient | None:
         """Return the registered OAuth client for *(agent_name, mcp_name)*, if any."""
         await self.ensure_tables()
-        async with await psycopg.AsyncConnection.connect(
-            self._uri, row_factory=dict_row
-        ) as conn:
+        async with async_connection(row_factory=dict_row) as conn:
             cur = await conn.execute(
                 "SELECT * FROM mcp_oauth_clients WHERE agent_name = %s AND mcp_name = %s",
                 (agent_name, mcp_name),
@@ -219,7 +217,7 @@ class McpTokenStore:
         """Insert or update the OAuth client record for *(agent_name, mcp_name)*."""
         await self.ensure_tables()
         enc_secret = encrypt_secret(client_secret)
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+        async with async_connection() as conn:
             await conn.execute(
                 """
                 INSERT INTO mcp_oauth_clients (

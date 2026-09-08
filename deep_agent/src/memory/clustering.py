@@ -116,12 +116,11 @@ async def cluster_user_memories(
 
     Returns the number of clusters created.
     """
-    import psycopg
     from psycopg.rows import dict_row
 
-    async with await psycopg.AsyncConnection.connect(
-        database_uri, row_factory=dict_row
-    ) as conn:
+    from deep_agent.aegra.db import async_connection
+
+    async with async_connection(row_factory=dict_row) as conn:
         cur = await conn.execute(
             "SELECT id, content FROM user_memories "
             "WHERE user_id = %s ORDER BY created_at DESC",
@@ -162,9 +161,9 @@ async def cluster_all_users(database_uri: str) -> int:
         logger.debug("Memory clustering disabled — skipping")
         return 0
 
-    import psycopg
+    from deep_agent.aegra.db import async_connection
 
-    async with await psycopg.AsyncConnection.connect(database_uri) as conn:
+    async with async_connection() as conn:
         cur = await conn.execute("SELECT DISTINCT user_id FROM user_memories")
         user_ids = [row[0] for row in await cur.fetchall()]
 

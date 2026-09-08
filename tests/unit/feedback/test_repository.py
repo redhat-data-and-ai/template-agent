@@ -1,5 +1,6 @@
 """Unit tests for FeedbackRepository (mocked DB)."""
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -31,6 +32,14 @@ def mock_conn():
     return conn
 
 
+def _fake_async_connection(mock_conn):
+    @asynccontextmanager
+    async def _ctx(**kwargs):
+        yield mock_conn
+
+    return _ctx
+
+
 @pytest.fixture
 def repo():
     return FeedbackRepository("postgresql://test:test@localhost/testdb")
@@ -40,8 +49,8 @@ class TestEnsureTable:
     @pytest.mark.asyncio
     async def test_creates_table_once(self, repo, mock_conn):
         with patch(
-            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
-            return_value=mock_conn,
+            "deep_agent.src.feedback.repository.async_connection",
+            _fake_async_connection(mock_conn),
         ):
             await repo.ensure_table()
             mock_conn.execute.assert_awaited_once()
@@ -50,8 +59,8 @@ class TestEnsureTable:
     @pytest.mark.asyncio
     async def test_idempotent_second_call(self, repo, mock_conn):
         with patch(
-            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
-            return_value=mock_conn,
+            "deep_agent.src.feedback.repository.async_connection",
+            _fake_async_connection(mock_conn),
         ):
             await repo.ensure_table()
             mock_conn.execute.reset_mock()
@@ -66,8 +75,8 @@ class TestUpsertFeedback:
     async def test_insert_calls_execute_and_commit(self, repo, mock_conn):
         feedback_repo_mod._TABLE_ENSURED = True
         with patch(
-            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
-            return_value=mock_conn,
+            "deep_agent.src.feedback.repository.async_connection",
+            _fake_async_connection(mock_conn),
         ):
             await repo.upsert_feedback(
                 "t1",
@@ -84,8 +93,8 @@ class TestUpsertFeedback:
         """Second upsert with same keys runs ON CONFLICT UPDATE (still one execute)."""
         feedback_repo_mod._TABLE_ENSURED = True
         with patch(
-            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
-            return_value=mock_conn,
+            "deep_agent.src.feedback.repository.async_connection",
+            _fake_async_connection(mock_conn),
         ):
             await repo.upsert_feedback("t1", "m1", "u1", "up", None)
             await repo.upsert_feedback("t1", "m1", "u1", "down", None)
@@ -100,8 +109,8 @@ class TestDeleteFeedback:
         mock_conn._cursor.rowcount = 1
         mock_conn.execute.return_value = mock_conn._cursor
         with patch(
-            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
-            return_value=mock_conn,
+            "deep_agent.src.feedback.repository.async_connection",
+            _fake_async_connection(mock_conn),
         ):
             result = await repo.delete_feedback("t1", "m1", "u1")
             assert result is True
@@ -112,8 +121,8 @@ class TestDeleteFeedback:
         mock_conn._cursor.rowcount = 0
         mock_conn.execute.return_value = mock_conn._cursor
         with patch(
-            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
-            return_value=mock_conn,
+            "deep_agent.src.feedback.repository.async_connection",
+            _fake_async_connection(mock_conn),
         ):
             result = await repo.delete_feedback("t1", "m1", "u1")
             assert result is False
@@ -130,8 +139,8 @@ class TestListFeedback:
             ]
         )
         with patch(
-            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
-            return_value=mock_conn,
+            "deep_agent.src.feedback.repository.async_connection",
+            _fake_async_connection(mock_conn),
         ):
             rows = await repo.list_feedback("t1", "u1")
             assert rows == [
@@ -143,8 +152,8 @@ class TestListFeedback:
     async def test_empty_list(self, repo, mock_conn):
         feedback_repo_mod._TABLE_ENSURED = True
         with patch(
-            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
-            return_value=mock_conn,
+            "deep_agent.src.feedback.repository.async_connection",
+            _fake_async_connection(mock_conn),
         ):
             rows = await repo.list_feedback("t1", "u1")
             assert rows == []

@@ -72,12 +72,11 @@ async def infer_user_relationships(
 
     Returns the number of new relationships created.
     """
-    import psycopg
     from psycopg.rows import dict_row
 
-    async with await psycopg.AsyncConnection.connect(
-        database_uri, row_factory=dict_row
-    ) as conn:
+    from deep_agent.aegra.db import async_connection
+
+    async with async_connection(row_factory=dict_row) as conn:
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS memory_relationships (
@@ -140,9 +139,9 @@ async def infer_all_relationships(database_uri: str) -> int:
         logger.debug("Relationship inference disabled — skipping")
         return 0
 
-    import psycopg
+    from deep_agent.aegra.db import async_connection
 
-    async with await psycopg.AsyncConnection.connect(database_uri) as conn:
+    async with async_connection() as conn:
         cur = await conn.execute("SELECT DISTINCT user_id FROM user_memories")
         user_ids = [row[0] for row in await cur.fetchall()]
 

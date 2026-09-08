@@ -214,6 +214,7 @@ async def run_shutdown() -> dict[str, str]:
         ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse),
         ("scheduler", _stop_scheduler),
+        ("pool", _close_pool),
         ("graph_cache", _clear_graph_cache),
         ("redis", _close_redis),
     ]:
@@ -361,6 +362,17 @@ def _shutdown_otel() -> str:
         return "ok"
     except Exception as exc:
         logger.warning("OTEL shutdown failed: %s", exc)
+        return f"error: {exc}"
+
+
+async def _close_pool() -> str:
+    try:
+        from deep_agent.aegra.db import close_pool
+
+        await close_pool()
+        return "ok"
+    except Exception as exc:
+        logger.warning("Connection pool close failed: %s", exc)
         return f"error: {exc}"
 
 

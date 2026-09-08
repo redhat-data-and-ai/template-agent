@@ -65,12 +65,19 @@ class TestRunShutdown:
             ),
             patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
             patch.object(shutdown_mod, "_close_redis", return_value="ok"),
+            patch.object(
+                shutdown_mod,
+                "_close_pool",
+                new_callable=AsyncMock,
+                return_value="ok",
+            ),
         ):
             result = await run_shutdown()
 
         assert result["drain"] == "ok"
         assert result["langfuse"] == "ok"
         assert result["scheduler"] == "ok"
+        assert result["pool"] == "ok"
         assert result["graph_cache"] == "ok"
         assert result["redis"] == "ok"
         assert is_shutting_down() is True
