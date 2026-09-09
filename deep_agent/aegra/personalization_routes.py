@@ -309,10 +309,10 @@ async def list_memories(
     memories = _parse_store_items_to_memories([item] if item is not None else [])
 
     if deduplicate and len(memories) >= 2:
-        from deep_agent.src.memory.clustering import cluster_memories
+        from deep_agent.src.memory.clustering import near_duplicate_groups
 
         contents = [m.content for m in memories]
-        clusters = cluster_memories(contents)
+        clusters = near_duplicate_groups(contents)
         indices_to_remove: set[int] = set()
         for group in clusters:
             longest_idx = max(group, key=lambda i: len(contents[i]))
@@ -379,7 +379,7 @@ async def deduplicate_memories(request: Request) -> DeduplicateResultOut:
     _require_memory()
     import re
 
-    from deep_agent.src.memory.clustering import cluster_memories
+    from deep_agent.src.memory.clustering import near_duplicate_groups
 
     user_id = await memory_user_id(request)
 
@@ -401,7 +401,7 @@ async def deduplicate_memories(request: Request) -> DeduplicateResultOut:
         return DeduplicateResultOut(removed=0, remaining=len(all_facts))
 
     contents = [f[1] for f in all_facts]
-    clusters = cluster_memories(contents)
+    clusters = near_duplicate_groups(contents)
 
     facts_to_remove: set[str] = set()
     for group in clusters:

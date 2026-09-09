@@ -1,5 +1,7 @@
 """Unit tests for memory clustering module."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from deep_agent.src.memory.clustering import (
@@ -8,6 +10,7 @@ from deep_agent.src.memory.clustering import (
     _normalize_text,
     _tokenize,
     cluster_memories,
+    cluster_store_memories,
 )
 
 
@@ -130,3 +133,76 @@ class TestClusterMemories:
         for group in clusters:
             assert len(group) >= 2
         assert len(clusters) >= 1
+
+
+class TestNearDuplicateFacts:
+    def test_weight_restatements_are_duplicates(self):
+        from deep_agent.src.memory.clustering import are_near_duplicate_facts
+
+        assert are_near_duplicate_facts("user weighs 70kg", "user weight is 70 kg")
+
+    def test_birth_and_joining_dates_are_not_duplicates(self):
+        from deep_agent.src.memory.clustering import (
+            are_near_duplicate_facts,
+            near_duplicate_groups,
+        )
+
+        birth = "The user's date of birth is June 11, 2003."
+        joining = "The user's joining date is 2 June 2020."
+        truncated = "The user's joining date is"
+        assert not are_near_duplicate_facts(birth, joining)
+        assert not are_near_duplicate_facts(birth, truncated)
+        assert near_duplicate_groups([birth, joining, truncated]) == []
+
+    def test_same_birth_dates_are_duplicates(self):
+        from deep_agent.src.memory.clustering import near_duplicate_groups
+
+        groups = near_duplicate_groups(
+            [
+                "The user's date of birth is June 11, 2003.",
+                "The user's date of birth is June 12, 2003.",
+            ]
+        )
+        assert len(groups) == 1
+        assert sorted(groups[0]) == [0, 1]
+
+
+def _store_item(key: str, content: str | list[str]) -> MagicMock:
+    item = MagicMock()
+    item.key = key
+    item.value = {"content": content}
+    return item
+
+
+class TestClusterStoreMemories:
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_fewer_than_two_facts(self):
+        item = _store_item("user_profile.md", "only one fact")
+        store = AsyncMock()
+        store.setup = AsyncMock()
+        store.asearch = AsyncMock(return_value=[item])
+        cm = AsyncMock()
+        cm.__aenter__ = AsyncMock(return_value=store)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        with patch("langgraph.store.postgres.aio.AsyncPostgresStore") as store_cls:
+            store_cls.from_conn_string.return_value = cm
+            assert await cluster_store_memories("postgresql://x", ("user", "u1")) == []
+
+    @pytest.mark.asyncio
+    async def test_skips_non_memory_keys_and_clusters_facts(self):
+        profile = _store_item(
+            "user_profile.md",
+            "user weighs 70kg\nuser weight is 70 kg\nlikes python programming",
+        )
+        other = _store_item("quarterly.md", "ignore this file")
+        store = AsyncMock()
+        store.setup = AsyncMock()
+        store.asearch = AsyncMock(return_value=[profile, other])
+        cm = AsyncMock()
+        cm.__aenter__ = AsyncMock(return_value=store)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        with patch("langgraph.store.postgres.aio.AsyncPostgresStore") as store_cls:
+            store_cls.from_conn_string.return_value = cm
+            clusters = await cluster_store_memories("postgresql://x", ("user", "u1"))
+        assert clusters
+        assert any(len(group) >= 2 for group in clusters)

@@ -18,6 +18,32 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 DEFAULT_CLUSTER_THRESHOLD = 0.4
+NEAR_DUPLICATE_JACCARD = 0.5
+
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "for",
+        "i",
+        "in",
+        "is",
+        "my",
+        "of",
+        "on",
+        "or",
+        "s",
+        "the",
+        "to",
+        "user",
+        "users",
+        "was",
+        "were",
+        "with",
+    }
+)
 
 _UNIT_PATTERN = re.compile(r"(\d+)\s*(kg|cm|lbs|ft|in|bmi|mph|km|m|g|lb)\b", re.I)
 _NUMBER_PATTERN = re.compile(r"(\d+\.?\d*)")
@@ -59,6 +85,53 @@ def _tokenize(text: str) -> list[str]:
     normalized = _normalize_text(text)
     tokens = normalized.split()
     return [_STEM_MAP.get(t, t) for t in tokens]
+
+
+def distinctive_tokens(text: str) -> set[str]:
+    """Content tokens used to tell one fact from another (not 'the user is')."""
+    return {t for t in _tokenize(text) if t not in _STOPWORDS}
+
+
+def are_near_duplicate_facts(left: str, right: str) -> bool:
+    """Return True when *left* and *right* are the same fact, restated.
+
+    Date of birth vs joining date share 'date' / 'june' but not enough
+    distinctive tokens — those must both be kept.
+    """
+    left_toks = distinctive_tokens(left)
+    right_toks = distinctive_tokens(right)
+    if not left_toks or not right_toks:
+        return False
+    overlap = len(left_toks & right_toks)
+    union = len(left_toks | right_toks)
+    return (overlap / union) >= NEAR_DUPLICATE_JACCARD
+
+
+def near_duplicate_groups(contents: list[str]) -> list[list[int]]:
+    """Groups of indices that are restatements of the same fact."""
+    n = len(contents)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if are_near_duplicate_facts(contents[i], contents[j]):
+                union(i, j)
+
+    groups: defaultdict[int, list[int]] = defaultdict(list)
+    for i in range(n):
+        groups[find(i)].append(i)
+    return [g for g in groups.values() if len(g) >= 2]
 
 
 def _build_tfidf(documents: list[str]) -> list[dict[str, float]]:

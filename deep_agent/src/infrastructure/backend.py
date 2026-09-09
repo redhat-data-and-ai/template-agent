@@ -145,7 +145,7 @@ class DeduplicatingStoreBackend:
         """Remove near-duplicate lines from memory file content."""
         import re
 
-        from deep_agent.src.memory.clustering import cluster_memories
+        from deep_agent.src.memory.clustering import near_duplicate_groups
 
         lines = content.strip().split("\n")
         facts: list[str] = []
@@ -161,7 +161,9 @@ class DeduplicatingStoreBackend:
         if len(facts) < 2:
             return content
 
-        clusters = cluster_memories(facts)
+        # Only drop restatements of the same fact (70kg vs 70 kg). Never
+        # drop "joining date" because it looks a bit like "date of birth".
+        clusters = near_duplicate_groups(facts)
         indices_to_remove: set[int] = set()
         for group in clusters:
             longest_idx = max(group, key=lambda i: len(facts[i]))
@@ -459,8 +461,7 @@ def _build_state_backend() -> Any:
 
 
 def _as_runtime(ctx: Any) -> Any:
-    """Return the LangGraph Runtime from a namespace-factory argument.
-    """
+    """Return the LangGraph Runtime from a namespace-factory argument."""
     if ctx is None:
         return None
     inner = getattr(ctx, "runtime", None)

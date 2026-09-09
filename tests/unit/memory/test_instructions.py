@@ -34,14 +34,30 @@ class TestLoadMemoryInstructions:
     """Instructions ship in the runtime package, not the config volume."""
 
     def test_loads_user_profile_path(self):
+        import deep_agent.src.memory.instructions as instr
+
+        instr._instructions_cache = None
         text = load_memory_instructions()
         assert USER_MEMORY_FILE in text
         assert "write_file" in text
+        assert "edit_file" in text
+        assert "complete sentence" in text.lower() or "complete" in text
 
     def test_append_adds_separator(self):
         result = append_memory_instructions("You are a helper.")
         assert result.startswith("You are a helper.\n\n---\n\n")
         assert USER_MEMORY_FILE in result
+
+    def test_missing_template_returns_empty_then_leaves_prompt(
+        self, tmp_path, monkeypatch
+    ):
+        import deep_agent.src.memory.instructions as instr
+
+        missing = tmp_path / "missing.j2"
+        monkeypatch.setattr(instr, "_INSTRUCTIONS_PATH", missing)
+        monkeypatch.setattr(instr, "_instructions_cache", None)
+        assert instr.load_memory_instructions() == ""
+        assert instr.append_memory_instructions("keep me") == "keep me"
 
 
 class TestIsMemoryStoreKey:
@@ -63,14 +79,17 @@ class TestMemoryFileText:
     def test_string_content(self):
         from deep_agent.src.memory.instructions import memory_file_text
 
-        assert memory_file_text({"content": "The user's date of birth is June 14, 2003."}) == (
-            "The user's date of birth is June 14, 2003."
-        )
+        assert memory_file_text(
+            {"content": "The user's date of birth is June 14, 2003."}
+        ) == ("The user's date of birth is June 14, 2003.")
 
     def test_list_content(self):
         from deep_agent.src.memory.instructions import memory_file_text
 
-        assert memory_file_text({"content": ["line one", "line two"]}) == "line one\nline two"
+        assert (
+            memory_file_text({"content": ["line one", "line two"]})
+            == "line one\nline two"
+        )
 
     def test_missing_or_invalid(self):
         from deep_agent.src.memory.instructions import memory_file_text

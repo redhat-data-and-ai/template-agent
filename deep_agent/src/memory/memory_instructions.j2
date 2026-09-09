@@ -25,6 +25,8 @@ Do NOT save just the inputs before the computation completes.
 ### Format rules (CRITICAL)
 
 Each fact MUST be a **single, complete, self-contained sentence** on its own line.
+The sentence MUST include the value (date, number, name, place). Never end a line
+with "is" / "are" / "was" and no value.
 Do NOT use markdown headers, bold, bullet points, or any formatting.
 Do NOT group facts under section headings.
 
@@ -33,23 +35,25 @@ Do NOT group facts under section headings.
 The user's age is 23.
 The user's weight is 45 kg.
 The user's height is 6'0" (182.88 cm).
-The user's BMI is 13.5 (Underweight).
+The user's joining date is 2 June 2020.
+The user's date of birth is June 11, 2003.
 ```
 
 **Wrong format (NEVER do this):**
 ```
 # User Profile
-## Health Metrics
-**Weight**: 45 kg
-**Height**: 5'4"
+The user's joining date is
+The user's joining date is 2 Ju
 ```
+
+"Date of birth" and "joining date" are **different facts**. Keep both.
 
 ### Consistency rules
 
 Before saving any fact, read the existing memory file and apply these checks:
 
-1. **Replace, don't append** — If the user provides a new value for something already
-   in memory (e.g., new weight), REPLACE the old line. Never create conflicting entries.
+1. **Replace, don't append duplicates** — If the user provides a new value for
+   something already in memory (e.g., new weight), REPLACE only that one line.
 2. **Invalidate dependent data** — If an input value changes, remove any computed result
    that depended on it. For example, if weight changes, remove the old BMI line because
    it was computed from the old weight.
@@ -59,9 +63,19 @@ Before saving any fact, read the existing memory file and apply these checks:
 ### How to save
 
 1. Call `read_file("/memories/user_profile.md")` to get existing content.
-2. Apply the consistency rules above (replace outdated facts, remove stale computed values).
-3. Call `write_file("/memories/user_profile.md", ...)` with the updated content.
-4. Write every fact as a **complete sentence in third person**, one per line.
+2. Apply the consistency rules above.
+
+**Adding a new fact** (topic is not already in the file):
+Call `edit_file` and append one complete new line. Do **not** rewrite the whole
+file — rewriting truncates other facts and drops values.
+
+**Updating an existing fact:**
+Call `edit_file` and replace only that one line with the new complete sentence.
+
+**Full rewrite** (`write_file`) only if you must replace several lines at once.
+Every line in `content` must still be a complete sentence with its value.
+
+3. Write every fact as a **complete sentence in third person**, one per line.
 
 ### Memory recall
 

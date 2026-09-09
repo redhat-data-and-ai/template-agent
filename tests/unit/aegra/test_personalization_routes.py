@@ -6,6 +6,7 @@ so no real Postgres/Redis is needed.
 
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -245,6 +246,15 @@ class TestListMemories:
         assert len(data) == 1
         assert data[0]["content"] == "The user's date of birth is June 14, 2003."
 
+    def test_non_string_created_at_becomes_empty(self, client, mock_store):
+        item = MagicMock()
+        item.key = USER_MEMORY_STORE_KEY
+        item.value = {"content": "a fact", "created_at": 123}
+        mock_store.asearch.return_value = [item]
+        resp = client.get("/personalization/memories")
+        assert resp.status_code == 200
+        assert resp.json()[0]["created_at"] == ""
+
     def test_falls_back_to_default_assistant_namespace(self, client, mock_store):
         item = MagicMock()
         item.key = "/user_profile.md"
@@ -384,6 +394,19 @@ class TestGetAssistantIdForStore:
         ):
             assert await pr._get_assistant_id_for_store() == "default"
 
+    @pytest.mark.asyncio
+    async def test_auth_on_returns_cached_assistant_id(self):
+        from deep_agent.aegra import personalization_routes as pr
+
+        pr._cached_assistant_id = "asst-cached"
+        pr._cached_assistant_ts = time.monotonic()
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch("asyncpg.create_pool") as create_pool,
+        ):
+            assert await pr._get_assistant_id_for_store() == "asst-cached"
+        create_pool.assert_not_called()
+
 
 class TestGetStoreNamespace:
     @pytest.fixture(autouse=True)
@@ -504,6 +527,21 @@ class TestInvalidateCache:
         gcache.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_invalidates_extra_ids(self):
+        from deep_agent.aegra.personalization_routes import _invalidate_cache
+
+        with (
+            patch(
+                "deep_agent.src.cache.personalization_cache.invalidate",
+                new_callable=AsyncMock,
+            ) as inv,
+            patch("deep_agent.aegra.graph.invalidate_graph_cache"),
+        ):
+            await _invalidate_cache("u1", extra_ids=["u2", ""])
+        invalidated = {call.args[0] for call in inv.await_args_list}
+        assert invalidated == {"u1", "u2"}
+
+    @pytest.mark.asyncio
     async def test_swallows_errors(self):
         from deep_agent.aegra.personalization_routes import _invalidate_cache
 
@@ -534,7 +572,7 @@ class TestListMemoriesExtra:
             ),
         ]
         with patch(
-            "deep_agent.src.memory.clustering.cluster_memories",
+            "deep_agent.src.memory.clustering.near_duplicate_groups",
             return_value=[[0, 1]],
         ):
             resp = client.get("/personalization/memories?deduplicate=true")
@@ -580,7 +618,7 @@ class TestDeduplicateMemories:
             _make_store_item(USER_MEMORY_STORE_KEY, ["alpha", "beta"]),
         ]
         with patch(
-            "deep_agent.src.memory.clustering.cluster_memories",
+            "deep_agent.src.memory.clustering.near_duplicate_groups",
             return_value=[],
         ):
             resp = client.post("/personalization/memories/deduplicate")
@@ -591,7 +629,7 @@ class TestDeduplicateMemories:
             _make_store_item(USER_MEMORY_STORE_KEY, ["short", "much longer fact"]),
         ]
         with patch(
-            "deep_agent.src.memory.clustering.cluster_memories",
+            "deep_agent.src.memory.clustering.near_duplicate_groups",
             return_value=[[0, 1]],
         ):
             resp = client.post("/personalization/memories/deduplicate")
@@ -608,7 +646,7 @@ class TestDeduplicateMemories:
             ),
         ]
         with patch(
-            "deep_agent.src.memory.clustering.cluster_memories",
+            "deep_agent.src.memory.clustering.near_duplicate_groups",
             return_value=[[0, 1]],
         ):
             resp = client.post("/personalization/memories/deduplicate")
@@ -621,7 +659,7 @@ class TestDeduplicateMemories:
             _make_store_item("quarterly.md", ["report"]),
         ]
         with patch(
-            "deep_agent.src.memory.clustering.cluster_memories",
+            "deep_agent.src.memory.clustering.near_duplicate_groups",
             return_value=[[0, 1]],
         ):
             resp = client.post("/personalization/memories/deduplicate")

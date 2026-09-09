@@ -9,6 +9,7 @@ from deepagents.backends.protocol import EditResult, ReadResult, WriteResult
 from deep_agent.src.infrastructure.backend import (
     DeduplicatingStoreBackend,
     _STORE_NAMESPACE_FACTORIES,
+    _as_runtime,
     _backend_accepts_runtime,
     _base_python,
     _build_env,
@@ -313,6 +314,9 @@ class TestBackendConstructorHelpers:
 
         assert _backend_accepts_runtime(NoRuntime) is False
 
+    def test_accepts_runtime_false_when_signature_unavailable(self):
+        assert _backend_accepts_runtime(42) is False
+
 
 class _FakeStoreInner:
     """Minimal backend that returns ReadResult from read/aread."""
@@ -322,11 +326,23 @@ class _FakeStoreInner:
         self.writes: list[str] = []
         self.read_error: str | None = None
 
-    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False):
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ):
         self.content = self.content.replace(old_string, new_string)
         return EditResult(path=file_path, occurrences=1)
 
-    async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False):
+    async def aedit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ):
         return self.edit(file_path, old_string, new_string, replace_all)
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000):
@@ -351,7 +367,12 @@ class TestTextFromRead:
         assert _text_from_read("hello") == "hello"
 
     def test_extracts_file_data_content(self):
-        result = ReadResult(file_data={"content": "The user's date of birth is June 12.\n", "encoding": "utf-8"})
+        result = ReadResult(
+            file_data={
+                "content": "The user's date of birth is June 12.\n",
+                "encoding": "utf-8",
+            }
+        )
         assert _text_from_read(result) == "The user's date of birth is June 12.\n"
 
     def test_returns_none_on_error(self):
@@ -359,6 +380,9 @@ class TestTextFromRead:
 
     def test_returns_none_for_none(self):
         assert _text_from_read(None) is None
+
+    def test_returns_none_for_unknown_object(self):
+        assert _text_from_read(object()) is None
 
 
 class TestDeduplicatingStoreBackendEdit:
@@ -399,3 +423,69 @@ class TestDeduplicatingStoreBackendEdit:
         )
         assert result.error is None
         assert "June 30" in inner.content
+
+
+class TestAsRuntime:
+    def test_returns_none_for_none(self):
+        assert _as_runtime(None) is None
+
+    def test_unwraps_nested_runtime(self):
+        inner = MagicMock(name="runtime")
+        ctx = MagicMock()
+        ctx.runtime = inner
+        assert _as_runtime(ctx) is inner
+
+    def test_returns_ctx_when_no_nested_runtime(self):
+        ctx = object()
+        assert _as_runtime(ctx) is ctx
+
+
+class TestDeduplicatingStoreBackendWrite:
+    def test_write_keeps_single_fact(self):
+        inner = _FakeStoreInner("")
+        backend = DeduplicatingStoreBackend(inner)
+        backend.write("user_profile.md", "- user likes python\n")
+        assert inner.writes[-1] == "- user likes python\n"
+
+    def test_write_drops_near_duplicate_facts(self):
+        inner = _FakeStoreInner("")
+        backend = DeduplicatingStoreBackend(inner)
+        backend.write(
+            "user_profile.md",
+            "user weighs 70kg\nuser weight is 70 kg\nlikes python programming\n",
+        )
+        written = inner.writes[-1]
+        assert written.count("70") == 1
+
+    async def test_awrite_deduplicates(self):
+        inner = _FakeStoreInner("")
+        backend = DeduplicatingStoreBackend(inner)
+        await backend.awrite(
+            "user_profile.md",
+            "user weighs 70kg\nuser weight is 70 kg\n",
+        )
+        assert inner.writes
+
+    def test_write_keeps_birth_and_joining_dates(self):
+        inner = _FakeStoreInner("")
+        backend = DeduplicatingStoreBackend(inner)
+        backend.write(
+            "user_profile.md",
+            "- The user's date of birth is June 11, 2003.\n"
+            "- The user's joining date is 2 June 2020.\n",
+        )
+        written = inner.writes[-1]
+        assert "date of birth is June 11, 2003" in written
+        assert "joining date is 2 June 2020" in written
+
+    def test_write_keeps_incomplete_joining_line_with_birth(self):
+        inner = _FakeStoreInner("")
+        backend = DeduplicatingStoreBackend(inner)
+        backend.write(
+            "user_profile.md",
+            "- The user's date of birth is June 11, 2003.\n"
+            "- The user's joining date is\n",
+        )
+        written = inner.writes[-1]
+        assert "date of birth" in written
+        assert "joining date" in written

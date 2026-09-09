@@ -115,6 +115,18 @@ class TestMemoryUserId:
             assert await memory_user_id(request) == "dpundir"
 
     @pytest.mark.asyncio
+    async def test_raises_when_token_has_no_user_claims(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch("deep_agent.aegra.auth._decode_token", return_value={}),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await memory_user_id(request)
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
     async def test_rejects_spoofed_x_user_id(self):
         request = MagicMock()
         request.headers = {

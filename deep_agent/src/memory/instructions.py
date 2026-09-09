@@ -29,9 +29,8 @@ def is_memory_store_key(key: str) -> bool:
     if not key:
         return False
     normalized = key.strip().lstrip("/")
-    return (
-        normalized == USER_MEMORY_STORE_KEY
-        or normalized.endswith("/" + USER_MEMORY_STORE_KEY)
+    return normalized == USER_MEMORY_STORE_KEY or normalized.endswith(
+        "/" + USER_MEMORY_STORE_KEY
     )
 
 
@@ -50,22 +49,28 @@ def memory_file_text(value: dict | None) -> str:
         return "\n".join(str(line) for line in raw)
     return ""
 
+
 _INSTRUCTIONS_PATH = Path(__file__).resolve().parent / "memory_instructions.j2"
 _instructions_cache: str | None = None
+_instructions_mtime: float | None = None
 
 
 def load_memory_instructions() -> str:
-    """Load the memory save/recall instructions (cached after first read)."""
-    global _instructions_cache  # noqa: PLW0603
-    if _instructions_cache is None:
-        try:
-            _instructions_cache = _INSTRUCTIONS_PATH.read_text()
-        except FileNotFoundError:
-            logger.warning(
-                "Memory instructions template not found at %s",
-                _INSTRUCTIONS_PATH,
-            )
-            _instructions_cache = ""
+    """Load the memory save/recall instructions (re-read when the template changes)."""
+    global _instructions_cache, _instructions_mtime  # noqa: PLW0603
+    try:
+        mtime = _INSTRUCTIONS_PATH.stat().st_mtime
+    except FileNotFoundError:
+        logger.warning(
+            "Memory instructions template not found at %s",
+            _INSTRUCTIONS_PATH,
+        )
+        _instructions_cache = ""
+        _instructions_mtime = None
+        return _instructions_cache
+    if _instructions_cache is None or _instructions_mtime != mtime:
+        _instructions_cache = _INSTRUCTIONS_PATH.read_text()
+        _instructions_mtime = mtime
     return _instructions_cache
 
 

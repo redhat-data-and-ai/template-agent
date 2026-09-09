@@ -2,10 +2,9 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from deep_agent.src.agent.config.hitl import (
     _DEEPAGENTS_BUILTIN_TOOLS,
+    _is_non_memory_path,
     build_interrupt_on,
 )
 from deep_agent.src.agent.config.middleware import HumanApprovalConfig
@@ -100,3 +99,15 @@ class TestBuildInterruptOn:
         # Built-in tools should also be included
         for builtin in _DEEPAGENTS_BUILTIN_TOOLS:
             assert builtin in result
+
+
+class TestIsNonMemoryPath:
+    def test_interrupts_paths_outside_memories(self):
+        req = MagicMock()
+        req.tool_call = {"args": {"file_path": "/tmp/notes.md"}}
+        assert _is_non_memory_path(req) is True
+
+    def test_allows_memories_path(self):
+        req = MagicMock()
+        req.tool_call = {"args": {"path": "/memories/user_profile.md"}}
+        assert _is_non_memory_path(req) is False
