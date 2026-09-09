@@ -5,6 +5,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["deep_agent"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"deep_agent/src/memory/memory_instructions.j2" = "deep_agent/src/memory/memory_instructions.j2"
+
 [tool.hatch.metadata]
 allow-direct-references = true
 

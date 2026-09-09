@@ -19,7 +19,7 @@ from deep_agent.aegra.eval_routes import eval_mgmt_router
 from deep_agent.aegra.eval_routes import router as eval_router
 from deep_agent.aegra.feedback import feedback_router
 from deep_agent.aegra.mcp_routes import router as mcp_router
-from deep_agent.aegra.personalization_routes import personalization_router
+from deep_agent.aegra.personalization_routes import router as personalization_router
 from deep_agent.aegra.projects_routes import projects_router
 from deep_agent.aegra.security_middleware import (
     RequestSizeLimitMiddleware,
@@ -151,6 +151,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     - ``X-Request-ID``: gateway-originated request correlation ID
     - ``X-Org-ID``: organisation owning the agent
     - ``X-Agent-ID``: ``org/name`` agent identifier
+    - ``X-User-ID``: BFF-forwarded session username (prefs/rules/store)
     """
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:
@@ -159,11 +160,13 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         request_id = request.headers.get("x-request-id") or uuid4().hex
         org_id = request.headers.get("x-org-id")
         agent_id = request.headers.get("x-agent-id")
+        user_id = request.headers.get("x-user-id")
         bind_request_context(
             trace_id=trace_id,
             request_id=request_id,
             org_id=org_id,
             agent_id=agent_id,
+            user_id=user_id,
         )
         try:
             from opentelemetry import trace as otel_trace

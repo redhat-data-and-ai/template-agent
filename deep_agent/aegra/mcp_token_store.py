@@ -71,6 +71,21 @@ END $$;
 """
 
 
+def _strip_client_secret(
+    data: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return a copy of *data* without the ``client_secret`` key.
+
+    If the dict does not contain ``client_secret``, it is returned as-is
+    (no copy).  The original dict is never mutated.
+    """
+    if data is None or "client_secret" not in data:
+        return data
+    cleaned = dict(data)
+    del cleaned["client_secret"]
+    return cleaned
+
+
 @dataclass
 class McpOAuthClient:
     """Registered OAuth client for a DCR-backed MCP server."""
@@ -219,6 +234,7 @@ class McpTokenStore:
         """Insert or update the OAuth client record for *(agent_name, mcp_name)*."""
         await self.ensure_tables()
         enc_secret = encrypt_secret(client_secret)
+        safe_registration_data = _strip_client_secret(registration_data)
         async with await psycopg.AsyncConnection.connect(self._uri) as conn:
             await conn.execute(
                 """
@@ -237,7 +253,9 @@ class McpTokenStore:
                     mcp_name,
                     client_id,
                     enc_secret,
-                    Jsonb(registration_data) if registration_data is not None else None,
+                    Jsonb(safe_registration_data)
+                    if safe_registration_data is not None
+                    else None,
                 ),
             )
             await conn.commit()
@@ -246,7 +264,7 @@ class McpTokenStore:
             mcp_name=mcp_name,
             client_id=client_id,
             client_secret=client_secret,
-            registration_data=registration_data,
+            registration_data=safe_registration_data,
         )
 
     async def get_token(

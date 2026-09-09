@@ -18,6 +18,8 @@ Functions:
 from __future__ import annotations
 
 import hashlib
+import inspect
+import json
 import os
 import shutil
 import subprocess
@@ -44,6 +46,43 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _backend: LocalShellBackend | None = None
 
 
+def _backend_accepts_runtime(cls: type) -> bool:
+    """Return True if *cls.__init__* takes a positional ``runtime`` argument.
+
+    PyPI deepagents 0.7.6 uses no-arg StateBackend/StoreBackend constructors.
+    Later builds require ``ToolRuntime`` as the first argument. Detect at
+    runtime so the same code works against both.
+    """
+    try:
+        param = inspect.signature(cls).parameters.get("runtime")
+    except (TypeError, ValueError):
+        return False
+    if param is None:
+        return False
+    return param.kind in (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
+
+
+def _make_state_backend(runtime: Any) -> Any:
+    """Instantiate StateBackend, passing runtime only when the ctor requires it."""
+    from deepagents.backends.state import StateBackend
+
+    if _backend_accepts_runtime(StateBackend):
+        return StateBackend(runtime)
+    return StateBackend()
+
+
+def _make_store_backend(runtime: Any, namespace: Any) -> Any:
+    """Instantiate StoreBackend, passing runtime only when the ctor requires it."""
+    from deepagents.backends.store import StoreBackend
+
+    if _backend_accepts_runtime(StoreBackend):
+        return StoreBackend(runtime, namespace=namespace)
+    return StoreBackend(namespace=namespace)
+
+
 class ReadOnlyFilesystemBackend(FilesystemBackend):
     """FilesystemBackend that rejects all write operations."""
 
@@ -67,6 +106,136 @@ class ReadOnlyFilesystemBackend(FilesystemBackend):
             FileUploadResponse(path=p, error="Read-only backend: uploads not permitted")
             for p, _ in files
         ]
+
+
+def _text_from_read(result: Any) -> str | None:
+    """Return file text from a backend ``read``/``aread`` result.
+
+    deepagents 0.7.x returns :class:`ReadResult`, not a string. Callers that
+    treat the result as ``str`` (e.g. ``.strip()``) crash after a successful
+    ``edit_file``.
+    """
+    if result is None:
+        return None
+    if isinstance(result, str):
+        return result
+    if getattr(result, "error", None):
+        return None
+    file_data = getattr(result, "file_data", None)
+    if isinstance(file_data, dict):
+        content = file_data.get("content")
+        if isinstance(content, str):
+            return content
+    return None
+
+
+class DeduplicatingStoreBackend:
+    """Wrapper around StoreBackend that deduplicates memory content on write.
+
+    Intercepts write/edit calls to memory files and removes near-duplicate
+    lines before persisting. All other operations are proxied unchanged.
+    """
+
+    def __init__(self, inner: Any, memory_prefix: str = "/memories/") -> None:
+        """Wrap *inner* backend, deduplicating writes under *memory_prefix*."""
+        self._inner = inner
+        self._memory_prefix = memory_prefix
+
+    def _deduplicate_content(self, content: str) -> str:
+        """Remove near-duplicate lines from memory file content."""
+        import re
+
+        from deep_agent.src.memory.clustering import near_duplicate_groups
+
+        lines = content.strip().split("\n")
+        facts: list[str] = []
+        non_fact_lines: list[str] = []
+
+        for line in lines:
+            cleaned = re.sub(r"^[-*•]\s*", "", line).strip()
+            if cleaned:
+                facts.append(cleaned)
+            elif line.strip():
+                non_fact_lines.append(line)
+
+        if len(facts) < 2:
+            return content
+
+        # Only drop restatements of the same fact (70kg vs 70 kg). Never
+        # drop "joining date" because it looks a bit like "date of birth".
+        clusters = near_duplicate_groups(facts)
+        indices_to_remove: set[int] = set()
+        for group in clusters:
+            longest_idx = max(group, key=lambda i: len(facts[i]))
+            for idx in group:
+                if idx != longest_idx:
+                    indices_to_remove.add(idx)
+
+        if not indices_to_remove:
+            return content
+
+        deduped_facts = [f for i, f in enumerate(facts) if i not in indices_to_remove]
+        result_lines = non_fact_lines + [f"- {f}" for f in deduped_facts]
+        logger.debug(
+            "Deduplicated memory: %d facts → %d (removed %d)",
+            len(facts),
+            len(deduped_facts),
+            len(indices_to_remove),
+        )
+        return "\n".join(result_lines) + "\n"
+
+    def _is_memory_path(self, file_path: str) -> bool:
+        return True
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        """Write *content* to *file_path*, deduplicating memory files."""
+        if self._is_memory_path(file_path):
+            content = self._deduplicate_content(content)
+        return self._inner.write(file_path, content)
+
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
+        """Async write with memory deduplication."""
+        if self._is_memory_path(file_path):
+            content = self._deduplicate_content(content)
+        return await self._inner.awrite(file_path, content)
+
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,  # noqa: FBT001, FBT002
+    ) -> EditResult:
+        """Edit file, then deduplicate if it is a memory file."""
+        result = self._inner.edit(file_path, old_string, new_string, replace_all)
+        if self._is_memory_path(file_path) and not getattr(result, "error", None):
+            current = _text_from_read(self._inner.read(file_path))
+            if current:
+                deduped = self._deduplicate_content(current)
+                if deduped != current:
+                    self._inner.write(file_path, deduped)
+        return result
+
+    async def aedit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,  # noqa: FBT001, FBT002
+    ) -> EditResult:
+        """Async edit with memory deduplication."""
+        result = await self._inner.aedit(file_path, old_string, new_string, replace_all)
+        if self._is_memory_path(file_path) and not getattr(result, "error", None):
+            current = _text_from_read(await self._inner.aread(file_path))
+            if current:
+                deduped = self._deduplicate_content(current)
+                if deduped != current:
+                    await self._inner.awrite(file_path, deduped)
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        """Proxy all other methods to the inner backend."""
+        return getattr(self._inner, name)
 
 
 def _base_python() -> str:
@@ -291,13 +460,22 @@ def _build_state_backend() -> Any:
         return get_backend()
 
 
+def _as_runtime(ctx: Any) -> Any:
+    """Return the LangGraph Runtime from a namespace-factory argument."""
+    if ctx is None:
+        return None
+    inner = getattr(ctx, "runtime", None)
+    return ctx if inner is None else inner
+
+
 def _get_assistant_id_from_config(ctx: Any) -> str:
     """Extract assistant_id from runtime config metadata, falling back to 'default'.
 
     Mirrors the fallback logic in StoreBackend._get_namespace_legacy:
     check runtime.config → metadata → assistant_id.
     """
-    cfg = getattr(ctx.runtime, "config", None) or {}
+    runtime = _as_runtime(ctx)
+    cfg = getattr(runtime, "config", None) or {}
     if isinstance(cfg, dict):
         metadata = cfg.get("metadata")
         assistant_id: Any = (
@@ -308,21 +486,89 @@ def _get_assistant_id_from_config(ctx: Any) -> str:
     return "default"
 
 
+def _get_user_id_from_runtime(runtime: Any) -> str | None:
+    """Extract the BFF user id from run config (metadata or configurable).
+
+    The UI proxy sets ``config.metadata.user_id`` (and ``configurable.user_id``)
+    to the same value as ``X-User-ID``, so local runs without Aegra auth still
+    get a per-user Store namespace.
+    """
+    cfg = getattr(runtime, "config", None) or {}
+    if not isinstance(cfg, dict):
+        return None
+    for bag_name in ("metadata", "configurable"):
+        bag = cfg.get(bag_name)
+        if not isinstance(bag, dict):
+            continue
+        uid = bag.get("user_id") or bag.get("x_user_id")
+        if uid:
+            uid_str = str(uid).strip()
+            if uid_str:
+                return uid_str
+    return None
+
+
+def _preferred_username_from_runtime(runtime: Any) -> str | None:
+    """Read ``preferred_username`` from the access token on the runtime user."""
+    candidates = [getattr(runtime, "user", None)]
+    si = getattr(runtime, "server_info", None)
+    if si is not None:
+        candidates.append(getattr(si, "user", None))
+    for user in candidates:
+        token = getattr(user, "access_token", None) if user is not None else None
+        if not isinstance(token, str) or token.count(".") < 2:
+            continue
+        try:
+            import base64
+
+            payload_b64 = token.split(".")[1]
+            payload_b64 += "=" * (-len(payload_b64) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+            username = claims.get("preferred_username")
+            if username:
+                return str(username)
+        except Exception:
+            continue
+    return None
+
+
 def _safe_namespace_user(ctx: Any) -> tuple[str, ...]:
-    """User-scoped namespace: (assistant_id, user_identity) on server, config fallback locally."""
-    si: Any = getattr(ctx.runtime, "server_info", None)
-    if si is not None and getattr(si, "assistant_id", None):
-        parts: list[str] = [si.assistant_id]
+    """User-scoped Store namespace: (assistant_id, memory_user_id).
+
+    Memories are keyed by the BFF user id (``X-User-ID`` /
+    ``preferred_username``), not JWT ``sub``. That matches Settings REST
+    (:func:`memory_user_id`) and run ``metadata.user_id``.
+
+    Resolution for the user component:
+    1. Run metadata / configurable ``user_id`` (BFF)
+    2. ``preferred_username`` on the access token
+    3. ``server_info.user.identity`` (JWT ``sub``) as last resort
+    """
+    runtime = _as_runtime(ctx)
+    si: Any = getattr(runtime, "server_info", None)
+    meta_user = _get_user_id_from_runtime(runtime)
+    jwt_username = _preferred_username_from_runtime(runtime)
+    identity: str | None = None
+    if si is not None:
         user: Any = getattr(si, "user", None)
-        if getattr(user, "identity", None):
-            parts.append(user.identity)
-        return tuple(parts)
-    return (_get_assistant_id_from_config(ctx),)
+        raw_identity = getattr(user, "identity", None) if user is not None else None
+        if raw_identity:
+            identity = str(raw_identity)
+
+    if si is not None and getattr(si, "assistant_id", None):
+        assistant = str(si.assistant_id)
+    else:
+        assistant = _get_assistant_id_from_config(ctx)
+
+    user_part = meta_user or jwt_username or identity
+    if user_part:
+        return (assistant, user_part)
+    return (assistant,)
 
 
 def _safe_namespace_assistant(ctx: Any) -> tuple[str, ...]:
     """Assistant-scoped namespace: (assistant_id,) on server, config fallback locally."""
-    si: Any = getattr(ctx.runtime, "server_info", None)
+    si: Any = getattr(_as_runtime(ctx), "server_info", None)
     if si is not None and getattr(si, "assistant_id", None):
         return (si.assistant_id,)
     return (_get_assistant_id_from_config(ctx),)
@@ -330,7 +576,8 @@ def _safe_namespace_assistant(ctx: Any) -> tuple[str, ...]:
 
 def _safe_namespace_org(ctx: Any) -> tuple[str, ...]:
     """Org-scoped namespace: (org_id,)."""
-    return (ctx.runtime.context.org_id,)
+    runtime = _as_runtime(ctx)
+    return (runtime.context.org_id,)
 
 
 _STORE_NAMESPACE_FACTORIES: dict[str, Any] = {
@@ -405,7 +652,12 @@ def _build_composite_backend(fs_config: Any) -> Any:
             ns = _STORE_NAMESPACE_FACTORIES.get(store_scope, _safe_namespace_user)
             store_backend = StoreBackend(namespace=ns)
             for prefix in store_route_prefixes:
-                routes[prefix] = store_backend
+                if prefix.rstrip("/").endswith("memories"):
+                    routes[prefix] = DeduplicatingStoreBackend(
+                        store_backend, memory_prefix=prefix
+                    )
+                else:
+                    routes[prefix] = store_backend
         except ImportError:
             logger.warning(
                 "StoreBackend not available — store routes will use StateBackend"
