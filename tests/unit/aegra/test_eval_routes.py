@@ -9,187 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import deep_agent.aegra.eval_routes as er
-from deep_agent.aegra.eval_routes import _require_developer
-
-# ── _require_developer ────────────────────────────────────────────────────────
-
-
-class TestRequireDeveloper:
-    @pytest.mark.asyncio
-    async def test_no_token_raises_401(self):
-        with pytest.raises(er.HTTPException) as exc:
-            await _require_developer(creds=None)
-        assert exc.value.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_empty_credentials_raises_401(self):
-        creds = MagicMock()
-        creds.credentials = ""
-        with pytest.raises(er.HTTPException) as exc:
-            await _require_developer(creds=creds)
-        assert exc.value.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_dev_bypass_returns_token(self):
-        creds = MagicMock()
-        creds.credentials = "some-token"
-        with patch("deep_agent.aegra.auth.ENABLE_AUTH", False):
-            result = await _require_developer(creds=creds)
-        assert result == "some-token"
-
-    @pytest.mark.asyncio
-    async def test_valid_developer_token_returns_token(self):
-        creds = MagicMock()
-        creds.credentials = "valid-token"
-        with (
-            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
-            patch(
-                "deep_agent.aegra.auth._decode_token",
-                return_value={"sub": "dev-123", "realm_access": {"roles": ["devs"]}},
-            ),
-            patch("deep_agent.aegra.auth_helpers.settings") as mock_settings,
-        ):
-            mock_settings.DEVELOPER_GROUP = ["devs"]
-            mock_settings.USER_GROUP = ["users"]
-            result = await _require_developer(creds=creds)
-        assert result == "valid-token"
-
-    @pytest.mark.asyncio
-    async def test_user_group_member_denied_on_eval(self):
-        creds = MagicMock()
-        creds.credentials = "user-token"
-        with (
-            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
-            patch(
-                "deep_agent.aegra.auth._decode_token",
-                return_value={"sub": "user-1", "realm_access": {"roles": ["users"]}},
-            ),
-            patch("deep_agent.aegra.auth_helpers.settings") as mock_settings,
-        ):
-            mock_settings.DEVELOPER_GROUP = ["devs"]
-            mock_settings.USER_GROUP = ["users"]
-            with pytest.raises(er.HTTPException) as exc:
-                await _require_developer(creds=creds)
-        assert exc.value.status_code == 403
-
-    @pytest.mark.asyncio
-    async def test_groups_unset_any_auth_passes(self):
-        creds = MagicMock()
-        creds.credentials = "any-token"
-        with (
-            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
-            patch(
-                "deep_agent.aegra.auth._decode_token",
-                return_value={"sub": "user-1", "realm_access": {"roles": ["other"]}},
-            ),
-            patch("deep_agent.aegra.auth_helpers.settings") as mock_settings,
-        ):
-            mock_settings.DEVELOPER_GROUP = []
-            mock_settings.USER_GROUP = []
-            result = await _require_developer(creds=creds)
-        assert result == "any-token"
-
-    @pytest.mark.asyncio
-    async def test_expired_token_raises_401(self, caplog):
-        import jwt
-
-        creds = MagicMock()
-        creds.credentials = "expired-token"
-        with (
-            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
-            patch(
-                "deep_agent.aegra.auth._decode_token",
-                side_effect=jwt.ExpiredSignatureError(),
-            ),
-            caplog.at_level("WARNING"),
-        ):
-            with pytest.raises(er.HTTPException) as exc:
-                await _require_developer(creds=creds)
-        assert exc.value.status_code == 401
-        assert exc.value.detail == "Token expired"
-        assert "Token expired" in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_invalid_token_raises_401(self, caplog):
-        import jwt
-
-        creds = MagicMock()
-        creds.credentials = "malformed-token"
-        with (
-            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
-            patch(
-                "deep_agent.aegra.auth._decode_token",
-                side_effect=jwt.DecodeError("Invalid header padding"),
-            ),
-            caplog.at_level("WARNING"),
-        ):
-            with pytest.raises(er.HTTPException) as exc:
-                await _require_developer(creds=creds)
-        assert exc.value.status_code == 401
-        assert exc.value.detail == "Invalid token"
-        assert "Invalid token" in caplog.text
-
-
-class TestEvalMgmtRequiresDeveloper:
-    """/evals/* management routes must reject USER_GROUP members (403)."""
-
-    def _client(self):
-        from fastapi import FastAPI
-        from fastapi.testclient import TestClient
-
-        app = FastAPI()
-        app.include_router(er.eval_mgmt_router)
-        return TestClient(app)
-
-    def test_user_group_member_gets_403_on_status(self):
-        client = self._client()
-        with (
-            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
-            patch(
-                "deep_agent.aegra.auth._decode_token",
-                return_value={"sub": "user-1", "realm_access": {"roles": ["users"]}},
-            ),
-            patch("deep_agent.aegra.auth_helpers.settings") as mock_settings,
-        ):
-            mock_settings.DEVELOPER_GROUP = []
-            mock_settings.USER_GROUP = ["users"]
-            resp = client.get("/evals/status", headers={"Authorization": "Bearer tok"})
-        assert resp.status_code == 403
-
-    def test_user_group_member_gets_403_on_trigger(self):
-        client = self._client()
-        with (
-            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
-            patch(
-                "deep_agent.aegra.auth._decode_token",
-                return_value={"sub": "user-1", "realm_access": {"roles": ["users"]}},
-            ),
-            patch("deep_agent.aegra.auth_helpers.settings") as mock_settings,
-        ):
-            mock_settings.DEVELOPER_GROUP = ["devs"]
-            mock_settings.USER_GROUP = ["users"]
-            resp = client.post(
-                "/evals/trigger", headers={"Authorization": "Bearer tok"}
-            )
-        assert resp.status_code == 403
-
-    def test_expired_token_gets_401_on_trigger(self):
-        import jwt
-
-        client = self._client()
-        with (
-            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
-            patch(
-                "deep_agent.aegra.auth._decode_token",
-                side_effect=jwt.ExpiredSignatureError(),
-            ),
-        ):
-            resp = client.post(
-                "/evals/trigger", headers={"Authorization": "Bearer tok"}
-            )
-        assert resp.status_code == 401
-        assert resp.json() == {"detail": "Token expired"}
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -1553,6 +1372,30 @@ class TestInternalCleanupEndpoint:
         ):
             result = await er.cleanup_eval_redis(mock_request)
         assert "status" in result
+
+
+class TestRequireBearer:
+    async def test_returns_token_when_valid(self):
+        creds = MagicMock()
+        creds.credentials = "my-token"
+        result = er._require_bearer(creds)
+        assert result == "my-token"
+
+    async def test_raises_401_when_none(self):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            er._require_bearer(None)
+        assert exc.value.status_code == 401
+
+    async def test_raises_401_when_empty_credentials(self):
+        from fastapi import HTTPException
+
+        creds = MagicMock()
+        creds.credentials = ""
+        with pytest.raises(HTTPException) as exc:
+            er._require_bearer(creds)
+        assert exc.value.status_code == 401
 
 
 class TestCheckMcpAuth:

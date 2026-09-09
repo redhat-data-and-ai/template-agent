@@ -59,7 +59,6 @@ def _patch_aegra_persistence_if_inmemory() -> None:
         from aegra_api.core.database import db_manager
 
         async def _noop_initialize() -> None:
-            """Skip database init when running in in-memory mode."""
             logger.info("aegra_db_initialize_skipped_inmemory_mode")
 
         db_manager.initialize = _noop_initialize
@@ -77,7 +76,6 @@ register_atexit()
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Run startup tasks on enter and shutdown on exit."""
     from deep_agent.aegra.startup import run_startup
     from deep_agent.src.observability.otel_setup import (
         setup_otel_metrics,

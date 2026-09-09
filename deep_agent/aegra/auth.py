@@ -33,7 +33,6 @@ import httpx
 import jwt
 from langgraph_sdk import Auth
 
-from deep_agent.aegra.auth_helpers import _normalize_roles
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -65,13 +64,6 @@ ENABLE_USER_ID_ENCRYPTION = (
     os.environ.get("ENABLE_USER_ID_ENCRYPTION", "false").lower() == "true"
 )
 USER_ID_ENCRYPTION_KEY = os.environ.get("USER_ID_ENCRYPTION_KEY", "")
-
-DEVELOPER_GROUP: list[str] = [
-    g.strip() for g in os.environ.get("DEVELOPER_GROUP", "").split(",") if g.strip()
-]
-USER_GROUP: list[str] = [
-    g.strip() for g in os.environ.get("USER_GROUP", "").split(",") if g.strip()
-]
 
 _jwks_client: jwt.PyJWKClient | None = None
 
@@ -160,7 +152,6 @@ def _resolve_jwks_uri() -> str:
 
 
 def _get_jwks_client() -> jwt.PyJWKClient:
-    """Return the cached JWKS client, creating it on first call."""
     global _jwks_client
     if _jwks_client is None:
         try:
@@ -265,7 +256,7 @@ async def authenticate(headers: dict) -> dict:
                 p = _decode_token(cached)
                 enc_rt = await asyncio.to_thread(cache_get, f"eval:refresh:{sub}") or ""
                 stored_rt = decrypt_secret(enc_rt) or "" if enc_rt else ""
-                return _checked_make_user(p, cached, stored_rt)
+                return _make_user(p, cached, stored_rt)
             except Exception:
                 pass  # cached token also expired — fall through to lock path
 
@@ -305,7 +296,7 @@ async def authenticate(headers: dict) -> dict:
                     _EVAL_REFRESH_TTL,
                 )
                 logger.info("eval_token_refreshed")
-                return _checked_make_user(_decode_token(new_access), new_access, new_rt)
+                return _make_user(_decode_token(new_access), new_access, new_rt)
             else:
                 # Lock loser: poll until winner writes the cache
                 for _ in range(6):
@@ -321,7 +312,7 @@ async def authenticate(headers: dict) -> dict:
                                 lambda: cache_get(f"eval:refresh:{sub}") or ""
                             )
                             stored_rt = decrypt_secret(enc_rt) or "" if enc_rt else ""
-                            return _checked_make_user(p, polled, stored_rt)
+                            return _make_user(p, polled, stored_rt)
                         except Exception:
                             break
                 raise PermissionError(
@@ -345,44 +336,17 @@ async def authenticate(headers: dict) -> dict:
                     _EVAL_REFRESH_TTL,
                 )
 
-    return _checked_make_user(payload, access_token, refresh_token)
-
-
-def _check_group_for_langgraph(permissions: list[str]) -> None:
-    """Enforce group restriction for LangGraph auth layer.
-
-    Unrestricted when both DEVELOPER_GROUP and USER_GROUP are empty.
-    Raises PermissionError — LangGraph converts this to an auth failure response.
-    """
-    if not DEVELOPER_GROUP and not USER_GROUP:
-        return
-    if DEVELOPER_GROUP and any(g in permissions for g in DEVELOPER_GROUP):
-        return
-    if USER_GROUP and any(g in permissions for g in USER_GROUP):
-        return
-    all_groups = DEVELOPER_GROUP + USER_GROUP
-    allowed = " or ".join(f"'{g}'" for g in all_groups)
-    raise PermissionError(f"Access denied: {allowed} group membership required.")
-
-
-def _checked_make_user(
-    payload: dict[str, Any], access_token: str, refresh_token: str
-) -> dict[str, Any]:
-    """Build user dict and enforce group membership via LangGraph layer."""
-    user = _make_user(payload, access_token, refresh_token)
-    _check_group_for_langgraph(user["permissions"])
-    return user
+    return _make_user(payload, access_token, refresh_token)
 
 
 def _make_user(
     payload: dict[str, Any], access_token: str, refresh_token: str
 ) -> dict[str, Any]:
-    """Build a user dict from a decoded JWT payload."""
     uid = payload["sub"]
     return {
         "identity": uid,
         "display_name": payload.get("name", payload.get("preferred_username", "")),
-        "permissions": _normalize_roles(payload),
+        "permissions": payload.get("realm_access", {}).get("roles", []),
         "is_authenticated": True,
         "email": payload.get("email", ""),
         "access_token": access_token,

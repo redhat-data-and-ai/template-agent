@@ -92,29 +92,6 @@ class Settings(BaseSettings):
     SSO_DEV_USER_ID: str = Field(default="dev-user")
     ENABLE_USER_ID_ENCRYPTION: bool = Field(default=False)
 
-    DEVELOPER_GROUP: str | list[str] = Field(
-        default="",
-        description="Keycloak realm_access.roles for developers. Full access including eval. Comma-separated.",
-    )
-    USER_GROUP: str | list[str] = Field(
-        default="",
-        description="Keycloak realm_access.roles for regular users. Non-eval access only. Comma-separated.",
-    )
-
-    @field_validator("DEVELOPER_GROUP", "USER_GROUP", mode="before")
-    @classmethod
-    def _csv_to_list(cls, v: object) -> list[str]:
-        """Parse comma-separated string into a list of trimmed, non-empty values."""
-        if isinstance(v, list):
-            return [s.strip() for s in v if isinstance(s, str) and s.strip()]
-        if isinstance(v, str):
-            return [s.strip() for s in v.split(",") if s.strip()]
-        if v is None:
-            return []
-        raise ValueError(
-            f"DEVELOPER_GROUP / USER_GROUP must be a comma-separated string or list, got {type(v).__name__}"
-        )
-
     # ── Environment ───────────────────────────────────────────────────
     ENVIRONMENT: str = Field(
         default="development",
@@ -161,7 +138,6 @@ class Settings(BaseSettings):
     )
     @classmethod
     def _empty_str_to_none(cls, v: object) -> object:
-        """Coerce blank strings to None for optional fields."""
         if isinstance(v, str) and not v.strip():
             return None
         return v
