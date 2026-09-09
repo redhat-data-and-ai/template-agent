@@ -465,3 +465,146 @@ class TestAuthenticate:
                 await authenticate(
                     {"authorization": "Bearer expired", "x-refresh-token": "rt"}
                 )
+
+    async def test_expired_token_cache_hit_returns_user(self):
+        """Line 259: cached access token is valid — return user without OIDC."""
+        from deep_agent.aegra.auth import authenticate
+
+        refreshed_payload = {"sub": "user-cache", "name": "Cached"}
+
+        def _cache_get(key: str) -> str | None:
+            if key == "eval:active:user-cache":
+                return "1"
+            if key == "eval:access:user-cache":
+                return "enc-access"
+            if key == "eval:refresh:user-cache":
+                return "enc-refresh"
+            return None
+
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch("deep_agent.aegra.auth.EVAL_TOKEN_REFRESH_ENABLED", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=[pyjwt.ExpiredSignatureError(), refreshed_payload],
+            ),
+            patch("deep_agent.aegra.redis.get_redis_client", return_value=MagicMock()),
+            patch(
+                "deep_agent.aegra.auth._decode_sub_unverified",
+                return_value="user-cache",
+            ),
+            patch("deep_agent.aegra.redis.cache_get", side_effect=_cache_get),
+            patch(
+                "deep_agent.aegra.mcp_crypto.decrypt_secret",
+                side_effect=lambda v: f"dec-{v}",
+            ),
+        ):
+            result = await authenticate(
+                {"authorization": "Bearer expired", "x-refresh-token": "rt"}
+            )
+
+        assert result["identity"] == "user-cache"
+        assert result["display_name"] == "Cached"
+
+    async def test_expired_token_lock_winner_refreshes(self):
+        """Line 299: lock holder refreshes via OIDC and returns user."""
+        from contextlib import asynccontextmanager
+
+        from deep_agent.aegra.auth import authenticate
+
+        refreshed_payload = {"sub": "user-winner", "name": "Winner"}
+
+        def _cache_get(key: str) -> str | None:
+            if key == "eval:active:user-winner":
+                return "1"
+            if key == "eval:refresh:user-winner":
+                return "enc-rt"
+            return None
+
+        @asynccontextmanager
+        async def _fake_lock(*a, **kw):
+            yield "held"
+
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch("deep_agent.aegra.auth.EVAL_TOKEN_REFRESH_ENABLED", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=[pyjwt.ExpiredSignatureError(), refreshed_payload],
+            ),
+            patch("deep_agent.aegra.redis.get_redis_client", return_value=MagicMock()),
+            patch(
+                "deep_agent.aegra.auth._decode_sub_unverified",
+                return_value="user-winner",
+            ),
+            patch("deep_agent.aegra.redis.cache_get", side_effect=_cache_get),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch("deep_agent.aegra.redis.distributed_lock", _fake_lock),
+            patch(
+                "deep_agent.aegra.mcp_crypto.decrypt_secret", return_value="plain-rt"
+            ),
+            patch("deep_agent.aegra.mcp_crypto.encrypt_secret", return_value="enc-val"),
+            patch(
+                "deep_agent.aegra.auth._oidc_refresh",
+                return_value=("new-access", "new-rt"),
+            ),
+        ):
+            result = await authenticate(
+                {"authorization": "Bearer expired", "x-refresh-token": "rt"}
+            )
+
+        assert result["identity"] == "user-winner"
+        assert result["display_name"] == "Winner"
+
+    async def test_expired_token_lock_loser_polls_cache(self):
+        """Line 315: lock loser polls until winner writes cached token."""
+        from contextlib import asynccontextmanager
+
+        from deep_agent.aegra.auth import authenticate
+
+        polled_payload = {"sub": "user-loser", "name": "Loser"}
+        poll_count = 0
+
+        def _cache_get(key: str) -> str | None:
+            nonlocal poll_count
+            if key == "eval:active:user-loser":
+                return "1"
+            if key == "eval:access:user-loser":
+                poll_count += 1
+                if poll_count >= 2:
+                    return "enc-polled-access"
+                return None
+            if key == "eval:refresh:user-loser":
+                return "enc-rt"
+            return None
+
+        @asynccontextmanager
+        async def _fake_lock(*a, **kw):
+            yield "timeout"
+
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch("deep_agent.aegra.auth.EVAL_TOKEN_REFRESH_ENABLED", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=[pyjwt.ExpiredSignatureError(), polled_payload],
+            ),
+            patch("deep_agent.aegra.redis.get_redis_client", return_value=MagicMock()),
+            patch(
+                "deep_agent.aegra.auth._decode_sub_unverified",
+                return_value="user-loser",
+            ),
+            patch("deep_agent.aegra.redis.cache_get", side_effect=_cache_get),
+            patch("deep_agent.aegra.redis.distributed_lock", _fake_lock),
+            patch(
+                "deep_agent.aegra.mcp_crypto.decrypt_secret",
+                side_effect=lambda v: f"dec-{v}",
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await authenticate(
+                {"authorization": "Bearer expired", "x-refresh-token": "rt"}
+            )
+
+        assert result["identity"] == "user-loser"
+        assert result["display_name"] == "Loser"
