@@ -92,6 +92,24 @@ class Settings(BaseSettings):
     SSO_DEV_USER_ID: str = Field(default="dev-user")
     ENABLE_USER_ID_ENCRYPTION: bool = Field(default=False)
 
+    DEVELOPER_GROUP: str | list[str] = Field(
+        default="",
+        description="Keycloak realm_access.roles for developers. Full access including eval. Comma-separated.",
+    )
+    USER_GROUP: str | list[str] = Field(
+        default="",
+        description="Keycloak realm_access.roles for regular users. Non-eval access only. Comma-separated.",
+    )
+
+    @field_validator("DEVELOPER_GROUP", "USER_GROUP", mode="before")
+    @classmethod
+    def _csv_to_list(cls, v: object) -> list[str]:
+        if isinstance(v, list):
+            return [s.strip() for s in v if s.strip()]
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return []
+
     # ── Environment ───────────────────────────────────────────────────
     ENVIRONMENT: str = Field(
         default="development",

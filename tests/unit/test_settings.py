@@ -192,3 +192,44 @@ class TestUiOrigin:
     def test_returns_none_when_neither_set(self):
         s = Settings(UI_ORIGIN=None, AGENT_PUBLIC_BASE_URL=None)
         assert s.ui_origin is None
+
+
+class TestGroupAccessSettings:
+    def test_developer_group_defaults_empty_list(self):
+        s = Settings(_env_file=None)
+        assert s.DEVELOPER_GROUP == []
+
+    def test_user_group_defaults_empty_list(self):
+        s = Settings(_env_file=None)
+        assert s.USER_GROUP == []
+
+    def test_group_fields_from_comma_separated_string(self):
+        s = Settings(DEVELOPER_GROUP="dev1,dev2", USER_GROUP="user1,user2")
+        assert s.DEVELOPER_GROUP == ["dev1", "dev2"]
+        assert s.USER_GROUP == ["user1", "user2"]
+
+    def test_single_group_value(self):
+        s = Settings(DEVELOPER_GROUP="dev-only")
+        assert s.DEVELOPER_GROUP == ["dev-only"]
+
+    def test_empty_string_produces_empty_list(self):
+        s = Settings(DEVELOPER_GROUP="", USER_GROUP="")
+        assert s.DEVELOPER_GROUP == []
+        assert s.USER_GROUP == []
+
+    def test_whitespace_trimmed_from_group_entries(self):
+        s = Settings(DEVELOPER_GROUP=" dev1 , dev2 ")
+        assert s.DEVELOPER_GROUP == ["dev1", "dev2"]
+
+    def test_accepts_list_input(self):
+        s = Settings(DEVELOPER_GROUP=["dev1", "dev2"], USER_GROUP=["user1"])
+        assert s.DEVELOPER_GROUP == ["dev1", "dev2"]
+        assert s.USER_GROUP == ["user1"]
+
+    def test_list_input_strips_whitespace(self):
+        s = Settings(DEVELOPER_GROUP=[" dev1 ", " dev2"])
+        assert s.DEVELOPER_GROUP == ["dev1", "dev2"]
+
+    def test_list_input_filters_empty_strings(self):
+        s = Settings(DEVELOPER_GROUP=["dev1", "", "  ", "dev2"])
+        assert s.DEVELOPER_GROUP == ["dev1", "dev2"]
