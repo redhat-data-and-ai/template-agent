@@ -109,6 +109,26 @@ class TestRequireDeveloper:
         assert exc.value.detail == "Token expired"
         assert "Token expired" in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_invalid_token_raises_401(self, caplog):
+        import jwt
+
+        creds = MagicMock()
+        creds.credentials = "malformed-token"
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=jwt.DecodeError("Invalid header padding"),
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            with pytest.raises(er.HTTPException) as exc:
+                await _require_developer(creds=creds)
+        assert exc.value.status_code == 401
+        assert exc.value.detail == "Invalid token"
+        assert "Invalid token" in caplog.text
+
 
 class TestEvalMgmtRequiresDeveloper:
     """/evals/* management routes must reject USER_GROUP members (403)."""

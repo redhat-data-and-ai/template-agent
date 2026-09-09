@@ -233,3 +233,19 @@ class TestGroupAccessSettings:
     def test_list_input_filters_empty_strings(self):
         s = Settings(DEVELOPER_GROUP=["dev1", "", "  ", "dev2"])
         assert s.DEVELOPER_GROUP == ["dev1", "dev2"]
+
+    def test_none_produces_empty_list(self):
+        s = Settings(DEVELOPER_GROUP=None)
+        assert s.DEVELOPER_GROUP == []
+
+    def test_integer_raises_validation_error(self):
+        with pytest.raises(Exception, match="comma-separated string or list"):
+            Settings(DEVELOPER_GROUP=123)
+
+    def test_dict_raises_validation_error(self):
+        with pytest.raises(Exception, match="comma-separated string or list"):
+            Settings(DEVELOPER_GROUP={"key": "val"})
+
+    def test_list_with_non_string_items_filters_them(self):
+        s = Settings(DEVELOPER_GROUP=["dev1", 123, "dev2"])
+        assert s.DEVELOPER_GROUP == ["dev1", "dev2"]

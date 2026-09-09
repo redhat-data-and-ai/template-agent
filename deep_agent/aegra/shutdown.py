@@ -162,6 +162,7 @@ def register_signal_handlers() -> None:
 
 
 def _handle_signal(signum: int, loop: asyncio.AbstractEventLoop) -> None:
+    """Schedule async shutdown when a termination signal is received."""
     global _shutting_down  # noqa: PLW0603
     _shutting_down = True
     logger.info("Signal %d received — scheduling async shutdown", signum)
@@ -248,6 +249,7 @@ def _persist_inflight_runs() -> str:
 
 
 async def _drain() -> str:
+    """Wait for the configured drain period before shutting down."""
     if SHUTDOWN_DRAIN_SECONDS <= 0:
         return "skipped: drain disabled"
     logger.info("Draining for %ds", SHUTDOWN_DRAIN_SECONDS)
@@ -256,6 +258,7 @@ async def _drain() -> str:
 
 
 async def _shutdown_langfuse() -> str:
+    """Flush and shut down the Langfuse client."""
     try:
         from deep_agent.aegra.telemetry import get_langfuse_client
 
@@ -309,6 +312,7 @@ def _langfuse_shutdown_blocking(client: Any) -> None:
 
 
 def _clear_graph_cache() -> str:
+    """Clear the in-memory graph cache on shutdown."""
     try:
         from deep_agent.aegra.graph import _graph_cache, _graph_cache_ts
 
@@ -336,6 +340,7 @@ def _shutdown_otel() -> str:
 
 
 def _close_redis() -> str:
+    """Close the Redis connection pool."""
     try:
         from deep_agent.aegra.redis import close_redis_client
 

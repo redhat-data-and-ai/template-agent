@@ -57,7 +57,12 @@ async def _require_developer(
     except jwt.ExpiredSignatureError:
         logging.getLogger(__name__).warning("Token expired")
         raise HTTPException(status_code=401, detail="Token expired") from None
-    permissions = payload.get("realm_access", {}).get("roles", [])
+    except jwt.PyJWTError as exc:
+        logging.getLogger(__name__).warning("Invalid token: %s", exc)
+        raise HTTPException(status_code=401, detail="Invalid token") from None
+    from deep_agent.aegra.auth_helpers import _normalize_roles
+
+    permissions = _normalize_roles(payload)
     check_group_access(permissions, developer_only=True)
     return str(creds.credentials)
 
@@ -291,6 +296,7 @@ def _extract_from_messages(messages: list[dict]) -> tuple[str, list[dict], list[
 
 
 async def _create_thread(client: httpx.AsyncClient) -> str:
+    """Create a new LangGraph thread and return its ID."""
     resp = await client.post(f"{AGENT_BASE_URL}/threads", json={})
     resp.raise_for_status()
     return resp.json()["thread_id"]  # type: ignore[no-any-return]
@@ -372,6 +378,7 @@ async def _collect_subagent_tool_calls_via_remote_graph(
         snapshot = await graph.aget_state(config, subgraphs=True)
 
         def _collect(state_snapshot: Any) -> None:
+            """Recursively collect tool calls from a state snapshot."""
             tasks = getattr(state_snapshot, "tasks", [])
             for task in tasks:
                 substate = getattr(task, "state", None)
@@ -411,8 +418,8 @@ async def _collect_subagent_tool_calls_from_postgres(
     from deep_agent.src.settings import settings
 
     def _ext_hook(code: int, data: bytes) -> Any:
-        # Return raw bytes for unknown ext types instead of raising —
-        # prevents Gemini thought-signature binary payloads from aborting parse.
+        """Return raw bytes for unknown msgpack ext types instead of raising."""
+        # Prevents Gemini thought-signature binary payloads from aborting parse.
         try:
             return msgpack.unpackb(data, raw=False, ext_hook=_ext_hook)
         except Exception:
@@ -637,6 +644,7 @@ _EVALS_DDL_STATEMENTS = [
 
 
 async def _pg_conn() -> Any:
+    """Open an async PostgreSQL connection using the configured URI."""
     import psycopg
 
     from deep_agent.src.settings import settings
@@ -645,6 +653,7 @@ async def _pg_conn() -> Any:
 
 
 async def _ensure_evals_table() -> None:
+    """Create the evals table and run migrations if needed."""
     import psycopg.errors
 
     conn = await _pg_conn()
@@ -671,6 +680,7 @@ _table_ensured = False
 
 
 async def _ensure_evals_table_once() -> None:
+    """Idempotent wrapper — runs _ensure_evals_table at most once."""
     global _table_ensured
     if _table_ensured:
         return
@@ -713,6 +723,7 @@ async def _run_ddl_once(
 
 
 def _pg_row_to_dict(row: Any, cursor: Any) -> dict[str, Any]:
+    """Convert a psycopg row tuple to a dict keyed by column name."""
     return dict(zip([d.name for d in cursor.description], row))
 
 
@@ -874,6 +885,7 @@ _datasets_table_ensured = False
 
 
 async def _ensure_datasets_table_once() -> None:
+    """Idempotent wrapper — runs datasets table DDL at most once."""
     await _run_ddl_once(
         _DATASETS_DDL,
         _DATASETS_DDL_MIGRATIONS,
@@ -1047,6 +1059,7 @@ async def _queue_eval_run(
     *,
     forced: bool = False,
 ) -> dict[str, Any]:
+    """Dispatch an eval run to the eval-runner service."""
     auth_token = request.headers.get("authorization", "")
     sub = _extract_sub(request)
     _write_eval_redis(sub or "", request.headers.get("x-refresh-token", ""))
@@ -1311,6 +1324,7 @@ def _collect_agent_models() -> list[dict[str, Any]]:
     seen: set[str] = set()
 
     def _parse_model(path: Path, source: str, default: bool = False) -> None:
+        """Extract model name from a config file and append to results."""
         if not path.exists():
             return
         try:

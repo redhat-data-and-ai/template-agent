@@ -33,6 +33,7 @@ import httpx
 import jwt
 from langgraph_sdk import Auth
 
+from deep_agent.aegra.auth_helpers import _normalize_roles
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -159,6 +160,7 @@ def _resolve_jwks_uri() -> str:
 
 
 def _get_jwks_client() -> jwt.PyJWKClient:
+    """Return the cached JWKS client, creating it on first call."""
     global _jwks_client
     if _jwks_client is None:
         try:
@@ -375,11 +377,12 @@ def _checked_make_user(
 def _make_user(
     payload: dict[str, Any], access_token: str, refresh_token: str
 ) -> dict[str, Any]:
+    """Build a user dict from a decoded JWT payload."""
     uid = payload["sub"]
     return {
         "identity": uid,
         "display_name": payload.get("name", payload.get("preferred_username", "")),
-        "permissions": payload.get("realm_access", {}).get("roles", []),
+        "permissions": _normalize_roles(payload),
         "is_authenticated": True,
         "email": payload.get("email", ""),
         "access_token": access_token,

@@ -6,11 +6,38 @@ import pytest
 from fastapi import HTTPException
 
 from deep_agent.aegra.auth_helpers import (
+    _normalize_roles,
     authenticated_user_id,
     check_group_access,
     memory_user_id,
     rule_user_ids,
 )
+
+
+class TestNormalizeRoles:
+    def test_normal_payload(self):
+        assert _normalize_roles({"realm_access": {"roles": ["dev", "user"]}}) == [
+            "dev",
+            "user",
+        ]
+
+    def test_realm_access_null(self):
+        assert _normalize_roles({"realm_access": None}) == []
+
+    def test_realm_access_missing(self):
+        assert _normalize_roles({}) == []
+
+    def test_roles_is_string_rejected(self):
+        assert _normalize_roles({"realm_access": {"roles": "admin-user"}}) == []
+
+    def test_roles_null(self):
+        assert _normalize_roles({"realm_access": {"roles": None}}) == []
+
+    def test_non_string_items_filtered(self):
+        assert _normalize_roles({"realm_access": {"roles": ["dev", 123, "user"]}}) == [
+            "dev",
+            "user",
+        ]
 
 
 def _groups(*, developer: list[str] | None = None, user: list[str] | None = None):

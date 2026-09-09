@@ -13,6 +13,15 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 
+def _normalize_roles(payload: dict) -> list[str]:
+    """Extract realm_access.roles as a flat list of strings."""
+    realm = payload.get("realm_access") or {}
+    roles = realm.get("roles") if isinstance(realm, dict) else None
+    if isinstance(roles, list):
+        return [r for r in roles if isinstance(r, str)]
+    return []
+
+
 def check_group_access(permissions: list[str], *, developer_only: bool = False) -> None:
     """Enforce group-based access from DEVELOPER_GROUP / USER_GROUP.
 
@@ -79,7 +88,7 @@ async def authenticated_user_id(
         return "anonymous"
 
     payload = await asyncio.to_thread(_decode_token, auth_header[7:])
-    permissions = payload.get("realm_access", {}).get("roles", [])
+    permissions = _normalize_roles(payload)
     check_group_access(permissions, developer_only=developer_only)
     return str(payload["sub"])
 
