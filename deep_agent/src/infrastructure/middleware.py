@@ -193,7 +193,9 @@ def resolve_memory_param(
         return None
     if not resolved.memory_enabled:
         return None
-    return resolved.memory_namespaces or None
+    from deep_agent.src.memory.instructions import resolve_memory_namespaces
+
+    return resolve_memory_namespaces(resolved.memory_namespaces)
 
 
 def _build_model_call_limit(run_limit: int) -> Any | None:

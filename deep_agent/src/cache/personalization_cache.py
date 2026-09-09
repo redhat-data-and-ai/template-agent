@@ -1,8 +1,7 @@
-"""Personalization cache — Redis L2 for user memories and rules.
+"""Personalization cache — Redis L2 for user rules.
 
 Avoids hitting Postgres on every request for the same user's
-personalization data. Stores serialised JSON in Redis, keyed by
-``user_id``.
+rules. Stores serialised JSON in Redis, keyed by ``user_id``.
 
 Feature flag: ``CACHE_PERSONALIZATION_ENABLED`` (+ ``CACHE_ENABLED``).
 """
@@ -37,10 +36,10 @@ def _cache_key(user_id: str) -> str:
     return f"user:{user_id}"
 
 
-async def get_personalization(
+async def get_rules(
     user_id: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
-    """Return cached ``(memories, rules)`` dicts or None on miss.
+) -> list[dict[str, Any]] | None:
+    """Return cached rules dicts or None on miss.
 
     When disabled, always returns None (caller falls through to DB).
     """
@@ -56,7 +55,7 @@ async def get_personalization(
         data = json.loads(raw)
         metrics.record_hit("personalization")
         logger.debug("Personalization cache HIT for user %s", user_id[:8])
-        return data["memories"], data["rules"]
+        return data["rules"]  # type: ignore[no-any-return]
     except (json.JSONDecodeError, KeyError):
         logger.debug(
             "Personalization cache corrupt for user %s — evicting", user_id[:8]
@@ -66,22 +65,20 @@ async def get_personalization(
         return None
 
 
-async def set_personalization(
+async def set_rules(
     user_id: str,
-    memories: list[dict[str, Any]],
     rules: list[dict[str, Any]],
 ) -> None:
-    """Store personalization data in Redis cache."""
+    """Store user rules in Redis cache."""
     if not cache_settings.is_enabled("personalization"):
         return
 
-    payload = json.dumps({"memories": memories, "rules": rules})
+    payload = json.dumps({"rules": rules})
     await asyncio.to_thread(_get_redis().set, _cache_key(user_id), payload)
     metrics.record_set("personalization")
     logger.debug(
-        "Personalization cached for user %s (%d memories, %d rules)",
+        "Personalization cached for user %s (%d rules)",
         user_id[:8],
-        len(memories),
         len(rules),
     )
 

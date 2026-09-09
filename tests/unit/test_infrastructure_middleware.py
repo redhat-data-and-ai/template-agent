@@ -145,6 +145,17 @@ class TestResolveMemoryParam:
             result = resolve_memory_param(resolved)
         assert result == ["user_mem", "shared"]
 
+    def test_stock_memories_maps_to_user_profile(self):
+        resolved = ResolvedMiddlewareConfig(
+            memory_enabled=True, memory_namespaces=["memories"]
+        )
+        with patch(
+            "deep_agent.src.infrastructure.middleware.settings"
+        ) as mock_settings:
+            mock_settings.MIDDLEWARE_ENABLED = True
+            result = resolve_memory_param(resolved)
+        assert result == ["/memories/user_profile.md"]
+
 
 class TestImportMiddleware:
     """Test dynamic middleware importing."""
