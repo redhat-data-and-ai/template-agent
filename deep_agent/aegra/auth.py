@@ -65,6 +65,13 @@ ENABLE_USER_ID_ENCRYPTION = (
 )
 USER_ID_ENCRYPTION_KEY = os.environ.get("USER_ID_ENCRYPTION_KEY", "")
 
+DEVELOPER_GROUP: list[str] = [
+    g.strip() for g in os.environ.get("DEVELOPER_GROUP", "").split(",") if g.strip()
+]
+USER_GROUP: list[str] = [
+    g.strip() for g in os.environ.get("USER_GROUP", "").split(",") if g.strip()
+]
+
 _jwks_client: jwt.PyJWKClient | None = None
 
 # ── Eval token refresh (off by default) ──────────────────────────────────────
@@ -256,7 +263,7 @@ async def authenticate(headers: dict) -> dict:
                 p = _decode_token(cached)
                 enc_rt = await asyncio.to_thread(cache_get, f"eval:refresh:{sub}") or ""
                 stored_rt = decrypt_secret(enc_rt) or "" if enc_rt else ""
-                return _make_user(p, cached, stored_rt)
+                return _checked_make_user(p, cached, stored_rt)
             except Exception:
                 pass  # cached token also expired — fall through to lock path
 
@@ -296,7 +303,7 @@ async def authenticate(headers: dict) -> dict:
                     _EVAL_REFRESH_TTL,
                 )
                 logger.info("eval_token_refreshed")
-                return _make_user(_decode_token(new_access), new_access, new_rt)
+                return _checked_make_user(_decode_token(new_access), new_access, new_rt)
             else:
                 # Lock loser: poll until winner writes the cache
                 for _ in range(6):
@@ -312,7 +319,7 @@ async def authenticate(headers: dict) -> dict:
                                 lambda: cache_get(f"eval:refresh:{sub}") or ""
                             )
                             stored_rt = decrypt_secret(enc_rt) or "" if enc_rt else ""
-                            return _make_user(p, polled, stored_rt)
+                            return _checked_make_user(p, polled, stored_rt)
                         except Exception:
                             break
                 raise PermissionError(
@@ -336,7 +343,32 @@ async def authenticate(headers: dict) -> dict:
                     _EVAL_REFRESH_TTL,
                 )
 
-    return _make_user(payload, access_token, refresh_token)
+    return _checked_make_user(payload, access_token, refresh_token)
+
+
+def _check_group_for_langgraph(permissions: list[str]) -> None:
+    """Enforce group restriction for LangGraph auth layer.
+
+    Unrestricted when both DEVELOPER_GROUP and USER_GROUP are empty.
+    Raises PermissionError — LangGraph converts this to an auth failure response.
+    """
+    if not DEVELOPER_GROUP and not USER_GROUP:
+        return
+    if DEVELOPER_GROUP and any(g in permissions for g in DEVELOPER_GROUP):
+        return
+    if USER_GROUP and any(g in permissions for g in USER_GROUP):
+        return
+    all_groups = DEVELOPER_GROUP + USER_GROUP
+    allowed = " or ".join(f"'{g}'" for g in all_groups)
+    raise PermissionError(f"Access denied: {allowed} group membership required.")
+
+
+def _checked_make_user(
+    payload: dict[str, Any], access_token: str, refresh_token: str
+) -> dict[str, Any]:
+    user = _make_user(payload, access_token, refresh_token)
+    _check_group_for_langgraph(user["permissions"])
+    return user
 
 
 def _make_user(

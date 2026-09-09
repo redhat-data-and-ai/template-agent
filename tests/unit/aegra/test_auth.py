@@ -8,11 +8,88 @@ import pytest
 
 from deep_agent.aegra.auth import (
     _build_dev_user,
+    _check_group_for_langgraph,
     _decode_sub_unverified,
     _make_user,
     _resolve_jwks_uri,
     encrypt_user_id,
 )
+
+
+class TestCheckGroupForLanggraph:
+    def test_open_when_both_groups_empty(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", []),
+            patch("deep_agent.aegra.auth.USER_GROUP", []),
+        ):
+            _check_group_for_langgraph(["any-role"])
+
+    def test_only_developer_group_allows_members(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", ["devs"]),
+            patch("deep_agent.aegra.auth.USER_GROUP", []),
+        ):
+            _check_group_for_langgraph(["devs"])
+
+    def test_only_developer_group_denies_others(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", ["devs"]),
+            patch("deep_agent.aegra.auth.USER_GROUP", []),
+        ):
+            with pytest.raises(PermissionError):
+                _check_group_for_langgraph(["any-role"])
+
+    def test_only_user_group_allows_members(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", []),
+            patch("deep_agent.aegra.auth.USER_GROUP", ["users"]),
+        ):
+            _check_group_for_langgraph(["users"])
+
+    def test_only_user_group_denies_others(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", []),
+            patch("deep_agent.aegra.auth.USER_GROUP", ["users"]),
+        ):
+            with pytest.raises(PermissionError):
+                _check_group_for_langgraph(["any-role"])
+
+    def test_developer_group_passes(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", ["devs"]),
+            patch("deep_agent.aegra.auth.USER_GROUP", ["users"]),
+        ):
+            _check_group_for_langgraph(["devs"])
+
+    def test_user_group_passes(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", ["devs"]),
+            patch("deep_agent.aegra.auth.USER_GROUP", ["users"]),
+        ):
+            _check_group_for_langgraph(["users"])
+
+    def test_neither_group_raises_permission_error(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", ["devs"]),
+            patch("deep_agent.aegra.auth.USER_GROUP", ["users"]),
+        ):
+            with pytest.raises(PermissionError):
+                _check_group_for_langgraph(["other-role"])
+
+    def test_multi_group_list_any_match_passes(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", ["devs", "admins"]),
+            patch("deep_agent.aegra.auth.USER_GROUP", []),
+        ):
+            _check_group_for_langgraph(["admins"])
+
+    def test_multi_group_list_no_match_raises(self):
+        with (
+            patch("deep_agent.aegra.auth.DEVELOPER_GROUP", ["devs", "admins"]),
+            patch("deep_agent.aegra.auth.USER_GROUP", ["viewers", "editors"]),
+        ):
+            with pytest.raises(PermissionError):
+                _check_group_for_langgraph(["other-role"])
 
 
 class TestEncryptUserId:
