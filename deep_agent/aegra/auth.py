@@ -366,6 +366,7 @@ def _check_group_for_langgraph(permissions: list[str]) -> None:
 def _checked_make_user(
     payload: dict[str, Any], access_token: str, refresh_token: str
 ) -> dict[str, Any]:
+    """Build user dict and enforce group membership via LangGraph layer."""
     user = _make_user(payload, access_token, refresh_token)
     _check_group_for_langgraph(user["permissions"])
     return user

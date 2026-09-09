@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     @field_validator("DEVELOPER_GROUP", "USER_GROUP", mode="before")
     @classmethod
     def _csv_to_list(cls, v: object) -> list[str]:
+        """Parse comma-separated string into a list of trimmed, non-empty values."""
         if isinstance(v, list):
             return [s.strip() for s in v if s.strip()]
         if isinstance(v, str):
