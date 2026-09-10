@@ -122,7 +122,7 @@ def run_shutdown_sync() -> None:
         ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse_sync),
         ("graph_cache", _clear_graph_cache),
-        ("ldap", _close_ldap),
+        ("ldap", _close_ldap_sync),
         ("redis", _close_redis),
     ]:
         try:
@@ -337,8 +337,20 @@ def _shutdown_otel() -> str:
         return f"error: {exc}"
 
 
-def _close_ldap() -> str:
+async def _close_ldap() -> str:
     """Close the LDAP connection and clear the membership cache."""
+    try:
+        from deep_agent.src.ldap.service import close_ldap
+
+        await asyncio.to_thread(close_ldap)
+        return "ok"
+    except Exception as exc:
+        logger.warning("LDAP close failed: %s", exc)
+        return f"error: {exc}"
+
+
+def _close_ldap_sync() -> str:
+    """Close the LDAP connection synchronously (atexit path)."""
     try:
         from deep_agent.src.ldap.service import close_ldap
 

@@ -142,7 +142,7 @@ groups:
 
     def test_file_not_found(self, tmp_path):
         config = _parse_groups_from_frontmatter(tmp_path / "missing.md")
-        assert config.groups is None
+        assert config.groups == []
         assert config.accessibility == "private"
 
     def test_accessibility_non_public_defaults_private(self, tmp_path):
@@ -227,13 +227,13 @@ groups:
             c2 = get_prompt_access_config()
             assert len(c2.groups) == 2
 
-    def test_missing_file_returns_default(self, tmp_path):
+    def test_missing_file_returns_denied(self, tmp_path):
         with patch(
             "deep_agent.src.ldap.prompt_config._prompt_md_path",
             return_value=tmp_path / "nonexistent.md",
         ):
             config = get_prompt_access_config()
-            assert config.groups is None
+            assert config.groups == []
             assert config.accessibility == "private"
 
 

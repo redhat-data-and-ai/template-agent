@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
 import time
 from typing import Any
 
@@ -25,7 +26,9 @@ logger = get_python_logger()
 
 _ldap_conn: Any = None
 _bind_failed: bool = False
+_ldap_lock = threading.Lock()
 _memory_cache: dict[str, tuple[bool, float]] = {}
+_MEMORY_CACHE_MAX_SIZE: int = 1024
 
 _startup_warning_logged: bool = False
 
@@ -51,6 +54,13 @@ def _ensure_bound() -> Any:
     if not ldap_settings.LDAP_URL:
         return None
 
+    if not ldap_settings.LDAP_URL.startswith("ldaps://"):
+        logger.error(
+            "LDAP_URL must use ldaps:// (got %s) — refusing to send credentials in cleartext",
+            ldap_settings.LDAP_URL.split("://")[0] + "://...",
+        )
+        return None
+
     if _ldap_conn is not None and not _bind_failed:
         return _ldap_conn
 
@@ -65,7 +75,7 @@ def _ensure_bound() -> Any:
         tls = Tls(validate=tls_validate)
         server = Server(
             ldap_settings.LDAP_URL,
-            use_ssl=ldap_settings.LDAP_URL.startswith("ldaps://"),
+            use_ssl=True,
             tls=tls,
             connect_timeout=10,
         )
@@ -105,11 +115,26 @@ def _cache_get(key: str) -> bool | None:
     return None
 
 
+def _evict_expired() -> None:
+    """Remove expired entries from the in-memory cache."""
+    ttl = ldap_settings.LDAP_CACHE_TTL_SECONDS
+    now = time.monotonic()
+    expired = [k for k, (_, ts) in _memory_cache.items() if now - ts >= ttl]
+    for k in expired:
+        del _memory_cache[k]
+
+
 def _cache_set(key: str, value: bool) -> None:
     """Write to Redis cache and in-memory fallback."""
     from deep_agent.aegra.redis import cache_set
 
     cache_set(key, "1" if value else "0", ldap_settings.LDAP_CACHE_TTL_SECONDS)
+
+    if len(_memory_cache) >= _MEMORY_CACHE_MAX_SIZE:
+        _evict_expired()
+    if len(_memory_cache) >= _MEMORY_CACHE_MAX_SIZE:
+        _memory_cache.clear()
+
     _memory_cache[key] = (value, time.monotonic())
 
 
@@ -121,56 +146,58 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
     if cached is not None:
         return cached
 
-    conn = _ensure_bound()
-    if conn is None:
-        return False
+    with _ldap_lock:
+        conn = _ensure_bound()
+        if conn is None:
+            return False
 
-    search_base = ldap_settings.get_group_search_base()
-    base_dn = _derive_base_dn()
-    member_attrs = ["member", "uniqueMember", "memberUid"]
+        search_base = ldap_settings.get_group_search_base()
+        base_dn = _derive_base_dn()
+        member_attrs = ["member", "uniqueMember", "memberUid"]
 
-    try:
-        from ldap3 import SUBTREE
+        try:
+            from ldap3 import SUBTREE
 
-        safe_cn = _escape_ldap_filter(group_cn)
-        conn.search(
-            search_base,
-            f"(cn={safe_cn})",
-            search_scope=SUBTREE,
-            attributes=member_attrs,
-        )
+            safe_cn = _escape_ldap_filter(group_cn)
+            conn.search(
+                search_base,
+                f"(cn={safe_cn})",
+                search_scope=SUBTREE,
+                attributes=member_attrs,
+            )
 
-        found = False
-        for entry in conn.entries:
-            for attr in member_attrs:
-                values = getattr(entry, attr, None)
-                if values is None:
-                    continue
-                raw_values = values.values if hasattr(values, "values") else values
-                if not isinstance(raw_values, (list, tuple)):
-                    raw_values = [raw_values]
-                for member_val in raw_values:
-                    member_str = str(member_val).lower()
-                    user_lower = user_id.lower()
-                    if (
-                        member_str == user_lower
-                        or member_str == f"uid={user_lower},ou=users,{base_dn}"
-                        or member_str.startswith(f"uid={user_lower},")
-                    ):
-                        found = True
+            found = False
+            for entry in conn.entries:
+                for attr in member_attrs:
+                    values = getattr(entry, attr, None)
+                    if values is None:
+                        continue
+                    raw_values = values.values if hasattr(values, "values") else values
+                    if not isinstance(raw_values, (list, tuple)):
+                        raw_values = [raw_values]
+                    for member_val in raw_values:
+                        member_str = str(member_val).lower()
+                        user_lower = user_id.lower()
+                        if (
+                            member_str == user_lower
+                            or member_str == f"uid={user_lower},ou=users,{base_dn}"
+                            or member_str.startswith(f"uid={user_lower},")
+                        ):
+                            found = True
+                            break
+                    if found:
                         break
                 if found:
                     break
-            if found:
-                break
 
-        _cache_set(cache_key, found)
-        return found
-    except Exception as exc:
-        global _bind_failed
-        logger.error("LDAP search failed for group %s: %s", group_cn, exc)
-        _bind_failed = True
-        return False
+        except Exception as exc:
+            global _bind_failed
+            logger.error("LDAP search failed for group %s: %s", group_cn, exc)
+            _bind_failed = True
+            return False
+
+    _cache_set(cache_key, found)
+    return found
 
 
 def _resolve_user_role_sync(
@@ -225,12 +252,13 @@ async def resolve_user_role(user_id: str) -> str | None:
 def close_ldap() -> None:
     """Unbind the LDAP connection and clear the in-memory cache."""
     global _ldap_conn, _bind_failed
-    if _ldap_conn is not None:
-        try:
-            _ldap_conn.unbind()
-        except Exception:
-            pass
-        _ldap_conn = None
-    _bind_failed = False
+    with _ldap_lock:
+        if _ldap_conn is not None:
+            try:
+                _ldap_conn.unbind()
+            except Exception:
+                pass
+            _ldap_conn = None
+        _bind_failed = False
     _memory_cache.clear()
     logger.info("LDAP client closed")

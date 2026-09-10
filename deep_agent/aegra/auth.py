@@ -285,6 +285,8 @@ async def authenticate(headers: dict) -> dict:
                 user["ldap_role"] = await _resolve_ldap_role(p)
                 _check_ldap_access(user["ldap_role"])
                 return user
+            except PermissionError:
+                raise
             except Exception:
                 pass  # cached token also expired — fall through to lock path
 
@@ -348,6 +350,8 @@ async def authenticate(headers: dict) -> dict:
                             user["ldap_role"] = await _resolve_ldap_role(p)
                             _check_ldap_access(user["ldap_role"])
                             return user
+                        except PermissionError:
+                            raise
                         except Exception:
                             break
                 raise PermissionError(

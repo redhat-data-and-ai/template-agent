@@ -58,8 +58,8 @@ def _parse_groups_from_frontmatter(path: Path) -> PromptAccessConfig:
 
         fm = parse_frontmatter(path)
     except Exception:
-        logger.debug("Could not read %s — no group restrictions", path)
-        return PromptAccessConfig()
+        logger.warning("Could not read %s — failing closed (denied)", path)
+        return PromptAccessConfig(groups=[], accessibility="private")
 
     accessibility = "public" if fm.get("accessibility") == "public" else "private"
 
@@ -97,7 +97,8 @@ def get_prompt_access_config() -> PromptAccessConfig:
     except OSError:
         if _cached_config is not None:
             return _cached_config
-        return PromptAccessConfig()
+        logger.warning("PROMPT.md not found at %s — failing closed (denied)", path)
+        return PromptAccessConfig(groups=[], accessibility="private")
 
     if _cached_config is not None and mtime == _cached_mtime:
         return _cached_config

@@ -37,7 +37,14 @@ async def check_ldap_role(request: Request, *, developer_only: bool = False) -> 
             status_code=401, detail="Missing or invalid Authorization header"
         )
 
-    payload = await asyncio.to_thread(_decode_token, auth_header[7:])
+    import jwt
+
+    try:
+        payload = await asyncio.to_thread(_decode_token, auth_header[7:])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired") from None
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}") from None
     user_id = str(payload.get("preferred_username") or payload.get("sub") or "").strip()
     if not user_id:
         raise HTTPException(status_code=401, detail="Token missing user identity")
