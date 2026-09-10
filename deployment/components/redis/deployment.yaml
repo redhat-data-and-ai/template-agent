@@ -20,7 +20,9 @@ spec:
           command:
             - redis-server
             - --appendonly
-            - "yes"
+            - "no"
+            - --save
+            - ""
             - --maxmemory
             - "256mb"
             - --maxmemory-policy
