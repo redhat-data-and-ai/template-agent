@@ -190,16 +190,24 @@ def _jwt_exp(token: str) -> float:
         return 0.0
 
 
+_SSO_REFRESH_BUFFER_SECS: float = 60.0
+
+_sso_refresh_lock: asyncio.Lock = asyncio.Lock()
+
+
 async def refresh_access_token(
     access_token: str,
     refresh_token: str | None,
 ) -> str:
     """Return a fresh access token, using the refresh_token grant if needed.
 
-    If the current ``access_token`` has more than 30 seconds of remaining
-    lifetime it is returned as-is.  Otherwise, if a ``refresh_token`` and
-    the OIDC token endpoint are available, the token is refreshed via the
-    standard ``refresh_token`` grant.
+    Proactively refreshes when fewer than 60 seconds remain (up from 30)
+    so long-running tool chains are less likely to hit expiry mid-call.
+
+    Uses a distributed Redis lock (falling back to an in-process asyncio
+    lock) to prevent concurrent refresh calls from racing — important when
+    Keycloak refresh-token rotation is enabled, as the old refresh token is
+    invalidated on first use.
 
     Args:
         access_token: Current JWT access token (may be expired).
@@ -210,7 +218,7 @@ async def refresh_access_token(
         is unavailable or fails).
     """
     remaining: float = _jwt_exp(access_token) - time.time()
-    if remaining > 30:
+    if remaining > _SSO_REFRESH_BUFFER_SECS:
         logger.debug("Access token still valid (%.0fs remaining)", remaining)
         return access_token
 
@@ -227,6 +235,52 @@ async def refresh_access_token(
         logger.warning("Cannot refresh token — SSO_ISSUER_URL or SSO_CLIENT_ID not set")
         return access_token
 
+    return await _locked_sso_refresh(access_token, refresh_token, remaining)
+
+
+async def _locked_sso_refresh(
+    access_token: str,
+    refresh_token: str,
+    remaining: float,
+) -> str:
+    """Perform the actual SSO refresh under a lock to prevent concurrent races."""
+    from deep_agent.aegra.redis import distributed_lock
+
+    user_id = _current_user_id.get() or "unknown"
+    lock_name = f"sso:refresh:{user_id}"
+
+    async with distributed_lock(lock_name, ttl_seconds=15, wait_seconds=10) as state:
+        if state == "no_redis":
+            async with _sso_refresh_lock:
+                return await _do_sso_refresh(access_token, refresh_token, remaining)
+        elif state == "timeout":
+            current = _current_access_token.get()
+            if current and current != access_token:
+                check_remaining = _jwt_exp(current) - time.time()
+                if check_remaining > 10:
+                    logger.info(
+                        "SSO refresh lock timeout — another thread refreshed (%.0fs left)",
+                        check_remaining,
+                    )
+                    return current
+            logger.warning("SSO refresh lock timeout — using current token")
+            return access_token
+        else:
+            current = _current_access_token.get()
+            if current and current != access_token:
+                check_remaining = _jwt_exp(current) - time.time()
+                if check_remaining > _SSO_REFRESH_BUFFER_SECS:
+                    logger.debug("SSO token already refreshed by another call")
+                    return current
+            return await _do_sso_refresh(access_token, refresh_token, remaining)
+
+
+async def _do_sso_refresh(
+    access_token: str,
+    refresh_token: str,
+    remaining: float,
+) -> str:
+    """Execute the OIDC refresh grant and update context vars."""
     logger.info("Refreshing SSO access token (%.0fs remaining)", remaining)
     try:
         from deep_agent.aegra.auth import EVAL_TOKEN_REFRESH_ENABLED, _oidc_refresh
