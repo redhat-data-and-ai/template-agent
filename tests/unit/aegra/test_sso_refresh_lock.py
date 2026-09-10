@@ -36,15 +36,9 @@ class TestLockedSsoRefresh:
     async def test_timeout_peer_already_refreshed(self):
         with (
             patch("deep_agent.aegra.redis.distributed_lock", _timeout_lock),
-            patch(
-                "deep_agent.aegra.mcp._current_access_token"
-            ) as mock_cv,
-            patch(
-                "deep_agent.aegra.mcp._current_user_id"
-            ) as mock_uid,
-            patch(
-                "deep_agent.aegra.mcp._jwt_exp", side_effect=_fake_jwt_exp_future
-            ),
+            patch("deep_agent.aegra.mcp._current_access_token") as mock_cv,
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_uid,
+            patch("deep_agent.aegra.mcp._jwt_exp", side_effect=_fake_jwt_exp_future),
         ):
             mock_uid.get.return_value = "user-1"
             mock_cv.get.return_value = "fresh-token"
@@ -56,12 +50,8 @@ class TestLockedSsoRefresh:
     async def test_timeout_no_peer_refresh(self):
         with (
             patch("deep_agent.aegra.redis.distributed_lock", _timeout_lock),
-            patch(
-                "deep_agent.aegra.mcp._current_access_token"
-            ) as mock_cv,
-            patch(
-                "deep_agent.aegra.mcp._current_user_id"
-            ) as mock_uid,
+            patch("deep_agent.aegra.mcp._current_access_token") as mock_cv,
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_uid,
         ):
             mock_uid.get.return_value = "user-1"
             mock_cv.get.return_value = None
@@ -73,15 +63,9 @@ class TestLockedSsoRefresh:
     async def test_timeout_peer_token_expiring_soon(self):
         with (
             patch("deep_agent.aegra.redis.distributed_lock", _timeout_lock),
-            patch(
-                "deep_agent.aegra.mcp._current_access_token"
-            ) as mock_cv,
-            patch(
-                "deep_agent.aegra.mcp._current_user_id"
-            ) as mock_uid,
-            patch(
-                "deep_agent.aegra.mcp._jwt_exp", side_effect=_fake_jwt_exp_soon
-            ),
+            patch("deep_agent.aegra.mcp._current_access_token") as mock_cv,
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_uid,
+            patch("deep_agent.aegra.mcp._jwt_exp", side_effect=_fake_jwt_exp_soon),
         ):
             mock_uid.get.return_value = "user-1"
             mock_cv.get.return_value = "almost-expired"
@@ -95,18 +79,10 @@ class TestLockedSsoRefresh:
 
         with (
             patch("deep_agent.aegra.redis.distributed_lock", _held_lock),
-            patch(
-                "deep_agent.aegra.mcp._current_access_token"
-            ) as mock_cv,
-            patch(
-                "deep_agent.aegra.mcp._current_user_id"
-            ) as mock_uid,
-            patch(
-                "deep_agent.aegra.mcp._jwt_exp", side_effect=_fake_jwt_exp_future
-            ),
-            patch(
-                "deep_agent.aegra.mcp._do_sso_refresh", mock_do_refresh
-            ),
+            patch("deep_agent.aegra.mcp._current_access_token") as mock_cv,
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_uid,
+            patch("deep_agent.aegra.mcp._jwt_exp", side_effect=_fake_jwt_exp_future),
+            patch("deep_agent.aegra.mcp._do_sso_refresh", mock_do_refresh),
         ):
             mock_uid.get.return_value = "user-1"
             mock_cv.get.return_value = "fresh-token"
@@ -121,15 +97,9 @@ class TestLockedSsoRefresh:
 
         with (
             patch("deep_agent.aegra.redis.distributed_lock", _held_lock),
-            patch(
-                "deep_agent.aegra.mcp._current_access_token"
-            ) as mock_cv,
-            patch(
-                "deep_agent.aegra.mcp._current_user_id"
-            ) as mock_uid,
-            patch(
-                "deep_agent.aegra.mcp._do_sso_refresh", mock_do_refresh
-            ),
+            patch("deep_agent.aegra.mcp._current_access_token") as mock_cv,
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_uid,
+            patch("deep_agent.aegra.mcp._do_sso_refresh", mock_do_refresh),
         ):
             mock_uid.get.return_value = "user-1"
             mock_cv.get.return_value = None
