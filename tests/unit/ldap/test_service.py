@@ -178,8 +178,10 @@ class TestCaching:
             assert svc._cache_get("key1") is None
 
     def test_cache_set_writes_both(self):
-        with patch("deep_agent.aegra.redis.cache_set") as redis_set, \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms:
+        with (
+            patch("deep_agent.aegra.redis.cache_set") as redis_set,
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+        ):
             ms.LDAP_CACHE_TTL_SECONDS = 300
             svc._cache_set("k", True)
             redis_set.assert_called_once_with("k", "1", 300)
@@ -187,8 +189,10 @@ class TestCaching:
             assert svc._memory_cache["k"][0] is True
 
     def test_cache_set_false_value(self):
-        with patch("deep_agent.aegra.redis.cache_set") as redis_set, \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms:
+        with (
+            patch("deep_agent.aegra.redis.cache_set") as redis_set,
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+        ):
             ms.LDAP_CACHE_TTL_SECONDS = 300
             svc._cache_set("k", False)
             redis_set.assert_called_once_with("k", "0", 300)
@@ -206,8 +210,10 @@ class TestIsUserInGroupSync:
                 assert svc._is_user_in_group_sync("alice", "team") is True
 
     def test_no_conn_returns_false(self):
-        with patch.object(svc, "_ensure_bound", return_value=None), \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None):
+        with (
+            patch.object(svc, "_ensure_bound", return_value=None),
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+        ):
             assert svc._is_user_in_group_sync("alice", "team") is False
 
     def test_member_uid_match(self):
@@ -216,12 +222,14 @@ class TestIsUserInGroupSync:
         mock_conn.entries = [entry]
         ldap3_mock = MagicMock()
 
-        with patch.object(svc, "_ensure_bound", return_value=mock_conn), \
-             patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None), \
-             patch("deep_agent.aegra.redis.cache_set"), \
-             patch.dict("sys.modules", {"ldap3": ldap3_mock}):
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn),
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("alice", "team-owners") is True
@@ -232,12 +240,14 @@ class TestIsUserInGroupSync:
         mock_conn.entries = [entry]
         ldap3_mock = MagicMock()
 
-        with patch.object(svc, "_ensure_bound", return_value=mock_conn), \
-             patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None), \
-             patch("deep_agent.aegra.redis.cache_set"), \
-             patch.dict("sys.modules", {"ldap3": ldap3_mock}):
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn),
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("bob", "team") is True
@@ -248,12 +258,14 @@ class TestIsUserInGroupSync:
         mock_conn.entries = [entry]
         ldap3_mock = MagicMock()
 
-        with patch.object(svc, "_ensure_bound", return_value=mock_conn), \
-             patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None), \
-             patch("deep_agent.aegra.redis.cache_set"), \
-             patch.dict("sys.modules", {"ldap3": ldap3_mock}):
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn),
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("carol", "team") is True
@@ -264,12 +276,14 @@ class TestIsUserInGroupSync:
         mock_conn.entries = [entry]
         ldap3_mock = MagicMock()
 
-        with patch.object(svc, "_ensure_bound", return_value=mock_conn), \
-             patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None), \
-             patch("deep_agent.aegra.redis.cache_set"), \
-             patch.dict("sys.modules", {"ldap3": ldap3_mock}):
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn),
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("alice", "team") is False
@@ -279,10 +293,12 @@ class TestIsUserInGroupSync:
         mock_conn.search.side_effect = Exception("timeout")
         ldap3_mock = MagicMock()
 
-        with patch.object(svc, "_ensure_bound", return_value=mock_conn), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None), \
-             patch.dict("sys.modules", {"ldap3": ldap3_mock}):
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
             assert svc._is_user_in_group_sync("alice", "team") is False
             assert svc._bind_failed is True
@@ -293,12 +309,14 @@ class TestIsUserInGroupSync:
         mock_conn.entries = [entry]
         ldap3_mock = MagicMock()
 
-        with patch.object(svc, "_ensure_bound", return_value=mock_conn), \
-             patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None), \
-             patch("deep_agent.aegra.redis.cache_set"), \
-             patch.dict("sys.modules", {"ldap3": ldap3_mock}):
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn),
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("alice", "team") is True
@@ -308,12 +326,14 @@ class TestIsUserInGroupSync:
         mock_conn.entries = []
         ldap3_mock = MagicMock()
 
-        with patch.object(svc, "_ensure_bound", return_value=mock_conn), \
-             patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None), \
-             patch("deep_agent.aegra.redis.cache_set"), \
-             patch.dict("sys.modules", {"ldap3": ldap3_mock}):
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn),
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("alice", "team") is False
@@ -324,12 +344,14 @@ class TestIsUserInGroupSync:
         mock_conn.entries = [entry]
         ldap3_mock = MagicMock()
 
-        with patch.object(svc, "_ensure_bound", return_value=mock_conn), \
-             patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch("deep_agent.aegra.redis.cache_get", return_value=None), \
-             patch("deep_agent.aegra.redis.cache_set"), \
-             patch.dict("sys.modules", {"ldap3": ldap3_mock}):
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn),
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("dave", "team") is True
@@ -390,8 +412,10 @@ class TestResolveUserRole:
             groups=[GroupRoleMapping(role="owners", group="g1")],
             accessibility="private",
         )
-        with patch.object(svc, "get_prompt_access_config", return_value=config), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms:
+        with (
+            patch.object(svc, "get_prompt_access_config", return_value=config),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+        ):
             ms.LDAP_URL = ""
             assert await svc.resolve_user_role("alice") == "denied"
 
@@ -401,8 +425,10 @@ class TestResolveUserRole:
             groups=[GroupRoleMapping(role="owners", group="g1")],
             accessibility="public",
         )
-        with patch.object(svc, "get_prompt_access_config", return_value=config), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms:
+        with (
+            patch.object(svc, "get_prompt_access_config", return_value=config),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+        ):
             ms.LDAP_URL = ""
             assert await svc.resolve_user_role("alice") == "users"
 
@@ -412,9 +438,11 @@ class TestResolveUserRole:
             groups=[GroupRoleMapping(role="owners", group="g1")],
             accessibility="public",
         )
-        with patch.object(svc, "get_prompt_access_config", return_value=config), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch.object(svc, "_resolve_user_role_sync", return_value="denied"):
+        with (
+            patch.object(svc, "get_prompt_access_config", return_value=config),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch.object(svc, "_resolve_user_role_sync", return_value="denied"),
+        ):
             ms.LDAP_URL = "ldaps://ldap.example.com"
             assert await svc.resolve_user_role("alice") == "users"
 
@@ -424,9 +452,11 @@ class TestResolveUserRole:
             groups=[GroupRoleMapping(role="owners", group="g1")],
             accessibility="private",
         )
-        with patch.object(svc, "get_prompt_access_config", return_value=config), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch.object(svc, "_resolve_user_role_sync", return_value="denied"):
+        with (
+            patch.object(svc, "get_prompt_access_config", return_value=config),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch.object(svc, "_resolve_user_role_sync", return_value="denied"),
+        ):
             ms.LDAP_URL = "ldaps://ldap.example.com"
             assert await svc.resolve_user_role("alice") == "denied"
 
@@ -436,9 +466,11 @@ class TestResolveUserRole:
             groups=[GroupRoleMapping(role="builders", group="g1")],
             accessibility="private",
         )
-        with patch.object(svc, "get_prompt_access_config", return_value=config), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms, \
-             patch.object(svc, "_resolve_user_role_sync", return_value="builders"):
+        with (
+            patch.object(svc, "get_prompt_access_config", return_value=config),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch.object(svc, "_resolve_user_role_sync", return_value="builders"),
+        ):
             ms.LDAP_URL = "ldaps://ldap.example.com"
             assert await svc.resolve_user_role("alice") == "builders"
 
@@ -448,8 +480,10 @@ class TestResolveUserRole:
             groups=[GroupRoleMapping(role="owners", group="g1")],
             accessibility="private",
         )
-        with patch.object(svc, "get_prompt_access_config", return_value=config), \
-             patch("deep_agent.src.ldap.service.ldap_settings") as ms:
+        with (
+            patch.object(svc, "get_prompt_access_config", return_value=config),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+        ):
             ms.LDAP_URL = ""
             await svc.resolve_user_role("alice")
             assert svc._startup_warning_logged is True

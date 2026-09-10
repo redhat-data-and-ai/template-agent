@@ -220,6 +220,7 @@ groups:
             assert len(c1.groups) == 1
 
             import time
+
             time.sleep(0.05)
             prompt_path.write_text(content2)
 

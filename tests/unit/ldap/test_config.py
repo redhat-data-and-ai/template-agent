@@ -81,7 +81,9 @@ class TestGetBindDn:
 class TestGetGroupSearchBase:
     def test_default_derivation(self):
         s = LdapSettings(LDAP_URL="ldaps://ldap.example.com")
-        assert s.get_group_search_base() == "ou=adhoc,ou=managedGroups,dc=example,dc=com"
+        assert (
+            s.get_group_search_base() == "ou=adhoc,ou=managedGroups,dc=example,dc=com"
+        )
 
     def test_explicit_override(self):
         s = LdapSettings(
