@@ -272,6 +272,11 @@ async def agent(runtime: ServerRuntime) -> Any:
         sso_token = await refresh_access_token(
             sso_token, refresh_token, user_id=user_identity
         )
+        from deep_agent.aegra.mcp import _user_token_cache
+
+        cached = _user_token_cache.get(user_identity) if user_identity else None
+        if cached:
+            refresh_token = cached[1]
 
     set_mcp_auth_context(sso_token, refresh_token, user_identity)
     orchestrator_cfg = agent_config.get_orchestrator_config()

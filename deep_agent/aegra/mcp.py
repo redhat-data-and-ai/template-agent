@@ -57,6 +57,12 @@ _current_refresh_token: contextvars.ContextVar[str | None] = contextvars.Context
 _current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_user_id", default=None
 )
+
+# Cross-task shared token cache keyed by user_id.
+# ContextVars are task-local in asyncio, so a refresh completed in one task
+# is invisible to a concurrent task for the same user.  This dict lets the
+# distributed-lock peer-check work across tasks.
+_user_token_cache: dict[str, tuple[str, str]] = {}
 _mcp_tool_discovery: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "_mcp_tool_discovery", default=False
 )
@@ -256,40 +262,44 @@ async def _locked_sso_refresh(
     lock_name = f"sso:refresh:{user_id}"
 
     async with distributed_lock(lock_name, ttl_seconds=15, wait_seconds=10) as state:
+        cached = _user_token_cache.get(user_id)
         if state == "no_redis":
             async with _sso_refresh_lock:
-                current = _current_access_token.get()
-                if current and current != access_token:
-                    check_remaining = _jwt_exp(current) - time.time()
-                    if check_remaining > _SSO_REFRESH_BUFFER_SECS:
-                        logger.debug(
-                            "SSO token already refreshed by peer (no-redis path)"
-                        )
-                        return current
-                latest_rt = _current_refresh_token.get() or refresh_token
+                cached = _user_token_cache.get(user_id)
+                if cached:
+                    cached_at, cached_rt = cached
+                    if cached_at != access_token:
+                        check_remaining = _jwt_exp(cached_at) - time.time()
+                        if check_remaining > _SSO_REFRESH_BUFFER_SECS:
+                            logger.debug(
+                                "SSO token already refreshed by peer (no-redis path)"
+                            )
+                            return cached_at
+                latest_rt = (cached[1] if cached else None) or refresh_token
                 return await _do_sso_refresh(access_token, latest_rt, remaining)
         elif state == "timeout":
-            current = _current_access_token.get()
-            if current and current != access_token:
-                check_remaining = _jwt_exp(current) - time.time()
-                if check_remaining > 10:
-                    logger.info(
-                        "SSO refresh lock timeout — another thread refreshed (%.0fs left)",
-                        check_remaining,
-                    )
-                    return current
+            if cached:
+                cached_at, _ = cached
+                if cached_at != access_token:
+                    check_remaining = _jwt_exp(cached_at) - time.time()
+                    if check_remaining > 10:
+                        logger.info(
+                            "SSO refresh lock timeout — another task refreshed (%.0fs left)",
+                            check_remaining,
+                        )
+                        return cached_at
             logger.warning("SSO refresh lock timeout — using current token")
             return access_token
         else:
-            current = _current_access_token.get()
-            if current and current != access_token:
-                check_remaining = _jwt_exp(current) - time.time()
-                if check_remaining > _SSO_REFRESH_BUFFER_SECS:
-                    logger.debug("SSO token already refreshed by another call")
-                    return current
-                latest_rt = _current_refresh_token.get() or refresh_token
-                return await _do_sso_refresh(access_token, latest_rt, remaining)
-            latest_rt = _current_refresh_token.get() or refresh_token
+            cached = _user_token_cache.get(user_id)
+            if cached:
+                cached_at, cached_rt = cached
+                if cached_at != access_token:
+                    check_remaining = _jwt_exp(cached_at) - time.time()
+                    if check_remaining > _SSO_REFRESH_BUFFER_SECS:
+                        logger.debug("SSO token already refreshed by another task")
+                        return cached_at
+            latest_rt = (cached[1] if cached else None) or refresh_token
             return await _do_sso_refresh(access_token, latest_rt, remaining)
 
 
@@ -310,18 +320,19 @@ async def _do_sso_refresh(
         _current_access_token.set(new_token)
         if new_rt != refresh_token:
             _current_refresh_token.set(new_rt)
+        sub = _current_user_id.get()
+        if sub:
+            _user_token_cache[sub] = (new_token, new_rt)
             if EVAL_TOKEN_REFRESH_ENABLED:
-                sub = _current_user_id.get()
-                if sub:
-                    from deep_agent.aegra.mcp_crypto import encrypt_secret
-                    from deep_agent.aegra.redis import cache_get, cache_set
+                from deep_agent.aegra.mcp_crypto import encrypt_secret
+                from deep_agent.aegra.redis import cache_get, cache_set
 
-                    if await asyncio.to_thread(cache_get, f"eval:active:{sub}"):
-                        encrypted_rt = encrypt_secret(new_rt)
-                        if encrypted_rt:
-                            await asyncio.to_thread(
-                                cache_set, f"eval:refresh:{sub}", encrypted_rt, 3600
-                            )
+                if await asyncio.to_thread(cache_get, f"eval:active:{sub}"):
+                    encrypted_rt = encrypt_secret(new_rt)
+                    if encrypted_rt:
+                        await asyncio.to_thread(
+                            cache_set, f"eval:refresh:{sub}", encrypted_rt, 3600
+                        )
 
         return new_token
     except Exception:

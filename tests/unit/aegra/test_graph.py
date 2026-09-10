@@ -205,7 +205,7 @@ class TestAgentFactory:
             result = await agent(mock_runtime)
             assert result is mock_compiled
             mock_refresh.assert_awaited_once_with(
-                "test_access_token", "test_refresh_token"
+                "test_access_token", "test_refresh_token", user_id=None
             )
 
     @pytest.mark.asyncio
