@@ -14,6 +14,22 @@ spec:
       labels:
         component: cache
     spec:
+      initContainers:
+        - name: clean-persistence-files
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - "rm -rf /data/dump.rdb /data/appendonlydir"
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: redis
           image: redis:7-alpine
