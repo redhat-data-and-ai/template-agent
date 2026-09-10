@@ -24,6 +24,13 @@ spec:
           volumeMounts:
             - name: redis-data
               mountPath: /data
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
