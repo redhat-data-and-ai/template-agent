@@ -20,7 +20,7 @@ from deep_agent.aegra.personalization_routes import (
     router,
 )
 from deep_agent.src.memory.instructions import USER_MEMORY_STORE_KEY
-from deep_agent.src.personalization.models import Rule, UserPreferences
+from deep_agent.src.personalization.models import ConsentRecord, Rule, UserPreferences
 
 app = FastAPI()
 app.include_router(router)
@@ -70,6 +70,10 @@ def mock_repo():
     repo.update_preferences = AsyncMock(
         return_value=UserPreferences(user_id="test-user", memory_enabled=False)
     )
+    repo.store_consent = AsyncMock(
+        side_effect=lambda uid, action: ConsentRecord(user_id=uid, action=action)
+    )
+    repo.get_consent_status = AsyncMock(return_value=None)
     with patch(
         "deep_agent.aegra.personalization_routes._get_repo",
         return_value=repo,
@@ -720,3 +724,52 @@ class TestPreferences:
         assert resp.status_code == 200
         assert resp.json() == {"memory_enabled": False}
         mock_repo.update_preferences.assert_awaited()
+
+
+# ── Consent endpoints ─────────────────────────────────────────────────
+
+
+class TestApproveConsent:
+    def test_success(self, client, mock_repo):
+        resp = client.post("/personalization/consent")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["has_consent"] is True
+        assert "granted_at" in data
+        mock_repo.store_consent.assert_awaited_once_with("test-user", "approved")
+
+
+class TestGetConsentStatus:
+    def test_no_consent_record(self, client, mock_repo):
+        mock_repo.get_consent_status.return_value = None
+        resp = client.get("/personalization/consent")
+        assert resp.status_code == 200
+        assert resp.json() == {"has_consent": False, "granted_at": None}
+
+    def test_approved(self, client, mock_repo):
+        mock_repo.get_consent_status.return_value = ConsentRecord(
+            user_id="test-user",
+            action="approved",
+        )
+        resp = client.get("/personalization/consent")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["has_consent"] is True
+        assert data["granted_at"] is not None
+
+    def test_revoked(self, client, mock_repo):
+        mock_repo.get_consent_status.return_value = ConsentRecord(
+            user_id="test-user",
+            action="revoked",
+        )
+        resp = client.get("/personalization/consent")
+        assert resp.status_code == 200
+        assert resp.json()["has_consent"] is False
+
+
+class TestRevokeConsent:
+    def test_success(self, client, mock_repo):
+        resp = client.delete("/personalization/consent")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "revoked"}
+        mock_repo.store_consent.assert_awaited_once_with("test-user", "revoked")

@@ -14,7 +14,12 @@ from datetime import datetime, timezone
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from deep_agent.src.personalization.models import Memory, Rule, UserPreferences
+from deep_agent.src.personalization.models import (
+    ConsentRecord,
+    Memory,
+    Rule,
+    UserPreferences,
+)
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -63,6 +68,19 @@ CREATE TABLE IF NOT EXISTS user_preferences (
 );
 """
 
+CREATE_CONSENT_TABLE = """
+CREATE TABLE IF NOT EXISTS user_consents (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_user_consents_user_id
+    ON user_consents (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_consents_created_at
+    ON user_consents (created_at);
+"""
+
 _pool_registry: dict[str, AsyncConnectionPool] = {}
 _pool_lock = asyncio.Lock()
 
@@ -106,6 +124,7 @@ class PersonalizationRepository:
                 await conn.execute(CREATE_MEMORIES_TABLE)
                 await conn.execute(MIGRATE_MEMORIES_TABLE)
                 await conn.execute(CREATE_PREFERENCES_TABLE)
+                await conn.execute(CREATE_CONSENT_TABLE)
                 await conn.commit()
             _TABLES_ENSURED = True
             logger.info("Personalization tables ensured")
@@ -407,3 +426,34 @@ class PersonalizationRepository:
             )
             await conn.commit()
         return current
+
+    # ── Consent ───────────────────────────────────────────────
+
+    async def store_consent(self, user_id: str, action: str) -> ConsentRecord:
+        """Append a consent event (approved/revoked) for audit trail."""
+        await self.ensure_tables()
+        record = ConsentRecord(user_id=user_id, action=action)
+        pool = await _get_pool(self._uri)
+        async with pool.connection() as conn:
+            await conn.execute(
+                "INSERT INTO user_consents (id, user_id, action, created_at) "
+                "VALUES (%s, %s, %s, %s)",
+                (str(record.id), record.user_id, record.action, record.created_at),
+            )
+            await conn.commit()
+        return record
+
+    async def get_consent_status(self, user_id: str) -> ConsentRecord | None:
+        """Return the most recent consent event for *user_id*, or None."""
+        await self.ensure_tables()
+        pool = await _get_pool(self._uri)
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT * FROM user_consents WHERE user_id = %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (user_id,),
+            )
+            row = await cur.fetchone()
+            if row:
+                return ConsentRecord(**row)
+        return None

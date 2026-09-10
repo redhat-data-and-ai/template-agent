@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from deep_agent.src.personalization.models import Rule
+from deep_agent.src.personalization.models import ConsentRecord, Rule
 from deep_agent.src.personalization.repository import PersonalizationRepository
 
 
@@ -74,8 +74,8 @@ class TestEnsureTables:
         ):
             await repo.ensure_tables()
             assert (
-                mock_conn.execute.call_count == 4
-            )  # rules + memories + migration + preferences
+                mock_conn.execute.call_count == 5
+            )  # rules + memories + migration + preferences + consent
             mock_conn.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -492,3 +492,70 @@ class TestGetPool:
         pool.open.assert_awaited_once()
         assert result is pool
         assert repo_mod._pool_registry["postgresql://fresh"] is pool
+
+
+class TestConsent:
+    @pytest.mark.asyncio
+    async def test_store_consent_inserts_row(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+        with patch(
+            "deep_agent.src.personalization.repository._get_pool",
+            return_value=AsyncMock(connection=MagicMock(return_value=mock_conn)),
+        ):
+            record = await repo.store_consent("u1", "approved")
+        assert record.user_id == "u1"
+        assert record.action == "approved"
+        sql = mock_conn.execute.call_args[0][0]
+        assert "INSERT INTO user_consents" in sql
+        mock_conn.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_store_consent_revoked(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+        with patch(
+            "deep_agent.src.personalization.repository._get_pool",
+            return_value=AsyncMock(connection=MagicMock(return_value=mock_conn)),
+        ):
+            record = await repo.store_consent("u1", "revoked")
+        assert record.action == "revoked"
+
+    @pytest.mark.asyncio
+    async def test_get_consent_status_returns_latest(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+        consent_id = uuid.uuid4()
+        mock_conn._cursor.fetchone = AsyncMock(
+            return_value={
+                "id": consent_id,
+                "user_id": "u1",
+                "action": "approved",
+                "created_at": "2026-09-10T17:30:00+00:00",
+            }
+        )
+        with patch(
+            "deep_agent.src.personalization.repository._get_pool",
+            return_value=AsyncMock(connection=MagicMock(return_value=mock_conn)),
+        ):
+            record = await repo.get_consent_status("u1")
+        assert record is not None
+        assert record.action == "approved"
+        sql = mock_conn.execute.call_args[0][0]
+        assert "ORDER BY created_at DESC LIMIT 1" in sql
+
+    @pytest.mark.asyncio
+    async def test_get_consent_status_returns_none_when_empty(self, repo, mock_conn):
+        import deep_agent.src.personalization.repository as repo_mod
+
+        repo_mod._TABLES_ENSURED = True
+        mock_conn._cursor.fetchone = AsyncMock(return_value=None)
+        with patch(
+            "deep_agent.src.personalization.repository._get_pool",
+            return_value=AsyncMock(connection=MagicMock(return_value=mock_conn)),
+        ):
+            record = await repo.get_consent_status("u1")
+        assert record is None

@@ -42,3 +42,12 @@ class UserPreferences(BaseModel):
     memory_enabled: bool = True
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class ConsentRecord(BaseModel):
+    """An append-only consent event for audit purposes."""
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    user_id: str
+    action: str  # "approved" or "revoked"
+    created_at: datetime = Field(default_factory=_utcnow)

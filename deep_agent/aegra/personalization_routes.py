@@ -652,3 +652,47 @@ async def delete_rule(request: Request, rule_id: str) -> dict[str, str]:
     await _invalidate_cache(user_id, request)
     logger.info("rule_deleted", user_id=user_id[:8], rule_id=rule_id)
     return {"status": "deleted"}
+
+
+# ── Consent endpoints (append-only audit trail) ──────────────────────
+
+
+class ConsentOut(BaseModel):
+    """Current consent status returned to the client."""
+
+    has_consent: bool
+    granted_at: str | None = None
+
+
+@router.post("/consent")
+async def approve_consent(request: Request) -> dict[str, Any]:
+    """Record a consent approval event."""
+    user_id = await memory_user_id(request)
+    repo = _get_repo()
+    record = await repo.store_consent(user_id, "approved")
+    logger.info("consent_approved", user_id=user_id[:8])
+    return {
+        "has_consent": True,
+        "granted_at": record.created_at.isoformat(),
+    }
+
+
+@router.get("/consent", response_model=ConsentOut)
+async def get_consent_status(request: Request) -> ConsentOut:
+    """Return the current consent status for the authenticated user."""
+    user_id = await memory_user_id(request)
+    repo = _get_repo()
+    record = await repo.get_consent_status(user_id)
+    if record and record.action == "approved":
+        return ConsentOut(has_consent=True, granted_at=record.created_at.isoformat())
+    return ConsentOut(has_consent=False)
+
+
+@router.delete("/consent", status_code=status.HTTP_200_OK)
+async def revoke_consent(request: Request) -> dict[str, str]:
+    """Record a consent revocation event."""
+    user_id = await memory_user_id(request)
+    repo = _get_repo()
+    await repo.store_consent(user_id, "revoked")
+    logger.info("consent_revoked", user_id=user_id[:8])
+    return {"status": "revoked"}
