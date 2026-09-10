@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -44,10 +45,13 @@ class UserPreferences(BaseModel):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+ConsentAction = Literal["approved", "revoked"]
+
+
 class ConsentRecord(BaseModel):
     """An append-only consent event for audit purposes."""
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     user_id: str
-    action: str  # "approved" or "revoked"
+    action: ConsentAction
     created_at: datetime = Field(default_factory=_utcnow)

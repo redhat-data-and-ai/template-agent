@@ -15,6 +15,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from deep_agent.src.personalization.models import (
+    ConsentAction,
     ConsentRecord,
     Memory,
     Rule,
@@ -72,13 +73,13 @@ CREATE_CONSENT_TABLE = """
 CREATE TABLE IF NOT EXISTS user_consents (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     TEXT NOT NULL,
-    action      TEXT NOT NULL,
+    action      TEXT NOT NULL CHECK (action IN ('approved', 'revoked')),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_user_consents_user_id
     ON user_consents (user_id);
-CREATE INDEX IF NOT EXISTS idx_user_consents_created_at
-    ON user_consents (created_at);
+CREATE INDEX IF NOT EXISTS idx_user_consents_user_id_created_at
+    ON user_consents (user_id, created_at DESC);
 """
 
 _pool_registry: dict[str, AsyncConnectionPool] = {}
@@ -429,7 +430,7 @@ class PersonalizationRepository:
 
     # ── Consent ───────────────────────────────────────────────
 
-    async def store_consent(self, user_id: str, action: str) -> ConsentRecord:
+    async def store_consent(self, user_id: str, action: ConsentAction) -> ConsentRecord:
         """Append a consent event (approved/revoked) for audit trail."""
         await self.ensure_tables()
         record = ConsentRecord(user_id=user_id, action=action)
