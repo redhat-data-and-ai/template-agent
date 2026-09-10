@@ -193,7 +193,32 @@ def _build_dev_user() -> dict[str, Any]:
         "is_authenticated": True,
         "email": "dev@localhost",
         "encrypted_id": encrypt_user_id(DEV_USER_ID),
+        "ldap_role": None,
     }
+
+
+async def _resolve_ldap_role(payload: dict[str, Any]) -> str | None:
+    """Resolve the user's LDAP role from PROMPT.md groups."""
+    from deep_agent.src.ldap.service import resolve_user_role
+
+    user_id = str(payload.get("preferred_username") or payload.get("sub") or "").strip()
+    if not user_id:
+        return "denied"
+    return await resolve_user_role(user_id)
+
+
+def _check_ldap_access(role: str | None) -> None:
+    """Enforce LDAP role at the LangGraph auth layer (gates chat access).
+
+    Raises PermissionError for 'denied' role — blocks chat and everything.
+    All other roles pass through; eval gating happens at the route level.
+    """
+    if role is None:
+        return
+    if role == "denied":
+        raise PermissionError(
+            "Access denied: user is not a member of any configured LDAP group"
+        )
 
 
 @auth.authenticate
@@ -256,7 +281,10 @@ async def authenticate(headers: dict) -> dict:
                 p = _decode_token(cached)
                 enc_rt = await asyncio.to_thread(cache_get, f"eval:refresh:{sub}") or ""
                 stored_rt = decrypt_secret(enc_rt) or "" if enc_rt else ""
-                return _make_user(p, cached, stored_rt)
+                user = _make_user(p, cached, stored_rt)
+                user["ldap_role"] = await _resolve_ldap_role(p)
+                _check_ldap_access(user["ldap_role"])
+                return user
             except Exception:
                 pass  # cached token also expired — fall through to lock path
 
@@ -296,7 +324,11 @@ async def authenticate(headers: dict) -> dict:
                     _EVAL_REFRESH_TTL,
                 )
                 logger.info("eval_token_refreshed")
-                return _make_user(_decode_token(new_access), new_access, new_rt)
+                refreshed_payload = _decode_token(new_access)
+                user = _make_user(refreshed_payload, new_access, new_rt)
+                user["ldap_role"] = await _resolve_ldap_role(refreshed_payload)
+                _check_ldap_access(user["ldap_role"])
+                return user
             else:
                 # Lock loser: poll until winner writes the cache
                 for _ in range(6):
@@ -312,7 +344,10 @@ async def authenticate(headers: dict) -> dict:
                                 lambda: cache_get(f"eval:refresh:{sub}") or ""
                             )
                             stored_rt = decrypt_secret(enc_rt) or "" if enc_rt else ""
-                            return _make_user(p, polled, stored_rt)
+                            user = _make_user(p, polled, stored_rt)
+                            user["ldap_role"] = await _resolve_ldap_role(p)
+                            _check_ldap_access(user["ldap_role"])
+                            return user
                         except Exception:
                             break
                 raise PermissionError(
@@ -336,7 +371,11 @@ async def authenticate(headers: dict) -> dict:
                     _EVAL_REFRESH_TTL,
                 )
 
-    return _make_user(payload, access_token, refresh_token)
+    user = _make_user(payload, access_token, refresh_token)
+    ldap_role = await _resolve_ldap_role(payload)
+    user["ldap_role"] = ldap_role
+    _check_ldap_access(ldap_role)
+    return user
 
 
 def _make_user(

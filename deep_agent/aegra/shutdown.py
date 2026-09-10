@@ -122,6 +122,7 @@ def run_shutdown_sync() -> None:
         ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse_sync),
         ("graph_cache", _clear_graph_cache),
+        ("ldap", _close_ldap),
         ("redis", _close_redis),
     ]:
         try:
@@ -205,6 +206,7 @@ async def run_shutdown() -> dict[str, str]:
         ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse),
         ("graph_cache", _clear_graph_cache),
+        ("ldap", _close_ldap),
         ("redis", _close_redis),
     ]:
         try:
@@ -332,6 +334,18 @@ def _shutdown_otel() -> str:
         return "ok"
     except Exception as exc:
         logger.warning("OTEL shutdown failed: %s", exc)
+        return f"error: {exc}"
+
+
+def _close_ldap() -> str:
+    """Close the LDAP connection and clear the membership cache."""
+    try:
+        from deep_agent.src.ldap.service import close_ldap
+
+        close_ldap()
+        return "ok"
+    except Exception as exc:
+        logger.warning("LDAP close failed: %s", exc)
         return f"error: {exc}"
 
 

@@ -19,6 +19,8 @@ A template for building [Deep Agents](https://github.com/langchain-ai/deepagents
 **Infrastructure:**
 - Aegra dev server with Redis-backed SSE streaming
 - PostgreSQL checkpoints, memory, and feedback storage
+- LDAP-based access control with group-to-role mappings defined in PROMPT.md
+- Eval and dataset APIs gated by LDAP role — see [`eval-runner/docs/`](./eval-runner/docs/) for eval documentation
 - Config-as-code in `config/agent/` (no Python edits for most changes)
 - Container-ready with Red Hat UBI; OpenShift and Kind deployment overlays
 
@@ -112,6 +114,12 @@ Configuration is split between **secrets/endpoints** (`.env`) and **operational 
 | `SSO_ISSUER_URL` | — | OIDC issuer (Keycloak, Okta, etc.) |
 | `SSO_CLIENT_ID` | — | OIDC client ID |
 | `SSO_CLIENT_SECRET` | — | OIDC client secret |
+| `LDAP_URL` | — | LDAP server URL (e.g. `ldaps://ldap.example.com`). Required when PROMPT.md has groups |
+| `LDAP_BASE_UID` | — | Service account uid for LDAP bind |
+| `LDAP_PASSWORD` | — | Service account password |
+| `LDAP_GROUP_SEARCH_BASE` | `ou=adhoc,ou=managedGroups,<baseDn>` | Override group search subtree |
+| `LDAP_TLS_VERIFY` | `true` | Validate LDAP server TLS certificate |
+| `LDAP_CACHE_TTL_SECONDS` | `300` | Redis cache TTL for LDAP membership lookups |
 | `LANGFUSE_PUBLIC_KEY` | — | Langfuse public key (optional) |
 | `LANGFUSE_SECRET_KEY` | — | Langfuse secret key (optional) |
 | `LANGFUSE_BASE_URL` | — | Langfuse host (optional) |
@@ -145,6 +153,85 @@ An [Open Policy Agent](https://www.openpolicyagent.org/) sidecar enforces author
 The `opa:` section in `agent.yaml` and the `OPA_*` environment variables above configure the agent-side client. Local policies live in `config/agent/compliance/policies/` and can be augmented from a remote git repository with automatic hot-reload.
 
 See **[`opa/README.md`](./opa/README.md)** for a full explanation of how the middleware, service, config, and OPA container work together.
+
+## LDAP Access Control
+
+Role-based access control driven by LDAP group membership. Group-to-role mappings are defined in [`config/agent/PROMPT.md`](./config/agent/PROMPT.md) YAML front matter — no code changes needed to add or remove groups.
+
+### Role hierarchy
+
+| Role | Priority | Chat | Eval / Dataset |
+|---|---|---|---|
+| `owners` | 4 | Yes | Yes |
+| `admins` | 3 | Yes | Yes |
+| `builders` | 2 | Yes | Yes |
+| `users` | 1 | Yes | No (403) |
+| `denied` | — | No (403) | No (403) |
+
+When a user belongs to multiple groups, the highest-priority role wins.
+
+### PROMPT.md configuration
+
+Groups and accessibility are set in the YAML front matter of `config/agent/PROMPT.md`:
+
+```yaml
+---
+accessibility: public
+groups:
+  - role: owners
+    group: aifactory-template-owner
+  - role: admins
+    group: team-admins
+  - role: builders
+    group: team-builders
+  - role: users
+    group: team-users
+---
+```
+
+### Behavior matrix
+
+| Scenario | Chat (`/threads/*`, `/runs/*`) | Eval (`/evals/*`, `/v1/eval/*`) |
+|---|---|---|
+| `ENABLE_AUTH=false` | Full access | Full access |
+| No groups in PROMPT.md | Allowed | 403 (everyone is `users`) |
+| Groups + role `owners`/`admins`/`builders` | Allowed | Allowed |
+| Groups + role `users` | Allowed | 403 |
+| Groups + no match + `accessibility: private` | 403 (denied) | 403 (denied) |
+| Groups + no match + `accessibility: public` | Allowed (as `users`) | 403 |
+| Groups defined + `LDAP_URL` missing | Depends on accessibility | 403 |
+
+### How it works
+
+1. User authenticates via SSO/OIDC — the JWT `preferred_username` claim identifies the user.
+2. The agent reads group-to-role mappings from PROMPT.md front matter (cached with mtime-based invalidation).
+3. For each configured group, the agent queries LDAP to check if the user is a member (`member`, `uniqueMember`, or `memberUid` attributes).
+4. The highest-priority matching role is assigned. If no groups match, the role is `denied` (private) or `users` (public).
+5. LDAP results are cached in Redis (with in-memory fallback) for `LDAP_CACHE_TTL_SECONDS` (default: 300s).
+
+### Two enforcement layers
+
+- **LangGraph auth** (`deep_agent/aegra/auth.py`): gates chat endpoints (`/threads/*`, `/runs/*`). Raises `PermissionError` for `denied` role — blocks the conversation entirely.
+- **FastAPI dependencies** (`deep_agent/aegra/eval_routes.py`): gates eval and dataset endpoints. Requires `owners`, `admins`, or `builders` role — returns HTTP 403 for `users` or `denied`.
+
+### Setup
+
+1. Define groups in `config/agent/PROMPT.md` front matter (see example above).
+2. Set LDAP environment variables in `.env`:
+
+```bash
+LDAP_URL=ldaps://ldap.example.com
+LDAP_BASE_UID=svcacct
+LDAP_PASSWORD=your-password
+# Optional:
+# LDAP_GROUP_SEARCH_BASE=ou=adhoc,ou=managedGroups,dc=example,dc=com
+# LDAP_TLS_VERIFY=true
+# LDAP_CACHE_TTL_SECONDS=300
+```
+
+3. Set `ENABLE_AUTH=true` and configure SSO variables.
+
+When `ENABLE_AUTH=false` (dev mode), LDAP is skipped entirely and all endpoints are accessible.
 
 ## MCP Server Configuration
 

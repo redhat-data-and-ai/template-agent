@@ -4,6 +4,16 @@ description: >
   Main coordinator for Red Hat fitness assistant. Handles client intake,
   routes to analyst and publisher subagents, manages TODO lists and
   delegates health metric analysis.
+# accessibility: private
+# groups:
+#   - role: owners
+#     group: template-owners
+#   - role: admins
+#     group: template-admins
+#   - role: builders
+#     group: template-builders
+#   - role: users
+#     group: template-owner
 model: gemini-2.5-pro
 # MaaS (Models as a Service) lets you serve open-source models via a managed
 # API without owning the infrastructure — see:

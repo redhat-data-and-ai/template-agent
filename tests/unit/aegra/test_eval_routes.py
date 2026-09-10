@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 import deep_agent.aegra.eval_routes as er
 
@@ -1374,27 +1375,191 @@ class TestInternalCleanupEndpoint:
         assert "status" in result
 
 
-class TestRequireBearer:
-    async def test_returns_token_when_valid(self):
-        creds = MagicMock()
-        creds.credentials = "my-token"
-        result = er._require_bearer(creds)
-        assert result == "my-token"
+class TestRequireDeveloper:
+    """Tests the Developer/Dataset/Eval column from the behavior matrix.
 
-    async def test_raises_401_when_none(self):
-        from fastapi import HTTPException
+    | Scenario                                    | Eval Access |
+    |---------------------------------------------|-------------|
+    | AUTH_ENABLED=false (local dev)               | Yes         |
+    | Groups defined, user is owner/admin/builder  | Yes         |
+    | No groups in PROMPT.md (everyone=users)      | No (403)    |
+    | Groups defined, user is users role           | No (403)    |
+    | Groups defined, private, no group match      | No (403)    |
+    | Groups defined, public, no group match       | No (403)    |
+    """
 
+    @pytest.mark.asyncio
+    async def test_raises_401_when_no_creds(self):
         with pytest.raises(HTTPException) as exc:
-            er._require_bearer(None)
+            await er._require_developer(None)
         assert exc.value.status_code == 401
 
+    @pytest.mark.asyncio
     async def test_raises_401_when_empty_credentials(self):
-        from fastapi import HTTPException
-
         creds = MagicMock()
         creds.credentials = ""
         with pytest.raises(HTTPException) as exc:
-            er._require_bearer(creds)
+            await er._require_developer(creds)
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_auth_disabled_passes(self):
+        """AUTH_ENABLED=false → eval=Yes (full access)."""
+        creds = MagicMock()
+        creds.credentials = "dev-token"
+        with patch("deep_agent.aegra.auth.ENABLE_AUTH", False):
+            result = await er._require_developer(creds)
+        assert result == "dev-token"
+
+    @pytest.mark.asyncio
+    async def test_owners_pass(self):
+        """Groups defined, user is owner → eval=Yes."""
+        creds = MagicMock()
+        creds.credentials = "valid-token"
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": "u1", "preferred_username": "alice"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="owners",
+            ),
+        ):
+            result = await er._require_developer(creds)
+        assert result == "valid-token"
+
+    @pytest.mark.asyncio
+    async def test_admins_pass(self):
+        creds = MagicMock()
+        creds.credentials = "valid-token"
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": "u1", "preferred_username": "alice"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="admins",
+            ),
+        ):
+            result = await er._require_developer(creds)
+        assert result == "valid-token"
+
+    @pytest.mark.asyncio
+    async def test_builders_pass(self):
+        creds = MagicMock()
+        creds.credentials = "valid-token"
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": "u1", "preferred_username": "builder"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="builders",
+            ),
+        ):
+            result = await er._require_developer(creds)
+        assert result == "valid-token"
+
+    @pytest.mark.asyncio
+    async def test_users_role_rejected(self):
+        """Groups defined, user is users role → eval=No (403)."""
+        creds = MagicMock()
+        creds.credentials = "valid-token"
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": "u1", "preferred_username": "alice"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="users",
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await er._require_developer(creds)
+        assert exc.value.status_code == 403
+        assert "Developer access" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_denied_role_rejected(self):
+        """Groups defined, private, no match → eval=403."""
+        creds = MagicMock()
+        creds.credentials = "valid-token"
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": "u1", "preferred_username": "outsider"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="denied",
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await er._require_developer(creds)
+        assert exc.value.status_code == 403
+        assert "not a member" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_expired_token_raises_401(self):
+        import jwt as pyjwt
+
+        creds = MagicMock()
+        creds.credentials = "expired-token"
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=pyjwt.ExpiredSignatureError(),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await er._require_developer(creds)
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_raises_401(self):
+        import jwt as pyjwt
+
+        creds = MagicMock()
+        creds.credentials = "bad-token"
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=pyjwt.PyJWTError("Invalid"),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await er._require_developer(creds)
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_missing_user_identity_raises_401(self):
+        creds = MagicMock()
+        creds.credentials = "valid-token"
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": ""},
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await er._require_developer(creds)
         assert exc.value.status_code == 401
 
 

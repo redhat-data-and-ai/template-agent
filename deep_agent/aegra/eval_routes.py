@@ -31,18 +31,49 @@ from pydantic import BaseModel
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _require_bearer(
+async def _require_developer(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> str:
-    """Reject requests that carry no Bearer token.
+    """Validate JWT and enforce privileged LDAP role for eval endpoints.
 
-    Both /v1/eval/run and /v1/eval/thread-tool-calls/{thread_id} invoke the
-    production agent or read checkpoint blobs that may contain user PII.
-    Callers (run_eval.py subprocess) always forward the session token; any
-    request without one is unauthenticated and must be rejected.
+    Requires owners/admins/builders role. Users with 'users' or 'denied' role get 403.
+    When ENABLE_AUTH=false (dev mode), passes through without LDAP check.
     """
     if creds is None or not creds.credentials:
         raise HTTPException(status_code=401, detail="Bearer token required")
+
+    from deep_agent.aegra.auth import ENABLE_AUTH, _decode_token
+
+    if not ENABLE_AUTH:
+        return str(creds.credentials)
+
+    import asyncio as _asyncio
+
+    import jwt
+
+    try:
+        payload = await _asyncio.to_thread(_decode_token, creds.credentials)
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired") from None
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}") from None
+
+    user_id = str(payload.get("preferred_username") or payload.get("sub") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Token missing user identity")
+
+    from deep_agent.src.ldap import PRIVILEGED_ROLES, resolve_user_role
+
+    role = await resolve_user_role(user_id)
+
+    if role == "denied":
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: not a member of any configured LDAP group",
+        )
+    if role is not None and role not in PRIVILEGED_ROLES:
+        raise HTTPException(status_code=403, detail="Developer access required")
+
     return str(creds.credentials)
 
 
@@ -463,7 +494,7 @@ def _detect_interrupt(run_state: dict) -> bool:
 async def get_thread_tool_calls(
     thread_id: str,
     request: Request,
-    _token: str = Depends(_require_bearer),
+    _token: str = Depends(_require_developer),
 ) -> dict[str, Any]:
     """Return all subagent tool calls for a completed thread.
 
@@ -505,7 +536,7 @@ async def _verify_thread_ownership(thread_id: str, request: Request) -> None:
 @router.post("/run", response_model=EvalRunResponse)
 async def eval_run(
     body: EvalRunRequest,
-    _token: str = Depends(_require_bearer),
+    _token: str = Depends(_require_developer),
 ) -> EvalRunResponse:
     """Run one conversation turn for eval purposes.
 
@@ -920,7 +951,9 @@ async def _require_eval_files() -> None:
 
 
 @eval_mgmt_router.post("/trigger", response_model=None)
-async def trigger_eval(request: Request) -> Any:
+async def trigger_eval(
+    request: Request, _token: str = Depends(_require_developer)
+) -> Any:
     """Cache-first eval trigger. Returns cached result or sets in_progress."""
     if not _EVAL_RUNNER_URL:
         raise HTTPException(
@@ -992,7 +1025,9 @@ async def trigger_eval(request: Request) -> Any:
 
 
 @eval_mgmt_router.post("/force-trigger", response_model=None)
-async def force_trigger_eval(request: Request) -> Any:
+async def force_trigger_eval(
+    request: Request, _token: str = Depends(_require_developer)
+) -> Any:
     """Force a fresh eval run, bypassing cache."""
     if not _EVAL_RUNNER_URL:
         raise HTTPException(
@@ -1054,7 +1089,9 @@ _EVAL_STALE_TIMEOUT_MINUTES = int(os.environ.get("EVAL_STALE_TIMEOUT_MINUTES", "
 
 
 @eval_mgmt_router.get("/status")
-async def eval_status() -> dict[str, Any]:
+async def eval_status(
+    _token: str = Depends(_require_developer),
+) -> dict[str, Any]:
     """Return the latest eval record for this agent.
 
     Returns {"eval_status": "no_dataset"} immediately when no dataset is
@@ -1108,7 +1145,9 @@ async def eval_status() -> dict[str, Any]:
 
 
 @eval_mgmt_router.get("/results")
-async def eval_results(request: Request) -> dict[str, Any]:
+async def eval_results(
+    request: Request, _token: str = Depends(_require_developer)
+) -> dict[str, Any]:
     """Return a completed eval report.
 
     Optional query param ``completed_at`` fetches a specific run by its
@@ -1154,7 +1193,9 @@ async def eval_results(request: Request) -> dict[str, Any]:
 
 
 @eval_mgmt_router.get("/history")
-async def eval_history(request: Request) -> dict[str, Any]:
+async def eval_history(
+    request: Request, _token: str = Depends(_require_developer)
+) -> dict[str, Any]:
     """Return historical completed eval runs (scalars only, no results_detail)."""
     try:
         limit = min(int(request.query_params.get("limit", "20")), 100)
@@ -1205,7 +1246,9 @@ async def eval_history(request: Request) -> dict[str, Any]:
 
 
 @eval_mgmt_router.get("/trends")
-async def eval_trends(request: Request) -> dict[str, Any]:
+async def eval_trends(
+    request: Request, _token: str = Depends(_require_developer)
+) -> dict[str, Any]:
     """Return per-metric score trends across historical eval runs."""
     try:
         limit = min(int(request.query_params.get("limit", "20")), 100)
@@ -1312,7 +1355,9 @@ def _collect_agent_models() -> list[dict[str, Any]]:
 
 
 @eval_mgmt_router.get("/models")
-async def get_eval_models() -> dict[str, Any]:
+async def get_eval_models(
+    _token: str = Depends(_require_developer),
+) -> dict[str, Any]:
     """Return available LLM models for evaluation (orchestrator + subagents)."""
     return {"models": _collect_agent_models()}
 
@@ -1325,7 +1370,9 @@ class DatasetUpsertRequest(BaseModel):
 
 
 @eval_mgmt_router.post("/dataset")
-async def upsert_dataset(body: DatasetUpsertRequest) -> dict[str, Any]:
+async def upsert_dataset(
+    body: DatasetUpsertRequest, _token: str = Depends(_require_developer)
+) -> dict[str, Any]:
     """Upsert the eval dataset for this agent.
 
     Only one row is kept — DELETE + INSERT ensures the latest submission always wins.
@@ -1349,7 +1396,9 @@ async def upsert_dataset(body: DatasetUpsertRequest) -> dict[str, Any]:
 
 
 @eval_mgmt_router.get("/dataset")
-async def get_dataset() -> dict[str, Any]:
+async def get_dataset(
+    _token: str = Depends(_require_developer),
+) -> dict[str, Any]:
     """Return the stored eval dataset for this agent."""
     await _ensure_datasets_table_once()
 

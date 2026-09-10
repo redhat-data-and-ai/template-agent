@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from deep_agent.aegra.auth_helpers import (
     authenticated_user_id,
+    check_ldap_role,
     memory_user_id,
     rule_user_ids,
 )
@@ -143,6 +144,232 @@ class TestMemoryUserId:
         ):
             await memory_user_id(request)
         assert exc_info.value.status_code == 403
+
+
+class TestCheckLdapRole:
+    """Tests the Developer/Eval column from the behavior matrix."""
+
+    @pytest.mark.asyncio
+    async def test_auth_disabled_returns_dev_user(self):
+        """AUTH_ENABLED=false → full access (eval=Yes)."""
+        request = MagicMock()
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", False),
+            patch("deep_agent.aegra.auth.DEV_USER_ID", "dev-user"),
+        ):
+            result = await check_ldap_role(request, developer_only=True)
+        assert result == "dev-user"
+
+    @pytest.mark.asyncio
+    async def test_no_bearer_raises_401(self):
+        request = MagicMock()
+        request.headers = {"authorization": ""}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await check_ldap_role(request)
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_denied_role_raises_403(self):
+        """Groups defined, private, no match → 'denied' → 403."""
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"preferred_username": "outsider", "sub": "uuid-1"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="denied",
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await check_ldap_role(request)
+        assert exc_info.value.status_code == 403
+        assert "not a member" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_users_role_passes_when_not_developer_only(self):
+        """Users role → check_ldap_role without developer_only=True passes."""
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"preferred_username": "alice", "sub": "uuid-1"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="users",
+            ),
+        ):
+            result = await check_ldap_role(request)
+        assert result == "alice"
+
+    @pytest.mark.asyncio
+    async def test_users_role_rejected_when_developer_only(self):
+        """Users role + developer_only=True → 403 (eval=No)."""
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"preferred_username": "alice", "sub": "uuid-1"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="users",
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await check_ldap_role(request, developer_only=True)
+        assert exc_info.value.status_code == 403
+        assert "Developer access" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_owners_pass_developer_only(self):
+        """Owners role + developer_only=True → passes (eval=Yes)."""
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"preferred_username": "admin-user", "sub": "uuid-1"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="owners",
+            ),
+        ):
+            result = await check_ldap_role(request, developer_only=True)
+        assert result == "admin-user"
+
+    @pytest.mark.asyncio
+    async def test_admins_pass_developer_only(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"preferred_username": "admin-user", "sub": "uuid-1"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="admins",
+            ),
+        ):
+            result = await check_ldap_role(request, developer_only=True)
+        assert result == "admin-user"
+
+    @pytest.mark.asyncio
+    async def test_builders_pass_developer_only(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"preferred_username": "builder-user", "sub": "uuid-1"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="builders",
+            ),
+        ):
+            result = await check_ldap_role(request, developer_only=True)
+        assert result == "builder-user"
+
+    @pytest.mark.asyncio
+    async def test_missing_user_identity_raises_401(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": ""},
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await check_ldap_role(request)
+        assert exc_info.value.status_code == 401
+
+
+class TestAuthenticatedUserIdDeveloperOnly:
+    """Tests the developer_only parameter on authenticated_user_id."""
+
+    @pytest.mark.asyncio
+    async def test_developer_only_blocks_users_role(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": "user-1", "preferred_username": "alice"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="users",
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await authenticated_user_id(request, developer_only=True)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_developer_only_passes_owners(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": "user-1", "preferred_username": "alice"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value="owners",
+            ),
+        ):
+            result = await authenticated_user_id(request, developer_only=True)
+        assert result == "user-1"
+
+    @pytest.mark.asyncio
+    async def test_developer_only_none_role_passes(self):
+        """When resolve_user_role returns None (no groups), developer_only does not block."""
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                return_value={"sub": "user-1", "preferred_username": "alice"},
+            ),
+            patch(
+                "deep_agent.src.ldap.resolve_user_role",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            result = await authenticated_user_id(request, developer_only=True)
+        assert result == "user-1"
 
 
 class TestRuleUserIds:
