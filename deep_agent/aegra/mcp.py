@@ -198,6 +198,7 @@ _sso_refresh_lock: asyncio.Lock = asyncio.Lock()
 async def refresh_access_token(
     access_token: str,
     refresh_token: str | None,
+    user_id: str | None = None,
 ) -> str:
     """Return a fresh access token, using the refresh_token grant if needed.
 
@@ -212,6 +213,8 @@ async def refresh_access_token(
     Args:
         access_token: Current JWT access token (may be expired).
         refresh_token: OIDC refresh token (may be ``None`` or ``""``).
+        user_id: Explicit user identity for the lock key. Falls back to
+            ``_current_user_id`` context var if not provided.
 
     Returns:
         A valid access token (refreshed if necessary, original if refresh
@@ -235,24 +238,36 @@ async def refresh_access_token(
         logger.warning("Cannot refresh token — SSO_ISSUER_URL or SSO_CLIENT_ID not set")
         return access_token
 
-    return await _locked_sso_refresh(access_token, refresh_token, remaining)
+    resolved_user_id = user_id or _current_user_id.get() or "unknown"
+    return await _locked_sso_refresh(
+        access_token, refresh_token, remaining, resolved_user_id
+    )
 
 
 async def _locked_sso_refresh(
     access_token: str,
     refresh_token: str,
     remaining: float,
+    user_id: str = "unknown",
 ) -> str:
     """Perform the actual SSO refresh under a lock to prevent concurrent races."""
     from deep_agent.aegra.redis import distributed_lock
 
-    user_id = _current_user_id.get() or "unknown"
     lock_name = f"sso:refresh:{user_id}"
 
     async with distributed_lock(lock_name, ttl_seconds=15, wait_seconds=10) as state:
         if state == "no_redis":
             async with _sso_refresh_lock:
-                return await _do_sso_refresh(access_token, refresh_token, remaining)
+                current = _current_access_token.get()
+                if current and current != access_token:
+                    check_remaining = _jwt_exp(current) - time.time()
+                    if check_remaining > _SSO_REFRESH_BUFFER_SECS:
+                        logger.debug(
+                            "SSO token already refreshed by peer (no-redis path)"
+                        )
+                        return current
+                latest_rt = _current_refresh_token.get() or refresh_token
+                return await _do_sso_refresh(access_token, latest_rt, remaining)
         elif state == "timeout":
             current = _current_access_token.get()
             if current and current != access_token:
@@ -272,7 +287,10 @@ async def _locked_sso_refresh(
                 if check_remaining > _SSO_REFRESH_BUFFER_SECS:
                     logger.debug("SSO token already refreshed by another call")
                     return current
-            return await _do_sso_refresh(access_token, refresh_token, remaining)
+                latest_rt = _current_refresh_token.get() or refresh_token
+                return await _do_sso_refresh(access_token, latest_rt, remaining)
+            latest_rt = _current_refresh_token.get() or refresh_token
+            return await _do_sso_refresh(access_token, latest_rt, remaining)
 
 
 async def _do_sso_refresh(

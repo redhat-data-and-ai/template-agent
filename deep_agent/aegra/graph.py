@@ -266,11 +266,12 @@ async def agent(runtime: ServerRuntime) -> Any:
     user = getattr(runtime, "user", None)
     sso_token = getattr(user, "access_token", None) if user else None
     refresh_token = getattr(user, "refresh_token", None) if user else None
+    user_identity = getattr(user, "identity", None) if user else None
 
     if sso_token:
-        sso_token = await refresh_access_token(sso_token, refresh_token)
-
-    user_identity = getattr(user, "identity", None) if user else None
+        sso_token = await refresh_access_token(
+            sso_token, refresh_token, user_id=user_identity
+        )
 
     set_mcp_auth_context(sso_token, refresh_token, user_identity)
     orchestrator_cfg = agent_config.get_orchestrator_config()
