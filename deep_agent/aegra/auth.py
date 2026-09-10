@@ -245,7 +245,9 @@ async def authenticate(headers: dict) -> dict:
         raise PermissionError("Missing or invalid Authorization header")
 
     access_token = auth_header[7:]
-    refresh_token = headers.get("x-refresh-token", "")
+    refresh_token = headers.get("x-user-refresh-token", "") or headers.get(
+        "x-refresh-token", ""
+    )
 
     try:
         payload = _decode_token(access_token)
