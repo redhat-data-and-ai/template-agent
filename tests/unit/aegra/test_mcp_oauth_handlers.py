@@ -560,6 +560,7 @@ _INTERACTIVE_SERVERS = {
         "enabled": True,
         "auth_mode": "oauth",
         "description": "Alpha tools",
+        "display_name": "Alpha",
         "oauth": {"grant_type": "authorization_code"},
     },
     "bravo-dcr": {
@@ -608,12 +609,14 @@ class TestHandleMcpConnections:
                     "mcp_name": "alpha-oauth",
                     "auth_mode": "oauth",
                     "description": "Alpha tools",
+                    "display_name": "Alpha",
                     "connected": True,
                 },
                 {
                     "mcp_name": "bravo-dcr",
                     "auth_mode": "dcr",
                     "description": "Bravo DCR",
+                    "display_name": "",
                     "connected": False,
                 },
             ]
@@ -666,6 +669,65 @@ class TestHandleMcpConnections:
             result = await handle_mcp_connections("user-1")
 
         assert result["connections"][0]["description"] == ""
+        assert result["connections"][0]["display_name"] == ""
+
+    async def test_returns_display_name_when_present(self):
+        resolver = MagicMock()
+        resolver.has_valid_token = AsyncMock(return_value=True)
+        servers = {
+            "named": {
+                "enabled": True,
+                "auth_mode": "oauth",
+                "description": "Long description",
+                "display_name": "Short Name",
+                "oauth": {"grant_type": "authorization_code"},
+            }
+        }
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.agent_config.get_mcp_servers",
+                return_value=servers,
+            ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.get_mcp_credential_resolver",
+                return_value=resolver,
+            ),
+        ):
+            mock_settings.MCP_DCR_ENABLED = True
+            result = await handle_mcp_connections("user-1")
+
+        assert result["connections"][0]["display_name"] == "Short Name"
+        assert result["connections"][0]["description"] == "Long description"
+
+    async def test_defaults_non_string_display_name_to_empty_string(self):
+        resolver = MagicMock()
+        resolver.has_valid_token = AsyncMock(return_value=True)
+        servers = {
+            "bad-name": {
+                "enabled": True,
+                "auth_mode": "oauth",
+                "display_name": 42,
+                "oauth": {"grant_type": "authorization_code"},
+            }
+        }
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.agent_config.get_mcp_servers",
+                return_value=servers,
+            ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.get_mcp_credential_resolver",
+                return_value=resolver,
+            ),
+        ):
+            mock_settings.MCP_DCR_ENABLED = True
+            result = await handle_mcp_connections("user-1")
+
+        assert result["connections"][0]["display_name"] == ""
 
 
 @pytest.mark.asyncio

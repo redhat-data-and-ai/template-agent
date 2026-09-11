@@ -398,12 +398,14 @@ async def handle_mcp_connections(user_id: str) -> dict[str, Any]:
     connections: list[dict[str, Any]] = []
     for mcp_name, server_cfg in _interactive_oauth_servers():
         description = server_cfg.get("description")
+        display_name = server_cfg.get("display_name")
         connected = await resolver.has_valid_token(user_id, mcp_name, server_cfg)
         connections.append(
             {
                 "mcp_name": mcp_name,
                 "auth_mode": server_cfg.get("auth_mode"),
                 "description": description if isinstance(description, str) else "",
+                "display_name": display_name if isinstance(display_name, str) else "",
                 "connected": connected,
             }
         )
