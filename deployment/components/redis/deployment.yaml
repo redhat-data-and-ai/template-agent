@@ -15,12 +15,21 @@ spec:
         component: cache
     spec:
       initContainers:
-        - name: clean-persistence-files
+        - name: validate-rdb
           image: redis:7-alpine
           command:
             - sh
             - -c
-            - "rm -rf /data/dump.rdb /data/appendonlydir"
+            - |
+              rm -rf /data/appendonlydir
+              if [ -f /data/dump.rdb ]; then
+                if redis-check-rdb /data/dump.rdb > /dev/null 2>&1; then
+                  echo "RDB file valid"
+                else
+                  echo "RDB file corrupt — removing"
+                  rm -f /data/dump.rdb
+                fi
+              fi
           volumeMounts:
             - name: redis-data
               mountPath: /data
@@ -45,7 +54,7 @@ spec:
             - --appendonly
             - "no"
             - --save
-            - ""
+            - "60 1"
             - --maxmemory
             - "256mb"
             - --maxmemory-policy
