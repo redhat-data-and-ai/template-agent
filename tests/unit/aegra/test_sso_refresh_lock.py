@@ -176,18 +176,14 @@ class TestLockedSsoRefresh:
 
         token = _current_user_id.set("cache-user")
         try:
-            with patch(
-                "deep_agent.aegra.mcp._oidc_refresh",
-                new=AsyncMock(return_value=("new-at", "new-rt")),
-            ):
-                with patch("deep_agent.aegra.auth.EVAL_TOKEN_REFRESH_ENABLED", False):
-                    with patch(
-                        "deep_agent.aegra.auth._oidc_refresh",
-                        new=AsyncMock(return_value=("new-at", "new-rt")),
-                    ):
-                        from deep_agent.aegra.mcp import _do_sso_refresh
+            with patch("deep_agent.aegra.auth.EVAL_TOKEN_REFRESH_ENABLED", False):
+                with patch(
+                    "deep_agent.aegra.auth._oidc_refresh",
+                    new=AsyncMock(return_value=("new-at", "new-rt")),
+                ):
+                    from deep_agent.aegra.mcp import _do_sso_refresh
 
-                        result = await _do_sso_refresh("old-at", "old-rt", 10.0)
+                    result = await _do_sso_refresh("old-at", "old-rt", 10.0)
 
             assert result == "new-at"
             assert _user_token_cache.get("cache-user") == ("new-at", "new-rt")
