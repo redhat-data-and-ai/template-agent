@@ -208,3 +208,42 @@ class TestMcpTokenStoreRedis:
             assert await store.delete_token("default", "user-1", "oauth-mcp") is True
 
         assert deleted_keys == ["mcp_oauth_token:default:user-1:oauth-mcp"]
+
+    async def test_delete_client_returns_true_when_row_exists(self, store):
+        mock_cur = AsyncMock()
+        mock_cur.rowcount = 1
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = mock_cur
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(store, "ensure_tables"),
+            patch("deep_agent.aegra.mcp_token_store.psycopg") as mock_psycopg,
+        ):
+            mock_psycopg.AsyncConnection.connect = AsyncMock(return_value=mock_conn)
+            result = await store.delete_client("default", "dcr-mcp")
+
+        assert result is True
+        mock_conn.execute.assert_awaited_once()
+        sql = mock_conn.execute.call_args[0][0]
+        assert "DELETE" in sql
+        assert mock_conn.execute.call_args[0][1] == ("default", "dcr-mcp")
+        mock_conn.commit.assert_awaited_once()
+
+    async def test_delete_client_returns_false_when_no_row(self, store):
+        mock_cur = AsyncMock()
+        mock_cur.rowcount = 0
+        mock_conn = AsyncMock()
+        mock_conn.execute.return_value = mock_cur
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch.object(store, "ensure_tables"),
+            patch("deep_agent.aegra.mcp_token_store.psycopg") as mock_psycopg,
+        ):
+            mock_psycopg.AsyncConnection.connect = AsyncMock(return_value=mock_conn)
+            result = await store.delete_client("default", "no-such-mcp")
+
+        assert result is False

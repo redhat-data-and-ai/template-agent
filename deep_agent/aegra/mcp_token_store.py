@@ -345,6 +345,17 @@ class McpTokenStore:
             updated_at=self._deserialize_datetime(payload["updated_at"]),
         )
 
+    async def delete_client(self, agent_name: str, mcp_name: str) -> bool:
+        """Delete the DCR client record for *(agent_name, mcp_name)* from Postgres."""
+        await self.ensure_tables()
+        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+            cur = await conn.execute(
+                "DELETE FROM mcp_oauth_clients WHERE agent_name = %s AND mcp_name = %s",
+                (agent_name, mcp_name),
+            )
+            await conn.commit()
+            return (cur.rowcount or 0) > 0
+
     async def delete_token(self, agent_name: str, user_id: str, mcp_name: str) -> bool:
         """Delete stored OAuth tokens for *(agent_name, user_id, mcp_name)* from Redis."""
         key = self._token_key(agent_name, user_id, mcp_name)

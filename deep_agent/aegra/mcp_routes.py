@@ -107,6 +107,31 @@ async def mcp_connections(request: Request) -> JSONResponse:
     return JSONResponse(content=result)
 
 
+@router.post("/mcp/{mcp_name}/reregister")
+async def mcp_reregister(mcp_name: str, request: Request) -> JSONResponse:
+    """Delete stale DCR client credentials and re-register with current config URLs."""
+    from deep_agent.aegra.mcp_oauth_handlers import handle_mcp_reregister
+    from deep_agent.src.settings import settings
+
+    if not settings.ENABLE_DCR_REREGISTER_API:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "DCR re-register API is disabled"},
+        )
+
+    servers = agent_config.get_mcp_servers()
+    cfg = servers.get(mcp_name, {})
+    if cfg.get("auth_mode") == "dcr" and not settings.MCP_DCR_ENABLED:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "DCR is disabled"},
+        )
+
+    await _authenticated_user_id(request)
+    result = await handle_mcp_reregister(mcp_name)
+    return JSONResponse(content=result)
+
+
 @router.get("/mcp/{mcp_name}/status")
 async def mcp_status(mcp_name: str, request: Request) -> JSONResponse:
     """Return whether the current user has a valid token for the MCP."""

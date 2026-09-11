@@ -16,6 +16,7 @@ from deep_agent.aegra.mcp_oauth_handlers import (
     _register_dcr_client,
     handle_mcp_connect,
     handle_mcp_connections,
+    handle_mcp_reregister,
     handle_mcp_disconnect,
     handle_mcp_oauth_callback,
 )
@@ -840,6 +841,183 @@ class TestHandleMcpDisconnect:
                 await handle_mcp_disconnect("user-1", "cc-mcp")
         assert exc.value.status_code == 400
         assert "client_credentials" in exc.value.detail
+
+
+@pytest.mark.asyncio
+class TestHandleMcpReregister:
+    async def test_rejects_non_dcr_auth_mode(self):
+        server_cfg = {
+            "enabled": True,
+            "auth_mode": "oauth",
+            "oauth": {"authorization_endpoint": "https://auth.example.com/authorize"},
+        }
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
+            return_value=server_cfg,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await handle_mcp_reregister("oauth-mcp")
+            assert exc.value.status_code == 400
+            assert "not using DCR" in exc.value.detail
+
+    async def test_rejects_sso_auth_mode(self):
+        server_cfg = {"enabled": True, "auth_mode": "sso"}
+        with patch(
+            "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
+            return_value=server_cfg,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await handle_mcp_reregister("sso-mcp")
+            assert exc.value.status_code == 400
+            assert "not using DCR" in exc.value.detail
+
+    async def test_deletes_and_reregisters(self):
+        server_cfg = {
+            "enabled": True,
+            "auth_mode": "dcr",
+            "oauth": {
+                "registration_endpoint": "https://auth.example.com/register",
+                "authorization_endpoint": "https://auth.example.com/authorize",
+                "token_endpoint": "https://auth.example.com/token",
+            },
+        }
+        call_order = MagicMock()
+        call_order.delete_client = AsyncMock(return_value=True)
+        call_order.register = AsyncMock(return_value=("new-client-id", "new-secret"))
+        mock_store = MagicMock()
+        mock_store.delete_client = call_order.delete_client
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
+                return_value=server_cfg,
+            ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.McpTokenStore",
+                return_value=mock_store,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._register_dcr_client",
+                side_effect=call_order.register,
+            ),
+        ):
+            mock_settings.agent_deployment_id = "test-agent"
+            mock_settings.database_uri = "postgresql://test"
+
+            result = await handle_mcp_reregister("dcr-mcp")
+
+        assert result["mcp_name"] == "dcr-mcp"
+        assert result["re_registered"] is True
+        assert result["client_id"] == "new-client-id"
+        call_order.delete_client.assert_awaited_once_with("test-agent", "dcr-mcp")
+        call_order.register.assert_awaited_once_with(
+            "test-agent", "dcr-mcp", server_cfg["oauth"], server_cfg
+        )
+        call_names = [c[0] for c in call_order.method_calls]
+        assert call_names.index("delete_client") < call_names.index("register")
+
+    async def test_reregisters_even_when_no_prior_client(self):
+        server_cfg = {
+            "enabled": True,
+            "auth_mode": "dcr",
+            "oauth": {
+                "registration_endpoint": "https://auth.example.com/register",
+            },
+        }
+        mock_store = MagicMock()
+        mock_store.delete_client = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._get_mcp_server_config",
+                return_value=server_cfg,
+            ),
+            patch("deep_agent.aegra.mcp_oauth_handlers.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.McpTokenStore",
+                return_value=mock_store,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers._register_dcr_client",
+                new_callable=AsyncMock,
+                return_value=("fresh-cid", "fresh-secret"),
+            ) as mock_register,
+        ):
+            mock_settings.agent_deployment_id = "test-agent"
+            mock_settings.database_uri = "postgresql://test"
+
+            result = await handle_mcp_reregister("dcr-mcp")
+
+        assert result["re_registered"] is True
+        assert result["client_id"] == "fresh-cid"
+        mock_store.delete_client.assert_awaited_once()
+        mock_register.assert_awaited_once()
+
+
+class TestMcpReregisterRoute:
+    def test_returns_403_when_api_disabled(self):
+        with (
+            patch("deep_agent.src.settings.settings") as mock_settings,
+        ):
+            mock_settings.ENABLE_DCR_REREGISTER_API = False
+            client = TestClient(app)
+            resp = client.post("/mcp/dcr-mcp/reregister")
+
+        assert resp.status_code == 403
+        assert "disabled" in resp.json()["detail"]
+
+    def test_returns_403_when_dcr_disabled_for_dcr_mcp(self):
+        with (
+            patch("deep_agent.src.settings.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_routes.agent_config.get_mcp_servers",
+                return_value={
+                    "dcr-mcp": {"enabled": True, "auth_mode": "dcr", "oauth": {}},
+                },
+            ),
+        ):
+            mock_settings.ENABLE_DCR_REREGISTER_API = True
+            mock_settings.MCP_DCR_ENABLED = False
+            client = TestClient(app)
+            resp = client.post("/mcp/dcr-mcp/reregister")
+
+        assert resp.status_code == 403
+        assert "DCR is disabled" in resp.json()["detail"]
+
+    def test_returns_success_when_enabled(self):
+        with (
+            patch("deep_agent.src.settings.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp_routes.agent_config.get_mcp_servers",
+                return_value={
+                    "dcr-mcp": {"enabled": True, "auth_mode": "dcr", "oauth": {}},
+                },
+            ),
+            patch(
+                "deep_agent.aegra.mcp_routes._authenticated_user_id",
+                new_callable=AsyncMock,
+                return_value="user-1",
+            ),
+            patch(
+                "deep_agent.aegra.mcp_oauth_handlers.handle_mcp_reregister",
+                new_callable=AsyncMock,
+                return_value={
+                    "mcp_name": "dcr-mcp",
+                    "re_registered": True,
+                    "client_id": "new-cid",
+                },
+            ),
+        ):
+            mock_settings.ENABLE_DCR_REREGISTER_API = True
+            mock_settings.MCP_DCR_ENABLED = True
+            client = TestClient(app)
+            resp = client.post("/mcp/dcr-mcp/reregister")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["re_registered"] is True
+        assert body["client_id"] == "new-cid"
 
 
 class TestCallbackHtml:

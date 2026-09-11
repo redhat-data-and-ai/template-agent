@@ -384,6 +384,46 @@ def _require_interactive_oauth(mcp_name: str, server_cfg: dict[str, Any]) -> Non
         )
 
 
+async def handle_mcp_reregister(mcp_name: str) -> dict[str, Any]:
+    """Delete existing DCR client credentials and re-register with current config URLs.
+
+    Call this when any DCR-related URL changes (authorization_endpoint,
+    token_endpoint, registration_endpoint, server url, or redirect_uri)
+    so that stale client_id/client_secret are replaced.
+    """
+    server_cfg = _get_mcp_server_config(mcp_name)
+    auth_mode = server_cfg.get("auth_mode", "sso")
+    if auth_mode != "dcr":
+        raise HTTPException(
+            status_code=400,
+            detail=f"MCP '{mcp_name}' is not using DCR authentication",
+        )
+
+    oauth_cfg = server_cfg.get("oauth") or {}
+    current_agent_name = settings.agent_deployment_id
+    store = McpTokenStore(settings.database_uri)
+
+    deleted = await store.delete_client(current_agent_name, mcp_name)
+    logger.info(
+        "DCR re-register for '%s' (agent '%s'): old client deleted=%s",
+        mcp_name,
+        current_agent_name,
+        deleted,
+    )
+
+    client_id, _ = await _register_dcr_client(
+        current_agent_name, mcp_name, oauth_cfg, server_cfg
+    )
+    logger.info(
+        "DCR re-registration for '%s' (agent '%s'): new client_id=%s",
+        mcp_name,
+        current_agent_name,
+        client_id,
+    )
+
+    return {"mcp_name": mcp_name, "re_registered": True, "client_id": client_id}
+
+
 async def handle_mcp_status(user_id: str, mcp_name: str) -> dict[str, Any]:
     """Return whether the user has a usable token for *mcp_name*."""
     server_cfg = _get_mcp_server_config(mcp_name)
