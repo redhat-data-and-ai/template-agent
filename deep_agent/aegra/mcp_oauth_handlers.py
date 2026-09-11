@@ -25,7 +25,7 @@ from deep_agent.aegra.mcp_oauth_scopes import (
     validate_granted_scopes,
 )
 from deep_agent.aegra.mcp_token_store import McpTokenStore
-from deep_agent.aegra.redis import cache_get, cache_set
+from deep_agent.aegra.redis import cache_getdel, cache_set
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -201,7 +201,7 @@ async def handle_mcp_oauth_callback(
             status_code=400,
         )
 
-    raw = cache_get(f"mcp_oauth_state:{state}")
+    raw = cache_getdel(f"mcp_oauth_state:{state}")
     if not raw:
         return HTMLResponse(
             _callback_html(error="OAuth state expired or invalid"),
