@@ -282,7 +282,7 @@ async def _locked_sso_refresh(
                 cached_at, _ = cached
                 if cached_at != access_token:
                     check_remaining = _jwt_exp(cached_at) - time.time()
-                    if check_remaining > 10:
+                    if check_remaining > _SSO_REFRESH_BUFFER_SECS:
                         logger.info(
                             "SSO refresh lock timeout — another task refreshed (%.0fs left)",
                             check_remaining,
