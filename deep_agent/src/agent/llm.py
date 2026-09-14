@@ -11,7 +11,11 @@ to the inference server's /v1 endpoint.
 """
 
 from langchain_core.language_models import BaseChatModel
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import (
+    ChatGoogleGenerativeAI,
+    HarmBlockThreshold,
+    HarmCategory,
+)
 from langchain_google_vertexai.model_garden import ChatAnthropicVertex
 
 from deep_agent.src.error_handling import llm_retry
@@ -34,6 +38,19 @@ CLAUDE_MODELS: list[str] = [
     "claude-sonnet-4",
     "claude-sonnet-4-6@default",
 ]
+
+_THRESHOLD_MAP = {v.name: v for v in HarmBlockThreshold}
+
+safety_settings = {
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: _THRESHOLD_MAP[
+        settings.SAFETY_DANGEROUS_CONTENT
+    ],
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: _THRESHOLD_MAP[settings.SAFETY_HATE_SPEECH],
+    HarmCategory.HARM_CATEGORY_HARASSMENT: _THRESHOLD_MAP[settings.SAFETY_HARASSMENT],
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: _THRESHOLD_MAP[
+        settings.SAFETY_SEXUALLY_EXPLICIT
+    ],
+}
 
 
 @llm_retry
@@ -114,6 +131,7 @@ def _create_vertex_model(
                 max_output_tokens=max_output_tokens,
                 max_retries=2,
                 streaming=True,
+                safety_settings=safety_settings,
             )
 
     except (ValueError, LLMError):

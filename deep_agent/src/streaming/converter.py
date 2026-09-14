@@ -107,7 +107,9 @@ def should_skip_message(message: BaseMessage) -> tuple[bool, str | None]:
         and not message.content
         and not message.tool_calls
     ):
-        reason = message.response_metadata.get("finish_reason", "")
+        reason = message.response_metadata.get(
+            "finish_reason", message.response_metadata.get("stop_reason", "")
+        )
         if reason == "MALFORMED_FUNCTION_CALL":
             return True, "LLM returned MALFORMED_FUNCTION_CALL — skipping empty message"
 

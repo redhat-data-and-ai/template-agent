@@ -4,7 +4,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from deep_agent.src.agent.llm import CLAUDE_MODELS, GEMINI_MODELS, create_model
+from deep_agent.src.agent.llm import (
+    CLAUDE_MODELS,
+    GEMINI_MODELS,
+    create_model,
+    safety_settings,
+)
 from deep_agent.src.exceptions import LLMError
 
 
@@ -30,6 +35,7 @@ class TestCreateModel:
                     max_output_tokens=8192,
                     max_retries=2,
                     streaming=True,
+                    safety_settings=safety_settings,
                 )
 
     def test_create_claude_model(self):

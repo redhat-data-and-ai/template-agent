@@ -32,14 +32,15 @@ class TestBuildMiddlewareList:
         ):
             yield
 
-    def test_returns_empty_when_master_switch_off(self):
+    def test_returns_only_safety_when_master_switch_off(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
         with patch(
             "deep_agent.src.infrastructure.middleware.settings"
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
-        assert result == []
+        # GeminiSafetyLogMiddleware is always included regardless of master switch
+        assert len(result) == 1
 
     def test_includes_summarization_tool_when_enabled(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
@@ -68,8 +69,8 @@ class TestBuildMiddlewareList:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
             build_sum.assert_not_called()
-        # Default guardrails (model/tool limits + model retry) still apply.
-        assert len(result) == 3
+        # Default guardrails (model/tool limits + model retry) + safety middleware.
+        assert len(result) == 4
 
     def test_includes_extra_middleware(self):
         resolved = ResolvedMiddlewareConfig(
@@ -83,7 +84,7 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert len(result) == 4
+        assert len(result) == 5
         assert any(isinstance(m, _DummyMiddleware) for m in result)
 
 
@@ -173,6 +174,67 @@ class TestImportMiddleware:
             "tests.unit.test_infrastructure_middleware:_DummyMiddleware"
         )
         assert result is not None
+
+
+class TestGeminiSafetyLogMiddleware:
+    """Test the GeminiSafetyLogMiddleware after_model hook."""
+
+    def _build_middleware(self):
+        from deep_agent.src.infrastructure.middleware import (
+            _build_gemini_safety_log_middleware,
+        )
+
+        return _build_gemini_safety_log_middleware()
+
+    def test_returns_none_for_normal_message(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {"messages": [AIMessage(content="Hello!", id="msg1")]}
+        assert mw.after_model(state, None) is None
+
+    def test_replaces_safety_blocked_message(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        blocked = AIMessage(
+            content="",
+            id="msg1",
+            response_metadata={"finish_reason": "SAFETY", "safety_ratings": []},
+        )
+        state = {"messages": [blocked]}
+        result = mw.after_model(state, None)
+        assert result is not None
+        replaced = result["messages"][-1]
+        assert "content safety filter" in replaced.content
+        assert replaced.id == "msg1"
+
+    def test_ignores_non_safety_empty_message(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        msg = AIMessage(
+            content="",
+            id="msg1",
+            response_metadata={"finish_reason": "stop"},
+        )
+        state = {"messages": [msg]}
+        assert mw.after_model(state, None) is None
+
+    def test_ignores_non_ai_message(self):
+        from langchain_core.messages import HumanMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {"messages": [HumanMessage(content="hi")]}
+        assert mw.after_model(state, None) is None
 
 
 class _DummyMiddleware:

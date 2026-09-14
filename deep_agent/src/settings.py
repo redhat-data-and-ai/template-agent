@@ -9,7 +9,7 @@ Hierarchy (highest wins):
   3. Defaults below (tuned for containerized demo stack)
 """
 
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -22,6 +22,13 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 _DEV_PUBLIC_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+SafetyThreshold = Literal[
+    "BLOCK_NONE",
+    "BLOCK_LOW_AND_ABOVE",
+    "BLOCK_MEDIUM_AND_ABOVE",
+    "BLOCK_ONLY_HIGH",
+]
 
 try:
     load_dotenv()
@@ -67,6 +74,12 @@ class Settings(BaseSettings):
 
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
+
+    # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────
+    SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_MEDIUM_AND_ABOVE")
+    SAFETY_HATE_SPEECH: SafetyThreshold = Field(default="BLOCK_MEDIUM_AND_ABOVE")
+    SAFETY_HARASSMENT: SafetyThreshold = Field(default="BLOCK_LOW_AND_ABOVE")
+    SAFETY_SEXUALLY_EXPLICIT: SafetyThreshold = Field(default="BLOCK_LOW_AND_ABOVE")
 
     # ── Database (PostgreSQL) ─────────────────────────────────────────
     POSTGRES_HOST: str = Field(default="pgvector")

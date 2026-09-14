@@ -56,6 +56,64 @@ def build_opa_middleware() -> Any | None:
     return OPAMiddleware()
 
 
+def _build_gemini_safety_log_middleware() -> Any | None:
+    """Build middleware that logs and replaces Gemini safety-blocked empty responses."""
+    try:
+        from langchain.agents.middleware import AgentMiddleware
+    except ImportError:
+        return None
+
+    _SAFETY_FINISH_REASONS = frozenset(
+        {"SAFETY", "RECITATION", "BLOCKLIST", "content_filter"}
+    )
+    _REFUSAL = (
+        "I'm unable to respond to that request as it was flagged by the "
+        "content safety filter. Please rephrase your message."
+    )
+
+    class GeminiSafetyLogMiddleware(AgentMiddleware):
+        """Detect Gemini safety filter blocks (finish_reason=SAFETY) and log them.
+
+        Gemini does not throw an exception — it returns an empty AIMessage with
+        finish_reason set to SAFETY. This middleware intercepts that after the
+        model call, logs the block with safety ratings, and replaces the empty
+        message with a user-facing refusal.
+        """
+
+        def after_model(self, state: Any, runtime: Any) -> Any:
+            return self._check_and_replace(state)
+
+        async def aafter_model(self, state: Any, runtime: Any) -> Any:
+            return self._check_and_replace(state)
+
+        def _check_and_replace(self, state: Any) -> Any:
+            from langchain_core.messages import AIMessage
+
+            msgs = state.get("messages", []) if isinstance(state, dict) else []
+            if not msgs:
+                return None
+            last = msgs[-1]
+            if not isinstance(last, AIMessage):
+                return None
+            if last.content or last.tool_calls:
+                return None
+            meta = getattr(last, "response_metadata", {}) or {}
+            reason = meta.get("finish_reason", meta.get("stop_reason", ""))
+            if reason not in _SAFETY_FINISH_REASONS:
+                return None
+            logger.warning(
+                "Gemini safety filter blocked response: "
+                "finish_reason=%s, model=%s, safety_ratings=%s",
+                reason,
+                meta.get("model_name", "unknown"),
+                meta.get("safety_ratings", []),
+            )
+            msgs[-1] = AIMessage(content=_REFUSAL, id=last.id)
+            return {"messages": msgs}
+
+    return GeminiSafetyLogMiddleware()
+
+
 def build_middleware_list(
     resolved: ResolvedMiddlewareConfig,
     *,
@@ -89,6 +147,10 @@ def build_middleware_list(
     opa_mw = build_opa_middleware()
     if opa_mw is not None:
         middlewares.append(opa_mw)
+
+    safety_mw = _build_gemini_safety_log_middleware()
+    if safety_mw is not None:
+        middlewares.append(safety_mw)
 
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
