@@ -58,4 +58,4 @@ class TestBuildMiddlewareListAudit:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
         assert isinstance(result[0], AuditMiddleware)
-        assert result == [result[0]]
+        assert len(result) == 2
