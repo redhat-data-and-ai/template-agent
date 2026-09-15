@@ -108,6 +108,42 @@ class TestRecordFeedback:
             "user-42",
             "up",
             "a" * 32,
+            comment=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_persists_comment_to_postgres(self):
+        payload = {
+            "trace_id": "b" * 32,
+            "name": "thumbs-down",
+            "value": 0.0,
+            "thread_id": "thread-2",
+            "message_id": "msg-2",
+            "user_id": "user-42",
+            "kwargs": {"comment": "The SQL was incorrect"},
+        }
+        mock_upsert = AsyncMock()
+        mock_repo = MagicMock()
+        mock_repo.upsert_feedback = mock_upsert
+
+        with patch(
+            "deep_agent.aegra.feedback.get_langfuse_client",
+            return_value=None,
+        ):
+            with patch(
+                "deep_agent.aegra.feedback.FeedbackRepository",
+                return_value=mock_repo,
+            ):
+                result = await record_feedback(payload)
+
+        assert result.status == "success"
+        mock_upsert.assert_awaited_once_with(
+            "thread-2",
+            "msg-2",
+            "user-42",
+            "down",
+            "b" * 32,
+            comment="The SQL was incorrect",
         )
 
     @pytest.mark.asyncio

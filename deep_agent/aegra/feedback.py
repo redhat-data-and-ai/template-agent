@@ -56,6 +56,8 @@ async def _persist_feedback_to_postgres(req: FeedbackRequest) -> None:
         return
     polarity = _score_to_feedback_polarity(req)
     user_id = req.user_id if req.user_id else "anonymous"
+    raw_comment = (req.kwargs or {}).get("comment") if req.kwargs else None
+    comment = raw_comment if isinstance(raw_comment, str) else None
     repo = FeedbackRepository(settings.database_uri)
     await repo.upsert_feedback(
         req.thread_id,
@@ -63,6 +65,7 @@ async def _persist_feedback_to_postgres(req: FeedbackRequest) -> None:
         user_id,
         polarity,
         req.trace_id,
+        comment=comment,
     )
     logger.info(
         "feedback_recorded_postgres",

@@ -80,6 +80,38 @@ class TestUpsertFeedback:
             mock_conn.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_insert_with_comment(self, repo, mock_conn):
+        feedback_repo_mod._TABLE_ENSURED = True
+        with patch(
+            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
+            return_value=mock_conn,
+        ):
+            await repo.upsert_feedback(
+                "t1",
+                "m1",
+                "u1",
+                "down",
+                "trace-1",
+                comment="The answer was wrong",
+            )
+            mock_conn.execute.assert_awaited_once()
+            args = mock_conn.execute.call_args
+            sql = args[0][0]
+            assert args[0][1] == (
+                "t1",
+                "m1",
+                "u1",
+                "down",
+                "The answer was wrong",
+                "trace-1",
+            )
+            comment_pos = sql.index("comment")
+            trace_id_pos = sql.index("trace_id")
+            assert comment_pos < trace_id_pos, (
+                "SQL column order: comment must precede trace_id"
+            )
+
+    @pytest.mark.asyncio
     async def test_update_second_upsert(self, repo, mock_conn):
         """Second upsert with same keys runs ON CONFLICT UPDATE (still one execute)."""
         feedback_repo_mod._TABLE_ENSURED = True
@@ -125,8 +157,8 @@ class TestListFeedback:
         feedback_repo_mod._TABLE_ENSURED = True
         mock_conn._cursor.fetchall = AsyncMock(
             return_value=[
-                {"message_id": "m1", "feedback": "up"},
-                {"message_id": "m2", "feedback": "down"},
+                {"message_id": "m1", "feedback": "up", "comment": None},
+                {"message_id": "m2", "feedback": "down", "comment": None},
             ]
         )
         with patch(
@@ -137,6 +169,23 @@ class TestListFeedback:
             assert rows == [
                 {"message_id": "m1", "feedback": "up"},
                 {"message_id": "m2", "feedback": "down"},
+            ]
+
+    @pytest.mark.asyncio
+    async def test_returns_comment_when_present(self, repo, mock_conn):
+        feedback_repo_mod._TABLE_ENSURED = True
+        mock_conn._cursor.fetchall = AsyncMock(
+            return_value=[
+                {"message_id": "m1", "feedback": "down", "comment": "Wrong answer"},
+            ]
+        )
+        with patch(
+            "deep_agent.src.feedback.repository.psycopg.AsyncConnection.connect",
+            return_value=mock_conn,
+        ):
+            rows = await repo.list_feedback("t1", "u1")
+            assert rows == [
+                {"message_id": "m1", "feedback": "down", "comment": "Wrong answer"},
             ]
 
     @pytest.mark.asyncio

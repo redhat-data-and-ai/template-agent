@@ -20,12 +20,23 @@ CREATE TABLE IF NOT EXISTS message_feedback (
     message_id  TEXT NOT NULL,
     user_id     TEXT NOT NULL DEFAULT 'anonymous',
     feedback    TEXT NOT NULL CHECK (feedback IN ('up', 'down')),
+    comment     TEXT,
     trace_id    TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (thread_id, message_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_thread ON message_feedback (thread_id);
+
+-- Migration: add comment column to existing tables
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'message_feedback' AND column_name = 'comment'
+    ) THEN
+        ALTER TABLE message_feedback ADD COLUMN comment TEXT;
+    END IF;
+END $$;
 """
 
 
@@ -41,9 +52,14 @@ class FeedbackRepository:
         global _TABLE_ENSURED  # noqa: PLW0603
         if _TABLE_ENSURED:
             return
-        async with await psycopg.AsyncConnection.connect(self._uri) as conn:
-            await conn.execute(CREATE_FEEDBACK_TABLE)
-            await conn.commit()
+        try:
+            async with await psycopg.AsyncConnection.connect(self._uri) as conn:
+                await conn.execute(CREATE_FEEDBACK_TABLE)
+                await conn.commit()
+        except psycopg.errors.DuplicateColumn:
+            logger.info(
+                "message_feedback comment column already exists (concurrent migration)"
+            )
         _TABLE_ENSURED = True
         logger.info("message_feedback table ensured")
 
@@ -54,6 +70,7 @@ class FeedbackRepository:
         user_id: str,
         feedback: Literal["up", "down"],
         trace_id: str | None = None,
+        comment: str | None = None,
     ) -> None:
         """Insert or update feedback for a message (per thread and user)."""
         await self.ensure_table()
@@ -62,16 +79,17 @@ class FeedbackRepository:
             await conn.execute(
                 """
                 INSERT INTO message_feedback (
-                    thread_id, message_id, user_id, feedback, trace_id, updated_at
+                    thread_id, message_id, user_id, feedback, comment, trace_id, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, now())
+                VALUES (%s, %s, %s, %s, %s, %s, now())
                 ON CONFLICT (thread_id, message_id, user_id)
                 DO UPDATE SET
                     feedback = EXCLUDED.feedback,
+                    comment = EXCLUDED.comment,
                     trace_id = EXCLUDED.trace_id,
                     updated_at = now()
                 """,
-                (thread_id, message_id, uid, feedback, trace_id),
+                (thread_id, message_id, uid, feedback, comment, trace_id),
             )
             await conn.commit()
 
@@ -100,7 +118,7 @@ class FeedbackRepository:
         thread_id: str,
         user_id: str,
     ) -> list[dict[str, Any]]:
-        """Return feedback entries for the thread and user as ``{message_id, feedback}``."""
+        """Return feedback entries for the thread and user."""
         await self.ensure_table()
         uid = user_id if user_id else "anonymous"
         async with await psycopg.AsyncConnection.connect(
@@ -108,7 +126,7 @@ class FeedbackRepository:
         ) as conn:
             cur = await conn.execute(
                 """
-                SELECT message_id, feedback
+                SELECT message_id, feedback, comment
                 FROM message_feedback
                 WHERE thread_id = %s AND user_id = %s
                 ORDER BY updated_at ASC
@@ -116,7 +134,13 @@ class FeedbackRepository:
                 (thread_id, uid),
             )
             rows = await cur.fetchall()
-            return [
-                {"message_id": str(r["message_id"]), "feedback": r["feedback"]}
-                for r in rows
-            ]
+            result = []
+            for r in rows:
+                entry: dict[str, Any] = {
+                    "message_id": str(r["message_id"]),
+                    "feedback": r["feedback"],
+                }
+                if r.get("comment"):
+                    entry["comment"] = r["comment"]
+                result.append(entry)
+            return result
