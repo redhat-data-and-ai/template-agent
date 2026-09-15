@@ -117,7 +117,7 @@ def _create_vertex_model(
                 model=model_name,
                 project=project,
                 credentials=credentials,
-                temperature=temperature,
+                # temperature=temperature, # this is not supported in the latest version of the library
                 max_tokens=max_output_tokens,
                 max_retries=2,
                 streaming=True,
