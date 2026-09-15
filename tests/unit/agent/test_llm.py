@@ -53,7 +53,6 @@ class TestCreateModel:
                     model="claude-sonnet-4",
                     project="test-project",
                     credentials=mock_creds,
-                    temperature=0.7,
                     max_tokens=8192,
                     max_retries=2,
                     streaming=True,
