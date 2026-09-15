@@ -64,7 +64,16 @@ def _build_gemini_safety_log_middleware() -> Any | None:
         return None
 
     _SAFETY_FINISH_REASONS = frozenset(
-        {"SAFETY", "RECITATION", "BLOCKLIST", "content_filter"}
+        {
+            "SAFETY",
+            "RECITATION",
+            "BLOCKLIST",
+            "PROHIBITED_CONTENT",
+            "IMAGE_SAFETY",
+            "SPII",
+            "content_filter",
+            "refusal",
+        }
     )
     _PROMPT_BLOCK_REASONS = frozenset(
         {

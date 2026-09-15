@@ -59,3 +59,4 @@ class TestBuildMiddlewareListAudit:
             result = build_middleware_list(resolved)
         assert isinstance(result[0], AuditMiddleware)
         assert len(result) == 2
+        assert type(result[1]).__name__ == "GeminiSafetyLogMiddleware"

@@ -195,7 +195,19 @@ class TestGeminiSafetyLogMiddleware:
         state = {"messages": [AIMessage(content="Hello!", id="msg1")]}
         assert mw.after_model(state, None) is None
 
-    def test_replaces_safety_blocked_message(self):
+    @pytest.mark.parametrize(
+        "finish_reason",
+        [
+            "SAFETY",
+            "RECITATION",
+            "BLOCKLIST",
+            "PROHIBITED_CONTENT",
+            "IMAGE_SAFETY",
+            "SPII",
+            "refusal",
+        ],
+    )
+    def test_replaces_candidate_level_safety_blocked_message(self, finish_reason):
         from langchain_core.messages import AIMessage
 
         mw = self._build_middleware()
@@ -204,7 +216,7 @@ class TestGeminiSafetyLogMiddleware:
         blocked = AIMessage(
             content="",
             id="msg1",
-            response_metadata={"finish_reason": "SAFETY", "safety_ratings": []},
+            response_metadata={"finish_reason": finish_reason, "safety_ratings": []},
         )
         state = {"messages": [blocked]}
         result = mw.after_model(state, None)
@@ -212,6 +224,23 @@ class TestGeminiSafetyLogMiddleware:
         replaced = result["messages"][-1]
         assert "content safety filter" in replaced.content
         assert replaced.id == "msg1"
+
+    def test_replaces_anthropic_refusal_via_stop_reason(self):
+        """ChatAnthropicVertex sets stop_reason, not finish_reason."""
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        blocked = AIMessage(
+            content="",
+            id="msg1",
+            response_metadata={"stop_reason": "refusal", "stop_sequence": None},
+        )
+        state = {"messages": [blocked]}
+        result = mw.after_model(state, None)
+        assert result is not None
+        assert "content safety filter" in result["messages"][-1].content
 
     def test_ignores_non_safety_empty_message(self):
         from langchain_core.messages import AIMessage
