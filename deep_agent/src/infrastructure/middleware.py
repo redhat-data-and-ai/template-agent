@@ -66,18 +66,31 @@ def _build_gemini_safety_log_middleware() -> Any | None:
     _SAFETY_FINISH_REASONS = frozenset(
         {"SAFETY", "RECITATION", "BLOCKLIST", "content_filter"}
     )
+    _PROMPT_BLOCK_REASONS = frozenset(
+        {
+            "SAFETY",
+            "BLOCKLIST",
+            "PROHIBITED_CONTENT",
+            "IMAGE_SAFETY",
+            "JAILBREAK",
+            "MODEL_ARMOR",
+            "OTHER",
+        }
+    )
     _REFUSAL = (
         "I'm unable to respond to that request as it was flagged by the "
         "content safety filter. Please rephrase your message."
     )
 
     class GeminiSafetyLogMiddleware(AgentMiddleware):
-        """Detect Gemini safety filter blocks (finish_reason=SAFETY) and log them.
+        """Detect Gemini safety filter blocks and log them.
 
-        Gemini does not throw an exception — it returns an empty AIMessage with
-        finish_reason set to SAFETY. This middleware intercepts that after the
-        model call, logs the block with safety ratings, and replaces the empty
-        message with a user-facing refusal.
+        Handles two distinct blocking paths:
+          1. Candidate-level: Gemini returns an empty AIMessage with
+             finish_reason=SAFETY (response generated but blocked).
+          2. Prompt-level: Gemini returns an empty AIMessage with only
+             response_metadata["prompt_feedback"]["block_reason"] set
+             (prompt itself rejected, no candidate produced).
         """
 
         def after_model(self, state: Any, runtime: Any) -> Any:
@@ -98,18 +111,33 @@ def _build_gemini_safety_log_middleware() -> Any | None:
             if last.content or last.tool_calls:
                 return None
             meta = getattr(last, "response_metadata", {}) or {}
+
             reason = meta.get("finish_reason", meta.get("stop_reason", ""))
-            if reason not in _SAFETY_FINISH_REASONS:
-                return None
-            logger.warning(
-                "Gemini safety filter blocked response: "
-                "finish_reason=%s, model=%s, safety_ratings=%s",
-                reason,
-                meta.get("model_name", "unknown"),
-                meta.get("safety_ratings", []),
-            )
-            msgs[-1] = AIMessage(content=_REFUSAL, id=last.id)
-            return {"messages": msgs}
+            if reason in _SAFETY_FINISH_REASONS:
+                logger.warning(
+                    "Gemini safety filter blocked response: "
+                    "finish_reason=%s, model=%s, safety_ratings=%s",
+                    reason,
+                    meta.get("model_name", "unknown"),
+                    meta.get("safety_ratings", []),
+                )
+                msgs[-1] = AIMessage(content=_REFUSAL, id=last.id)
+                return {"messages": msgs}
+
+            prompt_feedback = meta.get("prompt_feedback") or {}
+            block_reason = prompt_feedback.get("block_reason", "")
+            if isinstance(block_reason, int):
+                block_reason = ""
+            if block_reason in _PROMPT_BLOCK_REASONS:
+                logger.warning(
+                    "Gemini prompt-level block: block_reason=%s, safety_ratings=%s",
+                    block_reason,
+                    prompt_feedback.get("safety_ratings", []),
+                )
+                msgs[-1] = AIMessage(content=_REFUSAL, id=last.id)
+                return {"messages": msgs}
+
+            return None
 
     return GeminiSafetyLogMiddleware()
 

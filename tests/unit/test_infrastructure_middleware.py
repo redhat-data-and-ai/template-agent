@@ -236,6 +236,67 @@ class TestGeminiSafetyLogMiddleware:
         state = {"messages": [HumanMessage(content="hi")]}
         assert mw.after_model(state, None) is None
 
+    def test_replaces_prompt_level_safety_block(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        blocked = AIMessage(
+            content="",
+            id="msg1",
+            response_metadata={
+                "prompt_feedback": {
+                    "block_reason": "SAFETY",
+                    "safety_ratings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT"}],
+                }
+            },
+        )
+        state = {"messages": [blocked]}
+        result = mw.after_model(state, None)
+        assert result is not None
+        replaced = result["messages"][-1]
+        assert "content safety filter" in replaced.content
+        assert replaced.id == "msg1"
+
+    @pytest.mark.parametrize(
+        "block_reason",
+        ["BLOCKLIST", "PROHIBITED_CONTENT", "JAILBREAK", "IMAGE_SAFETY", "MODEL_ARMOR"],
+    )
+    def test_replaces_prompt_level_block_reasons(self, block_reason):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        blocked = AIMessage(
+            content="",
+            id="msg1",
+            response_metadata={
+                "prompt_feedback": {"block_reason": block_reason, "safety_ratings": []}
+            },
+        )
+        state = {"messages": [blocked]}
+        result = mw.after_model(state, None)
+        assert result is not None
+        assert "content safety filter" in result["messages"][-1].content
+
+    def test_ignores_prompt_feedback_with_unspecified_block_reason(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        msg = AIMessage(
+            content="",
+            id="msg1",
+            response_metadata={
+                "prompt_feedback": {"block_reason": 0, "safety_ratings": []}
+            },
+        )
+        state = {"messages": [msg]}
+        assert mw.after_model(state, None) is None
+
 
 class _DummyMiddleware:
     """Test fixture — a no-op middleware class."""
