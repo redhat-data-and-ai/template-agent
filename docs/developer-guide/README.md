@@ -90,11 +90,23 @@ This guide covers everything you need to configure, extend, and operate a templa
 
 6. **[Working Examples](./06-working-examples.md)** — Complete, copy-paste-ready example configs for every pattern: minimal and full agent.yaml, mcp.json per auth mode, subagent skeletons, pii.yaml rules, Langfuse .env, custom middleware.
 
+## Developer Skills
+
+Structured skill definitions with checklists, reference docs, and templates for common development tasks. Each skill includes a `SKILL.md` (instructions), `references/` (field schemas, validation rules), and `assets/` (templates).
+
+| Skill | Path | Purpose |
+|-------|------|---------|
+| **write-middleware** | [`skills/write-middleware/`](./skills/write-middleware/SKILL.md) | Create custom agent middleware with correct hooks, registration, and testing |
+| **create-subagent** | [`skills/create-subagent/`](./skills/create-subagent/SKILL.md) | Author new subagents with valid frontmatter, inheritance, and prompt structure |
+| **add-mcp-server** | [`skills/add-mcp-server/`](./skills/add-mcp-server/SKILL.md) | Connect MCP servers with correct auth mode config and validation |
+| **setup-langfuse** | [`skills/setup-langfuse/`](./skills/setup-langfuse/SKILL.md) | Configure Langfuse observability with env vars, PII scrubbing, and verification |
+
 ## Getting Started
 
 1. Start with the [Working Examples](./06-working-examples.md) — copy the minimal `agent.yaml` to get running quickly.
 2. Use the [Configuration Reference](./01-configuration-reference.md) to customize fields as needed.
 3. Follow the specific guide for whatever you're integrating (middleware, subagents, MCP, or Langfuse).
+4. Use the [Developer Skills](#developer-skills) for step-by-step checklists when extending the agent.
 
 ## Related Documentation
 
