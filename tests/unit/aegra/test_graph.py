@@ -647,6 +647,7 @@ class TestGraphCacheHit:
         mock_config.resolve_agent_middleware.return_value = MagicMock(
             skills_enabled=True
         )
+        mock_config.get_guardrails_config.return_value = MagicMock(enabled=False)
         return mock_config
 
     async def _build_agent(self, mock_config):
