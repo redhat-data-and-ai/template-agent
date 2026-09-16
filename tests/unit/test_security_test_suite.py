@@ -6,12 +6,19 @@ PII leak detection, session isolation, and LLM prompt injection boundaries.
 
 import asyncio
 import base64
+import contextlib
 import contextvars
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+
+
+@contextlib.asynccontextmanager
+async def _noop_lock(state: str = "winner"):
+    """Async context manager that replaces distributed_lock in tests."""
+    yield state
 
 
 # ---------------------------------------------------------------------------
@@ -57,11 +64,12 @@ class TestAuthBypassProd:
 
     def test_jwt_none_algorithm_rejected(self):
         """_decode_token() restricts algorithms to RS256/ES256 — a JWT crafted
-        with alg:none must be rejected."""
-        from deep_agent.aegra.auth import _decode_token
-
-        # Craft a minimal JWT-shaped string with alg:none header
+        with alg:none must be rejected by jwt.decode(), not just JWKS lookup."""
         import json
+
+        import jwt as pyjwt
+
+        from deep_agent.aegra.auth import _decode_token
 
         header = base64.urlsafe_b64encode(
             json.dumps({"alg": "none", "typ": "JWT"}).encode()
@@ -71,15 +79,15 @@ class TestAuthBypassProd:
         ).rstrip(b"=")
         none_token = f"{header.decode()}.{payload.decode()}."
 
+        mock_signing_key = MagicMock()
+        mock_signing_key.key = "test-key"
         mock_jwks_client = MagicMock()
-        mock_jwks_client.get_signing_key_from_jwt.side_effect = Exception(
-            "Unable to find a signing key"
-        )
+        mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
 
         with patch(
             "deep_agent.aegra.auth._get_jwks_client", return_value=mock_jwks_client
         ):
-            with pytest.raises(Exception):
+            with pytest.raises(pyjwt.exceptions.InvalidAlgorithmError):
                 _decode_token(none_token)
 
 
@@ -254,15 +262,27 @@ class TestPIILeakDetection:
         assert result["level1"]["level2"]["data"][1]["nested"]["count"] == 42
 
     def test_audit_emitter_scrubs_complete_sensitive_key_set(self):
-        """_is_sensitive_key() recognises all 16 keys in SENSITIVE_KEYS,
-        plus normalised variants (uppercase, hyphenated, compound)."""
-        from deep_agent.src.audit.emitter import SENSITIVE_KEYS, _is_sensitive_key
+        """_is_sensitive_key() must recognise security-critical keys.
+        Asserted against a test-owned set so removing a key from
+        SENSITIVE_KEYS causes a visible test failure."""
+        from deep_agent.src.audit.emitter import _is_sensitive_key
 
-        # Every entry in the frozenset must be recognised
-        for key in SENSITIVE_KEYS:
-            assert _is_sensitive_key(key), f"{key!r} should be sensitive"
+        required_keys = [
+            "password",
+            "token",
+            "secret",
+            "authorization",
+            "api_key",
+            "access_token",
+            "refresh_token",
+            "private_key",
+            "credentials",
+            "cookie",
+        ]
+        for key in required_keys:
+            assert _is_sensitive_key(key), f"{key!r} must be treated as sensitive"
 
-        # Normalised variants
+        # Normalised variants (uppercase, hyphenated)
         assert _is_sensitive_key("Access-Token") is True
         assert _is_sensitive_key("AUTHORIZATION") is True
         assert _is_sensitive_key("Private-Key") is True
@@ -311,31 +331,28 @@ class TestSessionIsolation:
     @pytest.mark.asyncio
     async def test_contextvar_pii_token_map_isolation_across_tasks(self):
         """ContextVar PII token maps don't leak between concurrent async tasks
-        running in isolated contexts (simulating multi-user requests)."""
+        on the same event loop (simulating multi-user requests handled by
+        LangGraph's copy_context().run pattern)."""
         from deep_agent.src.pii.scrubber import _token_map
 
         results: dict[str, dict | None] = {}
+        barrier = asyncio.Barrier(2)
 
         async def simulate_request(user_id: str, email: str):
             _token_map.set({"[EMAIL_1]": email})
-            await asyncio.sleep(0)  # yield control to other tasks
+            await barrier.wait()  # force both tasks to overlap on the same loop
             results[user_id] = _token_map.get()
 
         ctx_a = contextvars.copy_context()
         ctx_b = contextvars.copy_context()
 
-        loop = asyncio.get_event_loop()
-        await asyncio.gather(
-            loop.run_in_executor(
-                None,
-                ctx_a.run,
-                asyncio.run,
-                simulate_request("user_a", "alice@corp.com"),
-            ),
-            loop.run_in_executor(
-                None, ctx_b.run, asyncio.run, simulate_request("user_b", "bob@evil.com")
-            ),
+        task_a = asyncio.create_task(
+            simulate_request("user_a", "alice@corp.com"), context=ctx_a
         )
+        task_b = asyncio.create_task(
+            simulate_request("user_b", "bob@evil.com"), context=ctx_b
+        )
+        await asyncio.gather(task_a, task_b)
 
         assert results["user_a"] == {"[EMAIL_1]": "alice@corp.com"}
         assert results["user_b"] == {"[EMAIL_1]": "bob@evil.com"}
@@ -355,29 +372,102 @@ class TestSessionIsolation:
         assert key_a == "mcp_oauth_token:my-agent:user_a:jira-mcp"
         assert key_b == "mcp_oauth_token:my-agent:user_b:jira-mcp"
 
-    def test_process_level_token_cache_isolates_by_user_id(self):
-        """_user_token_cache dict returns only the requesting user's tokens;
-        a different user_id lookup returns different data or None."""
-        from deep_agent.aegra.mcp import _user_token_cache
+    @pytest.mark.asyncio
+    async def test_process_level_token_cache_isolates_by_user_id(self):
+        """refresh_access_token populates _user_token_cache keyed by user_id;
+        a refresh for user_a must not be returned for user_b."""
+        import json
+        import time
+
+        from deep_agent.aegra.mcp import (
+            _current_user_id,
+            _user_token_cache,
+            refresh_access_token,
+        )
+
+        def _make_expired_jwt(sub: str) -> str:
+            header = (
+                base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode())
+                .rstrip(b"=")
+                .decode()
+            )
+            payload = (
+                base64.urlsafe_b64encode(json.dumps({"sub": sub, "exp": 0}).encode())
+                .rstrip(b"=")
+                .decode()
+            )
+            return f"{header}.{payload}.sig"
+
+        def _make_fresh_jwt(sub: str) -> str:
+            header = (
+                base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode())
+                .rstrip(b"=")
+                .decode()
+            )
+            payload = (
+                base64.urlsafe_b64encode(
+                    json.dumps({"sub": sub, "exp": time.time() + 3600}).encode()
+                )
+                .rstrip(b"=")
+                .decode()
+            )
+            return f"{header}.{payload}.sig"
+
+        fresh_a = _make_fresh_jwt("user_a")
+        fresh_b = _make_fresh_jwt("user_b")
+        call_count = 0
+
+        async def mock_oidc_refresh(rt: str):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (fresh_a, "new_rt_a")
+            return (fresh_b, "new_rt_b")
 
         original = dict(_user_token_cache)
+        original_user_id = _current_user_id.get()
         try:
             _user_token_cache.clear()
-            _user_token_cache["user_a"] = ("token_a", "refresh_a")
-            _user_token_cache["user_b"] = ("token_b", "refresh_b")
 
-            assert _user_token_cache.get("user_a") == ("token_a", "refresh_a")
-            assert _user_token_cache.get("user_b") == ("token_b", "refresh_b")
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "SSO_ISSUER_URL": "https://sso.example.com/realms/test",
+                        "SSO_CLIENT_ID": "test-client",
+                    },
+                ),
+                patch("deep_agent.aegra.mcp._SSO_TOKEN_URL", ""),
+                patch(
+                    "deep_agent.aegra.auth._oidc_refresh",
+                    side_effect=mock_oidc_refresh,
+                ),
+                patch("deep_agent.aegra.auth.EVAL_TOKEN_REFRESH_ENABLED", False),
+                patch(
+                    "deep_agent.aegra.redis.distributed_lock",
+                    side_effect=lambda *a, **kw: _noop_lock("no_redis"),
+                ),
+            ):
+                # Refresh for user_a
+                _current_user_id.set("user_a")
+                await refresh_access_token(
+                    _make_expired_jwt("user_a"), "rt_a", user_id="user_a"
+                )
+
+                # Refresh for user_b
+                _current_user_id.set("user_b")
+                await refresh_access_token(
+                    _make_expired_jwt("user_b"), "rt_b", user_id="user_b"
+                )
+
+            assert _user_token_cache.get("user_a") == (fresh_a, "new_rt_a")
+            assert _user_token_cache.get("user_b") == (fresh_b, "new_rt_b")
             assert _user_token_cache.get("user_a") != _user_token_cache.get("user_b")
             assert _user_token_cache.get("user_c") is None
-
-            # Removing one user's entry does not affect others
-            del _user_token_cache["user_a"]
-            assert _user_token_cache.get("user_a") is None
-            assert _user_token_cache.get("user_b") == ("token_b", "refresh_b")
         finally:
             _user_token_cache.clear()
             _user_token_cache.update(original)
+            _current_user_id.set(original_user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +569,7 @@ class TestLLMPromptInjectionBoundaries:
             "messages", mock_acompletion.call_args[1].get("messages", [])
         )
         user_content = call_messages[0]["content"]
-        assert encoded_payload in user_content
+        assert user_content == encoded_payload
 
         # Guardian said safe — the encoded payload was NOT decoded/normalised
         assert is_safe is True
