@@ -221,6 +221,26 @@ class TestGuardianToolProxyAinvoke:
         mock_safety.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_phase2_reraises_graph_interrupt(self):
+        from langgraph.errors import GraphInterrupt
+
+        proxy, inner = self._make_proxy()
+        expected = GraphInterrupt()
+        inner.ainvoke = AsyncMock(side_effect=expected)
+
+        with (
+            patch(
+                "deep_agent.src.guardrails.get_guardrails_config",
+                return_value=_mock_enabled_config(),
+            ),
+            patch("deep_agent.src.settings.settings") as mock_settings,
+        ):
+            mock_settings.GUARDIAN_API_BASE = "http://guardian"
+            with pytest.raises(GraphInterrupt) as exc_info:
+                await proxy.ainvoke({"id": "call-1"})
+        assert exc_info.value is expected
+
+    @pytest.mark.asyncio
     async def test_phase1_blocks_unsafe_args(self):
         proxy, inner = self._make_proxy()
 

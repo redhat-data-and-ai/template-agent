@@ -58,8 +58,9 @@ def load_subagents(
     - ``async`` → AsyncSubAgent (remote Agent Protocol server)
 
     Subagents that don't specify a ``model`` inherit the orchestrator's model.
-    Subagents that don't specify ``mcps`` inherit the orchestrator's MCPs
-    (which determines tool visibility).
+    Subagents that omit ``mcps`` inherit the orchestrator's MCPs. Subagents
+    that omit both ``mcps`` and ``tools`` also inherit the orchestrator's
+    tools list.
 
     Args:
         tools: List of available MCP tools.
@@ -108,7 +109,7 @@ def _inherit_from_orchestrator(
     orchestrator_cfg: dict[str, Any],
     name: str,
 ) -> None:
-    """Fill in missing model/mcps from the parent orchestrator config.
+    """Fill in missing model/mcps/tools from the parent orchestrator config.
 
     Mutates *agent_cfg* in place. Model inheritance follows these rules:
     1. If subagent has no model → use orchestrator model (no fallback)
@@ -144,7 +145,10 @@ def _inherit_from_orchestrator(
             subagent_model, parent_model, name
         )
 
-    if not agent_cfg.get("mcps"):
+    mcps_was_omitted = "mcps" not in agent_cfg or not agent_cfg.get("mcps")
+    tools_was_omitted = "tools" not in agent_cfg
+
+    if mcps_was_omitted:
         parent_mcps = orchestrator_cfg.get("mcps", [])
         if parent_mcps:
             logger.info(
@@ -154,10 +158,35 @@ def _inherit_from_orchestrator(
             )
             agent_cfg["mcps"] = list(parent_mcps)
 
+    if tools_was_omitted and mcps_was_omitted:
+        parent_tools = orchestrator_cfg.get("tools") or []
+        if parent_tools:
+            logger.info(
+                "Subagent '%s' inheriting %d tool(s) from orchestrator",
+                name,
+                len(parent_tools),
+            )
+            agent_cfg["tools"] = list(parent_tools)
+
     if "resources" not in agent_cfg:
         parent_resources = orchestrator_cfg.get("resources")
         if parent_resources is not None:
             agent_cfg["resources"] = list(parent_resources)
+
+
+def _resolve_subagent_mcp_tools(
+    name: str,
+    agent_cfg: dict[str, Any],
+    tools: list[Any],
+) -> list[Any]:
+    from deep_agent.aegra.mcp import resolve_declared_mcp_tools
+
+    return resolve_declared_mcp_tools(
+        agent_cfg.get("tools") or [],
+        agent_cfg.get("mcps") or [],
+        tools,
+        agent_name=name,
+    )
 
 
 def _normalize_model_to_dict(
@@ -329,6 +358,9 @@ def _subagent_middleware(
     name: str,
     resolved_tools: list[Any],
     fallback_mw: list[Any],
+    *,
+    declared_tools: list[str] | None = None,
+    declared_mcps: list[str] | None = None,
 ) -> list[Any] | None:
     """Merge audit + OPA middleware with optional fallback middleware."""
     middleware: list[Any] = []
@@ -342,6 +374,16 @@ def _subagent_middleware(
     if opa_mw is not None:
         middleware.append(opa_mw)
     middleware.extend(fallback_mw)
+    from deep_agent.aegra.mcp_runtime_tools import (
+        build_mcp_runtime_tools_middleware_from_declared,
+    )
+
+    middleware.append(
+        build_mcp_runtime_tools_middleware_from_declared(
+            declared_tools,
+            declared_mcps,
+        )
+    )
     return middleware or None
 
 
@@ -414,24 +456,7 @@ def _build_default_subagent(
         "Subagent '%s' [default] using model: %s", name, _format_model_log(spec)
     )
 
-    tool_names: list[str] = agent_cfg.get("tools", [])
-    mcp_names: list[str] = agent_cfg.get("mcps", [])
-
-    if tool_names:
-        resolved_tools: list[Any] = agent_config.resolve_tools(
-            tool_names, tools, agent_name=name
-        )
-    elif mcp_names and tools:
-        logger.info(
-            "Subagent '%s' declared MCP servers %s but no explicit tools; "
-            "exposing all %d available MCP tool(s)",
-            name,
-            mcp_names,
-            len(tools),
-        )
-        resolved_tools = list(tools)
-    else:
-        resolved_tools = []
+    resolved_tools: list[Any] = _resolve_subagent_mcp_tools(name, agent_cfg, tools)
 
     resolved_tools = _append_mcp_resource_tools(resolved_tools, agent_cfg)
 
@@ -461,7 +486,13 @@ def _build_default_subagent(
         subagent_params["tools"] = resolved_tools
     if skill_paths:
         subagent_params["skills"] = to_virtual_skill_paths(skill_paths)
-    middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
+    middleware = _subagent_middleware(
+        name,
+        resolved_tools,
+        fallback_mw,
+        declared_tools=agent_cfg.get("tools") or [],
+        declared_mcps=agent_cfg.get("mcps") or [],
+    )
     if middleware:
         subagent_params["middleware"] = middleware
 
@@ -493,24 +524,7 @@ def _build_compiled_subagent(
         "Subagent '%s' [compiled] using model: %s", name, _format_model_log(spec)
     )
 
-    tool_names: list[str] = agent_cfg.get("tools", [])
-    mcp_names: list[str] = agent_cfg.get("mcps", [])
-
-    if tool_names:
-        resolved_tools: list[Any] = agent_config.resolve_tools(
-            tool_names, tools, agent_name=name
-        )
-    elif mcp_names and tools:
-        logger.info(
-            "Subagent '%s' [compiled] declared MCP servers %s but no explicit tools; "
-            "exposing all %d available MCP tool(s)",
-            name,
-            mcp_names,
-            len(tools),
-        )
-        resolved_tools = list(tools)
-    else:
-        resolved_tools = []
+    resolved_tools: list[Any] = _resolve_subagent_mcp_tools(name, agent_cfg, tools)
     resolved_tools = _append_mcp_resource_tools(resolved_tools, agent_cfg)
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
@@ -536,7 +550,13 @@ def _build_compiled_subagent(
         "backend": get_configured_backend(),
     }
 
-    middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
+    middleware = _subagent_middleware(
+        name,
+        resolved_tools,
+        fallback_mw,
+        declared_tools=agent_cfg.get("tools") or [],
+        declared_mcps=agent_cfg.get("mcps") or [],
+    )
     if middleware:
         create_kwargs["middleware"] = middleware
 

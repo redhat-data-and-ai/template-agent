@@ -47,6 +47,13 @@ _mcp_breaker: CircuitBreaker | None = None
 _MCP_TOOL_CACHE_TTL: float = float(agent_config.get_cache_config().mcp.ttl)
 _cached_tools: dict[str | None, list[Any]] = {}
 _cached_tools_ts: dict[str | None, float] = {}
+# Live oauth/dcr tools listed with a user token. Process-local TTL cache only;
+# Redis holds the token (and optional name catalog). Any pod can refill this.
+_oauth_live_tools: dict[str, tuple[float, list[Any]]] = {}
+_OAUTH_LIVE_TOOLS_TTL: float = min(60.0, _MCP_TOOL_CACHE_TTL)
+# live tool name → oauth/dcr mcp.json keys (filled on tools/list, not per-user)
+_oauth_live_name_index: dict[str, set[str]] = {}
+_oauth_live_names_hydrated_at: float = 0.0
 
 _current_access_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_access_token", default=None
@@ -84,6 +91,45 @@ def set_mcp_auth_context(
     _current_user_id.set(user_id)
 
 
+def _resolve_mcp_user_id() -> str | None:
+    """JWT ``sub`` used to key per-user MCP OAuth tokens.
+
+    Prefer the factory ContextVar (set from Aegra ``user.identity``). Fall back
+    to LangGraph auth identity on the run config so nested subagent tool calls
+    still resolve Redis tokens when the ContextVar is empty. Do not use BFF
+    ``configurable.user_id`` / ``X-User-ID`` — that is preferred_username, not
+    the token-store key.
+    """
+    uid = _current_user_id.get()
+    if uid:
+        return uid
+    try:
+        from langgraph.config import get_config
+
+        config = get_config()
+    except Exception:
+        return None
+    if not isinstance(config, dict):
+        return None
+    bags = (config.get("configurable"), config.get("metadata"))
+    for bag in bags:
+        if not isinstance(bag, dict):
+            continue
+        for key in ("langgraph_auth_user_id", "user_identity"):
+            val = bag.get(key)
+            if val:
+                return str(val)
+        user = bag.get("langgraph_auth_user")
+        if user is None:
+            continue
+        identity = getattr(user, "identity", None)
+        if identity:
+            return str(identity)
+        if isinstance(user, dict) and user.get("identity"):
+            return str(user["identity"])
+    return None
+
+
 class _TokenInjectorInterceptor:
     """Inject the correct per-MCP bearer token into every MCP tool call."""
 
@@ -103,7 +149,7 @@ class _TokenInjectorInterceptor:
             get_mcp_credential_resolver,
         )
 
-        user_id = _current_user_id.get()
+        user_id = _resolve_mcp_user_id()
         auth_mode = self._server_cfg.get("auth_mode", "sso")
 
         if auth_mode == "api_key":
@@ -371,6 +417,247 @@ def _get_server_configs() -> dict[str, dict[str, Any]]:
     return agent_config.get_mcp_servers()
 
 
+def placeholder_tool_name(server_key: str) -> str:
+    """Compile-time OAuth/DCR tool name: ``mcp__`` + hyphens as underscores."""
+    return f"mcp__{server_key.replace('-', '_')}"
+
+
+def _enabled_oauth_dcr_servers() -> dict[str, dict[str, Any]]:
+    configs = _get_server_configs()
+    return {
+        key: cfg
+        for key, cfg in configs.items()
+        if isinstance(cfg, dict)
+        and cfg.get("enabled", False)
+        and cfg.get("auth_mode") in ("oauth", "dcr")
+    }
+
+
+def _fenced_oauth_dcr_servers(
+    scope: list[str] | frozenset[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Enabled oauth/dcr servers, optionally restricted to *scope* (``mcps:`` fence)."""
+    servers = _enabled_oauth_dcr_servers()
+    if scope is None:
+        return servers
+    wanted = set(scope)
+    return {key: cfg for key, cfg in servers.items() if key in wanted}
+
+
+def _oauth_live_names_redis_key(mcp_name: str) -> str:
+    return f"mcp_oauth_live_names:{mcp_name}"
+
+
+def _apply_oauth_live_names(mcp_name: str, names: list[str]) -> None:
+    """Replace this server's entries in the process name index."""
+    for tool_name, owners in list(_oauth_live_name_index.items()):
+        owners.discard(mcp_name)
+        if not owners:
+            del _oauth_live_name_index[tool_name]
+    for tool_name in names:
+        if not tool_name or tool_name.startswith("mcp__"):
+            continue
+        _oauth_live_name_index.setdefault(tool_name, set()).add(mcp_name)
+
+
+def record_oauth_live_names(mcp_name: str, names: list[str]) -> None:
+    """Remember which live tool names belong to *mcp_name* (process + Redis)."""
+    from deep_agent.aegra.redis import cache_set_persistent
+
+    stored = cache_set_persistent(
+        _oauth_live_names_redis_key(mcp_name), json.dumps(list(names))
+    )
+    if not stored:
+        logger.error("Redis SET failed for MCP live tool names: mcp='%s'", mcp_name)
+        raise RuntimeError(f"Failed to persist MCP live tool names for '{mcp_name}'")
+    _apply_oauth_live_names(mcp_name, names)
+
+
+def _refresh_oauth_live_name_index() -> None:
+    """Load live-name catalogs from Redis at most once per live-tools TTL."""
+    global _oauth_live_names_hydrated_at  # noqa: PLW0603
+
+    now = time.time()
+    if (
+        _oauth_live_name_index
+        and (now - _oauth_live_names_hydrated_at) < _OAUTH_LIVE_TOOLS_TTL
+    ):
+        return
+    from deep_agent.aegra.redis import cache_get
+
+    for key in _enabled_oauth_dcr_servers():
+        raw = cache_get(_oauth_live_names_redis_key(key))
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(parsed, list):
+            continue
+        listed = [str(item) for item in parsed if item]
+        _apply_oauth_live_names(key, listed)
+    _oauth_live_names_hydrated_at = now
+
+
+def _catalog_servers_for_name(name: str) -> set[str]:
+    _refresh_oauth_live_name_index()
+    return set(_oauth_live_name_index.get(name) or ())
+
+
+def oauth_dcr_server_for_tool_name(
+    name: str,
+    scope: list[str] | frozenset[str] | None = None,
+) -> str | None:
+    """Return the enabled oauth/dcr server key for a placeholder or live tool name.
+
+    Placeholders (``mcp__jira_mcp``) map by server key. Live names map from the
+    tools/list catalog, then from ``tool_prefix``. SSO/api_key and unknown names
+    return ``None``. *scope* is the ``mcps:`` fence (``None`` = all enabled).
+    Duplicate catalog owners in scope follow SSO first-wins (``mcp.json`` order).
+    """
+    if not name:
+        return None
+    servers = _fenced_oauth_dcr_servers(scope)
+    if not servers:
+        return None
+    for key in servers:
+        if name == placeholder_tool_name(key):
+            return key
+    owners = {key for key in _catalog_servers_for_name(name) if key in servers}
+    if owners:
+        winner = next(key for key in servers if key in owners)
+        extras = [key for key in servers if key in owners and key != winner]
+        if extras:
+            logger.warning(
+                "Live MCP tool '%s' is advertised by multiple oauth/dcr servers %s "
+                "— using '%s' (first wins)",
+                name,
+                sorted(owners),
+                winner,
+            )
+        return winner
+    prefix_pairs = sorted(
+        ((str(cfg.get("tool_prefix") or key), key) for key, cfg in servers.items()),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+    for prefix, key in prefix_pairs:
+        if name == prefix or name.startswith(f"{prefix}_"):
+            return key
+    return None
+
+
+def rewrite_oauth_dcr_tool_names(
+    tool_names: list[str],
+    scope: list[str] | frozenset[str] | None = None,
+) -> list[str]:
+    """Map live OAuth/DCR tool names to compile-time placeholders.
+
+    Builders may list live names (``jira_search``) or placeholders
+    (``mcp__jira_mcp``). Compile-time ``get_mcp_tools`` only binds
+    placeholders for oauth/dcr, so live names are rewritten before
+    ``resolve_tools``. SSO/api_key tools and unknown names pass through.
+    Two live names from the same server collapse to one placeholder.
+    Mapping uses the live-name catalog, then ``tool_prefix``.
+    *scope* is the ``mcps:`` fence (``None`` = all enabled).
+    """
+    if not tool_names:
+        return list(tool_names)
+
+    rewritten: list[str] = []
+    seen: set[str] = set()
+    for name in tool_names:
+        key = oauth_dcr_server_for_tool_name(name, scope=scope)
+        mapped = placeholder_tool_name(key) if key else name
+        if mapped in seen:
+            continue
+        seen.add(mapped)
+        rewritten.append(mapped)
+    return rewritten
+
+
+def _tool_mcp_server(tool: Any) -> str | None:
+    metadata = getattr(tool, "metadata", None)
+    if isinstance(metadata, dict):
+        server = metadata.get("mcp_server")
+        if isinstance(server, str) and server:
+            return server
+    name = str(getattr(tool, "name", "") or "")
+    return oauth_dcr_server_for_tool_name(name)
+
+
+def _available_on_mcps(available: list[Any], mcp_names: list[str]) -> list[Any]:
+    if not mcp_names:
+        return list(available)
+    wanted = set(mcp_names)
+    kept: list[Any] = []
+    for tool in available:
+        server = _tool_mcp_server(tool)
+        if server is None or server in wanted:
+            kept.append(tool)
+    return kept
+
+
+def resolve_declared_mcp_tools(
+    declared_tools: list[str],
+    declared_mcps: list[str],
+    available: list[Any],
+    agent_name: str = "agent",
+) -> list[Any]:
+    """Bind compile-time MCP tools from yaml ``tools:`` / ``mcps:``.
+
+    ``mcps:`` is the server fence. ``tools:`` is the name allowlist when
+    non-empty. Empty ``tools:`` with ``mcps:`` keeps every compile tool on
+    those servers. Both empty yields no MCP tools. OAuth/DCR servers in
+    the fence always get their connect placeholder.
+    """
+    from deep_agent.src.agent.config.resolver import resolve_tools
+
+    tool_names = list(declared_tools or [])
+    mcp_names = list(declared_mcps or [])
+    scoped = _available_on_mcps(available, mcp_names)
+
+    if not tool_names and not mcp_names:
+        return []
+
+    if not tool_names:
+        return scoped
+
+    scope: list[str] | None = mcp_names or None
+    rewritten = rewrite_oauth_dcr_tool_names(tool_names, scope=scope)
+    resolved = resolve_tools(rewritten, scoped, agent_name=agent_name)
+    if mcp_names:
+        have = {t.name for t in resolved}
+        configs = _get_server_configs()
+        for key in mcp_names:
+            entry = configs.get(key)
+            if not isinstance(entry, dict) or not entry.get("enabled", False):
+                continue
+            if entry.get("auth_mode") not in ("oauth", "dcr"):
+                continue
+            want = placeholder_tool_name(key)
+            placeholder = next(
+                (t for t in scoped if getattr(t, "name", None) == want),
+                None,
+            )
+            if placeholder is not None and placeholder.name not in have:
+                resolved.append(placeholder)
+                have.add(placeholder.name)
+        for name in tool_names:
+            owner = oauth_dcr_server_for_tool_name(name)
+            if owner and owner not in mcp_names:
+                logger.warning(
+                    "Agent '%s' lists tool '%s' from MCP '%s' which is not in "
+                    "mcps: %s — ignoring",
+                    agent_name,
+                    name,
+                    owner,
+                    mcp_names,
+                )
+    return resolved
+
+
 async def _resolve_connection_token(
     name: str,
     entry: dict[str, Any],
@@ -472,7 +759,7 @@ def _create_auth_placeholder_tool(
     class _Input(BaseModel):
         query: str = PydanticField(default="", description="Your request for this tool")
 
-    safe = mcp_name.replace("-", "_")
+    safe_name = placeholder_tool_name(mcp_name)
     svc_desc = (server_cfg or {}).get("description", f"{mcp_name} services")
 
     async def _require_auth(query: str = "") -> str:
@@ -481,7 +768,7 @@ def _create_auth_placeholder_tool(
             get_mcp_credential_resolver,
         )
 
-        user_id = _current_user_id.get()
+        user_id = _resolve_mcp_user_id()
         if user_id:
             resolver = get_mcp_credential_resolver()
             cfg = _get_server_configs().get(mcp_name, {})
@@ -489,16 +776,22 @@ def _create_auth_placeholder_tool(
                 # Resolve (and refresh if needed) instead of has_valid_token().
                 # A leftover refresh token must not skip re-auth after refresh fails.
                 await resolver.resolve(user_id, mcp_name, cfg)
-                invalidate_mcp_tool_cache(user_id)
                 logger.info(
-                    "[%s] placeholder tool resolved auth — "
-                    "tool cache invalidated, rebuild on next request",
+                    "[%s] placeholder tool resolved auth — staying on this graph",
                     mcp_name,
                 )
+                live = await get_authenticated_oauth_mcp_tools(
+                    user_id, server_names=[mcp_name]
+                )
+                if not live:
+                    return (
+                        f"Authenticated to {mcp_name} but live tools could not be "
+                        "loaded. Try the connect tool again."
+                    )
                 return (
                     f"Successfully connected to {mcp_name}. "
-                    f"The tools are now available — please ask the user to "
-                    f"repeat their request so the updated tools can be loaded."
+                    "Continue with the user's original request in this same run. "
+                    "Do not call every available tool."
                 )
             except NeedsAuthorization:
                 raise
@@ -516,7 +809,7 @@ def _create_auth_placeholder_tool(
         )
 
     return StructuredTool(
-        name=f"mcp__{safe}",
+        name=safe_name,
         description=(
             f"Call this tool to access {svc_desc}. "
             f"You MUST call this tool when the user asks about any of these services. "
@@ -618,6 +911,13 @@ async def _connect_single_server(
             elif _is_auth_error(exc):
                 auth_mode = server_cfg.get("auth_mode", "sso")
                 if auth_mode in ("oauth", "dcr"):
+                    from deep_agent.aegra.mcp_tool_auth import (
+                        _forget_oauth_session,
+                        _is_http_401,
+                    )
+
+                    if _is_http_401(exc):
+                        await _forget_oauth_session(auth_key)
                     logger.info(
                         "[%s] MCP tool discovery auth failed (auth_mode=%s) "
                         "— returning auth placeholder tool (%s: %s)",
@@ -737,6 +1037,142 @@ def invalidate_mcp_tool_cache(user_id: str | None = None) -> None:
         _cached_tools_ts.clear()
 
 
+def _oauth_live_cache_key(user_id: str, mcp_name: str) -> str:
+    return f"{user_id}:{mcp_name}"
+
+
+def invalidate_authenticated_oauth_tools(
+    user_id: str, mcp_name: str | None = None
+) -> None:
+    """Drop live OAuth/DCR tool objects for *user_id*."""
+    if mcp_name:
+        _oauth_live_tools.pop(_oauth_live_cache_key(user_id, mcp_name), None)
+        return
+    prefix = f"{user_id}:"
+    for key in [k for k in _oauth_live_tools if k.startswith(prefix)]:
+        _oauth_live_tools.pop(key, None)
+
+
+def _is_oauth_placeholder_tool(tool: Any) -> bool:
+    name = str(getattr(tool, "name", "") or "")
+    return name.startswith("mcp__")
+
+
+async def get_authenticated_oauth_mcp_tools(
+    user_id: str,
+    server_names: list[str] | None = None,
+) -> list[Any]:
+    """Return live tools for oauth/dcr servers that currently have a Redis token.
+
+    Compile-time ``get_mcp_tools`` always binds placeholders for those servers.
+    This listing is for runtime attach after Connect and must not change the
+    compiled graph fingerprint. Call-time auth wrapping is applied so a later
+    401 still interrupts.
+    """
+    from deep_agent.aegra.mcp_tool_auth import wrap_mcp_tools_for_auth
+
+    if user_id:
+        _current_user_id.set(user_id)
+
+    servers = _filter_by_names(
+        {
+            k: v
+            for k, v in _get_server_configs().items()
+            if v.get("enabled", False) and v.get("auth_mode") in ("oauth", "dcr")
+        },
+        server_names,
+    )
+    if not servers:
+        return []
+
+    now = time.time()
+    for key, (ts, _) in list(_oauth_live_tools.items()):
+        if now - ts >= _OAUTH_LIVE_TOOLS_TTL:
+            _oauth_live_tools.pop(key, None)
+    collected: list[Any] = []
+    connect_jobs: list[Any] = []
+    connect_keys: list[str] = []
+
+    for name, entry in servers.items():
+        cache_key = _oauth_live_cache_key(user_id, name)
+        cached = _oauth_live_tools.get(cache_key)
+        cached_live = (
+            cached[1]
+            if cached and cached[1] and (now - cached[0]) < _OAUTH_LIVE_TOOLS_TTL
+            else None
+        )
+        bearer = await _resolve_connection_token(name, entry, None, user_id)
+        if not bearer:
+            _oauth_live_tools.pop(cache_key, None)
+            continue
+        if cached_live:
+            collected.extend(cached_live)
+            _apply_oauth_live_names(
+                name,
+                [
+                    str(getattr(t, "name", ""))
+                    for t in cached_live
+                    if getattr(t, "name", None)
+                ],
+            )
+            continue
+        mcp_prefix_name = entry.get("tool_prefix") or name
+        connect_keys.append(name)
+        connect_jobs.append(
+            _connect_single_server(
+                name=mcp_prefix_name,
+                config=_build_server_config(entry, bearer),
+                server_cfg=entry,
+                timeout=entry.get("timeout", 30),
+                required=False,
+                server_key=name,
+            )
+        )
+
+    if connect_jobs:
+        results = await asyncio.gather(*connect_jobs, return_exceptions=True)
+        for mcp_name, result in zip(connect_keys, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "[%s] authenticated tool listing failed: %s",
+                    mcp_name,
+                    result,
+                )
+                continue
+            live = [tool for tool in result if not _is_oauth_placeholder_tool(tool)]
+            if not live:
+                continue
+            live = wrap_mcp_tools_for_auth(live)
+            if not live:
+                continue
+            names = [
+                str(getattr(t, "name", "")) for t in live if getattr(t, "name", None)
+            ]
+            try:
+                record_oauth_live_names(mcp_name, names)
+            except RuntimeError:
+                logger.error(
+                    "[%s] live tool name catalog was not persisted — skipping cache",
+                    mcp_name,
+                )
+                continue
+            _oauth_live_tools[_oauth_live_cache_key(user_id, mcp_name)] = (
+                time.time(),
+                live,
+            )
+            collected.extend(live)
+
+    seen: set[str] = set()
+    unique: list[Any] = []
+    for tool in collected:
+        tool_name = getattr(tool, "name", None)
+        if not isinstance(tool_name, str) or not tool_name or tool_name in seen:
+            continue
+        seen.add(tool_name)
+        unique.append(tool)
+    return unique
+
+
 async def get_mcp_tools(
     sso_token: str | None = None,
     server_names: list[str] | None = None,
@@ -757,6 +1193,11 @@ async def get_mcp_tools(
 
     The ``sso_token`` should already be **refreshed** by the caller via
     ``refresh_access_token()`` before calling this function.
+
+    OAuth/DCR servers always bind an auth placeholder, even when Redis
+    already has a token. Live tools attach at runtime via
+    ``get_authenticated_oauth_mcp_tools`` so the graph fingerprint does
+    not change across pods or after Connect.
 
     Connection failures are logged but do not raise exceptions, ensuring
     the application continues with an empty tool list.
@@ -807,11 +1248,11 @@ async def get_mcp_tools(
         placeholder_tools: list[list[Any]] = []
         for name, entry in enabled.items():
             mcp_prefix_name = entry.get("tool_prefix") or name
-            bearer = await _resolve_connection_token(name, entry, sso_token, user_id)
             auth_mode = entry.get("auth_mode", "sso")
-            if auth_mode in ("oauth", "dcr") and bearer is None:
+            if auth_mode in ("oauth", "dcr"):
                 logger.info(
-                    "[%s] No OAuth token for %s server — using auth placeholder",
+                    "[%s] Using auth placeholder for %s server "
+                    "(live tools attach at runtime)",
                     mcp_prefix_name,
                     auth_mode,
                 )
@@ -822,6 +1263,7 @@ async def get_mcp_tools(
                     )
                 )
                 continue
+            bearer = await _resolve_connection_token(name, entry, sso_token, user_id)
             connect_jobs.append(
                 _connect_single_server(
                     name=mcp_prefix_name,

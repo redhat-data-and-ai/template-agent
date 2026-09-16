@@ -21,9 +21,9 @@ from pydantic import Field as PydanticField
 
 from deep_agent.aegra.mcp import (
     _current_access_token,
-    _current_user_id,
     _filter_by_names,
     _get_server_configs,
+    _resolve_mcp_user_id,
 )
 from deep_agent.aegra.mcp_auth import NeedsAuthorization
 from deep_agent.aegra.mcp_host import (
@@ -200,7 +200,7 @@ def _template_matches(pattern: str, uri: str) -> bool:
 
 
 def _auth_context() -> tuple[str, str | None]:
-    return _current_user_id.get() or "", _current_access_token.get()
+    return _resolve_mcp_user_id() or "", _current_access_token.get()
 
 
 def _is_authorization_required(exc: HTTPException) -> bool:

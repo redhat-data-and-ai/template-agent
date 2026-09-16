@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from typing import Any
 
 from langgraph.types import interrupt
@@ -12,6 +13,79 @@ from deep_agent.aegra.mcp_auth import NeedsAuthorization
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
+
+
+def _mcp_server_from_tool(tool: Any) -> str | None:
+    """Return ``mcp_server`` metadata, or None."""
+    metadata = getattr(tool, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    server = metadata.get("mcp_server")
+    return server if isinstance(server, str) and server else None
+
+
+def _is_http_401(exc: BaseException) -> bool:
+    """True when *exc* is an HTTP 401 (not 403 / Forbidden)."""
+    for sub in getattr(exc, "exceptions", [exc]):
+        response = getattr(sub, "response", None)
+        if response is not None:
+            status = getattr(response, "status_code", None)
+            if status == 401:
+                return True
+            if status is not None:
+                continue
+        if re.search(r"(?<!\d)401(?!\d)", str(sub)):
+            return True
+        if sub.__cause__ and _is_http_401(sub.__cause__):
+            return True
+        if (
+            sub.__context__
+            and sub is not sub.__context__
+            and _is_http_401(sub.__context__)
+        ):
+            return True
+    return False
+
+
+def _oauth_dcr_http_auth_required(
+    tool: Any, exc: BaseException
+) -> NeedsAuthorization | None:
+    """Map an HTTP 401 from an oauth/dcr tool into Connect, or None."""
+    from deep_agent.aegra.mcp import _get_server_configs
+
+    if not _is_http_401(exc):
+        return None
+    mcp_name = _mcp_server_from_tool(tool)
+    if not mcp_name:
+        return None
+    cfg = _get_server_configs().get(mcp_name) or {}
+    if cfg.get("auth_mode") not in ("oauth", "dcr"):
+        return None
+    from deep_agent.aegra.mcp_auth import get_mcp_credential_resolver
+
+    return NeedsAuthorization(
+        mcp_name, get_mcp_credential_resolver().connect_url(mcp_name)
+    )
+
+
+async def _forget_oauth_session(mcp_name: str) -> None:
+    """Drop the stored token so Continue cannot reuse a rejected bearer."""
+    from deep_agent.aegra.mcp import (
+        _resolve_mcp_user_id,
+        invalidate_authenticated_oauth_tools,
+    )
+    from deep_agent.aegra.mcp_auth import get_mcp_credential_resolver
+    from deep_agent.aegra.mcp_token_store import McpTokenStore
+    from deep_agent.src.settings import settings
+
+    user_id = _resolve_mcp_user_id()
+    if not user_id:
+        return
+    get_mcp_credential_resolver().invalidate_cache(user_id, mcp_name)
+    await McpTokenStore(settings.database_uri).delete_token(
+        settings.agent_deployment_id, user_id, mcp_name
+    )
+    invalidate_authenticated_oauth_tools(user_id, mcp_name)
 
 
 def _mcp_auth_interrupt_payload(exc: NeedsAuthorization) -> str:
@@ -106,6 +180,15 @@ def _make_safe_ainvoke(target_tool: Any) -> Any:
         except GraphBubbleUp:
             raise
         except Exception as exc:
+            reauth = _oauth_dcr_http_auth_required(target_tool, exc)
+            if reauth is not None:
+                logger.info(
+                    "MCP HTTP auth failed for '%s' — dropping token and interrupting",
+                    reauth.mcp_name,
+                )
+                await _forget_oauth_session(reauth.mcp_name)
+                interrupt(_mcp_auth_interrupt_payload(reauth))
+                return await original_ainvoke(tool_input, config, **kwargs)
             tool_name = getattr(target_tool, "name", "unknown")
             tool_call_id = ""
             if isinstance(tool_input, dict):

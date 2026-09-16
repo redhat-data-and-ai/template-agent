@@ -159,6 +159,33 @@ class TestListResourcesTool:
         assert parsed["nextCursor"] == "page-2"
 
     @pytest.mark.asyncio
+    async def test_falls_back_to_run_config_user_id(self):
+        tools = build_mcp_resource_tools(
+            allowed_servers=["template-mcp-server"],
+            allowed_uris=None,
+        )
+        with (
+            patch(
+                "deep_agent.aegra.mcp_resource_tools.list_resources",
+                new_callable=AsyncMock,
+                return_value={"resources": []},
+            ) as mock_list,
+            patch(
+                "langgraph.config.get_config",
+                return_value={
+                    "configurable": {"langgraph_auth_user_id": "jwt-sub-1"},
+                },
+            ),
+        ):
+            await _tool(tools, LIST_TOOL).ainvoke({"mcp_name": "template-mcp-server"})
+        mock_list.assert_awaited_once_with(
+            "template-mcp-server",
+            cursor=None,
+            user_id="jwt-sub-1",
+            sso_token=None,
+        )
+
+    @pytest.mark.asyncio
     async def test_filters_list_by_allowlist(self, auth_ctx):
         tools = build_mcp_resource_tools(
             allowed_servers=["s"],

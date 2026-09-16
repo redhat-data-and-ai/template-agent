@@ -189,6 +189,24 @@ class TestRegisterProfiles:
         mock_gp_cls.assert_called_once_with(
             enabled=False, description=None, system_prompt=None
         )
+        kwargs = mock_hp_cls.call_args.kwargs
+        assert "extra_middleware" in kwargs
+        assert callable(kwargs["extra_middleware"])
+
+    def test_extra_middleware_is_name_slot_not_real_runtime(self):
+        from deep_agent.aegra.mcp_runtime_tools import (
+            McpRuntimeToolsMiddleware,
+            McpRuntimeToolsMiddlewareSlot,
+        )
+        from deep_agent.src.infrastructure.providers import (
+            _mcp_runtime_extra_middleware,
+        )
+
+        result = _mcp_runtime_extra_middleware()
+        assert len(result) == 1
+        assert isinstance(result[0], McpRuntimeToolsMiddlewareSlot)
+        assert not isinstance(result[0], McpRuntimeToolsMiddleware)
+        assert result[0].name == McpRuntimeToolsMiddleware.name
 
 
 class TestAsyncMiddleware:

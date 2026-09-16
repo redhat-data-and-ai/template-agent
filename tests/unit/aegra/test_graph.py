@@ -524,6 +524,21 @@ class TestGraphHelpers:
         assert fp_resources != fp_mcps
         assert fp_resources_order == fp_resources_order_rev
 
+    def test_graph_fingerprint_includes_declared_tools(self):
+        from deep_agent.aegra.graph import _graph_fingerprint
+
+        base = dict(model_name="model", system_prompt="prompt", tool_names=["mcp__dcr"])
+        fp_none = _graph_fingerprint(**base)
+        fp_empty = _graph_fingerprint(**base, declared_tools=[])
+        fp_search = _graph_fingerprint(**base, declared_tools=["search"])
+        fp_both = _graph_fingerprint(**base, declared_tools=["create", "search"])
+        fp_both_rev = _graph_fingerprint(**base, declared_tools=["search", "create"])
+
+        assert fp_none == fp_empty
+        assert fp_search != fp_none
+        assert fp_both != fp_search
+        assert fp_both == fp_both_rev
+
     def test_invalidate_graph_cache_clears_caches(self):
         import time
 
@@ -744,6 +759,18 @@ class TestGraphCacheHit:
         assert {LIST_TOOL, TEMPLATES_TOOL, READ_TOOL} <= set(mw_names)
         mock_subs.assert_called_once()
         assert mock_subs.call_args.kwargs["tools"] == []
+
+    @pytest.mark.asyncio
+    async def test_passes_yaml_tools_and_mcps_to_middleware(self):
+        mock_config = self._mock_orch_config(
+            tools=["search"],
+            mcps=["acme-jira"],
+        )
+        mock_config.get_mcp_servers.return_value = {}
+        _, _, _, mock_mw, _ = await self._build_agent(mock_config)
+        kwargs = mock_mw.call_args.kwargs
+        assert kwargs["declared_tools"] == ["search"]
+        assert kwargs["declared_mcps"] == ["acme-jira"]
 
     @pytest.mark.asyncio
     async def test_resources_empty_list_allows_all(self):

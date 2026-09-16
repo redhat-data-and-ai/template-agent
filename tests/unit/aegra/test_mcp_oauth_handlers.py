@@ -226,6 +226,7 @@ class TestHandleMcpOauthCallback:
             ) as mock_resolver,
             patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache"),
             patch("deep_agent.aegra.graph.invalidate_graph_cache"),
+            patch("deep_agent.aegra.mcp.invalidate_authenticated_oauth_tools"),
         ):
             mock_settings.oauth_callback_url = (
                 "https://agent.example.com/mcp/oauth/callback"
@@ -368,6 +369,7 @@ class TestHandleMcpOauthCallback:
             ) as mock_resolver,
             patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache"),
             patch("deep_agent.aegra.graph.invalidate_graph_cache"),
+            patch("deep_agent.aegra.mcp.invalidate_authenticated_oauth_tools"),
         ):
             mock_settings.oauth_callback_url = (
                 "https://agent.example.com/mcp/oauth/callback"
@@ -452,8 +454,8 @@ class TestHandleMcpOauthCallback:
         assert response.status_code == 502
         assert b"missing access_token" in response.body
 
-    async def test_graph_cache_invalidation_failure_still_succeeds(self, caplog):
-        """OAuth callback succeeds even if graph cache invalidation fails."""
+    async def test_callback_does_not_invalidate_graph_or_tool_cache(self):
+        """Connect must not rebuild the compiled graph; token in Redis is enough."""
         state_payload = json.dumps(
             {
                 "user_id": "user-1",
@@ -482,10 +484,7 @@ class TestHandleMcpOauthCallback:
         mock_store = MagicMock()
         mock_store.upsert_token = AsyncMock()
 
-        import logging
-
         with (
-            caplog.at_level(logging.WARNING),
             patch(
                 "deep_agent.aegra.mcp_oauth_handlers.cache_get",
                 return_value=state_payload,
@@ -513,11 +512,11 @@ class TestHandleMcpOauthCallback:
             patch(
                 "deep_agent.aegra.mcp_oauth_handlers.get_mcp_credential_resolver",
             ) as mock_resolver,
-            patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache"),
+            patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache") as mock_tools,
+            patch("deep_agent.aegra.graph.invalidate_graph_cache") as mock_graph,
             patch(
-                "deep_agent.aegra.graph.invalidate_graph_cache",
-                side_effect=RuntimeError("graph cache boom"),
-            ),
+                "deep_agent.aegra.mcp.invalidate_authenticated_oauth_tools"
+            ) as mock_live,
         ):
             mock_settings.oauth_callback_url = (
                 "https://agent.example.com/mcp/oauth/callback"
@@ -534,17 +533,14 @@ class TestHandleMcpOauthCallback:
                 code="auth-code", state="valid-state", request=_mock_request()
             )
 
-        # Callback still succeeds despite graph cache invalidation failure
         assert response.status_code == 200
         assert b"Connected" in response.body
-        # Verify the warning was emitted at the correct level
-        warning_records = [
-            r
-            for r in caplog.records
-            if r.levelno == logging.WARNING
-            and "Graph cache invalidation failed" in r.message
-        ]
-        assert len(warning_records) == 1
+        mock_tools.assert_not_called()
+        mock_graph.assert_not_called()
+        mock_live.assert_called_once_with("user-1", "oauth-mcp")
+        mock_resolver.return_value.invalidate_cache.assert_called_once_with(
+            "user-1", "oauth-mcp"
+        )
 
 
 class TestMcpOauthCallbackRoute:
@@ -757,8 +753,9 @@ class TestHandleMcpDisconnect:
                 "deep_agent.aegra.mcp_oauth_handlers.get_mcp_credential_resolver",
                 return_value=resolver,
             ),
-            patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache") as mock_tools,
-            patch("deep_agent.aegra.graph.invalidate_graph_cache") as mock_graph,
+            patch(
+                "deep_agent.aegra.mcp.invalidate_authenticated_oauth_tools"
+            ) as mock_runtime,
         ):
             mock_settings.database_uri = "postgresql://test"
             mock_settings.agent_deployment_id = "test-agent"
@@ -767,10 +764,9 @@ class TestHandleMcpDisconnect:
         assert result == {"mcp_name": "oauth-mcp", "connected": False}
         store.delete_token.assert_awaited_once_with("test-agent", "user-1", "oauth-mcp")
         resolver.invalidate_cache.assert_called_once_with("user-1", "oauth-mcp")
-        mock_tools.assert_called_once_with(user_id="user-1")
-        mock_graph.assert_called_once_with()
+        mock_runtime.assert_called_once_with("user-1", "oauth-mcp")
 
-    async def test_disconnect_succeeds_when_graph_cache_invalidation_fails(self):
+    async def test_disconnect_still_succeeds_without_graph_rebuild(self):
         store = MagicMock()
         store.delete_token = AsyncMock(return_value=True)
         resolver = MagicMock()
@@ -795,11 +791,10 @@ class TestHandleMcpDisconnect:
                 "deep_agent.aegra.mcp_oauth_handlers.get_mcp_credential_resolver",
                 return_value=resolver,
             ),
-            patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache"),
             patch(
-                "deep_agent.aegra.graph.invalidate_graph_cache",
-                side_effect=RuntimeError("cache down"),
+                "deep_agent.aegra.mcp.invalidate_authenticated_oauth_tools",
             ),
+            patch("deep_agent.aegra.graph.invalidate_graph_cache") as mock_graph,
         ):
             mock_settings.database_uri = "postgresql://test"
             mock_settings.agent_deployment_id = "test-agent"
@@ -808,6 +803,7 @@ class TestHandleMcpDisconnect:
         assert result == {"mcp_name": "oauth-mcp", "connected": False}
         store.delete_token.assert_awaited_once_with("test-agent", "user-1", "oauth-mcp")
         resolver.invalidate_cache.assert_called_once_with("user-1", "oauth-mcp")
+        mock_graph.assert_not_called()
 
     async def test_rejects_dcr_when_feature_disabled(self):
         store = MagicMock()
@@ -868,8 +864,7 @@ class TestHandleMcpDisconnect:
                 "deep_agent.aegra.mcp_oauth_handlers.get_mcp_credential_resolver",
                 return_value=resolver,
             ),
-            patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache"),
-            patch("deep_agent.aegra.graph.invalidate_graph_cache"),
+            patch("deep_agent.aegra.mcp.invalidate_authenticated_oauth_tools"),
         ):
             mock_settings.MCP_DCR_ENABLED = True
             mock_settings.database_uri = "postgresql://test"
