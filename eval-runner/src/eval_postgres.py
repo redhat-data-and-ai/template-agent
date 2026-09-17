@@ -449,9 +449,9 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
         turns = []
         for i, turn in enumerate(tc.get("turns", []), 1):
             turn_data: dict[str, Any] = {
-                "turn_id": str(turn.get("id", f"turn_{i}")).strip(),
-                "query": str(turn.get("userMessage", "")).strip(),
-                "expected_response": str(turn.get("expectedResponse", "")).strip(),
+                "turn_id": str(turn.get("id") or f"turn_{i}").strip(),
+                "query": str(turn.get("userMessage") or "").strip(),
+                "expected_response": str(turn.get("expectedResponse") or "").strip(),
                 "turn_metrics": list(metrics),
             }
             # For HITL cases, mark only the LAST turn as the HITL turn.
@@ -465,7 +465,10 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
                     str(turn.get("expectedIntent") or "").strip()
                     or "request approval before taking action"
                 )
-            elif turn.get("expectedIntent"):
+            elif (
+                turn.get("expectedIntent") is not None
+                and str(turn["expectedIntent"]).strip()
+            ):
                 turn_data["expected_intent"] = str(turn["expectedIntent"]).strip()
                 # Auto-add intent_eval when user specifies an expected intent
                 if "custom:intent_eval" not in turn_data["turn_metrics"]:
@@ -486,14 +489,19 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
             if turn.get("toolCallEnabled") and turn.get("expectedToolCalls"):
                 tool_calls = []
                 for c in turn["expectedToolCalls"]:
+                    tool_name = str(c.get("toolName") or "").strip()
+                    if not tool_name:
+                        continue
                     args = {
-                        str(a["key"]).strip(): (str(a.get("value", "")).strip() or ".*")
+                        str(a["key"]).strip(): (
+                            str(a.get("value") or "").strip() or ".*"
+                        )
                         for a in c.get("arguments", [])
-                        if str(a.get("key", "")).strip()
+                        if str(a.get("key") or "").strip()
                     }
                     tool_calls.append(
                         {
-                            "tool_name": str(c.get("toolName", "")).strip(),
+                            "tool_name": tool_name,
                             "arguments": args,
                         }
                     )
@@ -542,8 +550,8 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
         effective_tag = "tool_use" if any_tool_calls else tag
 
         case_entry: dict[str, Any] = {
-            "conversation_group_id": str(tc.get("name") or tc.get("id", "")).strip(),
-            "description": str(tc.get("description", f"tag:{tag}")).strip(),
+            "conversation_group_id": str(tc.get("name") or tc.get("id") or "").strip(),
+            "description": str(tc.get("description") or f"tag:{tag}").strip(),
             "tag": effective_tag,
             "turns": turns,
         }

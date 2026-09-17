@@ -1890,6 +1890,35 @@ class TestUpsertDataset:
         assert result["status"] == "ok"
         assert result["case_count"] == 1
         assert conn.execute.call_count == 2
+
+        delete_sql = conn.execute.call_args_list[0].args[0]
+        assert delete_sql == "DELETE FROM eval_dataset_items"
+
+        insert_sql = conn.execute.call_args_list[1].args[0]
+        assert "INSERT INTO eval_dataset_items" in insert_sql
+        assert "eval_datasets" not in insert_sql
+        for col in (
+            "case_id",
+            "case_data",
+            "judge_model",
+            "created_by",
+            "updated_by",
+            "created_at",
+            "updated_at",
+        ):
+            assert col in insert_sql, f"missing column {col}"
+        assert "%s::jsonb" in insert_sql
+
+        params = conn.execute.call_args_list[1].args[1]
+        assert len(params) == 7
+        assert params[0] == "c1"
+        assert json.loads(params[1]) == {"id": "c1", "query": "test", "expected": "ok"}
+        assert params[2] == "gpt-4"
+        assert params[3] == "test-user"
+        assert params[4] == "test-user"
+        assert isinstance(params[5], datetime)
+        assert isinstance(params[6], datetime)
+
         er._datasets_table_ensured = False
         er._dataset_items_table_ensured = False
 
@@ -2069,6 +2098,27 @@ class TestEnsureDatasetItemsTableOnce:
             await er._ensure_dataset_items_table_once()
         assert er._datasets_table_ensured is False
         assert er._dataset_items_table_ensured is True
+
+        executed_sqls = [c.args[0] for c in conn.execute.call_args_list]
+        ddl_sql = executed_sqls[1]
+        assert "CREATE TABLE" in ddl_sql
+        assert "eval_dataset_items" in ddl_sql
+        for col in (
+            "case_id",
+            "case_data",
+            "judge_model",
+            "created_by",
+            "updated_by",
+            "created_at",
+            "updated_at",
+        ):
+            assert col in ddl_sql, f"missing column {col} in DDL"
+        assert not any(
+            "CREATE TABLE" in s
+            and "eval_datasets" in s
+            and "eval_dataset_items" not in s
+            for s in executed_sqls
+        )
         er._dataset_items_table_ensured = False
 
 
@@ -2119,24 +2169,50 @@ class TestRunDdlOnce:
         conn.execute.assert_not_called()
         er._datasets_table_ensured = False
 
-    async def test_migration_failure_logged_not_raised(self):
+    async def test_undefined_table_migration_suppressed(self):
+        import psycopg.errors
+
         er._datasets_table_ensured = False
         conn, _ = _make_conn()
         ok_result = AsyncMock()
         conn.execute = AsyncMock(
-            side_effect=[ok_result, ok_result, Exception("migration err")]
+            side_effect=[
+                ok_result,  # SET statement_timeout
+                ok_result,  # DDL
+                ok_result,  # first migration succeeds
+                psycopg.errors.UndefinedTable("eval_datasets"),  # second migration
+            ]
         )
         with patch(
             "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
         ):
             await er._run_ddl_once(
                 "CREATE TABLE test (id INT)",
-                ["ALTER OK", "ALTER FAIL"],
+                ["ALTER OK", "MIGRATION REFERENCING OLD TABLE"],
                 "_datasets_table_ensured",
                 "test",
             )
         assert er._datasets_table_ensured is True
         er._datasets_table_ensured = False
+
+    async def test_unexpected_migration_failure_propagates(self):
+        er._datasets_table_ensured = False
+        conn, _ = _make_conn()
+        ok_result = AsyncMock()
+        conn.execute = AsyncMock(
+            side_effect=[ok_result, ok_result, RuntimeError("transient db error")]
+        )
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            with pytest.raises(RuntimeError, match="transient db error"):
+                await er._run_ddl_once(
+                    "CREATE TABLE test (id INT)",
+                    ["ALTER OK", "MIGRATION FAIL"],
+                    "_datasets_table_ensured",
+                    "test",
+                )
+        assert er._datasets_table_ensured is False
 
 
 class TestEvalStatusUndefinedTable:
@@ -2532,8 +2608,16 @@ class TestExportResults:
             _col("completed_at"),
         ]
         eval_row = (["run-1"], 0.9, 9, 1, 0, now)
-        turn_cols = [_col("conversation_group_id"), _col("result"), _col("score")]
-        turn_rows = [("conv-1", "PASS", 1.0), ("conv-1", "FAIL", 0.0)]
+        turn_cols = [
+            _col("conversation_group_id"),
+            _col("turn_id"),
+            _col("result"),
+            _col("score"),
+        ]
+        turn_rows = [
+            ("conv-1", "turn_1", "PASS", 1.0),
+            ("conv-1", "turn_2", "FAIL", 0.0),
+        ]
 
         call_count = 0
 

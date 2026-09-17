@@ -720,8 +720,14 @@ async def _run_ddl_once(
 
     The flag is only set on SUCCESS so that transient failures can be retried.
     set_autocommit is inside the try/finally so the connection is always closed.
+
+    Migration failures are only suppressed when the legacy source table does not
+    exist (UndefinedTable) — all other errors propagate so the flag stays unset
+    and the migration is retried on the next request.
     """
     import sys as _sys
+
+    import psycopg.errors
 
     mod = _sys.modules[__name__]
     if getattr(mod, flag_attr):
@@ -734,8 +740,14 @@ async def _run_ddl_once(
         for stmt in migrations:
             try:
                 await conn.execute(stmt)
-            except Exception as exc:
-                log.warning("%s migration skipped (may already exist): %s", label, exc)
+            except psycopg.errors.UndefinedTable:
+                log.info(
+                    "%s migration skipped (legacy table absent): %s", label, stmt[:80]
+                )
+            except psycopg.errors.UniqueViolation:
+                log.info(
+                    "%s migration skipped (data already migrated): %s", label, stmt[:80]
+                )
         setattr(mod, flag_attr, True)  # only on success
     except Exception as exc:
         log.warning("%s DDL failed: %s", label, exc)
@@ -928,13 +940,19 @@ _DATASET_ITEMS_DDL = """
 """
 
 _DATASET_ITEMS_DDL_MIGRATIONS = [
-    # One-time data migration from old single-blob table
+    # One-time data migration from old single-blob table.
+    # COALESCE + NULLIF ensures blank ids get a fresh UUID, and
+    # gen_random_uuid() guarantees uniqueness even for duplicates —
+    # no ON CONFLICT DO NOTHING so duplicate/blank ids don't silently
+    # drop cases.
     """
     INSERT INTO eval_dataset_items (case_id, case_data, judge_model, created_at, updated_at)
-    SELECT COALESCE(c->>'id', gen_random_uuid()::text), c, ed.judge_model, ed.created_at, ed.created_at
-    FROM eval_datasets ed, jsonb_array_elements(ed.dataset->'cases') AS c
+    SELECT COALESCE(NULLIF(TRIM(c->>'id'), ''), gen_random_uuid()::text),
+           c, ed.judge_model, ed.created_at, ed.created_at
+    FROM eval_datasets ed,
+         jsonb_array_elements(ed.dataset->'cases') WITH ORDINALITY AS t(c, ord)
     WHERE NOT EXISTS (SELECT 1 FROM eval_dataset_items LIMIT 1)
-    ON CONFLICT (case_id) DO NOTHING
+    ORDER BY ed.id, t.ord
     """,
 ]
 
@@ -1346,7 +1364,10 @@ async def export_results(
             if hasattr(eval_doc.get("completed_at"), "isoformat")
             else str(eval_doc.get("completed_at"))
         ),
-        "total_turns": len(turns),
+        "total_evaluations": len(turns),
+        "total_turns": len(
+            {(t.get("conversation_group_id"), t.get("turn_id")) for t in turns}
+        ),
         "turns": turns,
     }
 
