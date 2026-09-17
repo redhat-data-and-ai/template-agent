@@ -177,6 +177,23 @@ def _extract_sub(request: Request) -> str | None:
     return _decode_sub_unverified(auth[7:])
 
 
+def _extract_username(request: Request) -> str | None:
+    """Extract preferred_username from the Bearer JWT (falls back to sub)."""
+    import jwt as _jwt
+
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    try:
+        payload = _jwt.decode(auth[7:], options={"verify_signature": False})
+        return (
+            str(payload.get("preferred_username") or payload.get("sub") or "").strip()
+            or None
+        )
+    except Exception:
+        return None
+
+
 def _write_eval_redis(sub: str, refresh_token: str) -> None:
     """Write the three eval Redis keys at trigger time. Best-effort."""
     if not _EVAL_TOKEN_REFRESH_ENABLED or not sub:
@@ -897,14 +914,49 @@ async def _ensure_datasets_table_once() -> None:
     )
 
 
+_DATASET_ITEMS_DDL = """
+    CREATE TABLE IF NOT EXISTS eval_dataset_items (
+        id          SERIAL PRIMARY KEY,
+        case_id     TEXT NOT NULL UNIQUE,
+        case_data   JSONB NOT NULL,
+        judge_model TEXT,
+        created_by  TEXT,
+        updated_by  TEXT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+"""
+
+_DATASET_ITEMS_DDL_MIGRATIONS = [
+    # One-time data migration from old single-blob table
+    """
+    INSERT INTO eval_dataset_items (case_id, case_data, judge_model, created_at, updated_at)
+    SELECT COALESCE(c->>'id', gen_random_uuid()::text), c, ed.judge_model, ed.created_at, ed.created_at
+    FROM eval_datasets ed, jsonb_array_elements(ed.dataset->'cases') AS c
+    WHERE NOT EXISTS (SELECT 1 FROM eval_dataset_items LIMIT 1)
+    ON CONFLICT (case_id) DO NOTHING
+    """,
+]
+
+_dataset_items_table_ensured = False
+
+
+async def _ensure_dataset_items_table_once() -> None:
+    await _run_ddl_once(
+        _DATASET_ITEMS_DDL,
+        _DATASET_ITEMS_DDL_MIGRATIONS,
+        "_dataset_items_table_ensured",
+        "eval_dataset_items",
+    )
+
+
 async def _has_postgres_dataset() -> bool:
-    """Return True if eval_datasets has a row with at least one case."""
+    """Return True if eval_dataset_items has at least one row."""
     try:
-        await _ensure_datasets_table_once()
+        await _ensure_dataset_items_table_once()
         async with await _pg_conn() as conn:
             row = await conn.execute(
-                "SELECT 1 FROM eval_datasets "
-                "WHERE jsonb_array_length(dataset->'cases') > 0 LIMIT 1",
+                "SELECT 1 FROM eval_dataset_items LIMIT 1",
             )
             return await row.fetchone() is not None
     except Exception as exc:
@@ -982,19 +1034,19 @@ async def trigger_eval(
             #    file — the cached result is stale regardless of config_hash match).
             try:
                 ds_row = await conn.execute(
-                    "SELECT created_at FROM eval_datasets LIMIT 1",
+                    "SELECT MAX(updated_at) FROM eval_dataset_items",
                 )
                 ds = await ds_row.fetchone()
-                if ds is None:
-                    # Postgres dataset cleared — always run fresh so config file is used
+                ds_ts = ds[0] if ds else None
+                if ds_ts is None:
                     log.info(
-                        "eval_datasets is empty — bypassing cache to pick up config file"
+                        "eval_dataset_items is empty — bypassing cache to pick up config file"
                     )
                     existing = None
-                elif ds[0] and doc.get("completed_at") and ds[0] > doc["completed_at"]:
+                elif doc.get("completed_at") and ds_ts > doc["completed_at"]:
                     log.info(
                         "Dataset updated after last eval (dataset=%s eval=%s) — bypassing cache",
-                        ds[0].isoformat(),
+                        ds_ts.isoformat(),
                         doc["completed_at"],
                     )
                     existing = None
@@ -1144,6 +1196,13 @@ async def eval_status(
         raise
 
 
+_TURN_COLUMNS = (
+    "conversation_group_id, turn_id, tag, metric_identifier, "
+    "result, score, reason, "
+    "judge_llm_input_tokens, judge_llm_output_tokens"
+)
+
+
 @eval_mgmt_router.get("/results")
 async def eval_results(
     request: Request, _token: str = Depends(_require_developer)
@@ -1152,6 +1211,8 @@ async def eval_results(
 
     Optional query param ``completed_at`` fetches a specific run by its
     completion timestamp.  Without it the most recent run is returned.
+    Turn-level detail is fetched from evaluation_results on demand rather
+    than stored in the results_detail JSONB blob.
     """
     from fastapi import HTTPException
 
@@ -1176,6 +1237,33 @@ async def eval_results(
                 raise HTTPException(status_code=404, detail="no completed eval results")
             doc = _pg_row_to_dict(result, row)
             doc.pop("id", None)
+
+            # Fetch turn-level detail from evaluation_results if not already
+            # embedded in results_detail (new runs strip turns to save space).
+            rd = doc.get("results_detail") or {}
+            if isinstance(rd, str):
+                rd = json.loads(rd)
+            doc["results_detail"] = rd
+            if "turns" not in rd:
+                run_ids = doc.get("ls_run_ids") or []
+                if run_ids:
+                    try:
+                        turns_cur = await conn.execute(
+                            f"SELECT {_TURN_COLUMNS} "
+                            "FROM evaluation_results "
+                            "WHERE run_id = ANY(%s) ORDER BY id",
+                            (run_ids,),
+                        )
+                        turn_cols = [d.name for d in turns_cur.description]
+                        rd["turns"] = [
+                            dict(zip(turn_cols, t)) for t in await turns_cur.fetchall()
+                        ]
+                    except Exception as turns_exc:
+                        log.warning(
+                            "Could not fetch turns from evaluation_results: %s",
+                            turns_exc,
+                        )
+
             return doc
     except HTTPException:
         raise
@@ -1190,6 +1278,77 @@ async def eval_results(
             )
             raise HTTPException(status_code=404, detail="no completed eval results")
         raise
+
+
+_EXPORT_COLUMNS = (
+    "conversation_group_id, turn_id, tag, metric_identifier, "
+    "result, score, threshold, reason, "
+    "query, response, expected_response, expected_intent, "
+    "expected_keywords, expected_tool_calls, tool_calls, contexts, "
+    "execution_time, evaluation_latency, agent_latency, "
+    "judge_llm_input_tokens, judge_llm_output_tokens"
+)
+
+
+@eval_mgmt_router.get("/results/export")
+async def export_results(
+    request: Request, _token: str = Depends(_require_developer)
+) -> dict[str, Any]:
+    """Export all turn-level results for a completed eval run.
+
+    Optional query param ``completed_at`` selects a specific run.
+    Without it the most recent completed run is exported.
+    """
+    completed_at = request.query_params.get("completed_at")
+    await _ensure_evals_table_once()
+
+    async with await _pg_conn() as conn:
+        if completed_at:
+            row = await conn.execute(
+                "SELECT ls_run_ids, eval_score, pass, fail, error, completed_at "
+                "FROM evals WHERE eval_status='completed' AND completed_at=%s LIMIT 1",
+                (completed_at,),
+            )
+        else:
+            row = await conn.execute(
+                "SELECT ls_run_ids, eval_score, pass, fail, error, completed_at "
+                "FROM evals WHERE eval_status='completed' "
+                "ORDER BY completed_at DESC LIMIT 1",
+            )
+        eval_row = await row.fetchone()
+        if not eval_row:
+            raise HTTPException(status_code=404, detail="no completed eval results")
+
+        cols = [d.name for d in row.description]
+        eval_doc = dict(zip(cols, eval_row))
+        run_ids = eval_doc.get("ls_run_ids") or []
+
+        if not run_ids:
+            raise HTTPException(
+                status_code=404, detail="no run IDs found for this eval"
+            )
+
+        turns_cur = await conn.execute(
+            f"SELECT {_EXPORT_COLUMNS} FROM evaluation_results "
+            "WHERE run_id = ANY(%s) ORDER BY id",
+            (run_ids,),
+        )
+        turn_cols = [d.name for d in turns_cur.description]
+        turns = [dict(zip(turn_cols, t)) for t in await turns_cur.fetchall()]
+
+    return {
+        "eval_score": eval_doc.get("eval_score"),
+        "pass": eval_doc.get("pass"),
+        "fail": eval_doc.get("fail"),
+        "error": eval_doc.get("error"),
+        "completed_at": (
+            eval_doc["completed_at"].isoformat()
+            if hasattr(eval_doc.get("completed_at"), "isoformat")
+            else str(eval_doc.get("completed_at"))
+        ),
+        "total_turns": len(turns),
+        "turns": turns,
+    }
 
 
 @eval_mgmt_router.get("/history")
@@ -1371,26 +1530,45 @@ class DatasetUpsertRequest(BaseModel):
 
 @eval_mgmt_router.post("/dataset")
 async def upsert_dataset(
-    body: DatasetUpsertRequest, _token: str = Depends(_require_developer)
+    body: DatasetUpsertRequest,
+    request: Request,
+    _token: str = Depends(_require_developer),
 ) -> dict[str, Any]:
     """Upsert the eval dataset for this agent.
 
-    Only one row is kept — DELETE + INSERT ensures the latest submission always wins.
+    Full replace: DELETE all rows then INSERT one row per case.
+    Cases removed from the payload are deleted from Postgres.
     """
-    await _ensure_datasets_table_once()
+    await _ensure_dataset_items_table_once()
     now = datetime.now(UTC)
-    dataset_json = json.dumps({"cases": body.cases})
+    username = _extract_username(request) or ""
 
     async with await _pg_conn() as conn:
-        await conn.execute("DELETE FROM eval_datasets")
-        await conn.execute(
-            "INSERT INTO eval_datasets (dataset, judge_model, created_at) "
-            "VALUES (%s::jsonb, %s, %s)",
-            (dataset_json, body.judge_model, now),
-        )
+        await conn.execute("DELETE FROM eval_dataset_items")
+        for case in body.cases:
+            cid = case.get("id")
+            if cid is None:
+                cid = str(uuid.uuid4())
+            await conn.execute(
+                "INSERT INTO eval_dataset_items "
+                "(case_id, case_data, judge_model, created_by, updated_by, created_at, updated_at) "
+                "VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s)",
+                (
+                    str(cid),
+                    json.dumps(case),
+                    body.judge_model,
+                    username,
+                    username,
+                    now,
+                    now,
+                ),
+            )
 
     log.info(
-        "Dataset upserted: cases=%d judge_model=%s", len(body.cases), body.judge_model
+        "Dataset upserted: cases=%d judge_model=%s user=%s",
+        len(body.cases),
+        body.judge_model,
+        username,
     )
     return {"status": "ok", "case_count": len(body.cases)}
 
@@ -1400,28 +1578,39 @@ async def get_dataset(
     _token: str = Depends(_require_developer),
 ) -> dict[str, Any]:
     """Return the stored eval dataset for this agent."""
-    await _ensure_datasets_table_once()
+    await _ensure_dataset_items_table_once()
 
     async with await _pg_conn() as conn:
-        row = await conn.execute(
-            "SELECT dataset, judge_model, created_at FROM eval_datasets LIMIT 1",
+        cursor = await conn.execute(
+            "SELECT case_data, judge_model, created_at "
+            "FROM eval_dataset_items ORDER BY id",
         )
-        result = await row.fetchone()
+        rows = await cursor.fetchall()
 
-    if not result:
+    if not rows:
         return {"dataset": {"cases": []}, "judge_model": None, "created_at": None}
 
-    dataset, judge_model, created_at = result
-    if isinstance(dataset, str):
-        dataset = json.loads(dataset)
+    cases: list[Any] = []
+    judge_model = None
+    latest_created_at = None
+    for case_data, jm, created_at in rows:
+        if isinstance(case_data, str):
+            case_data = json.loads(case_data)
+        cases.append(case_data)
+        if jm:
+            judge_model = jm
+        if created_at and (latest_created_at is None or created_at > latest_created_at):
+            latest_created_at = created_at
 
     return {
-        "dataset": dataset,
+        "dataset": {"cases": cases},
         "judge_model": judge_model,
         "created_at": (
-            created_at.isoformat()
-            if hasattr(created_at, "isoformat")
-            else str(created_at)
+            latest_created_at.isoformat()  # type: ignore[union-attr]
+            if hasattr(latest_created_at, "isoformat")
+            else str(latest_created_at)
+            if latest_created_at
+            else None
         ),
     }
 
