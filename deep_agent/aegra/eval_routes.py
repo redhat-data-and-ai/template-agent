@@ -1308,16 +1308,28 @@ _EXPORT_COLUMNS = (
 )
 
 
+_EXPORT_ROW_LIMIT = 50_000
+
+
 @eval_mgmt_router.get("/results/export")
 async def export_results(
     request: Request, _token: str = Depends(_require_developer)
 ) -> dict[str, Any]:
-    """Export all turn-level results for a completed eval run.
+    """Export turn-level results for a completed eval run.
 
-    Optional query param ``completed_at`` selects a specific run.
-    Without it the most recent completed run is exported.
+    Optional query params:
+      ``completed_at`` — selects a specific run (default: latest completed).
+      ``limit`` — max rows to return (default/cap: 50 000).
+
+    Returns ``truncated: true`` when the result set exceeds the limit.
     """
     completed_at = request.query_params.get("completed_at")
+    try:
+        req_limit = int(request.query_params.get("limit", _EXPORT_ROW_LIMIT))
+    except (ValueError, TypeError):
+        req_limit = _EXPORT_ROW_LIMIT
+    row_limit = max(1, min(req_limit, _EXPORT_ROW_LIMIT))
+
     await _ensure_evals_table_once()
 
     async with await _pg_conn() as conn:
@@ -1346,10 +1358,16 @@ async def export_results(
                 status_code=404, detail="no run IDs found for this eval"
             )
 
+        count_cur = await conn.execute(
+            "SELECT COUNT(*) FROM evaluation_results WHERE run_id = ANY(%s)",
+            (run_ids,),
+        )
+        total_available = (await count_cur.fetchone())[0]
+
         turns_cur = await conn.execute(
             f"SELECT {_EXPORT_COLUMNS} FROM evaluation_results "
-            "WHERE run_id = ANY(%s) ORDER BY id",
-            (run_ids,),
+            "WHERE run_id = ANY(%s) ORDER BY id LIMIT %s",
+            (run_ids, row_limit),
         )
         turn_cols = [d.name for d in turns_cur.description]
         turns = [dict(zip(turn_cols, t)) for t in await turns_cur.fetchall()]
@@ -1364,11 +1382,12 @@ async def export_results(
             if hasattr(eval_doc.get("completed_at"), "isoformat")
             else str(eval_doc.get("completed_at"))
         ),
-        "total_evaluations": len(turns),
+        "total_evaluations": total_available,
         "total_turns": len(
             {(t.get("conversation_group_id"), t.get("turn_id")) for t in turns}
         ),
         "turns": turns,
+        "truncated": total_available > row_limit,
     }
 
 
@@ -1567,8 +1586,9 @@ async def upsert_dataset(
     async with await _pg_conn() as conn:
         await conn.execute("DELETE FROM eval_dataset_items")
         for case in body.cases:
-            cid = case.get("id")
-            if cid is None:
+            raw_id = case.get("id")
+            cid = str(raw_id).strip() if raw_id is not None else ""
+            if not cid:
                 cid = str(uuid.uuid4())
             await conn.execute(
                 "INSERT INTO eval_dataset_items "

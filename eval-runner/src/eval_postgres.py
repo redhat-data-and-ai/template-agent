@@ -449,7 +449,7 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
         turns = []
         for i, turn in enumerate(tc.get("turns", []), 1):
             turn_data: dict[str, Any] = {
-                "turn_id": str(turn.get("id") or f"turn_{i}").strip(),
+                "turn_id": str(turn.get("id") or "").strip() or f"turn_{i}",
                 "query": str(turn.get("userMessage") or "").strip(),
                 "expected_response": str(turn.get("expectedResponse") or "").strip(),
                 "turn_metrics": list(metrics),
@@ -540,17 +540,15 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
                     }
             turns.append(turn_data)
 
-        # If any turn expects tool calls, mark the case tag as tool_use so the
-        # eval runner fetches subagent tool calls from Postgres checkpoint_blobs.
-        # We preserve the original tag in the description for reference.
-        any_tool_calls = any(
-            t.get("toolCallEnabled") and t.get("expectedToolCalls")
-            for t in tc.get("turns", [])
-        )
+        # If any normalized turn has expected_tool_calls, mark the case as
+        # tool_use so the eval runner fetches subagent tool calls from Postgres.
+        any_tool_calls = any(t.get("expected_tool_calls") for t in turns)
         effective_tag = "tool_use" if any_tool_calls else tag
 
         case_entry: dict[str, Any] = {
-            "conversation_group_id": str(tc.get("name") or tc.get("id") or "").strip(),
+            "conversation_group_id": (
+                str(tc.get("name") or "").strip() or str(tc.get("id") or "").strip()
+            ),
             "description": str(tc.get("description") or f"tag:{tag}").strip(),
             "tag": effective_tag,
             "turns": turns,

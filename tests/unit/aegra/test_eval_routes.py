@@ -2595,8 +2595,6 @@ class TestExtractUsername:
 
 class TestExportResults:
     async def test_exports_latest_results(self):
-        from fastapi import HTTPException
-
         er._table_ensured = True
         now = datetime(2025, 6, 1, tzinfo=UTC)
         eval_cols = [
@@ -2608,6 +2606,7 @@ class TestExportResults:
             _col("completed_at"),
         ]
         eval_row = (["run-1"], 0.9, 9, 1, 0, now)
+        count_cols = [_col("count")]
         turn_cols = [
             _col("conversation_group_id"),
             _col("turn_id"),
@@ -2619,13 +2618,14 @@ class TestExportResults:
             ("conv-1", "turn_2", "FAIL", 0.0),
         ]
 
-        call_count = 0
+        queries = []
 
         async def mock_execute(query, params=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
+            queries.append((query, params))
+            if len(queries) == 1:
                 return _make_cursor(rows=[eval_row], description=eval_cols)
+            if len(queries) == 2:
+                return _make_cursor(rows=[(2,)], description=count_cols)
             return _make_cursor(rows=turn_rows, description=turn_cols)
 
         conn, _ = _make_conn()
@@ -2640,8 +2640,29 @@ class TestExportResults:
             result = await er.export_results(mock_request)
 
         assert result["eval_score"] == 0.9
+        assert result["total_evaluations"] == 2
         assert result["total_turns"] == 2
         assert len(result["turns"]) == 2
+        assert result["truncated"] is False
+
+        eval_sql = queries[0][0]
+        assert "eval_status='completed'" in eval_sql
+        assert "ORDER BY completed_at DESC" in eval_sql
+        assert "LIMIT 1" in eval_sql
+        assert queries[0][1] is None
+
+        count_sql, count_params = queries[1]
+        assert "COUNT(*)" in count_sql
+        assert "evaluation_results" in count_sql
+        assert "run_id = ANY(%s)" in count_sql
+        assert count_params == (["run-1"],)
+
+        turns_sql, turns_params = queries[2]
+        assert "evaluation_results" in turns_sql
+        assert "run_id = ANY(%s)" in turns_sql
+        assert "LIMIT" in turns_sql
+        assert turns_params[0] == ["run-1"]
+
         er._table_ensured = False
 
     async def test_404_when_no_completed_eval(self):
@@ -2702,16 +2723,18 @@ class TestExportResults:
             _col("completed_at"),
         ]
         eval_row = (["run-1"], 0.8, 8, 2, 0, now)
+        count_cols = [_col("count")]
         turn_cols = [_col("conversation_group_id"), _col("result")]
         turn_rows = [("conv-1", "PASS")]
 
-        call_count = 0
+        queries = []
 
         async def mock_execute(query, params=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
+            queries.append((query, params))
+            if len(queries) == 1:
                 return _make_cursor(rows=[eval_row], description=eval_cols)
+            if len(queries) == 2:
+                return _make_cursor(rows=[(1,)], description=count_cols)
             return _make_cursor(rows=turn_rows, description=turn_cols)
 
         conn, _ = _make_conn()
@@ -2727,6 +2750,16 @@ class TestExportResults:
 
         assert result["eval_score"] == 0.8
         assert result["total_turns"] == 1
+
+        eval_sql, eval_params = queries[0]
+        assert "completed_at=%s" in eval_sql
+        assert eval_params == ("2025-06-01T00:00:00+00:00",)
+
+        count_sql, count_params = queries[1]
+        assert "evaluation_results" in count_sql
+        assert "run_id = ANY(%s)" in count_sql
+        assert count_params == (["run-1"],)
+
         er._table_ensured = False
 
 
