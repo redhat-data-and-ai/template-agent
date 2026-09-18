@@ -78,7 +78,13 @@ def start_server() -> None:
     print(f"   Port: {port}")
     print(f"   Config: {CONFIG_PATH}")
 
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        h11_max_incomplete_event_size=32768,
+    )
 
 
 def main() -> None:
