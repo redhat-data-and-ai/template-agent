@@ -113,7 +113,7 @@ def _create_vertex_model(
         )
 
         if is_claude:
-            return ChatAnthropicVertex(
+            claude_kwargs: dict = dict(
                 model=model_name,
                 project=project,
                 credentials=credentials,
@@ -122,6 +122,9 @@ def _create_vertex_model(
                 max_retries=2,
                 streaming=True,
             )
+            if settings.VERTEX_AI_LOCATION:
+                claude_kwargs["location"] = settings.VERTEX_AI_LOCATION
+            return ChatAnthropicVertex(**claude_kwargs)
         else:
             return ChatGoogleGenerativeAI(
                 model=model_name,
