@@ -84,12 +84,32 @@ class TestEnsureBound:
             assert svc._ensure_bound() is None
 
     def test_returns_existing_conn(self):
-        mock_conn = MagicMock()
+        mock_conn = MagicMock(closed=False)
         svc._ldap_conn = mock_conn
         svc._bind_failed = False
         with patch("deep_agent.src.ldap.service.ldap_settings") as ms:
             ms.LDAP_URL = "ldaps://ldap.example.com"
             assert svc._ensure_bound() is mock_conn
+
+    def test_drops_closed_conn_and_rebinds(self):
+        stale_conn = MagicMock(closed=True)
+        svc._ldap_conn = stale_conn
+        svc._bind_failed = False
+
+        fresh_conn = MagicMock()
+        ldap3_mock = MagicMock()
+        ldap3_mock.Connection.return_value = fresh_conn
+
+        with patch("deep_agent.src.ldap.service.ldap_settings") as ms:
+            ms.LDAP_URL = "ldaps://ldap.example.com"
+            ms.LDAP_TLS_VERIFY = True
+            ms.LDAP_PASSWORD = "pass"
+            ms.get_bind_dn.return_value = "uid=svc,dc=example,dc=com"
+
+            with patch.dict("sys.modules", {"ldap3": ldap3_mock}):
+                result = svc._ensure_bound()
+                assert result is fresh_conn
+                assert svc._ldap_conn is fresh_conn
 
     def test_bind_failure_returns_none(self):
         svc._ldap_conn = None
@@ -288,13 +308,13 @@ class TestIsUserInGroupSync:
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("alice", "team") is False
 
-    def test_search_exception_returns_false(self):
+    def test_search_exception_retries_then_returns_false(self):
         mock_conn = MagicMock()
         mock_conn.search.side_effect = Exception("timeout")
         ldap3_mock = MagicMock()
 
         with (
-            patch.object(svc, "_ensure_bound", return_value=mock_conn),
+            patch.object(svc, "_ensure_bound", return_value=mock_conn) as ensure_mock,
             patch("deep_agent.src.ldap.service.ldap_settings") as ms,
             patch("deep_agent.aegra.redis.cache_get", return_value=None),
             patch.dict("sys.modules", {"ldap3": ldap3_mock}),
@@ -302,6 +322,86 @@ class TestIsUserInGroupSync:
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
             assert svc._is_user_in_group_sync("alice", "team") is False
             assert svc._bind_failed is True
+            assert ensure_mock.call_count == 2
+
+    def test_search_exception_recovers_on_retry(self):
+        stale_conn = MagicMock()
+        stale_conn.search.side_effect = Exception("connection reset")
+
+        fresh_conn = MagicMock()
+        entry = _make_entry(member_uid=["alice"])
+        fresh_conn.entries = [entry]
+
+        ldap3_mock = MagicMock()
+        call_count = {"n": 0}
+
+        def ensure_side_effect():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return stale_conn
+            svc._bind_failed = False
+            return fresh_conn
+
+        with (
+            patch.object(svc, "_ensure_bound", side_effect=ensure_side_effect),
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
+            ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
+            ms.LDAP_CACHE_TTL_SECONDS = 300
+            assert svc._is_user_in_group_sync("alice", "team") is True
+
+    def test_search_returns_false_triggers_retry(self):
+        mock_conn = MagicMock()
+        mock_conn.search.return_value = False
+        mock_conn.result = {"description": "operationsError"}
+        ldap3_mock = MagicMock()
+
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn) as ensure_mock,
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
+            ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
+            assert svc._is_user_in_group_sync("alice", "team") is False
+            assert svc._bind_failed is True
+            assert ensure_mock.call_count == 2
+
+    def test_search_returns_false_recovers_on_retry(self):
+        bad_conn = MagicMock()
+        bad_conn.search.return_value = False
+        bad_conn.result = {"description": "operationsError"}
+
+        good_conn = MagicMock()
+        good_conn.search.return_value = True
+        entry = _make_entry(member_uid=["alice"])
+        good_conn.entries = [entry]
+
+        ldap3_mock = MagicMock()
+        call_count = {"n": 0}
+
+        def ensure_side_effect():
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return bad_conn
+            svc._bind_failed = False
+            return good_conn
+
+        with (
+            patch.object(svc, "_ensure_bound", side_effect=ensure_side_effect),
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
+            ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
+            ms.LDAP_CACHE_TTL_SECONDS = 300
+            assert svc._is_user_in_group_sync("alice", "team") is True
 
     def test_case_insensitive_match(self):
         entry = _make_entry(member_uid=["ALICE"])
