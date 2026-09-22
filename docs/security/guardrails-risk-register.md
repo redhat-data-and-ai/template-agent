@@ -134,19 +134,39 @@ for memory in repo.list_all_memories():
 
 ---
 
-### 4. Subagent system prompt not validated at config load — Low
-**Threat:** A tampered subagent config file could inject instructions into a
-subagent's system prompt at startup.
+### 4. Subagent/skill metadata not validated at config load — Addressed (OFFSEC-379)
+**Threat:** A tampered, malicious, or compromised subagent/skill catalogue entry
+could inject instructions into a subagent's system prompt, delegation
+description, or skill body at startup. Because subagents and skills are
+resolved from the shared package catalogue, this content may be authored by a
+different user or org than the one deploying the agent — making the catalogue
+a cross-tenant prompt-injection distribution channel (DI 06).
 
-**Mitigation in place:** Subagents loaded from `config/subagents/*.md` which
-are version-controlled. Guardian fires on all in-process subagent LLM calls via
-the global callback, and `SafetyAwareRunnable` wraps each subagent runnable.
+**Mitigation in place:** `scan_catalogue_safety()`
+(`deep_agent/src/agent/config/catalogue_safety.py`) runs once at startup, after
+Guardian is initialised (`run_startup()` → `_validate_catalogue_safety()`).
+It runs the existing `check_safety` + `check_injection` Guardian checks over
+every subagent's `description` + `body` and every skill's `SKILL.md`
+`description` + body. Any subagent or skill flagged unsafe or as an injection
+attempt is excluded from the running agent (`AgentConfig.exclude_subagent` /
+`exclude_skill`, which also scrubs the skill's path out of any already-resolved
+`skill_paths`) — the rest of the agent still starts and runs normally.
 
-**Residual gap:** No runtime validation of subagent system prompt content at
-config load time.
-
-**Required action:** Add a startup Guardian check over all subagent `body` fields
-in `load_subagents()` before building subagent instances.
+**Residual gaps:**
+- The Guardian scan itself only runs once, at startup. `CONFIG_AUTO_RELOAD`
+  (default `true` — see `settings.py`) reloads subagent/skill configs from
+  disk on every `AgentConfig` access; previously-excluded items stay excluded
+  across those reloads (`AgentConfig._reapply_exclusions`, keyed by name), but
+  if a subagent/skill's *content* changes on disk after startup (e.g. hot
+  edited during local dev), the new content is not re-scanned until the
+  process restarts.
+- No-op when Guardian is disabled (`GUARDIAN_API_BASE` unset or
+  `guardrail.enabled: false`) — same fail-open posture as every other Guardian
+  check in this register.
+- Registry-side (publish-time) scanning is still absent — malicious catalogue
+  content is only caught when a consuming agent starts up, not blocked from
+  being published in the first place. The registry has no Guardian wiring
+  today; adding it is a separate, larger effort tracked outside this fix.
 
 ---
 

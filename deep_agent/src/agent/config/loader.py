@@ -120,6 +120,8 @@ class AgentConfig:
     _guardrails_config: GuardrailsConfig
     _pii_config: PIIConfig
     _name: str
+    _excluded_subagents: set[str]
+    _excluded_skills: set[str]
 
     def __new__(cls, base_dir: Path | None = None) -> "AgentConfig":
         """Create or return the singleton instance.
@@ -148,6 +150,9 @@ class AgentConfig:
         self._base_dir = base_dir if base_dir is not None else _AGENT_CONFIG_DIR
         self._initialized = True
         self._configs_loaded = False
+        # Sticky for the process lifetime — see _reapply_exclusions().
+        self._excluded_subagents: set[str] = set()
+        self._excluded_skills: set[str] = set()
 
     def _load_agent_yaml(self) -> dict[str, Any]:
         """Load the unified runtime/agent.yaml once.
@@ -298,6 +303,11 @@ class AgentConfig:
         self._orchestrator: dict[str, Any] = self._load_orchestrator()
         self._subagents: dict[str, dict[str, Any]] = self._load_all_subagents()
         self._mcp_servers: dict[str, Any] = self._load_mcp_servers()
+
+        # Re-apply any exclusions from a prior catalogue safety scan — a
+        # reload from disk (CONFIG_AUTO_RELOAD) must not silently resurrect
+        # a subagent/skill previously flagged unsafe (OFFSEC-379).
+        self._reapply_exclusions()
 
         self._configs_loaded = True
         logger.info(
@@ -529,6 +539,90 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return self._subagents
+
+    def get_available_skills(self) -> dict[str, Path]:
+        """Get all available skill directory paths, keyed by skill name.
+
+        Returns:
+            A copy of the skill-name -> skill-directory-path mapping.
+        """
+        self._ensure_loaded()
+        return dict(self._available_skills)
+
+    def exclude_subagent(self, name: str, reason: str = "") -> bool:
+        """Remove a subagent from the loaded configuration (e.g. failed a safety check).
+
+        The exclusion is sticky for the lifetime of this singleton: even if
+        ``CONFIG_AUTO_RELOAD`` causes a later reload from disk, this subagent
+        will continue to be excluded (see ``_reapply_exclusions``).
+
+        Args:
+            name: Subagent name (config key), as returned by ``get_all_subagent_configs``.
+            reason: Optional human-readable reason, used only for logging.
+
+        Returns:
+            True if the subagent was present and removed, False otherwise.
+        """
+        self._ensure_loaded()
+        self._excluded_subagents.add(name)
+        removed = self._subagents.pop(name, None) is not None
+        if removed:
+            logger.warning(
+                "Excluded subagent '%s' from agent config%s",
+                name,
+                f": {reason}" if reason else "",
+            )
+        return removed
+
+    def exclude_skill(self, name: str, reason: str = "") -> bool:
+        """Remove a skill from the loaded configuration (e.g. failed a safety check).
+
+        Also strips the skill's resolved path from ``skill_paths`` on the
+        orchestrator config and every subagent config, so a flagged skill's
+        content can no longer be surfaced even though paths were already
+        resolved eagerly at load time. The exclusion is sticky for the
+        lifetime of this singleton (see ``_reapply_exclusions``).
+
+        Args:
+            name: Skill name (directory name), as returned by ``get_available_skills``.
+            reason: Optional human-readable reason, used only for logging.
+
+        Returns:
+            True if the skill was present and removed, False otherwise.
+        """
+        self._ensure_loaded()
+        self._excluded_skills.add(name)
+        removed = self._available_skills.pop(name, None) is not None
+        if removed:
+            self._scrub_skill_path(name)
+            logger.warning(
+                "Excluded skill '%s' from agent config%s",
+                name,
+                f": {reason}" if reason else "",
+            )
+        return removed
+
+    def _scrub_skill_path(self, name: str) -> None:
+        """Remove a skill's resolved path from every already-resolved skill_paths list."""
+        resolved = str(self._base_dir / "skills" / name)
+        for cfg in (self._orchestrator, *self._subagents.values()):
+            paths = cfg.get("skill_paths")
+            if paths:
+                cfg["skill_paths"] = [p for p in paths if p != resolved]
+
+    def _reapply_exclusions(self) -> None:
+        """Re-apply previously-excluded subagents/skills after a (re)load.
+
+        ``_ensure_loaded`` reloads everything from disk whenever
+        ``CONFIG_AUTO_RELOAD`` is set, which would otherwise silently
+        resurrect anything the catalogue safety scan previously excluded
+        (OFFSEC-379). Called at the end of ``_ensure_loaded``.
+        """
+        for name in self._excluded_subagents:
+            self._subagents.pop(name, None)
+        for name in self._excluded_skills:
+            if self._available_skills.pop(name, None) is not None:
+                self._scrub_skill_path(name)
 
     @staticmethod
     def resolve_tools(

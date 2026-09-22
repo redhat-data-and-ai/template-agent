@@ -235,3 +235,144 @@ Test prompt.
         ):
             result = cfg._load_guardrails_config({"enabled": True, "model": "x"})
         assert result.enabled is False
+
+
+class TestCatalogueExclusion:
+    """Tests for AgentConfig.exclude_subagent / exclude_skill (OFFSEC-379)."""
+
+    def setup_method(self):
+        """Reset the singleton before each test."""
+        AgentConfig._instance = None
+
+    def _make_config_dir(self, tmp_path):
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+
+        skills_dir = config_dir / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "safe-skill").mkdir()
+        (skills_dir / "unsafe-skill").mkdir()
+
+        (config_dir / "PROMPT.md").write_text("""---
+name: orchestrator
+model: gemini-2.5-flash
+skills:
+  - safe-skill
+  - unsafe-skill
+---
+
+Orchestrator prompt.
+""")
+
+        subagents_dir = config_dir / "subagents"
+        subagents_dir.mkdir()
+        (subagents_dir / "analyst.md").write_text("""---
+name: analyst
+model: gemini-2.5-flash
+description: Analyzes things.
+skills:
+  - safe-skill
+  - unsafe-skill
+---
+
+Analyst prompt.
+""")
+        (subagents_dir / "researcher.md").write_text("""---
+name: researcher
+model: gemini-2.5-flash
+description: Researches things.
+---
+
+Researcher prompt.
+""")
+        return config_dir
+
+    def test_get_available_skills_returns_copy(self, tmp_path):
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+
+        skills = cfg.get_available_skills()
+        assert set(skills) == {"safe-skill", "unsafe-skill"}
+
+        # Mutating the returned dict must not affect internal state.
+        skills.pop("safe-skill")
+        assert "safe-skill" in cfg.get_available_skills()
+
+    def test_exclude_subagent_removes_it(self, tmp_path):
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+
+        assert "researcher" in cfg.get_all_subagent_configs()
+        removed = cfg.exclude_subagent("researcher", reason="unsafe")
+        assert removed is True
+        assert "researcher" not in cfg.get_all_subagent_configs()
+
+    def test_exclude_subagent_missing_returns_false(self, tmp_path):
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+
+        assert cfg.exclude_subagent("does-not-exist") is False
+
+    def test_exclude_skill_removes_it_and_scrubs_paths(self, tmp_path):
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+
+        orchestrator = cfg.get_orchestrator_config()
+        analyst = cfg.get_all_subagent_configs()["analyst"]
+        assert len(orchestrator["skill_paths"]) == 2
+        assert len(analyst["skill_paths"]) == 2
+
+        removed = cfg.exclude_skill("unsafe-skill", reason="injection detected")
+        assert removed is True
+
+        assert "unsafe-skill" not in cfg.get_available_skills()
+
+        # The excluded skill's path must be scrubbed from every config that
+        # had already resolved it, while the safe skill's path remains.
+        orchestrator = cfg.get_orchestrator_config()
+        analyst = cfg.get_all_subagent_configs()["analyst"]
+        assert len(orchestrator["skill_paths"]) == 1
+        assert "unsafe-skill" not in orchestrator["skill_paths"][0]
+        assert "safe-skill" in orchestrator["skill_paths"][0]
+        assert len(analyst["skill_paths"]) == 1
+        assert "unsafe-skill" not in analyst["skill_paths"][0]
+
+    def test_exclude_skill_missing_returns_false(self, tmp_path):
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+
+        assert cfg.exclude_skill("does-not-exist") is False
+
+    def test_exclusions_survive_config_auto_reload(self, tmp_path):
+        """CONFIG_AUTO_RELOAD (default True) must not resurrect excluded items.
+
+        Regression test for OFFSEC-379: _ensure_loaded() reloads everything
+        from disk on every access when CONFIG_AUTO_RELOAD is set, which would
+        otherwise silently undo exclude_subagent/exclude_skill on the very
+        next getter call.
+        """
+        config_dir = self._make_config_dir(tmp_path)
+        cfg = AgentConfig(config_dir)
+
+        cfg.exclude_subagent("researcher", reason="unsafe")
+        cfg.exclude_skill("unsafe-skill", reason="injection detected")
+
+        with patch("deep_agent.src.agent.config.loader.settings") as mock_settings:
+            mock_settings.CONFIG_AUTO_RELOAD = True
+
+            # Force a reload from disk, simulating a later request that
+            # triggers CONFIG_AUTO_RELOAD after the safety scan already ran.
+            subs = cfg.get_all_subagent_configs()
+            skills = cfg.get_available_skills()
+            orchestrator = cfg.get_orchestrator_config()
+
+        # "researcher.md" is still on disk, but the reload must re-apply
+        # the exclusion rather than resurrecting it.
+        assert "researcher" not in subs
+        assert "researcher" not in cfg.get_all_subagent_configs()
+        assert "unsafe-skill" not in skills
+        assert "analyst" in subs
+        assert all("unsafe-skill" not in p for p in orchestrator["skill_paths"])
+        assert all(
+            "unsafe-skill" not in p for p in subs["analyst"]["skill_paths"]
+        )
