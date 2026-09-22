@@ -192,6 +192,10 @@ async def _get_store() -> Any:
                     "autocommit": True,
                     "prepare_threshold": 0,
                     "row_factory": dict_row,
+                    "keepalives": 1,
+                    "keepalives_idle": 300,
+                    "keepalives_interval": 30,
+                    "keepalives_count": 3,
                 },
                 open=False,
             )

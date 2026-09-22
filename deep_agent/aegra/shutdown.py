@@ -124,6 +124,7 @@ def run_shutdown_sync() -> None:
         ("graph_cache", _clear_graph_cache),
         ("ldap", _close_ldap_sync),
         ("redis", _close_redis),
+        ("postgres", _close_postgres_sync),
     ]:
         try:
             results[key] = step()
@@ -208,6 +209,7 @@ async def run_shutdown() -> dict[str, str]:
         ("graph_cache", _clear_graph_cache),
         ("ldap", _close_ldap),
         ("redis", _close_redis),
+        ("postgres", _close_postgres),
     ]:
         try:
             step_result = step()
@@ -369,4 +371,47 @@ def _close_redis() -> str:
         return "ok"
     except Exception as exc:
         logger.warning("Redis close failed: %s", exc)
+        return f"error: {exc}"
+
+
+async def _close_postgres() -> str:
+    """Close Postgres connection pools (aegra db_manager + personalization)."""
+    closed = []
+    try:
+        from aegra_api.core.database import db_manager
+
+        if db_manager.engine is not None:
+            await db_manager.close()
+            closed.append("db_manager")
+    except Exception as exc:
+        logger.warning("db_manager close failed: %s", exc)
+
+    try:
+        from deep_agent.src.personalization.repository import _pool_registry
+
+        for uri, pool in list(_pool_registry.items()):
+            await pool.close()
+        _pool_registry.clear()
+        if _pool_registry is not None:
+            closed.append("personalization")
+    except Exception as exc:
+        logger.warning("Personalization pool close failed: %s", exc)
+
+    return f"ok: {', '.join(closed)}" if closed else "skipped: no pools"
+
+
+def _close_postgres_sync() -> str:
+    """Close Postgres pools synchronously (atexit path)."""
+    try:
+        from aegra_api.core.database import db_manager
+
+        if db_manager.engine is None and db_manager.lg_pool is None:
+            return "skipped: not initialized"
+
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(_close_postgres())
+        loop.close()
+        return result
+    except Exception as exc:
+        logger.warning("Postgres sync close failed: %s", exc)
         return f"error: {exc}"

@@ -96,7 +96,13 @@ async def _get_pool(uri: str) -> AsyncConnectionPool:
                 uri,
                 min_size=2,
                 max_size=10,
-                kwargs={"row_factory": dict_row},
+                kwargs={
+                    "row_factory": dict_row,
+                    "keepalives": 1,
+                    "keepalives_idle": 300,
+                    "keepalives_interval": 30,
+                    "keepalives_count": 3,
+                },
                 open=False,
             )
             await pool.open()
