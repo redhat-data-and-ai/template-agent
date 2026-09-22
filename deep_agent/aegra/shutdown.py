@@ -390,10 +390,12 @@ async def _close_postgres() -> str:
         from deep_agent.src.personalization.repository import _pool_registry
 
         for uri, pool in list(_pool_registry.items()):
-            await pool.close()
+            try:
+                await pool.close()
+            except Exception as exc:
+                logger.warning("Pool close failed for %s: %s", uri[:40], exc)
         _pool_registry.clear()
-        if _pool_registry is not None:
-            closed.append("personalization")
+        closed.append("personalization")
     except Exception as exc:
         logger.warning("Personalization pool close failed: %s", exc)
 
@@ -405,7 +407,13 @@ def _close_postgres_sync() -> str:
     try:
         from aegra_api.core.database import db_manager
 
-        if db_manager.engine is None and db_manager.lg_pool is None:
+        from deep_agent.src.personalization.repository import _pool_registry
+
+        if (
+            db_manager.engine is None
+            and db_manager.lg_pool is None
+            and not _pool_registry
+        ):
             return "skipped: not initialized"
 
         loop = asyncio.new_event_loop()

@@ -493,7 +493,6 @@ class TestGetStore:
         from deep_agent.aegra import personalization_routes as pr
 
         mock_pool = AsyncMock()
-        mock_pool.open = AsyncMock()
         mock_store = AsyncMock()
         mock_store.setup = AsyncMock()
         with (
@@ -501,12 +500,14 @@ class TestGetStore:
                 "langgraph.store.postgres.aio.AsyncPostgresStore",
                 return_value=mock_store,
             ),
-            patch("psycopg_pool.AsyncConnectionPool", return_value=mock_pool),
-            patch("psycopg.rows.dict_row", MagicMock()),
+            patch(
+                "deep_agent.src.personalization.repository._get_pool",
+                new_callable=AsyncMock,
+                return_value=mock_pool,
+            ),
         ):
             result = await pr._get_store()
         assert result is mock_store
-        mock_pool.open.assert_awaited()
         mock_store.setup.assert_awaited()
         assert pr._store_instance is mock_store
 

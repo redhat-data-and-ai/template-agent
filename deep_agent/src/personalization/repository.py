@@ -97,6 +97,8 @@ async def _get_pool(uri: str) -> AsyncConnectionPool:
                 min_size=2,
                 max_size=10,
                 kwargs={
+                    "autocommit": True,
+                    "prepare_threshold": 0,
                     "row_factory": dict_row,
                     "keepalives": 1,
                     "keepalives_idle": 300,
