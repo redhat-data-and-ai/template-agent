@@ -417,9 +417,15 @@ def _close_postgres_sync() -> str:
         ):
             return "skipped: not initialized"
 
-        loop = asyncio.new_event_loop()
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                raise RuntimeError("closed")
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
         result = loop.run_until_complete(_close_postgres())
-        loop.close()
         return result
     except Exception as exc:
         logger.warning("Postgres sync close failed: %s", exc)
