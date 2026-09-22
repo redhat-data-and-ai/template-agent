@@ -388,6 +388,7 @@ class TestClosePostgres:
 
         assert "personalization" in result
         assert "db_manager" not in result
+        mock_db_manager.close.assert_awaited_once()
 
 
 class TestClosePostgresSync:
