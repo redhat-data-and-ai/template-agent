@@ -332,8 +332,32 @@ class TestClosePostgres:
         ):
             result = await _close_postgres()
 
-        assert "personalization" in result
+        assert result == "skipped: no pools"
         mock_db_manager.close.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reports_no_pools_when_both_empty(self):
+        mock_db_manager = MagicMock()
+        mock_db_manager.engine = None
+
+        mock_lock = asyncio.Lock()
+
+        with (
+            patch("aegra_api.core.database.db_manager", mock_db_manager),
+            patch(
+                "deep_agent.src.personalization.repository._pool_registry",
+                {},
+            ),
+            patch(
+                "deep_agent.src.personalization.repository._pool_lock",
+                mock_lock,
+            ),
+        ):
+            result = await _close_postgres()
+
+        assert result == "skipped: no pools"
+        assert "personalization" not in result
+        assert "db_manager" not in result
 
     @pytest.mark.asyncio
     async def test_continues_after_pool_close_failure(self):
@@ -386,7 +410,7 @@ class TestClosePostgres:
         ):
             result = await _close_postgres()
 
-        assert "personalization" in result
+        assert result == "skipped: no pools"
         assert "db_manager" not in result
         mock_db_manager.close.assert_awaited_once()
 

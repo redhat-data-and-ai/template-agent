@@ -390,13 +390,15 @@ async def _close_postgres() -> str:
         from deep_agent.src.personalization.repository import _pool_lock, _pool_registry
 
         async with _pool_lock:
+            pool_count = len(_pool_registry)
             for uri, pool in list(_pool_registry.items()):
                 try:
                     await pool.close()
                 except Exception as exc:
                     logger.warning("Pool close failed for %s: %s", uri[:40], exc)
             _pool_registry.clear()
-            closed.append("personalization")
+            if pool_count:
+                closed.append("personalization")
     except Exception as exc:
         logger.warning("Personalization pool close failed: %s", exc)
 
