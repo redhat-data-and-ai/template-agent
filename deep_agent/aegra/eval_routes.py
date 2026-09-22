@@ -1359,10 +1359,12 @@ async def export_results(
             )
 
         count_cur = await conn.execute(
-            "SELECT COUNT(*) FROM evaluation_results WHERE run_id = ANY(%s)",
+            "SELECT COUNT(*), "
+            "COUNT(DISTINCT (conversation_group_id, turn_id)) "
+            "FROM evaluation_results WHERE run_id = ANY(%s)",
             (run_ids,),
         )
-        total_available = (await count_cur.fetchone())[0]
+        total_available, total_turns = await count_cur.fetchone()
 
         turns_cur = await conn.execute(
             f"SELECT {_EXPORT_COLUMNS} FROM evaluation_results "
@@ -1383,9 +1385,7 @@ async def export_results(
             else str(eval_doc.get("completed_at"))
         ),
         "total_evaluations": total_available,
-        "total_turns": len(
-            {(t.get("conversation_group_id"), t.get("turn_id")) for t in turns}
-        ),
+        "total_turns": total_turns,
         "turns": turns,
         "truncated": total_available > row_limit,
     }
@@ -1583,13 +1583,24 @@ async def upsert_dataset(
     now = datetime.now(UTC)
     username = _extract_username(request) or ""
 
+    normalized: list[tuple[str, dict]] = []
+    seen_ids: dict[str, int] = {}
+    for idx, case in enumerate(body.cases):
+        raw_id = case.get("id")
+        cid = str(raw_id).strip() if raw_id is not None else ""
+        if not cid:
+            cid = str(uuid.uuid4())
+        if cid in seen_ids:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Duplicate case ID {cid!r} at positions {seen_ids[cid]} and {idx}",
+            )
+        seen_ids[cid] = idx
+        normalized.append((cid, case))
+
     async with await _pg_conn() as conn:
         await conn.execute("DELETE FROM eval_dataset_items")
-        for case in body.cases:
-            raw_id = case.get("id")
-            cid = str(raw_id).strip() if raw_id is not None else ""
-            if not cid:
-                cid = str(uuid.uuid4())
+        for cid, case in normalized:
             await conn.execute(
                 "INSERT INTO eval_dataset_items "
                 "(case_id, case_data, judge_model, created_by, updated_by, created_at, updated_at) "

@@ -1922,6 +1922,54 @@ class TestUpsertDataset:
         er._datasets_table_ensured = False
         er._dataset_items_table_ensured = False
 
+    async def test_rejects_duplicate_case_ids(self):
+        er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer fake-token"}
+        with patch(
+            "deep_agent.aegra.eval_routes._extract_username",
+            return_value="test-user",
+        ):
+            body = er.DatasetUpsertRequest(
+                cases=[
+                    {"id": "dup", "query": "first"},
+                    {"id": "dup", "query": "second"},
+                ],
+            )
+            with pytest.raises(HTTPException) as exc:
+                await er.upsert_dataset(body, request=mock_request)
+            assert exc.value.status_code == 422
+            assert "dup" in exc.value.detail
+        er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
+
+    async def test_rejects_duplicate_blank_ids(self):
+        er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer fake-token"}
+        with patch(
+            "deep_agent.aegra.eval_routes._extract_username",
+            return_value="test-user",
+        ):
+            body = er.DatasetUpsertRequest(
+                cases=[
+                    {"id": "  ", "query": "first"},
+                    {"id": "", "query": "second"},
+                ],
+            )
+            # Blank IDs get UUIDs, so they should NOT collide
+            conn, _ = _make_conn()
+            with patch(
+                "deep_agent.aegra.eval_routes._pg_conn",
+                AsyncMock(return_value=conn),
+            ):
+                result = await er.upsert_dataset(body, request=mock_request)
+            assert result["status"] == "ok"
+        er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
+
     async def test_upserts_empty_dataset(self):
         er._datasets_table_ensured = True
         er._dataset_items_table_ensured = True
@@ -2606,7 +2654,7 @@ class TestExportResults:
             _col("completed_at"),
         ]
         eval_row = (["run-1"], 0.9, 9, 1, 0, now)
-        count_cols = [_col("count")]
+        count_cols = [_col("count"), _col("distinct_turns")]
         turn_cols = [
             _col("conversation_group_id"),
             _col("turn_id"),
@@ -2625,7 +2673,7 @@ class TestExportResults:
             if len(queries) == 1:
                 return _make_cursor(rows=[eval_row], description=eval_cols)
             if len(queries) == 2:
-                return _make_cursor(rows=[(2,)], description=count_cols)
+                return _make_cursor(rows=[(2, 2)], description=count_cols)
             return _make_cursor(rows=turn_rows, description=turn_cols)
 
         conn, _ = _make_conn()
@@ -2653,6 +2701,7 @@ class TestExportResults:
 
         count_sql, count_params = queries[1]
         assert "COUNT(*)" in count_sql
+        assert "COUNT(DISTINCT" in count_sql
         assert "evaluation_results" in count_sql
         assert "run_id = ANY(%s)" in count_sql
         assert count_params == (["run-1"],)
@@ -2723,7 +2772,7 @@ class TestExportResults:
             _col("completed_at"),
         ]
         eval_row = (["run-1"], 0.8, 8, 2, 0, now)
-        count_cols = [_col("count")]
+        count_cols = [_col("count"), _col("distinct_turns")]
         turn_cols = [_col("conversation_group_id"), _col("result")]
         turn_rows = [("conv-1", "PASS")]
 
@@ -2734,7 +2783,7 @@ class TestExportResults:
             if len(queries) == 1:
                 return _make_cursor(rows=[eval_row], description=eval_cols)
             if len(queries) == 2:
-                return _make_cursor(rows=[(1,)], description=count_cols)
+                return _make_cursor(rows=[(1, 1)], description=count_cols)
             return _make_cursor(rows=turn_rows, description=turn_cols)
 
         conn, _ = _make_conn()
