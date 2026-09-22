@@ -164,12 +164,17 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
                 from ldap3 import SUBTREE
 
                 safe_cn = _escape_ldap_filter(group_cn)
-                conn.search(
+                search_ok = conn.search(
                     search_base,
                     f"(cn={safe_cn})",
                     search_scope=SUBTREE,
                     attributes=member_attrs,
                 )
+
+                if not search_ok:
+                    raise RuntimeError(
+                        f"LDAP search returned False (result: {conn.result})"
+                    )
 
                 found = False
                 for entry in conn.entries:
