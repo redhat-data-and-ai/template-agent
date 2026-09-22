@@ -499,15 +499,17 @@ class TestGetStore:
             patch(
                 "langgraph.store.postgres.aio.AsyncPostgresStore",
                 return_value=mock_store,
-            ),
+            ) as mock_store_cls,
             patch(
                 "deep_agent.src.personalization.repository._get_pool",
                 new_callable=AsyncMock,
                 return_value=mock_pool,
-            ),
+            ) as mock_get_pool,
         ):
             result = await pr._get_store()
         assert result is mock_store
+        mock_get_pool.assert_awaited_once_with(pr.settings.database_uri)
+        mock_store_cls.assert_called_once_with(conn=mock_pool)
         mock_store.setup.assert_awaited()
         assert pr._store_instance is mock_store
 
