@@ -174,28 +174,17 @@ _store_lock = asyncio.Lock()
 
 
 async def _get_store() -> Any:
-    """Return a shared AsyncPostgresStore backed by a connection pool."""
+    """Return a shared AsyncPostgresStore backed by the personalization pool."""
     global _store_instance  # noqa: PLW0603
     if _store_instance is not None:
         return _store_instance
     async with _store_lock:
         if _store_instance is None:
             from langgraph.store.postgres.aio import AsyncPostgresStore
-            from psycopg.rows import dict_row
-            from psycopg_pool import AsyncConnectionPool
 
-            pool = AsyncConnectionPool(
-                settings.database_uri,
-                min_size=2,
-                max_size=10,
-                kwargs={
-                    "autocommit": True,
-                    "prepare_threshold": 0,
-                    "row_factory": dict_row,
-                },
-                open=False,
-            )
-            await pool.open()
+            from deep_agent.src.personalization.repository import _get_pool
+
+            pool = await _get_pool(settings.database_uri)
             store = AsyncPostgresStore(conn=pool)
             await store.setup()
             _store_instance = store

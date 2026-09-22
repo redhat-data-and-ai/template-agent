@@ -9,6 +9,8 @@ import pytest
 import deep_agent.aegra.shutdown as shutdown_mod
 from deep_agent.aegra.shutdown import (
     _clear_graph_cache,
+    _close_postgres,
+    _close_postgres_sync,
     _close_redis,
     _drain,
     _shutdown_langfuse,
@@ -277,3 +279,205 @@ class TestRegisterSignalHandlers:
         loop = asyncio.get_running_loop()
         assert loop.remove_signal_handler(signal.SIGTERM) is True
         assert loop.remove_signal_handler(signal.SIGINT) is True
+
+
+class TestClosePostgres:
+    @pytest.mark.asyncio
+    async def test_closes_db_manager_and_pools(self):
+        mock_db_manager = MagicMock()
+        mock_db_manager.engine = MagicMock()
+        mock_db_manager.close = AsyncMock()
+
+        mock_pool = AsyncMock()
+        mock_pool.close = AsyncMock()
+        mock_registry = {"postgresql://localhost/test": mock_pool}
+        mock_lock = asyncio.Lock()
+
+        with (
+            patch("aegra_api.core.database.db_manager", mock_db_manager),
+            patch(
+                "deep_agent.src.personalization.repository._pool_registry",
+                mock_registry,
+            ),
+            patch(
+                "deep_agent.src.personalization.repository._pool_lock",
+                mock_lock,
+            ),
+        ):
+            result = await _close_postgres()
+
+        assert "db_manager" in result
+        assert "personalization" in result
+        mock_db_manager.close.assert_awaited_once()
+        mock_pool.close.assert_awaited_once()
+        assert len(mock_registry) == 0
+
+    @pytest.mark.asyncio
+    async def test_skips_uninitialized_db_manager(self):
+        mock_db_manager = MagicMock()
+        mock_db_manager.engine = None
+
+        mock_lock = asyncio.Lock()
+
+        with (
+            patch("aegra_api.core.database.db_manager", mock_db_manager),
+            patch(
+                "deep_agent.src.personalization.repository._pool_registry",
+                {},
+            ),
+            patch(
+                "deep_agent.src.personalization.repository._pool_lock",
+                mock_lock,
+            ),
+        ):
+            result = await _close_postgres()
+
+        assert result == "skipped: no pools"
+        mock_db_manager.close.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reports_no_pools_when_both_empty(self):
+        mock_db_manager = MagicMock()
+        mock_db_manager.engine = None
+
+        mock_lock = asyncio.Lock()
+
+        with (
+            patch("aegra_api.core.database.db_manager", mock_db_manager),
+            patch(
+                "deep_agent.src.personalization.repository._pool_registry",
+                {},
+            ),
+            patch(
+                "deep_agent.src.personalization.repository._pool_lock",
+                mock_lock,
+            ),
+        ):
+            result = await _close_postgres()
+
+        assert result == "skipped: no pools"
+        assert "personalization" not in result
+        assert "db_manager" not in result
+
+    @pytest.mark.asyncio
+    async def test_continues_after_pool_close_failure(self):
+        mock_db_manager = MagicMock()
+        mock_db_manager.engine = None
+
+        pool1 = AsyncMock()
+        pool1.close = AsyncMock(side_effect=RuntimeError("broken"))
+        pool2 = AsyncMock()
+        pool2.close = AsyncMock()
+        mock_registry = {"uri1": pool1, "uri2": pool2}
+        mock_lock = asyncio.Lock()
+
+        with (
+            patch("aegra_api.core.database.db_manager", mock_db_manager),
+            patch(
+                "deep_agent.src.personalization.repository._pool_registry",
+                mock_registry,
+            ),
+            patch(
+                "deep_agent.src.personalization.repository._pool_lock",
+                mock_lock,
+            ),
+        ):
+            result = await _close_postgres()
+
+        assert "personalization" in result
+        pool1.close.assert_awaited_once()
+        pool2.close.assert_awaited_once()
+        assert len(mock_registry) == 0
+
+    @pytest.mark.asyncio
+    async def test_handles_db_manager_close_failure(self):
+        mock_db_manager = MagicMock()
+        mock_db_manager.engine = MagicMock()
+        mock_db_manager.close = AsyncMock(side_effect=RuntimeError("db error"))
+
+        mock_lock = asyncio.Lock()
+
+        with (
+            patch("aegra_api.core.database.db_manager", mock_db_manager),
+            patch(
+                "deep_agent.src.personalization.repository._pool_registry",
+                {},
+            ),
+            patch(
+                "deep_agent.src.personalization.repository._pool_lock",
+                mock_lock,
+            ),
+        ):
+            result = await _close_postgres()
+
+        assert result == "skipped: no pools"
+        assert "db_manager" not in result
+        mock_db_manager.close.assert_awaited_once()
+
+
+class TestClosePostgresSync:
+    def test_skips_when_not_initialized(self):
+        mock_db_manager = MagicMock()
+        mock_db_manager.engine = None
+        mock_db_manager.lg_pool = None
+
+        with (
+            patch("aegra_api.core.database.db_manager", mock_db_manager),
+            patch(
+                "deep_agent.src.personalization.repository._pool_registry",
+                {},
+            ),
+        ):
+            result = _close_postgres_sync()
+
+        assert result == "skipped: not initialized"
+
+    def test_runs_cleanup_when_initialized(self):
+        mock_db_manager = MagicMock()
+        mock_db_manager.engine = MagicMock()
+        mock_db_manager.lg_pool = MagicMock()
+        mock_db_manager.close = AsyncMock()
+
+        mock_lock = asyncio.Lock()
+
+        with (
+            patch("aegra_api.core.database.db_manager", mock_db_manager),
+            patch(
+                "deep_agent.src.personalization.repository._pool_registry",
+                {},
+            ),
+            patch(
+                "deep_agent.src.personalization.repository._pool_lock",
+                mock_lock,
+            ),
+        ):
+            result = _close_postgres_sync()
+
+        assert "db_manager" in result
+        mock_db_manager.close.assert_awaited_once()
+
+    def test_runs_when_only_pool_registry_initialized(self):
+        mock_db_manager = MagicMock()
+        mock_db_manager.engine = None
+        mock_db_manager.lg_pool = None
+
+        mock_pool = AsyncMock()
+        mock_pool.close = AsyncMock()
+        mock_registry = {"uri": mock_pool}
+        mock_lock = asyncio.Lock()
+
+        with (
+            patch("aegra_api.core.database.db_manager", mock_db_manager),
+            patch(
+                "deep_agent.src.personalization.repository._pool_registry",
+                mock_registry,
+            ),
+            patch(
+                "deep_agent.src.personalization.repository._pool_lock",
+                mock_lock,
+            ),
+        ):
+            result = _close_postgres_sync()
+
+        assert "personalization" in result
+        mock_pool.close.assert_awaited_once()
