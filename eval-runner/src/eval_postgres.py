@@ -119,6 +119,17 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_run_id ON evaluation_results (run_id
 CREATE INDEX IF NOT EXISTS idx_eval_results_group_id ON evaluation_results (conversation_group_id);
 CREATE INDEX IF NOT EXISTS idx_eval_results_metric ON evaluation_results (metric_identifier);
 CREATE INDEX IF NOT EXISTS idx_eval_results_timestamp ON evaluation_results (timestamp);
+
+CREATE TABLE IF NOT EXISTS eval_dataset_items (
+    id          SERIAL PRIMARY KEY,
+    case_id     TEXT NOT NULL UNIQUE,
+    case_data   JSONB NOT NULL,
+    judge_model TEXT,
+    created_by  TEXT,
+    updated_by  TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 
@@ -438,9 +449,9 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
         turns = []
         for i, turn in enumerate(tc.get("turns", []), 1):
             turn_data: dict[str, Any] = {
-                "turn_id": turn.get("id", f"turn_{i}"),
-                "query": turn.get("userMessage", ""),
-                "expected_response": turn.get("expectedResponse", ""),
+                "turn_id": str(turn.get("id") or "").strip() or f"turn_{i}",
+                "query": str(turn.get("userMessage") or "").strip(),
+                "expected_response": str(turn.get("expectedResponse") or "").strip(),
                 "turn_metrics": list(metrics),
             }
             # For HITL cases, mark only the LAST turn as the HITL turn.
@@ -451,11 +462,14 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
             if tag_defaults.get("hitl") and is_last_turn:
                 turn_data["hitl"] = True
                 turn_data["expected_intent"] = (
-                    turn.get("expectedIntent")
+                    str(turn.get("expectedIntent") or "").strip()
                     or "request approval before taking action"
                 )
-            elif turn.get("expectedIntent"):
-                turn_data["expected_intent"] = turn["expectedIntent"]
+            elif (
+                turn.get("expectedIntent") is not None
+                and str(turn["expectedIntent"]).strip()
+            ):
+                turn_data["expected_intent"] = str(turn["expectedIntent"]).strip()
                 # Auto-add intent_eval when user specifies an expected intent
                 if "custom:intent_eval" not in turn_data["turn_metrics"]:
                     turn_data["turn_metrics"].append("custom:intent_eval")
@@ -475,14 +489,19 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
             if turn.get("toolCallEnabled") and turn.get("expectedToolCalls"):
                 tool_calls = []
                 for c in turn["expectedToolCalls"]:
+                    tool_name = str(c.get("toolName") or "").strip()
+                    if not tool_name:
+                        continue
                     args = {
-                        a["key"]: (str(a.get("value", "")).strip() or ".*")
+                        str(a["key"]).strip(): (
+                            str(a.get("value") or "").strip() or ".*"
+                        )
                         for a in c.get("arguments", [])
-                        if a.get("key")
+                        if str(a.get("key") or "").strip()
                     }
                     tool_calls.append(
                         {
-                            "tool_name": c.get("toolName", ""),
+                            "tool_name": tool_name,
                             "arguments": args,
                         }
                     )
@@ -521,18 +540,16 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
                     }
             turns.append(turn_data)
 
-        # If any turn expects tool calls, mark the case tag as tool_use so the
-        # eval runner fetches subagent tool calls from Postgres checkpoint_blobs.
-        # We preserve the original tag in the description for reference.
-        any_tool_calls = any(
-            t.get("toolCallEnabled") and t.get("expectedToolCalls")
-            for t in tc.get("turns", [])
-        )
+        # If any normalized turn has expected_tool_calls, mark the case as
+        # tool_use so the eval runner fetches subagent tool calls from Postgres.
+        any_tool_calls = any(t.get("expected_tool_calls") for t in turns)
         effective_tag = "tool_use" if any_tool_calls else tag
 
         case_entry: dict[str, Any] = {
-            "conversation_group_id": tc.get("name") or tc.get("id", ""),
-            "description": tc.get("description", f"tag:{tag}"),
+            "conversation_group_id": (
+                str(tc.get("name") or "").strip() or str(tc.get("id") or "").strip()
+            ),
+            "description": str(tc.get("description") or f"tag:{tag}").strip(),
             "tag": effective_tag,
             "turns": turns,
         }
@@ -545,7 +562,7 @@ def _dataset_to_eval_cases(dataset: dict) -> list[dict]:
 
 
 def fetch_dataset() -> tuple[list[dict] | None, str | None]:
-    """Fetch eval cases and judge_model from eval_datasets in one query.
+    """Fetch eval cases and judge_model from eval_dataset_items.
 
     Returns (cases, judge_model) — either may be None if no dataset stored or on error.
     """
@@ -553,16 +570,25 @@ def fetch_dataset() -> tuple[list[dict] | None, str | None]:
         conn = _get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT dataset, judge_model FROM eval_datasets LIMIT 1")
-                row = cur.fetchone()
+                cur.execute(
+                    "SELECT case_data, judge_model FROM eval_dataset_items ORDER BY id"
+                )
+                rows = cur.fetchall()
         finally:
             conn.close()
 
-        if not row:
+        if not rows:
             return None, None
 
-        raw, judge_model = row
-        dataset = json.loads(raw) if isinstance(raw, str) else raw
+        cases_raw: list[dict] = []
+        judge_model = None
+        for raw, jm in rows:
+            case = json.loads(raw) if isinstance(raw, str) else raw
+            cases_raw.append(case)
+            if jm:
+                judge_model = jm
+
+        dataset = {"cases": cases_raw}
         cases = _dataset_to_eval_cases(dataset)
         log.info("fetch_dataset: %d cases judge_model=%s", len(cases), judge_model)
         return (cases or None), (str(judge_model) if judge_model else None)
