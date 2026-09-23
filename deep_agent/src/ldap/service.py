@@ -150,9 +150,14 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
     if cached is not None:
         return cached
 
-    # 0 = success with zero entries (ldap3 search() is False when no CN matches).
-    # 10 = referral, 32 = noSuchObject, 34 = invalidDNSyntax.
+    # Non-fatal LDAP result codes that should not destroy the connection.
+    # 0 = success with zero entries, 10 = referral, 32 = noSuchObject,
+    # 34 = invalidDNSyntax.
     _LDAP_NON_FATAL_RESULT_CODES = {0, 10, 32, 34}
+    # Only cache when the result is conclusive (code 0 = search succeeded,
+    # group simply has no matching entries). Codes 10/32/34 are inconclusive
+    # — the group may become reachable later.
+    _LDAP_CACHEABLE_RESULT_CODES = {0}
 
     with _ldap_lock:
         search_base = ldap_settings.get_group_search_base()
@@ -185,7 +190,8 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
                             result_code,
                             conn.result.get("description", "unknown"),
                         )
-                        _cache_set(cache_key, False)
+                        if result_code in _LDAP_CACHEABLE_RESULT_CODES:
+                            _cache_set(cache_key, False)
                         return False
                     raise RuntimeError(
                         f"LDAP search returned False (result: {conn.result})"

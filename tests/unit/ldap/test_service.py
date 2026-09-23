@@ -354,7 +354,7 @@ class TestIsUserInGroupSync:
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("alice", "team") is True
 
-    def test_search_returns_false_fatal_error_triggers_retry(self):
+    def test_search_returns_false_fatal_error_triggers_retry_and_unbind(self):
         """Non-noSuchObject failures (e.g. operationsError) still retry and unbind."""
         mock_conn = MagicMock()
         mock_conn.search.return_value = False
@@ -371,6 +371,7 @@ class TestIsUserInGroupSync:
             assert svc._is_user_in_group_sync("alice", "team") is False
             assert svc._bind_failed is True
             assert ensure_mock.call_count == 2
+            assert mock_conn.unbind.call_count == 2
 
     def test_search_returns_false_success_empty_skips_without_retry(self):
         """ldap3 returns False + result 0 when the group CN is missing; that is a miss, not a connection failure."""
@@ -402,8 +403,8 @@ class TestIsUserInGroupSync:
             mock_conn.unbind.assert_not_called()
             redis_set.assert_called_once_with("ldap:membership:alice:team", "0", 300)
 
-    def test_search_returns_false_no_such_object_skips_without_retry(self):
-        """noSuchObject (code 32) returns False without destroying connection."""
+    def test_search_returns_false_no_such_object_skips_without_retry_no_cache(self):
+        """noSuchObject (code 32) returns False without destroying connection or caching."""
         mock_conn = MagicMock()
         mock_conn.search.return_value = False
         mock_conn.result = {"result": 32, "description": "noSuchObject"}
@@ -414,7 +415,7 @@ class TestIsUserInGroupSync:
             patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
             patch("deep_agent.src.ldap.service.ldap_settings") as ms,
             patch("deep_agent.aegra.redis.cache_get", return_value=None),
-            patch("deep_agent.aegra.redis.cache_set"),
+            patch("deep_agent.aegra.redis.cache_set") as redis_set,
             patch.dict("sys.modules", {"ldap3": ldap3_mock}),
         ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
@@ -423,9 +424,10 @@ class TestIsUserInGroupSync:
             assert svc._bind_failed is False
             assert ensure_mock.call_count == 1
             mock_conn.unbind.assert_not_called()
+            redis_set.assert_not_called()
 
-    def test_search_returns_false_referral_skips_without_retry(self):
-        """Referral (code 10) returns False without destroying connection."""
+    def test_search_returns_false_referral_skips_without_retry_no_cache(self):
+        """Referral (code 10) returns False without destroying connection or caching."""
         mock_conn = MagicMock()
         mock_conn.search.return_value = False
         mock_conn.result = {"result": 10, "description": "referral"}
@@ -436,7 +438,7 @@ class TestIsUserInGroupSync:
             patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
             patch("deep_agent.src.ldap.service.ldap_settings") as ms,
             patch("deep_agent.aegra.redis.cache_get", return_value=None),
-            patch("deep_agent.aegra.redis.cache_set"),
+            patch("deep_agent.aegra.redis.cache_set") as redis_set,
             patch.dict("sys.modules", {"ldap3": ldap3_mock}),
         ):
             ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
@@ -444,6 +446,8 @@ class TestIsUserInGroupSync:
             assert svc._is_user_in_group_sync("alice", "team") is False
             assert svc._bind_failed is False
             assert ensure_mock.call_count == 1
+            mock_conn.unbind.assert_not_called()
+            redis_set.assert_not_called()
 
     def test_search_returns_false_recovers_on_retry(self):
         bad_conn = MagicMock()
