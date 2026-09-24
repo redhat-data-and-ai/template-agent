@@ -35,6 +35,8 @@ make install     # creates venv, installs deps + pre-commit hooks
 make local       # pgvector + redis in compose; agent on host → :5002
 ```
 
+`make install` sets up pre-commit hooks (`gitleaks` and `detect-private-key`). Also enable [GitHub Secret Scanning](https://docs.github.com/en/code-security/concepts/secret-security/secret-scanning) and [Push Protection](https://docs.github.com/en/code-security/concepts/secret-security/push-protection) on the repository for defense in depth.
+
 Verify in another terminal:
 
 ```bash
