@@ -81,6 +81,20 @@ class Settings(BaseSettings):
     SAFETY_HARASSMENT: SafetyThreshold = Field(default="BLOCK_LOW_AND_ABOVE")
     SAFETY_SEXUALLY_EXPLICIT: SafetyThreshold = Field(default="BLOCK_LOW_AND_ABOVE")
 
+    # ── Repetition Loop Detection ───────────────────────────────────
+    # Gemini occasionally enters a degenerate autoregressive loop, repeating
+    # the same sentence/phrase dozens of times. These settings tune the
+    # detector used by SafetyAwareRunnable to break/truncate such responses.
+    REPETITION_LOOP_DETECTION_ENABLED: bool = Field(default=True)
+    REPETITION_LOOP_MIN_UNIT_LEN: int = Field(
+        default=20,
+        description="Minimum length (chars) of the repeated unit to consider a loop.",
+    )
+    REPETITION_LOOP_MIN_REPEATS: int = Field(
+        default=4,
+        description="Minimum consecutive repeats of a unit to flag as a loop.",
+    )
+
     # ── Database (PostgreSQL) ─────────────────────────────────────────
     POSTGRES_HOST: str = Field(default="pgvector")
     POSTGRES_PORT: int = Field(default=5432)
