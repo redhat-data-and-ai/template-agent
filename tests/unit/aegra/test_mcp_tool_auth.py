@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import ToolMessage
 
-from deep_agent.aegra.mcp_auth import NeedsAuthorization
 from deep_agent.aegra.mcp_tool_auth import (
     _fix_stringified_json_args,
+    _is_http_401,
     _wrap_single_tool,
     wrap_mcp_tools_for_auth,
 )
@@ -26,12 +26,32 @@ def _make_mock_tool(*, name: str = "gitlab_list_issues", coroutine=None):
     return tool
 
 
+class TestIsHttp401:
+    def test_status_401_is_true(self):
+        exc = Exception("Unauthorized")
+        exc.response = MagicMock(status_code=401)
+        assert _is_http_401(exc) is True
+
+    def test_status_403_is_false(self):
+        exc = Exception("Forbidden")
+        exc.response = MagicMock(status_code=403)
+        assert _is_http_401(exc) is False
+
+    def test_standalone_401_in_message_is_true(self):
+        assert _is_http_401(RuntimeError("HTTP 401 Unauthorized")) is True
+
+    def test_4012_is_false(self):
+        assert _is_http_401(RuntimeError("error 4012")) is False
+
+    def test_1401_is_false(self):
+        assert _is_http_401(RuntimeError("error 1401")) is False
+
+
 class TestSafeAinvoke:
     @pytest.mark.asyncio
     async def test_passthrough_on_success(self):
         tool = _make_mock_tool()
         tool.ainvoke = AsyncMock(return_value="success result")
-        original = tool.ainvoke
 
         wrapped = _wrap_single_tool(tool)
 
@@ -58,6 +78,90 @@ class TestSafeAinvoke:
         assert "[TOOL_ERROR]" in result.content
         assert result.tool_call_id == "call_2"
         assert result.name == "gitlab_list_issues"
+
+    @pytest.mark.asyncio
+    async def test_http_401_on_oauth_tool_interrupts_and_drops_token(self):
+        class Http401(Exception):
+            def __init__(self) -> None:
+                super().__init__("Unauthorized")
+                self.response = MagicMock(status_code=401)
+
+        tool = _make_mock_tool(name="jira_search")
+        tool.metadata = {"mcp_server": "jira-mcp"}
+        tool.ainvoke = AsyncMock(side_effect=[Http401(), "ok"])
+        wrapped = _wrap_single_tool(tool)
+        store = AsyncMock()
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={"jira-mcp": {"enabled": True, "auth_mode": "dcr"}},
+            ),
+            patch("deep_agent.aegra.mcp._resolve_mcp_user_id", return_value="user-1"),
+            patch("deep_agent.aegra.mcp_auth.get_mcp_credential_resolver") as mock_res,
+            patch("deep_agent.aegra.mcp_token_store.McpTokenStore") as mock_store_cls,
+            patch(
+                "deep_agent.aegra.mcp.invalidate_authenticated_oauth_tools"
+            ) as mock_invalidate,
+            patch("deep_agent.src.settings.settings") as mock_settings,
+            patch("deep_agent.aegra.mcp_tool_auth.interrupt") as mock_int,
+        ):
+            mock_res.return_value.connect_url.return_value = "/mcp/jira-mcp/connect"
+            mock_res.return_value.invalidate_cache = MagicMock()
+            mock_store_cls.return_value = store
+            mock_settings.database_uri = "postgres://"
+            mock_settings.agent_deployment_id = "agent-1"
+            result = await wrapped.ainvoke({"id": "call_401", "name": "jira_search"})
+        assert result == "ok"
+        mock_int.assert_called_once()
+        payload = mock_int.call_args[0][0]
+        assert "mcp_auth_required" in payload
+        assert "jira-mcp" in payload
+        store.delete_token.assert_awaited_once()
+        mock_res.return_value.invalidate_cache.assert_called_once_with(
+            "user-1", "jira-mcp"
+        )
+        mock_invalidate.assert_called_once_with("user-1", "jira-mcp")
+
+    @pytest.mark.asyncio
+    async def test_http_403_on_dcr_tool_stays_tool_error(self):
+        class Http403(Exception):
+            def __init__(self) -> None:
+                super().__init__("Forbidden")
+                self.response = MagicMock(status_code=403)
+
+        tool = _make_mock_tool(name="jira_search")
+        tool.metadata = {"mcp_server": "jira-mcp"}
+        tool.ainvoke = AsyncMock(side_effect=Http403())
+        wrapped = _wrap_single_tool(tool)
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={"jira-mcp": {"enabled": True, "auth_mode": "dcr"}},
+            ),
+            patch("deep_agent.aegra.mcp_token_store.McpTokenStore") as mock_store_cls,
+            patch("deep_agent.aegra.mcp_tool_auth.interrupt") as mock_int,
+        ):
+            result = await wrapped.ainvoke({"id": "call_403", "name": "jira_search"})
+        assert isinstance(result, ToolMessage)
+        assert result.status == "error"
+        assert "[TOOL_ERROR]" in result.content
+        mock_int.assert_not_called()
+        mock_store_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sso_403_with_metadata_stays_tool_error(self):
+        tool = _make_mock_tool()
+        tool.metadata = {"mcp_server": "gitlab-mcp"}
+        tool.ainvoke = AsyncMock(side_effect=RuntimeError("403 Forbidden"))
+        wrapped = _wrap_single_tool(tool)
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value={"gitlab-mcp": {"enabled": True, "auth_mode": "sso"}},
+        ):
+            result = await wrapped.ainvoke({"id": "call_sso"})
+        assert isinstance(result, ToolMessage)
+        assert result.status == "error"
+        assert "[TOOL_ERROR]" in result.content
 
     @pytest.mark.asyncio
     async def test_catches_mcp_error(self):

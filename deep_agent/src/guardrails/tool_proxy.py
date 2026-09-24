@@ -180,8 +180,12 @@ class GuardianToolProxy(BaseTool):
                 return _make_blocked_input_result(self.name, input)
 
         # Phase 2: execute inner tool; catch exceptions to preserve parallel isolation.
+        from langgraph.errors import GraphBubbleUp
+
         try:
             result = await self._inner.ainvoke(input, config, **kwargs)
+        except GraphBubbleUp:
+            raise
         except Exception as exc:
             logger.warning(
                 "tool_invocation_failed",

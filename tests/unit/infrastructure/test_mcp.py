@@ -1,5 +1,6 @@
 """Unit tests for MCP client utilities."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +12,11 @@ from deep_agent.aegra.mcp import (
     _get_server_configs,
     get_mcp_tools,
     mcp_httpx_verify,
+    oauth_dcr_server_for_tool_name,
+    placeholder_tool_name,
+    record_oauth_live_names,
+    resolve_declared_mcp_tools,
+    rewrite_oauth_dcr_tool_names,
 )
 
 
@@ -313,6 +319,72 @@ class TestConnectSingleServer:
 
         assert len(tools) == 1
         assert tools[0].name == "mcp__jira_mcp_prod"
+
+    @pytest.mark.asyncio
+    async def test_listing_401_drops_oauth_token(self):
+        class Http401(Exception):
+            def __init__(self) -> None:
+                super().__init__("unauthorized")
+                self.response = MagicMock(status_code=401)
+
+        mock_client = MagicMock()
+        mock_client.get_tools = AsyncMock(side_effect=Http401())
+        server_cfg = {"auth_mode": "dcr", "description": "Jira"}
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp.MultiServerMCPClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_tool_auth._forget_oauth_session",
+                new=AsyncMock(),
+            ) as mock_forget,
+        ):
+            tools = await _connect_single_server(
+                "jira-mcp",
+                {"url": "http://j/mcp/"},
+                server_cfg,
+                timeout=5,
+                server_key="jira-mcp",
+            )
+
+        assert len(tools) == 1
+        assert tools[0].name == "mcp__jira_mcp"
+        mock_forget.assert_awaited_once_with("jira-mcp")
+
+    @pytest.mark.asyncio
+    async def test_listing_403_keeps_oauth_token(self):
+        class Http403(Exception):
+            def __init__(self) -> None:
+                super().__init__("forbidden")
+                self.response = MagicMock(status_code=403)
+
+        mock_client = MagicMock()
+        mock_client.get_tools = AsyncMock(side_effect=Http403())
+        server_cfg = {"auth_mode": "dcr", "description": "Jira"}
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp.MultiServerMCPClient",
+                return_value=mock_client,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_tool_auth._forget_oauth_session",
+                new=AsyncMock(),
+            ) as mock_forget,
+        ):
+            tools = await _connect_single_server(
+                "jira-mcp",
+                {"url": "http://j/mcp/"},
+                server_cfg,
+                timeout=5,
+                server_key="jira-mcp",
+            )
+
+        assert len(tools) == 1
+        assert tools[0].name == "mcp__jira_mcp"
+        mock_forget.assert_not_called()
 
 
 def _reset_mcp_cache() -> None:
@@ -644,6 +716,91 @@ class TestGetMCPTools:
             )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_mode", ["oauth", "dcr"])
+    async def test_oauth_dcr_always_placeholder_even_with_token(self, auth_mode):
+        """Redis token must not bind live OAuth/DCR tools at compile time."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "jira-mcp": {
+                "url": "http://jira:9090/mcp",
+                "enabled": True,
+                "auth": True,
+                "auth_mode": auth_mode,
+                "timeout": 5,
+                "tool_prefix": "jira",
+            }
+        }
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch("deep_agent.aegra.mcp._resolve_connection_token") as mock_resolve,
+            patch("deep_agent.aegra.mcp._connect_single_server") as mock_connect,
+            patch(
+                "deep_agent.aegra.mcp._create_auth_placeholder_tool"
+            ) as mock_placeholder,
+        ):
+            mock_get_configs.return_value = mock_servers
+            mock_resolve.return_value = "redis-bearer"
+            mock_tool = MagicMock()
+            mock_tool.name = "mcp__jira_mcp"
+            mock_placeholder.return_value = mock_tool
+            tools = await get_mcp_tools(user_id="user-1")
+            mock_connect.assert_not_called()
+            mock_resolve.assert_not_called()
+            mock_placeholder.assert_called_once_with(
+                "jira-mcp", mock_servers["jira-mcp"]
+            )
+            assert [t.name for t in tools] == ["mcp__jira_mcp"]
+
+    @pytest.mark.asyncio
+    async def test_oauth_placeholder_does_not_block_sso_connect(self):
+        """SSO servers still connect; OAuth/DCR stay placeholders."""
+        _reset_mcp_cache()
+        mock_servers = {
+            "sso-mcp": {
+                "url": "http://sso/mcp",
+                "enabled": True,
+                "auth": True,
+                "auth_mode": "sso",
+                "timeout": 5,
+                "tool_prefix": "sso",
+            },
+            "dcr-mcp": {
+                "url": "http://dcr/mcp",
+                "enabled": True,
+                "auth": True,
+                "auth_mode": "dcr",
+                "timeout": 5,
+                "tool_prefix": "dcr",
+            },
+        }
+        sso_tool = MagicMock()
+        sso_tool.name = "sso_ping"
+        dcr_placeholder = MagicMock()
+        dcr_placeholder.name = "mcp__dcr_mcp"
+        with (
+            patch("deep_agent.aegra.mcp._get_server_configs") as mock_get_configs,
+            patch(
+                "deep_agent.aegra.mcp._resolve_connection_token",
+                new=AsyncMock(return_value="sso-tok"),
+            ) as mock_resolve,
+            patch(
+                "deep_agent.aegra.mcp._connect_single_server",
+                new=AsyncMock(return_value=[sso_tool]),
+            ) as mock_connect,
+            patch(
+                "deep_agent.aegra.mcp._create_auth_placeholder_tool",
+                return_value=dcr_placeholder,
+            ),
+        ):
+            mock_get_configs.return_value = mock_servers
+            tools = await get_mcp_tools(sso_token="sso-tok", user_id="user-1")
+            mock_connect.assert_called_once()
+            assert mock_connect.call_args.kwargs["server_key"] == "sso-mcp"
+            mock_resolve.assert_awaited_once()
+            names = {t.name for t in tools}
+            assert names == {"sso_ping", "mcp__dcr_mcp"}
+
+    @pytest.mark.asyncio
     async def test_cache_is_per_user(self):
         """Different users should not share cached MCP tools."""
         _reset_mcp_cache()
@@ -724,6 +881,483 @@ class TestGetMCPTools:
             assert "user-b:" in mcp._cached_tools_ts
 
 
+class TestRewriteOauthDcrToolNames:
+    """Builders list live OAuth/DCR names; compile still uses placeholders."""
+
+    _SERVERS = {
+        "template-mcp-server": {
+            "enabled": True,
+            "auth_mode": "sso",
+            "tool_prefix": "template",
+        },
+        "template-mcp-server-dcr-open": {
+            "enabled": True,
+            "auth_mode": "dcr",
+            "tool_prefix": "dcr_open",
+        },
+        "template-mcp-server-dcr-gated": {
+            "enabled": True,
+            "auth_mode": "dcr",
+            "tool_prefix": "dcr_gated",
+        },
+        "jira-mcp": {
+            "enabled": True,
+            "auth_mode": "oauth",
+            "tool_prefix": "jira",
+        },
+    }
+
+    def test_placeholder_tool_name_sanitizes_hyphens(self):
+        assert placeholder_tool_name("jira-mcp-prod") == "mcp__jira_mcp_prod"
+
+    def test_rewrites_live_names_and_keeps_sso(self):
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            assert rewrite_oauth_dcr_tool_names(
+                [
+                    "template_validate_email",
+                    "dcr_gated_read_secret",
+                    "dcr_open_employee_profile",
+                ]
+            ) == [
+                "template_validate_email",
+                "mcp__template_mcp_server_dcr_gated",
+                "mcp__template_mcp_server_dcr_open",
+            ]
+
+    def test_longest_prefix_wins(self):
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            assert rewrite_oauth_dcr_tool_names(["dcr_gated_read_secret"]) == [
+                "mcp__template_mcp_server_dcr_gated"
+            ]
+
+    def test_placeholder_passthrough_and_dedupe(self):
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            assert rewrite_oauth_dcr_tool_names(
+                [
+                    "mcp__template_mcp_server_dcr_gated",
+                    "dcr_gated_read_secret",
+                    "dcr_gated_vault_status",
+                ]
+            ) == ["mcp__template_mcp_server_dcr_gated"]
+
+    def test_oauth_live_name_and_unknown_passthrough(self):
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            assert rewrite_oauth_dcr_tool_names(["jira_search", "missing_tool"]) == [
+                "mcp__jira_mcp",
+                "missing_tool",
+            ]
+
+    def test_server_for_placeholder_live_and_sso(self):
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            assert oauth_dcr_server_for_tool_name("mcp__jira_mcp") == "jira-mcp"
+            assert oauth_dcr_server_for_tool_name("jira_search") == "jira-mcp"
+            assert (
+                oauth_dcr_server_for_tool_name("dcr_open_employee_profile")
+                == "template-mcp-server-dcr-open"
+            )
+            assert oauth_dcr_server_for_tool_name("template_validate_email") is None
+            assert oauth_dcr_server_for_tool_name("missing_tool") is None
+            assert oauth_dcr_server_for_tool_name("") is None
+
+    def test_empty_and_non_dict_configs(self):
+        assert rewrite_oauth_dcr_tool_names([]) == []
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=MagicMock(),
+        ):
+            assert rewrite_oauth_dcr_tool_names(["jira_search"]) == ["jira_search"]
+
+    def test_rewrite_then_resolve_binds_placeholder(self):
+        from deep_agent.src.agent.config.resolver import resolve_tools
+
+        email = MagicMock()
+        email.name = "template_validate_email"
+        placeholder = MagicMock()
+        placeholder.name = "mcp__template_mcp_server_dcr_gated"
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            names = rewrite_oauth_dcr_tool_names(
+                ["template_validate_email", "dcr_gated_read_secret"]
+            )
+        resolved = resolve_tools(names, [email, placeholder], "gated-child")
+        assert [t.name for t in resolved] == [
+            "template_validate_email",
+            "mcp__template_mcp_server_dcr_gated",
+        ]
+
+
+class TestOauthDcrLiveNameCatalog:
+    """Live names map to servers from tools/list, without tool_prefix."""
+
+    _NO_PREFIX = {
+        "acme-jira": {"enabled": True, "auth_mode": "dcr"},
+        "acme-vault": {"enabled": True, "auth_mode": "dcr"},
+        "sso-mcp": {
+            "enabled": True,
+            "auth_mode": "sso",
+            "tool_prefix": "template",
+        },
+    }
+
+    def setup_method(self):
+        from deep_agent.aegra import mcp as mcp_mod
+
+        mcp_mod._oauth_live_name_index.clear()
+        mcp_mod._oauth_live_names_hydrated_at = 0.0
+
+    def teardown_method(self):
+        from deep_agent.aegra import mcp as mcp_mod
+
+        mcp_mod._oauth_live_name_index.clear()
+        mcp_mod._oauth_live_names_hydrated_at = 0.0
+
+    def test_catalog_maps_unprefixed_live_name(self):
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._NO_PREFIX,
+            ),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+        ):
+            record_oauth_live_names("acme-jira", ["search", "create_issue"])
+            assert oauth_dcr_server_for_tool_name("search") == "acme-jira"
+            assert oauth_dcr_server_for_tool_name("create_issue") == "acme-jira"
+            assert rewrite_oauth_dcr_tool_names(["search"]) == ["mcp__acme_jira"]
+
+    def test_catalog_redis_fail_does_not_index(self):
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._NO_PREFIX,
+            ),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=False),
+        ):
+            with pytest.raises(RuntimeError, match="live tool names"):
+                record_oauth_live_names("acme-jira", ["search"])
+            assert oauth_dcr_server_for_tool_name("search") is None
+
+    def test_scope_excludes_out_of_fence_server(self):
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._NO_PREFIX,
+            ),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+        ):
+            record_oauth_live_names("acme-jira", ["search"])
+            assert (
+                oauth_dcr_server_for_tool_name("search", scope=["acme-jira"])
+                == "acme-jira"
+            )
+            assert (
+                oauth_dcr_server_for_tool_name("search", scope=["acme-vault"]) is None
+            )
+
+    def test_ambiguous_catalog_first_wins(self):
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._NO_PREFIX,
+            ),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+        ):
+            record_oauth_live_names("acme-jira", ["search"])
+            record_oauth_live_names("acme-vault", ["search"])
+            assert oauth_dcr_server_for_tool_name("search") == "acme-jira"
+            assert (
+                oauth_dcr_server_for_tool_name("search", scope=["acme-jira"])
+                == "acme-jira"
+            )
+            assert (
+                oauth_dcr_server_for_tool_name("search", scope=["acme-vault"])
+                == "acme-vault"
+            )
+
+    def test_placeholder_ignores_catalog_and_prefix(self):
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._NO_PREFIX,
+        ):
+            assert oauth_dcr_server_for_tool_name("mcp__acme_jira") == "acme-jira"
+            assert (
+                oauth_dcr_server_for_tool_name("mcp__acme_jira", scope=["acme-vault"])
+                is None
+            )
+
+    def test_sso_name_is_not_mapped(self):
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._NO_PREFIX,
+            ),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+        ):
+            record_oauth_live_names("acme-jira", ["search"])
+            assert oauth_dcr_server_for_tool_name("template_validate_email") is None
+
+    def test_unmapped_live_name_is_not_guessed_without_catalog(self):
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._NO_PREFIX,
+        ):
+            assert oauth_dcr_server_for_tool_name("search") is None
+            assert rewrite_oauth_dcr_tool_names(["search"]) == ["search"]
+
+    def test_optional_tool_prefix_still_rewrites(self):
+        servers = {
+            "acme-jira": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "tool_prefix": "jira",
+            }
+        }
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=servers,
+        ):
+            assert oauth_dcr_server_for_tool_name("jira_search") == "acme-jira"
+            assert rewrite_oauth_dcr_tool_names(["jira_search"]) == ["mcp__acme_jira"]
+
+    def test_hydrates_catalog_from_redis_when_process_index_empty(self):
+        from deep_agent.aegra import mcp as mcp_mod
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._NO_PREFIX,
+            ),
+            patch(
+                "deep_agent.aegra.redis.cache_get",
+                side_effect=lambda key: (
+                    json.dumps(["search"])
+                    if key == "mcp_oauth_live_names:acme-jira"
+                    else None
+                ),
+            ),
+        ):
+            mcp_mod._oauth_live_name_index.clear()
+            mcp_mod._oauth_live_names_hydrated_at = 0.0
+            assert oauth_dcr_server_for_tool_name("search") == "acme-jira"
+
+    def test_repeated_lookup_reads_redis_once_until_ttl(self):
+        from deep_agent.aegra import mcp as mcp_mod
+
+        getter = MagicMock(
+            side_effect=lambda key: (
+                json.dumps(["search"])
+                if key == "mcp_oauth_live_names:acme-jira"
+                else None
+            )
+        )
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._NO_PREFIX,
+            ),
+            patch("deep_agent.aegra.redis.cache_get", getter),
+        ):
+            mcp_mod._oauth_live_name_index.clear()
+            mcp_mod._oauth_live_names_hydrated_at = 0.0
+            assert oauth_dcr_server_for_tool_name("search") == "acme-jira"
+            first = getter.call_count
+            assert first >= 1
+            assert oauth_dcr_server_for_tool_name("search") == "acme-jira"
+            assert getter.call_count == first
+            mcp_mod._oauth_live_names_hydrated_at -= mcp_mod._OAUTH_LIVE_TOOLS_TTL + 1
+            assert oauth_dcr_server_for_tool_name("search") == "acme-jira"
+            assert getter.call_count > first
+
+    def test_process_hit_still_unions_redis_owners(self):
+        from deep_agent.aegra import mcp as mcp_mod
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._NO_PREFIX,
+            ),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+            patch(
+                "deep_agent.aegra.redis.cache_get",
+                side_effect=lambda key: (
+                    json.dumps(["search"])
+                    if key
+                    in (
+                        "mcp_oauth_live_names:acme-jira",
+                        "mcp_oauth_live_names:acme-vault",
+                    )
+                    else None
+                ),
+            ),
+        ):
+            record_oauth_live_names("acme-vault", ["search"])
+            assert oauth_dcr_server_for_tool_name("search") == "acme-jira"
+
+
+class TestResolveDeclaredMcpTools:
+    """Compile-time tools: / mcps: fence and allowlist."""
+
+    _SERVERS = {
+        "sso-mcp": {"enabled": True, "auth_mode": "sso"},
+        "dcr1": {"enabled": True, "auth_mode": "dcr"},
+        "dcr2": {"enabled": True, "auth_mode": "dcr"},
+    }
+
+    @staticmethod
+    def _tool(name: str, server: str) -> MagicMock:
+        tool = MagicMock()
+        tool.name = name
+        tool.metadata = {"mcp_server": server}
+        return tool
+
+    def setup_method(self):
+        from deep_agent.aegra import mcp as mcp_mod
+
+        mcp_mod._oauth_live_name_index.clear()
+
+    def teardown_method(self):
+        from deep_agent.aegra import mcp as mcp_mod
+
+        mcp_mod._oauth_live_name_index.clear()
+
+    def test_both_empty_returns_no_mcp_tools(self):
+        email = self._tool("validate_email", "sso-mcp")
+        assert resolve_declared_mcp_tools([], [], [email], "orch") == []
+
+    def test_mcps_only_keeps_compile_tools_on_fence(self):
+        email = self._tool("validate_email", "sso-mcp")
+        ph1 = self._tool("mcp__dcr1", "dcr1")
+        ph2 = self._tool("mcp__dcr2", "dcr2")
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            names = [
+                t.name
+                for t in resolve_declared_mcp_tools(
+                    [], ["dcr1"], [email, ph1, ph2], "child"
+                )
+            ]
+        assert names == ["mcp__dcr1"]
+
+    def test_tools_and_mcps_drops_sso_outside_fence_adds_placeholder(self):
+        email = self._tool("validate_email", "sso-mcp")
+        ph1 = self._tool("mcp__dcr1", "dcr1")
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            names = [
+                t.name
+                for t in resolve_declared_mcp_tools(
+                    ["validate_email", "employee_profile"],
+                    ["dcr1"],
+                    [email, ph1],
+                    "child",
+                )
+            ]
+        assert names == ["mcp__dcr1"]
+        assert "validate_email" not in names
+
+    def test_tools_and_mcps_keeps_sso_when_listed(self):
+        email = self._tool("validate_email", "sso-mcp")
+        ph1 = self._tool("mcp__dcr1", "dcr1")
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            names = [
+                t.name
+                for t in resolve_declared_mcp_tools(
+                    ["validate_email", "employee_profile"],
+                    ["sso-mcp", "dcr1"],
+                    [email, ph1],
+                    "child",
+                )
+            ]
+        assert names == ["validate_email", "mcp__dcr1"]
+
+    def test_dcr2_tool_does_not_bind_dcr2_when_fenced_to_dcr1(self):
+        ph1 = self._tool("mcp__dcr1", "dcr1")
+        ph2 = self._tool("mcp__dcr2", "dcr2")
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._SERVERS,
+            ),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+        ):
+            record_oauth_live_names("dcr2", ["read_secret"])
+            names = [
+                t.name
+                for t in resolve_declared_mcp_tools(
+                    ["read_secret"],
+                    ["dcr1"],
+                    [ph1, ph2],
+                    "child",
+                )
+            ]
+        assert names == ["mcp__dcr1"]
+        assert "mcp__dcr2" not in names
+
+    def test_tools_only_rewrites_via_catalog_without_adding_other_placeholders(self):
+        email = self._tool("validate_email", "sso-mcp")
+        ph1 = self._tool("mcp__dcr1", "dcr1")
+        ph2 = self._tool("mcp__dcr2", "dcr2")
+        with (
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value=self._SERVERS,
+            ),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+        ):
+            record_oauth_live_names("dcr1", ["search"])
+            names = [
+                t.name
+                for t in resolve_declared_mcp_tools(
+                    ["validate_email", "search"],
+                    [],
+                    [email, ph1, ph2],
+                    "orch",
+                )
+            ]
+        assert names == ["validate_email", "mcp__dcr1"]
+        assert "mcp__dcr2" not in names
+
+    def test_fenced_placeholder_bound_when_live_name_is_unmapped(self):
+        ph1 = self._tool("mcp__dcr1", "dcr1")
+        with patch(
+            "deep_agent.aegra.mcp._get_server_configs",
+            return_value=self._SERVERS,
+        ):
+            names = [
+                t.name
+                for t in resolve_declared_mcp_tools(
+                    ["search"],
+                    ["dcr1"],
+                    [ph1],
+                    "orch",
+                )
+            ]
+        assert names == ["mcp__dcr1"]
+
+
 class TestCreateAuthPlaceholderTool:
     """Tests for _create_auth_placeholder_tool function."""
 
@@ -770,6 +1404,8 @@ class TestCreateAuthPlaceholderTool:
         tool = _create_auth_placeholder_tool(
             "jira-mcp", {"description": "JIRA services"}
         )
+        live_tool = MagicMock()
+        live_tool.name = "jira_search"
         mock_resolver = MagicMock()
         mock_resolver.resolve = AsyncMock(return_value="fresh-access-token")
         with (
@@ -782,10 +1418,47 @@ class TestCreateAuthPlaceholderTool:
                 "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
                 return_value=mock_resolver,
             ),
+            patch(
+                "deep_agent.aegra.mcp.get_authenticated_oauth_mcp_tools",
+                new=AsyncMock(return_value=[live_tool]),
+            ),
         ):
             mock_ctx.get.return_value = "user-1"
             result = await tool.coroutine(query="list my tickets")
         assert "Successfully connected to jira-mcp" in result
+        assert "original request" in result
+        assert "jira_search" not in result
+        assert "this same run" in result
+        assert "repeat their request" not in result
+        mock_resolver.resolve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_require_auth_does_not_claim_success_when_listing_empty(self):
+        """Token exists but tools/list produced nothing — do not say connected."""
+        tool = _create_auth_placeholder_tool(
+            "jira-mcp", {"description": "JIRA services"}
+        )
+        mock_resolver = MagicMock()
+        mock_resolver.resolve = AsyncMock(return_value="fresh-access-token")
+        with (
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_ctx,
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={"jira-mcp": {"auth_mode": "dcr"}},
+            ),
+            patch(
+                "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
+                return_value=mock_resolver,
+            ),
+            patch(
+                "deep_agent.aegra.mcp.get_authenticated_oauth_mcp_tools",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            mock_ctx.get.return_value = "user-1"
+            result = await tool.coroutine(query="list my tickets")
+        assert "Successfully connected" not in result
+        assert "could not be loaded" in result
         mock_resolver.resolve.assert_awaited_once()
 
     @pytest.mark.asyncio

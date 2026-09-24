@@ -334,17 +334,9 @@ async def handle_mcp_oauth_callback(
         scopes=scopes,
     )
     get_mcp_credential_resolver().invalidate_cache(user_id, mcp_name)
-    from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
+    from deep_agent.aegra.mcp import invalidate_authenticated_oauth_tools
 
-    invalidate_mcp_tool_cache(user_id=user_id)
-    try:
-        from deep_agent.aegra.graph import invalidate_graph_cache
-
-        invalidate_graph_cache()
-    except Exception:
-        logger.warning(
-            "Graph cache invalidation failed in OAuth callback", exc_info=True
-        )
+    invalidate_authenticated_oauth_tools(user_id, mcp_name)
 
     opener_origin = caller_origin or settings.ui_origin
     return HTMLResponse(_callback_html(mcp_name=mcp_name, opener_origin=opener_origin))
@@ -457,15 +449,9 @@ async def handle_mcp_disconnect(user_id: str, mcp_name: str) -> dict[str, Any]:
     store = McpTokenStore(settings.database_uri)
     await store.delete_token(settings.agent_deployment_id, user_id, mcp_name)
     get_mcp_credential_resolver().invalidate_cache(user_id, mcp_name)
-    from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
+    from deep_agent.aegra.mcp import invalidate_authenticated_oauth_tools
 
-    invalidate_mcp_tool_cache(user_id=user_id)
-    try:
-        from deep_agent.aegra.graph import invalidate_graph_cache
-
-        invalidate_graph_cache()
-    except Exception:
-        logger.debug("Graph cache invalidation skipped", exc_info=True)
+    invalidate_authenticated_oauth_tools(user_id, mcp_name)
     return {"mcp_name": mcp_name, "connected": False}
 
 

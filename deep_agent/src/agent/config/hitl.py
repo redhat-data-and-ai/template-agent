@@ -105,7 +105,7 @@ def build_interrupt_on(
 
     interrupt_on: dict[str, Any] = {}
     for name in all_names:
-        if name in exclude:
+        if name in exclude or name.startswith("mcp__"):
             continue
         if name in _MEMORY_FILE_TOOLS:
             interrupt_on[name] = {

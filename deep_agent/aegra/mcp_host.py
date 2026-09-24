@@ -145,12 +145,26 @@ async def mcp_session(
             timeout,
         )
         raise
-    except Exception:
+    except HTTPException:
+        raise
+    except Exception as exc:
         logger.error(
             "[%s] host proxy MCP session failed",
             mcp_name,
             exc_info=True,
         )
+        if entry.get("auth_mode") in ("oauth", "dcr"):
+            from deep_agent.aegra.mcp import _current_user_id
+            from deep_agent.aegra.mcp_tool_auth import (
+                _forget_oauth_session,
+                _is_http_401,
+            )
+
+            if _is_http_401(exc):
+                if user_id:
+                    _current_user_id.set(user_id)
+                await _forget_oauth_session(mcp_name)
+                raise _authorization_required(mcp_name) from None
         raise
 
 

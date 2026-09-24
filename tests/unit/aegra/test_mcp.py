@@ -348,3 +348,366 @@ class TestBuildServerConfig:
                 None,
             )
         assert config["headers"]["X-Trace-ID"] == "trace-abc"
+
+
+class TestResolveMcpUserId:
+    def teardown_method(self):
+        mcp_mod._current_user_id.set(None)
+
+    def test_prefers_context_var(self):
+        mcp_mod._current_user_id.set("jwt-sub")
+        with patch("langgraph.config.get_config", side_effect=RuntimeError("no graph")):
+            assert mcp_mod._resolve_mcp_user_id() == "jwt-sub"
+
+    def test_falls_back_to_langgraph_auth_identity(self):
+        mcp_mod._current_user_id.set(None)
+        with patch(
+            "langgraph.config.get_config",
+            return_value={
+                "configurable": {"user_id": "bff-username", "user_identity": "jwt-sub"}
+            },
+        ):
+            assert mcp_mod._resolve_mcp_user_id() == "jwt-sub"
+
+    def test_ignores_bff_user_id(self):
+        mcp_mod._current_user_id.set(None)
+        with patch(
+            "langgraph.config.get_config",
+            return_value={"configurable": {"user_id": "bff-username"}},
+        ):
+            assert mcp_mod._resolve_mcp_user_id() is None
+
+    def test_returns_none_outside_graph(self):
+        mcp_mod._current_user_id.set(None)
+        with patch("langgraph.config.get_config", side_effect=RuntimeError("no graph")):
+            assert mcp_mod._resolve_mcp_user_id() is None
+
+
+class TestAuthenticatedOauthMcpTools:
+    def setup_method(self):
+        mcp_mod._oauth_live_tools.clear()
+        mcp_mod._oauth_live_name_index.clear()
+
+    def teardown_method(self):
+        mcp_mod._oauth_live_tools.clear()
+        mcp_mod._oauth_live_name_index.clear()
+
+    @pytest.mark.asyncio
+    async def test_lists_live_tools_when_token_exists(self):
+        live = MagicMock()
+        live.name = "jira_search"
+        servers = {
+            "jira-mcp": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+                "timeout": 5,
+            }
+        }
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(return_value="tok")
+            ),
+            patch.object(
+                mcp_mod, "_connect_single_server", new=AsyncMock(return_value=[live])
+            ),
+            patch(
+                "deep_agent.aegra.mcp_tool_auth.wrap_mcp_tools_for_auth",
+                side_effect=lambda tools: tools,
+            ),
+            patch("deep_agent.aegra.redis.cache_set", return_value=True),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+        ):
+            tools = await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+            assert [t.name for t in tools] == ["jira_search"]
+            assert mcp_mod.oauth_dcr_server_for_tool_name("jira_search") == "jira-mcp"
+
+    def test_record_oauth_live_names_requires_redis(self):
+        with (
+            patch.object(
+                mcp_mod,
+                "_get_server_configs",
+                return_value={
+                    "jira-mcp": {"enabled": True, "auth_mode": "dcr"},
+                },
+            ),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=False),
+        ):
+            with pytest.raises(RuntimeError, match="live tool names"):
+                mcp_mod.record_oauth_live_names("jira-mcp", ["jira_search"])
+            assert mcp_mod.oauth_dcr_server_for_tool_name("jira_search") is None
+
+    @pytest.mark.asyncio
+    async def test_lists_live_tools_when_token_exists_persist_fail_skips(self):
+        live = MagicMock()
+        live.name = "jira_search"
+        servers = {
+            "jira-mcp": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+                "timeout": 5,
+            }
+        }
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(return_value="tok")
+            ),
+            patch.object(
+                mcp_mod, "_connect_single_server", new=AsyncMock(return_value=[live])
+            ),
+            patch(
+                "deep_agent.aegra.mcp_tool_auth.wrap_mcp_tools_for_auth",
+                side_effect=lambda tools: tools,
+            ),
+            patch("deep_agent.aegra.redis.cache_set") as mock_cache,
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=False),
+        ):
+            tools = await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+            assert tools == []
+            assert mcp_mod.oauth_dcr_server_for_tool_name("jira_search") is None
+        mock_cache.assert_not_called()
+        assert "user-1:jira-mcp" not in mcp_mod._oauth_live_tools
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_does_not_rewrite_redis_catalog(self):
+        live = MagicMock()
+        live.name = "jira_search"
+        servers = {
+            "jira-mcp": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+                "timeout": 5,
+            }
+        }
+        mcp_mod._oauth_live_tools["user-1:jira-mcp"] = (time.time(), [live])
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(return_value="tok")
+            ),
+            patch.object(mcp_mod, "_connect_single_server") as mock_connect,
+            patch("deep_agent.aegra.redis.cache_set") as mock_cache,
+            patch("deep_agent.aegra.redis.cache_set_persistent") as mock_persistent,
+        ):
+            tools = await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+            assert [t.name for t in tools] == ["jira_search"]
+            assert mcp_mod.oauth_dcr_server_for_tool_name("jira_search") == "jira-mcp"
+        mock_connect.assert_not_called()
+        mock_cache.assert_not_called()
+        mock_persistent.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_listing_drops_expired_live_tools_for_other_users(self):
+        live = MagicMock()
+        live.name = "jira_search"
+        stale = MagicMock()
+        stale.name = "old_search"
+        servers = {
+            "jira-mcp": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+                "timeout": 5,
+            }
+        }
+        now = time.time()
+        mcp_mod._oauth_live_tools["user-1:jira-mcp"] = (now, [live])
+        mcp_mod._oauth_live_tools["user-old:jira-mcp"] = (
+            now - mcp_mod._OAUTH_LIVE_TOOLS_TTL - 1,
+            [stale],
+        )
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(return_value="tok")
+            ),
+            patch.object(mcp_mod, "_connect_single_server") as mock_connect,
+            patch("deep_agent.aegra.redis.cache_set"),
+            patch("deep_agent.aegra.redis.cache_set_persistent"),
+        ):
+            tools = await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+        assert [t.name for t in tools] == ["jira_search"]
+        assert "user-old:jira-mcp" not in mcp_mod._oauth_live_tools
+        assert "user-1:jira-mcp" in mcp_mod._oauth_live_tools
+        mock_connect.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_without_token_drops_live_tools(self):
+        live = MagicMock()
+        live.name = "jira_search"
+        servers = {
+            "jira-mcp": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+                "timeout": 5,
+            }
+        }
+        mcp_mod._oauth_live_tools["user-1:jira-mcp"] = (time.time(), [live])
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(return_value=None)
+            ),
+            patch.object(mcp_mod, "_connect_single_server") as mock_connect,
+        ):
+            tools = await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+        assert tools == []
+        assert "user-1:jira-mcp" not in mcp_mod._oauth_live_tools
+        mock_connect.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_two_dcrs_lists_only_the_connected_server(self):
+        search = MagicMock()
+        search.name = "search"
+        servers = {
+            "acme-jira": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+                "timeout": 5,
+            },
+            "acme-vault": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://vault/mcp",
+                "timeout": 5,
+            },
+        }
+
+        async def resolve(name, *_args, **_kwargs):
+            return "tok" if name == "acme-jira" else None
+
+        connect = AsyncMock(return_value=[search])
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(side_effect=resolve)
+            ),
+            patch.object(mcp_mod, "_connect_single_server", new=connect),
+            patch(
+                "deep_agent.aegra.mcp_tool_auth.wrap_mcp_tools_for_auth",
+                side_effect=lambda tools: tools,
+            ),
+            patch("deep_agent.aegra.redis.cache_set", return_value=True),
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+        ):
+            tools = await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+            assert [t.name for t in tools] == ["search"]
+            assert connect.await_count == 1
+            assert connect.await_args.kwargs["server_key"] == "acme-jira"
+            assert mcp_mod.oauth_dcr_server_for_tool_name("search") == "acme-jira"
+            assert mcp_mod.oauth_dcr_server_for_tool_name("read_secret") is None
+
+    @pytest.mark.asyncio
+    async def test_skips_servers_without_token(self):
+        servers = {
+            "jira-mcp": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+            }
+        }
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(return_value=None)
+            ),
+            patch.object(mcp_mod, "_connect_single_server") as mock_connect,
+        ):
+            tools = await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+        assert tools == []
+        mock_connect.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_drops_placeholder_results(self):
+        stub = MagicMock()
+        stub.name = "mcp__jira_mcp"
+        servers = {
+            "jira-mcp": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+                "timeout": 5,
+            }
+        }
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(return_value="tok")
+            ),
+            patch.object(
+                mcp_mod, "_connect_single_server", new=AsyncMock(return_value=[stub])
+            ),
+            patch(
+                "deep_agent.aegra.mcp_tool_auth.wrap_mcp_tools_for_auth",
+                side_effect=lambda tools: tools,
+            ) as mock_wrap,
+            patch("deep_agent.aegra.redis.cache_set", return_value=True) as mock_cache,
+            patch("deep_agent.aegra.redis.cache_set_persistent", return_value=True),
+        ):
+            tools = await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+        assert tools == []
+        mock_wrap.assert_not_called()
+        mock_cache.assert_not_called()
+        assert "user-1:jira-mcp" not in mcp_mod._oauth_live_tools
+
+    @pytest.mark.asyncio
+    async def test_empty_live_list_does_not_poison_catalog(self):
+        servers = {
+            "jira-mcp": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+                "timeout": 5,
+            }
+        }
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(return_value="tok")
+            ),
+            patch.object(
+                mcp_mod, "_connect_single_server", new=AsyncMock(return_value=[])
+            ),
+            patch(
+                "deep_agent.aegra.mcp_tool_auth.wrap_mcp_tools_for_auth",
+                side_effect=lambda tools: tools,
+            ),
+            patch("deep_agent.aegra.redis.cache_set") as mock_cache,
+            patch("deep_agent.aegra.redis.cache_set_persistent") as mock_persistent,
+        ):
+            tools = await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+        assert tools == []
+        mock_cache.assert_not_called()
+        mock_persistent.assert_not_called()
+        assert "user-1:jira-mcp" not in mcp_mod._oauth_live_tools
+
+    @pytest.mark.asyncio
+    async def test_sets_user_id_before_listing(self):
+        servers = {
+            "jira-mcp": {
+                "enabled": True,
+                "auth_mode": "dcr",
+                "url": "http://jira/mcp",
+                "timeout": 5,
+            }
+        }
+        with (
+            patch.object(mcp_mod, "_get_server_configs", return_value=servers),
+            patch.object(
+                mcp_mod, "_resolve_connection_token", new=AsyncMock(return_value=None)
+            ),
+        ):
+            mcp_mod._current_user_id.set(None)
+            await mcp_mod.get_authenticated_oauth_mcp_tools("user-1")
+            assert mcp_mod._current_user_id.get() == "user-1"
+
+    def test_invalidate_authenticated_oauth_tools_drops_process_cache(self):
+        mcp_mod._oauth_live_tools["user-1:jira-mcp"] = (time.time(), [MagicMock()])
+        mcp_mod.invalidate_authenticated_oauth_tools("user-1", "jira-mcp")
+        assert "user-1:jira-mcp" not in mcp_mod._oauth_live_tools

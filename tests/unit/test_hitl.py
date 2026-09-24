@@ -76,6 +76,14 @@ class TestBuildInterruptOn:
         assert "ls" not in result
         assert "read_file" not in result
 
+    def test_compiled_placeholder_is_not_on_interrupt_on(self):
+        config = HumanApprovalConfig(enabled=True, mode="all")
+        tools = [_tool("mcp__acme_jira"), _tool("send_email")]
+        result = build_interrupt_on(config, tools)
+        assert "mcp__acme_jira" not in result
+        assert result["send_email"] is True
+        assert "search" not in result
+
     def test_exclude_nonexistent_tool_is_harmless(self):
         tools = [_tool("send_email")]
         config = HumanApprovalConfig(enabled=True, mode="all", exclude=["nonexistent"])

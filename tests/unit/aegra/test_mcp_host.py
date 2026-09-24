@@ -156,6 +156,90 @@ class TestListResources:
         session.list_resources.assert_awaited_once_with(cursor=None)
         assert result["resources"][0]["uri"] == "showcase://sample.json"
 
+    @pytest.mark.asyncio
+    async def test_dcr_http_401_forgets_token_and_requires_auth(self):
+        class Http401(Exception):
+            def __init__(self) -> None:
+                super().__init__("unauthorized")
+                self.response = MagicMock(status_code=401)
+
+        session = MagicMock()
+        session.list_resources = AsyncMock(side_effect=Http401())
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_host._get_server_configs",
+                return_value={
+                    "acme-jira": _server_cfg(auth=True, auth_mode="dcr"),
+                },
+            ),
+            patch(
+                "deep_agent.aegra.mcp_host._resolve_connection_token",
+                new_callable=AsyncMock,
+                return_value="tok",
+            ),
+            patch(
+                "deep_agent.aegra.mcp_host.MultiServerMCPClient",
+            ) as mock_client_cls,
+            patch(
+                "deep_agent.aegra.mcp_tool_auth._forget_oauth_session",
+                new=AsyncMock(),
+            ) as mock_forget,
+            patch(
+                "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
+            ) as mock_resolver,
+            pytest.raises(HTTPException) as exc,
+        ):
+            client = MagicMock()
+            client.session = lambda _name: _fake_session(session)
+            mock_client_cls.return_value = client
+            mock_resolver.return_value.connect_url.return_value = (
+                "/mcp/acme-jira/connect"
+            )
+            await list_resources("acme-jira", user_id="u1", sso_token=None)
+
+        assert exc.value.status_code == 401
+        assert exc.value.detail["error"] == "authorization_required"
+        mock_forget.assert_awaited_once_with("acme-jira")
+
+    @pytest.mark.asyncio
+    async def test_dcr_http_403_does_not_forget_token(self):
+        class Http403(Exception):
+            def __init__(self) -> None:
+                super().__init__("forbidden")
+                self.response = MagicMock(status_code=403)
+
+        session = MagicMock()
+        session.list_resources = AsyncMock(side_effect=Http403())
+
+        with (
+            patch(
+                "deep_agent.aegra.mcp_host._get_server_configs",
+                return_value={
+                    "acme-jira": _server_cfg(auth=True, auth_mode="dcr"),
+                },
+            ),
+            patch(
+                "deep_agent.aegra.mcp_host._resolve_connection_token",
+                new_callable=AsyncMock,
+                return_value="tok",
+            ),
+            patch(
+                "deep_agent.aegra.mcp_host.MultiServerMCPClient",
+            ) as mock_client_cls,
+            patch(
+                "deep_agent.aegra.mcp_tool_auth._forget_oauth_session",
+                new=AsyncMock(),
+            ) as mock_forget,
+            pytest.raises(Http403),
+        ):
+            client = MagicMock()
+            client.session = lambda _name: _fake_session(session)
+            mock_client_cls.return_value = client
+            await list_resources("acme-jira", user_id="u1", sso_token=None)
+
+        mock_forget.assert_not_called()
+
 
 class TestListResourceTemplates:
     @pytest.mark.asyncio
