@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from deep_agent.src.agent.config.model import ModelSpec, Provider
+from deep_agent.src.capability.tool_proxy import CapabilityToolProxy
 from deep_agent.src.exceptions import SubAgentError
 from deep_agent.src.infrastructure.subagents import VALID_AGENT_TYPES, load_subagents
 
@@ -118,7 +119,13 @@ class TestLoadSubagents:
     def test_load_subagent_with_tools(self):
         """Test loading subagent with tools that get resolved."""
         mock_tool1 = MagicMock()
+        mock_tool1.name = "calculate_bmi"
+        mock_tool1.description = "Calculates BMI"
+        mock_tool1.args_schema = None
         mock_tool2 = MagicMock()
+        mock_tool2.name = "search_web"
+        mock_tool2.description = "Searches the web"
+        mock_tool2.args_schema = None
         mock_model = MagicMock()
         mock_subagent = MagicMock()
 
@@ -169,13 +176,15 @@ class TestLoadSubagents:
             mock_resolve_tools.assert_called_once_with(
                 ["calculate_bmi", "search_web"], available_tools, agent_name="analyst"
             )
-            mock_sa.assert_called_once_with(
-                name="analyst",
-                model=mock_model,
-                description="Analyst",
-                system_prompt="Prompt",
-                tools=[mock_tool1, mock_tool2],
-            )
+            # Tools are wrapped by CapabilityToolProxy (OFFSEC-384); compare by
+            # name rather than identity.
+            built_tools = mock_sa.call_args.kwargs["tools"]
+            assert [t.name for t in built_tools] == ["calculate_bmi", "search_web"]
+            assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
+            assert mock_sa.call_args.kwargs["name"] == "analyst"
+            assert mock_sa.call_args.kwargs["model"] == mock_model
+            assert mock_sa.call_args.kwargs["description"] == "Analyst"
+            assert mock_sa.call_args.kwargs["system_prompt"] == "Prompt"
 
     def test_load_subagent_with_skills(self):
         """Test loading subagent with pre-resolved skill paths."""
@@ -374,11 +383,13 @@ class TestAgentTypeSystem:
     """Tests for the type field and multi-type subagent dispatch."""
 
     def test_valid_agent_types_constant(self):
+        """Test that VALID_AGENT_TYPES contains all three supported agent types."""
         assert "default" in VALID_AGENT_TYPES
         assert "compiled" in VALID_AGENT_TYPES
         assert "async" in VALID_AGENT_TYPES
 
     def test_invalid_type_raises_value_error(self):
+        """Test that an unrecognized 'type' value raises SubAgentError."""
         with (
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
@@ -427,6 +438,7 @@ class TestAgentTypeSystem:
             mock_sa.assert_called_once()
 
     def test_type_default_builds_subagent(self):
+        """Test that type='default' builds a standard SubAgent."""
         mock_model = MagicMock()
         mock_subagent = MagicMock()
 
@@ -455,6 +467,7 @@ class TestAgentTypeSystem:
             assert result == [mock_subagent]
 
     def test_type_compiled_builds_compiled_subagent(self):
+        """Test that type='compiled' builds a CompiledSubAgent from a pre-compiled graph."""
         mock_model = MagicMock()
         mock_graph = MagicMock()
         mock_settings = MagicMock()
@@ -501,6 +514,7 @@ class TestAgentTypeSystem:
             )
 
     def test_type_async_builds_async_subagent(self):
+        """Test that type='async' builds an AsyncSubAgent from graph_id/url."""
         with (
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
@@ -531,6 +545,7 @@ class TestAgentTypeSystem:
             )
 
     def test_type_async_raises_without_graph_id(self):
+        """Test that an async subagent missing 'graph_id' raises SubAgentError."""
         with (
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs"
@@ -562,6 +577,7 @@ class TestSubagentProviderConfig:
     """Tests for provider-aware model configuration."""
 
     def test_inherits_orchestrator_string_model(self):
+        """Test that a subagent with no model inherits the orchestrator's string model."""
         mock_model = MagicMock()
 
         with (
@@ -810,6 +826,7 @@ import sys
 
 from deep_agent.src.infrastructure.subagents import (
     _build_fallback_middleware,
+    _filter_tools_by_mcp_names,
     _normalize_model_to_dict,
     _resolve_async_headers,
 )
@@ -898,6 +915,7 @@ class TestGuardianActivationGate:
     """Guardian wrapping requires BOTH guardrail config.enabled AND GUARDIAN_API_BASE."""
 
     def _guardrail_cfg(self, enabled: bool) -> MagicMock:
+        """Build a mock guardrails config with a configurable enabled flag."""
         cfg = MagicMock()
         cfg.enabled = enabled
         return cfg
@@ -907,6 +925,9 @@ class TestGuardianActivationGate:
     def test_default_subagent_wraps_tools_when_guardian_active(self):
         """Both enabled=True and GUARDIAN_API_BASE set → wrap_tools called."""
         mock_tool = MagicMock()
+        mock_tool.name = "t"
+        mock_tool.description = "A tool"
+        mock_tool.args_schema = None
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = "http://guardian.internal"
 
@@ -958,12 +979,19 @@ class TestGuardianActivationGate:
         ):
             load_subagents(tools=[mock_tool])
 
-        mock_wrap.assert_called_once_with([mock_tool])
+        # The tool passed to wrap_tools is wrapped by CapabilityToolProxy
+        # (OFFSEC-384); assert on shape/name rather than identity.
+        wrap_call_args = mock_wrap.call_args.args[0]
+        assert [t.name for t in wrap_call_args] == [mock_tool.name]
+        assert all(isinstance(t, CapabilityToolProxy) for t in wrap_call_args)
         assert mock_sa_cls.call_args.kwargs["tools"] == [mock_tool]
 
     def test_default_subagent_skips_wrapping_when_config_disabled(self):
         """enabled=False + GUARDIAN_API_BASE set → wrap_tools not called."""
         mock_tool = MagicMock()
+        mock_tool.name = "t"
+        mock_tool.description = "A tool"
+        mock_tool.args_schema = None
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = "http://guardian.internal"
 
@@ -1017,6 +1045,9 @@ class TestGuardianActivationGate:
     def test_default_subagent_skips_wrapping_when_api_base_absent(self):
         """enabled=True + no GUARDIAN_API_BASE → wrap_tools not called."""
         mock_tool = MagicMock()
+        mock_tool.name = "t"
+        mock_tool.description = "A tool"
+        mock_tool.args_schema = None
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = ""
 
@@ -1253,10 +1284,16 @@ class TestMcpResourceToolsOnSubagents:
     def test_default_explicit_tools_still_gets_resource_tools(
         self, _no_mcp_resource_tools
     ):
+        """Test that an explicit 'tools:' list still gets MCP resource-read tools appended."""
         resource_tool = MagicMock()
         resource_tool.name = "mcp_list_resources"
+        resource_tool.description = "Lists MCP resources"
+        resource_tool.args_schema = None
         _no_mcp_resource_tools.return_value = [resource_tool]
         mock_tool = MagicMock()
+        mock_tool.name = "calculate_bmi"
+        mock_tool.description = "Calculates BMI"
+        mock_tool.args_schema = None
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = ""
 
@@ -1301,14 +1338,21 @@ class TestMcpResourceToolsOnSubagents:
         ):
             load_subagents(tools=[mock_tool])
 
-        assert mock_sa.call_args.kwargs["tools"] == [mock_tool, resource_tool]
+        built_tools = mock_sa.call_args.kwargs["tools"]
+        assert [t.name for t in built_tools] == [mock_tool.name, resource_tool.name]
+        assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
         _no_mcp_resource_tools.assert_called_once_with(
             server_names=None, allowed_uris=None
         )
 
     def test_default_passes_agent_mcps_and_resources(self, _no_mcp_resource_tools):
+        """Test that a subagent's declared 'mcps:'/'resources:' are forwarded to resource-tool resolution."""
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = ""
+        mock_tool = MagicMock()
+        mock_tool.name = "calculate_bmi"
+        mock_tool.description = "Calculates BMI"
+        mock_tool.args_schema = None
 
         with (
             patch(
@@ -1331,7 +1375,7 @@ class TestMcpResourceToolsOnSubagents:
             ),
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[MagicMock()],
+                return_value=[mock_tool],
             ),
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
@@ -1358,7 +1402,11 @@ class TestMcpResourceToolsOnSubagents:
         )
 
     def test_default_resources_empty_allows_all(self, _no_mcp_resource_tools):
+        """Test that an explicit empty 'resources:' list allows every resource URI."""
         mock_tool = MagicMock()
+        mock_tool.name = "calculate_bmi"
+        mock_tool.description = "Calculates BMI"
+        mock_tool.args_schema = None
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = ""
 
@@ -1404,14 +1452,21 @@ class TestMcpResourceToolsOnSubagents:
         ):
             load_subagents(tools=[mock_tool])
 
-        assert mock_sa.call_args.kwargs["tools"] == [mock_tool]
+        built_tools = mock_sa.call_args.kwargs["tools"]
+        assert [t.name for t in built_tools] == [mock_tool.name]
+        assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
         _no_mcp_resource_tools.assert_called_once_with(
             server_names=None, allowed_uris=None
         )
 
     def test_default_inherits_orchestrator_resources(self, _no_mcp_resource_tools):
+        """Test that a subagent with no 'resources:' inherits the orchestrator's resources."""
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = ""
+        mock_tool = MagicMock()
+        mock_tool.name = "calculate_bmi"
+        mock_tool.description = "Calculates BMI"
+        mock_tool.args_schema = None
 
         with (
             patch(
@@ -1432,7 +1487,7 @@ class TestMcpResourceToolsOnSubagents:
             ),
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[MagicMock()],
+                return_value=[mock_tool],
             ),
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
@@ -1461,10 +1516,16 @@ class TestMcpResourceToolsOnSubagents:
     def test_compiled_explicit_tools_still_gets_resource_tools(
         self, _no_mcp_resource_tools
     ):
+        """Test that a compiled subagent's explicit 'tools:' list still gets resource tools appended."""
         resource_tool = MagicMock()
         resource_tool.name = "mcp_list_resources"
+        resource_tool.description = "Lists MCP resources"
+        resource_tool.args_schema = None
         _no_mcp_resource_tools.return_value = [resource_tool]
         mock_tool = MagicMock()
+        mock_tool.name = "calculate_bmi"
+        mock_tool.description = "Calculates BMI"
+        mock_tool.args_schema = None
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = ""
 
@@ -1508,10 +1569,9 @@ class TestMcpResourceToolsOnSubagents:
         ):
             load_subagents(tools=[mock_tool])
 
-        assert mock_create_agent.call_args.kwargs["tools"] == [
-            mock_tool,
-            resource_tool,
-        ]
+        built_tools = mock_create_agent.call_args.kwargs["tools"]
+        assert [t.name for t in built_tools] == [mock_tool.name, resource_tool.name]
+        assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
         _no_mcp_resource_tools.assert_called_once_with(
             server_names=None, allowed_uris=None
         )
@@ -1519,6 +1579,7 @@ class TestMcpResourceToolsOnSubagents:
     def test_async_subagent_does_not_attach_resource_tools(
         self, _no_mcp_resource_tools
     ):
+        """Test that an async subagent never gets MCP resource-read tools attached."""
         with (
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
@@ -1541,3 +1602,190 @@ class TestMcpResourceToolsOnSubagents:
             load_subagents(tools=[])
 
         _no_mcp_resource_tools.assert_not_called()
+
+
+class TestFilterToolsByMcpNames:
+    """Unit tests for _filter_tools_by_mcp_names (OFFSEC-384 follow-up, CWE-863).
+
+    Guards against an orchestrator-wide MCP tool pool leaking tools from
+    servers a subagent never declared via ``mcps:``.
+    """
+
+    @staticmethod
+    def _mcp_tool(name: str, mcp_server: str) -> MagicMock:
+        """Build a MagicMock MCP tool stamped with 'mcp_server' metadata."""
+        tool = MagicMock()
+        tool.name = name
+        tool.metadata = {"mcp_server": mcp_server}
+        return tool
+
+    def test_keeps_only_tools_from_declared_servers(self):
+        """Test that only tools from the declared MCP server(s) are kept."""
+        tool_a = self._mcp_tool("read_a", "server-a")
+        tool_b = self._mcp_tool("read_b", "server-b")
+
+        result = _filter_tools_by_mcp_names([tool_a, tool_b], ["server-a"])
+
+        assert result == [tool_a]
+
+    def test_empty_mcp_names_drops_all_mcp_tools(self):
+        """Test that an empty mcp_names list drops every MCP-tagged tool."""
+        tool_a = self._mcp_tool("read_a", "server-a")
+
+        result = _filter_tools_by_mcp_names([tool_a], [])
+
+        assert result == []
+
+    def test_none_mcp_names_drops_all_mcp_tools(self):
+        """Test that a None mcp_names is treated the same as an empty list."""
+        tool_a = self._mcp_tool("read_a", "server-a")
+
+        result = _filter_tools_by_mcp_names([tool_a], None)
+
+        assert result == []
+
+    def test_passes_through_tools_without_mcp_server_metadata(self):
+        """Tools that were never stamped with `mcp_server` metadata (e.g.
+        non-MCP tools) can't be attributed to an undeclared server, so they
+        are not affected by this filter."""
+        untagged = MagicMock()
+        untagged.name = "local_tool"
+        untagged.metadata = {}
+
+        result = _filter_tools_by_mcp_names([untagged], [])
+
+        assert result == [untagged]
+
+    def test_keeps_multiple_declared_servers(self):
+        """Test that tools from any of several declared MCP servers are kept."""
+        tool_a = self._mcp_tool("read_a", "server-a")
+        tool_b = self._mcp_tool("read_b", "server-b")
+        tool_c = self._mcp_tool("read_c", "server-c")
+
+        result = _filter_tools_by_mcp_names(
+            [tool_a, tool_b, tool_c], ["server-a", "server-b"]
+        )
+
+        assert result == [tool_a, tool_b]
+
+
+class TestSubagentMcpScoping:
+    """Regression guard: a subagent declaring only server A's `mcps:` must
+    NOT receive server B's tools when `tools:` is omitted (OFFSEC-384
+    follow-up / CWE-863 authorization bypass).
+
+    Before this fix, `load_subagents` passed the orchestrator-wide tool pool
+    (every MCP server it connected to) straight into
+    `resolve_capability_manifest`, whose implicit-all-mcp grant (triggered
+    when `tools:` is omitted) authorized every tool in that pool -- not just
+    the ones from the servers this subagent actually declared.
+    """
+
+    @staticmethod
+    def _mcp_tool(name: str, mcp_server: str) -> MagicMock:
+        """Build a MagicMock MCP tool stamped with 'mcp_server' metadata."""
+        tool = MagicMock()
+        tool.name = name
+        tool.description = f"{name} description"
+        tool.args_schema = None
+        tool.metadata = {"mcp_server": mcp_server}
+        return tool
+
+    def test_subagent_with_single_declared_server_excludes_other_server_tools(
+        self, _no_mcp_resource_tools
+    ):
+        """Test that a subagent declaring only server A's mcps does not receive server B's tools when tools: is omitted."""
+        tool_a = self._mcp_tool("read_a", "server-a")
+        tool_b = self._mcp_tool("read_b", "server-b")
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
+                return_value={
+                    "analyst": {
+                        "name": "analyst",
+                        "model": "gemini-2.5-flash",
+                        "description": "Analyst",
+                        "body": "Prompt",
+                        "mcps": ["server-a"],
+                        # 'tools:' deliberately omitted -- this is the
+                        # implicit-grant path resolve_capability_manifest
+                        # authorizes based on the (now-scoped) tool pool.
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                # Orchestrator itself is connected to BOTH servers -- this is
+                # the orchestrator-wide pool passed into load_subagents.
+                return_value={"mcps": ["server-a", "server-b"]},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
+        ):
+            load_subagents(tools=[tool_a, tool_b])
+
+        built_tools = mock_sa.call_args.kwargs["tools"]
+        built_names = {t.name for t in built_tools}
+        assert built_names == {"read_a"}
+        assert "read_b" not in built_names
+
+    def test_subagent_declaring_no_servers_gets_no_mcp_tools(
+        self, _no_mcp_resource_tools
+    ):
+        """No `mcps:` at all (and orchestrator has none either) -> the
+        implicit grant has nothing to scope to and must authorize nothing."""
+        tool_a = self._mcp_tool("read_a", "server-a")
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
+                return_value={
+                    "analyst": {
+                        "name": "analyst",
+                        "model": "gemini-2.5-flash",
+                        "description": "Analyst",
+                        "body": "Prompt",
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ) as mock_sa,
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
+        ):
+            load_subagents(tools=[tool_a])
+
+        assert "tools" not in mock_sa.call_args.kwargs

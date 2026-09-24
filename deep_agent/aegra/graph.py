@@ -284,7 +284,10 @@ async def agent(runtime: ServerRuntime) -> Any:
     orch_model_raw = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
     system_prompt = orchestrator_cfg.get("body", "")
     skill_paths = orchestrator_cfg.get("skill_paths", [])
-    tool_names = orchestrator_cfg.get("tools", [])
+    # No default here: a `None` (key absent) must stay distinguishable from
+    # an explicit `tools: []` for resolve_capability_manifest's fallback
+    # logic below (OFFSEC-384).
+    tool_names = orchestrator_cfg.get("tools")
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
     # Resolve the personalization user ID to match what the BFF proxy
@@ -353,24 +356,21 @@ async def agent(runtime: ServerRuntime) -> Any:
     mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
 
     all_available_tools = list(mcp_tools)
-    tools = agent_config.resolve_tools(
-        tool_names, all_available_tools, agent_name=agent_name
+
+    from deep_agent.src.capability import (
+        enforce_capability,
+        resolve_capability_manifest,
     )
-    if mcp_server_names and mcp_tools:
-        resolved_names = {t.name for t in tools}
-        extra = []
-        for tool in mcp_tools:
-            if tool.name not in resolved_names:
-                resolved_names.add(tool.name)
-                extra.append(tool)
-        if extra:
-            logger.info(
-                "Agent '%s' adding %d MCP tool(s) from servers %s",
-                agent_name,
-                len(extra),
-                mcp_server_names,
-            )
-            tools.extend(extra)
+
+    # Enforced tool manifest (OFFSEC-384): resolved once from deploy-time
+    # frontmatter, never from anything the running conversation can influence.
+    # An explicit 'tools:' list is authoritative and is NOT unioned with the
+    # rest of the declared MCP server's tools; only agents that omit 'tools:'
+    # get every tool the server currently exposes (logged/audited as an
+    # implicit grant).
+    tools, capability_manifest = resolve_capability_manifest(
+        tool_names, all_available_tools, mcp_server_names, agent_name=agent_name
+    )
 
     resource_tools = wrap_mcp_tools_for_auth(
         get_mcp_resource_tools(
@@ -378,7 +378,17 @@ async def agent(runtime: ServerRuntime) -> Any:
             allowed_uris=orchestrator_cfg.get("resources") or None,
         )
     )
-    tools.extend(resource_tools)
+    if resource_tools:
+        # Resource-read tools enforce their own URI allowlist internally
+        # (via `allowed_uris` above); authorize the tool family itself here.
+        capability_manifest = capability_manifest.merged_with(
+            t.name for t in resource_tools
+        )
+        tools.extend(resource_tools)
+
+    # Dispatch-time gate: every tool call is checked against the manifest
+    # above, independent of the model's context (OFFSEC-384).
+    tools = enforce_capability(tools, capability_manifest)
 
     from deep_agent.src.infrastructure.middleware import (
         build_middleware_list,

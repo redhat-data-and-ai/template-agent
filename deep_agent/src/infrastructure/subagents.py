@@ -380,22 +380,101 @@ def _build_single_subagent(
     return _build_default_subagent(name, agent_cfg, tools)
 
 
-def _append_mcp_resource_tools(
-    resolved_tools: list[Any], agent_cfg: dict[str, Any]
+def _filter_tools_by_mcp_names(
+    tools: list[Any],
+    mcp_names: list[str],
 ) -> list[Any]:
-    """Append host resource tools using this subagent's mcps/resources allowlists."""
+    """Scope an orchestrator-wide MCP tool pool down to one subagent's servers.
+
+    ``tools`` (as passed to ``load_subagents``) is every MCP tool the
+    orchestrator connected to -- not just the servers this particular
+    subagent declared via ``mcps:``. Without this filter, a subagent that
+    declares only server A still receives every tool from every *other*
+    server the orchestrator also happens to use, and
+    ``resolve_capability_manifest``'s implicit-all-mcp grant (when
+    ``tools:`` is omitted) would authorize all of them too -- letting a user
+    or prompt injection invoke tools from servers this subagent never
+    declared (OFFSEC-384 follow-up, CWE-863).
+
+    Only tools carrying ``mcp_server`` metadata (i.e. tools that were
+    actually stamped by ``annotate_mcp_tool`` as belonging to a specific MCP
+    server) are subject to this filter; anything without that metadata is
+    passed through unchanged since it cannot be attributed to an undeclared
+    server in the first place.
+
+    Args:
+        tools: Orchestrator-wide pool of available tools.
+        mcp_names: This subagent's declared (or inherited) ``mcps:`` list.
+
+    Returns:
+        *tools* with any MCP tool whose ``mcp_server`` metadata is not in
+        *mcp_names* removed.
+    """
+    allowed_servers = set(mcp_names or [])
+    filtered: list[Any] = []
+    for tool in tools:
+        metadata = getattr(tool, "metadata", None)
+        if isinstance(metadata, dict) and "mcp_server" in metadata:
+            if metadata["mcp_server"] in allowed_servers:
+                filtered.append(tool)
+            # else: dropped -- belongs to an MCP server this subagent never
+            # declared via `mcps:`.
+        else:
+            filtered.append(tool)
+    return filtered
+
+
+def _resolve_and_enforce_subagent_tools(
+    name: str,
+    agent_cfg: dict[str, Any],
+    tools: list[Any],
+) -> list[Any]:
+    """Resolve, manifest-authorize, and enforce this subagent's tool set.
+
+    Builds the enforced capability manifest (OFFSEC-384) from the subagent's
+    declared ``tools:``/``mcps:``, adds its MCP resource-read tools (which
+    carry their own per-call URI allowlist via ``resources:``), then wraps
+    the combined set with the dispatch-time capability gate so every tool
+    call -- regardless of which of these sources it came from -- is checked
+    independent of the model's context.
+    """
     from deep_agent.aegra.mcp_resource_tools import get_mcp_resource_tools
     from deep_agent.aegra.mcp_tool_auth import wrap_mcp_tools_for_auth
+    from deep_agent.src.capability import (
+        enforce_capability,
+        resolve_capability_manifest,
+    )
 
-    extra = wrap_mcp_tools_for_auth(
+    # No default here: a `None` (key absent) must stay distinguishable from
+    # an explicit `tools: []` for resolve_capability_manifest's fallback
+    # logic (OFFSEC-384).
+    tool_names: list[str] | None = agent_cfg.get("tools")
+    mcp_names: list[str] = agent_cfg.get("mcps", [])
+
+    # `tools` is the orchestrator-wide pool (every MCP server it connected
+    # to), so it must be scoped down to this subagent's declared servers
+    # *before* manifest resolution -- otherwise the implicit-all-mcp grant
+    # below would authorize tools from servers this subagent never declared
+    # (CWE-863, OFFSEC-384 follow-up).
+    scoped_tools = _filter_tools_by_mcp_names(tools, mcp_names)
+
+    resolved_tools, manifest = resolve_capability_manifest(
+        tool_names, scoped_tools, mcp_names, agent_name=name
+    )
+
+    resource_tools = wrap_mcp_tools_for_auth(
         get_mcp_resource_tools(
             server_names=agent_cfg.get("mcps") or None,
             allowed_uris=agent_cfg.get("resources") or None,
         )
     )
-    if not extra:
-        return resolved_tools
-    return [*resolved_tools, *extra]
+    if resource_tools:
+        manifest = manifest.merged_with(t.name for t in resource_tools)
+        resolved_tools = [*resolved_tools, *resource_tools]
+
+    # Dispatch-time gate: every tool call is checked against the manifest
+    # above, independent of the model's context (OFFSEC-384).
+    return enforce_capability(resolved_tools, manifest)
 
 
 def _build_default_subagent(
@@ -414,26 +493,9 @@ def _build_default_subagent(
         "Subagent '%s' [default] using model: %s", name, _format_model_log(spec)
     )
 
-    tool_names: list[str] = agent_cfg.get("tools", [])
-    mcp_names: list[str] = agent_cfg.get("mcps", [])
-
-    if tool_names:
-        resolved_tools: list[Any] = agent_config.resolve_tools(
-            tool_names, tools, agent_name=name
-        )
-    elif mcp_names and tools:
-        logger.info(
-            "Subagent '%s' declared MCP servers %s but no explicit tools; "
-            "exposing all %d available MCP tool(s)",
-            name,
-            mcp_names,
-            len(tools),
-        )
-        resolved_tools = list(tools)
-    else:
-        resolved_tools = []
-
-    resolved_tools = _append_mcp_resource_tools(resolved_tools, agent_cfg)
+    resolved_tools: list[Any] = _resolve_and_enforce_subagent_tools(
+        name, agent_cfg, tools
+    )
 
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
@@ -493,25 +555,9 @@ def _build_compiled_subagent(
         "Subagent '%s' [compiled] using model: %s", name, _format_model_log(spec)
     )
 
-    tool_names: list[str] = agent_cfg.get("tools", [])
-    mcp_names: list[str] = agent_cfg.get("mcps", [])
-
-    if tool_names:
-        resolved_tools: list[Any] = agent_config.resolve_tools(
-            tool_names, tools, agent_name=name
-        )
-    elif mcp_names and tools:
-        logger.info(
-            "Subagent '%s' [compiled] declared MCP servers %s but no explicit tools; "
-            "exposing all %d available MCP tool(s)",
-            name,
-            mcp_names,
-            len(tools),
-        )
-        resolved_tools = list(tools)
-    else:
-        resolved_tools = []
-    resolved_tools = _append_mcp_resource_tools(resolved_tools, agent_cfg)
+    resolved_tools: list[Any] = _resolve_and_enforce_subagent_tools(
+        name, agent_cfg, tools
+    )
     skill_paths: list[str] = agent_cfg.get("skill_paths", [])
 
     # Build fallback middleware if spec has fallback configured
