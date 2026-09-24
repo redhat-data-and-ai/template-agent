@@ -151,6 +151,128 @@ def _build_gemini_safety_log_middleware() -> Any | None:
     return GeminiSafetyLogMiddleware()
 
 
+def _build_image_sanitize_middleware() -> Any | None:
+    """Build middleware that strips markdown image tags from user input and model responses."""
+    try:
+        from langchain.agents.middleware import AgentMiddleware
+    except ImportError:
+        return None
+
+    import re
+
+    _IMG_INLINE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
+    _IMG_REF = re.compile(r"!\[([^\]]*)\]\[([^\]]+)\]")
+    _REF_DEF = re.compile(r"^\s{0,3}\[([^\]]+)\]:\s+\S+[^\n]*$", re.MULTILINE)
+
+    _MAX_STRIP_PASSES = 5
+
+    def _strip_images(text: str) -> str:
+        used_labels: set[str] = set()
+        result = text
+        for _ in range(_MAX_STRIP_PASSES):
+            for match in _IMG_REF.finditer(result):
+                used_labels.add(match.group(2).lower())
+            updated = _IMG_REF.sub(r"\1", _IMG_INLINE.sub(r"\1", result))
+            if updated == result:
+                break
+            result = updated
+        if used_labels:
+            result = _REF_DEF.sub(
+                lambda m: "" if m.group(1).lower() in used_labels else m.group(0),
+                result,
+            )
+        return result
+
+    def _sanitize_content(content: Any) -> tuple[Any, bool]:
+        """Sanitize string or list-based message content. Returns (new_content, changed)."""
+        if isinstance(content, str):
+            sanitized = _strip_images(content)
+            return sanitized, sanitized != content
+        if isinstance(content, list):
+            changed = False
+            new_blocks: list[Any] = []
+            for block in content:
+                if isinstance(block, str):
+                    sanitized = _strip_images(block)
+                    if sanitized != block:
+                        changed = True
+                    new_blocks.append(sanitized)
+                elif (
+                    isinstance(block, dict)
+                    and block.get("type") == "text"
+                    and isinstance(block.get("text"), str)
+                ):
+                    sanitized = _strip_images(block["text"])
+                    if sanitized != block["text"]:
+                        changed = True
+                        new_blocks.append({**block, "text": sanitized})
+                    else:
+                        new_blocks.append(block)
+                else:
+                    new_blocks.append(block)
+            return new_blocks, changed
+        return content, False
+
+    class ImageSanitizeMiddleware(AgentMiddleware):
+        """Strip markdown image tags from both user input and AI responses."""
+
+        def before_model(self, state: Any, runtime: Any) -> Any:
+            return self._sanitize_input(state)
+
+        async def abefore_model(self, state: Any, runtime: Any) -> Any:
+            return self._sanitize_input(state)
+
+        def after_model(self, state: Any, runtime: Any) -> Any:
+            return self._sanitize_output(state)
+
+        async def aafter_model(self, state: Any, runtime: Any) -> Any:
+            return self._sanitize_output(state)
+
+        def _sanitize_input(self, state: Any) -> Any:
+            from langchain_core.messages import HumanMessage, ToolMessage
+
+            msgs = state.get("messages", []) if isinstance(state, dict) else []
+            if not msgs:
+                return None
+            modified = False
+            for i in range(len(msgs) - 1, -1, -1):
+                msg = msgs[i]
+                if isinstance(msg, (HumanMessage, ToolMessage)) and msg.content:
+                    sanitized, changed = _sanitize_content(msg.content)
+                    if changed:
+                        label = (
+                            "user input"
+                            if isinstance(msg, HumanMessage)
+                            else "tool result"
+                        )
+                        logger.warning("Stripped markdown image tag(s) from %s", label)
+                        msgs[i] = msg.model_copy(update={"content": sanitized})
+                        modified = True
+            if not modified:
+                return None
+            return {"messages": msgs}
+
+        def _sanitize_output(self, state: Any) -> Any:
+            from langchain_core.messages import AIMessage
+
+            msgs = state.get("messages", []) if isinstance(state, dict) else []
+            if not msgs:
+                return None
+            last = msgs[-1]
+            if not isinstance(last, AIMessage):
+                return None
+            if not last.content:
+                return None
+            sanitized, changed = _sanitize_content(last.content)
+            if not changed:
+                return None
+            logger.warning("Stripped markdown image tag(s) from model response")
+            msgs[-1] = last.model_copy(update={"content": sanitized})
+            return {"messages": msgs}
+
+    return ImageSanitizeMiddleware()
+
+
 def build_middleware_list(
     resolved: ResolvedMiddlewareConfig,
     *,
@@ -188,6 +310,10 @@ def build_middleware_list(
     safety_mw = _build_gemini_safety_log_middleware()
     if safety_mw is not None:
         middlewares.append(safety_mw)
+
+    image_sanitize_mw = _build_image_sanitize_middleware()
+    if image_sanitize_mw is not None:
+        middlewares.append(image_sanitize_mw)
 
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
