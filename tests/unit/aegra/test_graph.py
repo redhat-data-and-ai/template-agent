@@ -35,6 +35,10 @@ class TestAgentFactory:
         mock_settings.LIFECYCLE_PERSISTENCE_ENABLED = False
         mock_settings.MEMORY_ENABLED = False
         mock_settings.PYTHON_LOG_LEVEL = "WARNING"
+        mock_settings.SAFETY_DANGEROUS_CONTENT = "BLOCK_MEDIUM_AND_ABOVE"
+        mock_settings.SAFETY_HATE_SPEECH = "BLOCK_MEDIUM_AND_ABOVE"
+        mock_settings.SAFETY_HARASSMENT = "BLOCK_LOW_AND_ABOVE"
+        mock_settings.SAFETY_SEXUALLY_EXPLICIT = "BLOCK_LOW_AND_ABOVE"
         with (
             patch("deep_agent.src.settings.settings", mock_settings),
             patch("deep_agent.src.pii.get_scrubber", return_value=None),
