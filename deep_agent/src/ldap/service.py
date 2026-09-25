@@ -150,6 +150,15 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
     if cached is not None:
         return cached
 
+    # Non-fatal LDAP result codes that should not destroy the connection.
+    # 0 = success with zero entries, 10 = referral, 32 = noSuchObject,
+    # 34 = invalidDNSyntax.
+    _LDAP_NON_FATAL_RESULT_CODES = {0, 10, 32, 34}
+    # Only cache when the result is conclusive (code 0 = search succeeded,
+    # group simply has no matching entries). Codes 10/32/34 are inconclusive
+    # — the group may become reachable later.
+    _LDAP_CACHEABLE_RESULT_CODES = {0}
+
     with _ldap_lock:
         search_base = ldap_settings.get_group_search_base()
         base_dn = _derive_base_dn()
@@ -172,6 +181,18 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
                 )
 
                 if not search_ok:
+                    result_code = conn.result.get("result", -1) if conn.result else -1
+                    if result_code in _LDAP_NON_FATAL_RESULT_CODES:
+                        logger.warning(
+                            "LDAP group '%s' not found (result code %d: %s) — "
+                            "skipping, other groups unaffected",
+                            group_cn,
+                            result_code,
+                            conn.result.get("description", "unknown"),
+                        )
+                        if result_code in _LDAP_CACHEABLE_RESULT_CODES:
+                            _cache_set(cache_key, False)
+                        return False
                     raise RuntimeError(
                         f"LDAP search returned False (result: {conn.result})"
                     )
@@ -229,11 +250,20 @@ def _resolve_user_role_sync(
     highest_priority = 0
 
     for mapping in group_mappings:
-        if _is_user_in_group_sync(user_id, mapping.group):
-            priority = ROLE_HIERARCHY.get(mapping.role, 0)
-            if priority > highest_priority:
-                highest_priority = priority
-                highest_role = mapping.role
+        try:
+            if _is_user_in_group_sync(user_id, mapping.group):
+                priority = ROLE_HIERARCHY.get(mapping.role, 0)
+                if priority > highest_priority:
+                    highest_priority = priority
+                    highest_role = mapping.role
+        except Exception as exc:
+            logger.error(
+                "LDAP check failed for group '%s' (role '%s'), "
+                "continuing with remaining groups: %s",
+                mapping.group,
+                mapping.role,
+                exc,
+            )
 
     return highest_role or "denied"
 

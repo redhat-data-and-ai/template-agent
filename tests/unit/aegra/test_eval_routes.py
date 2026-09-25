@@ -1869,40 +1869,172 @@ class TestGetEvalModels:
 class TestUpsertDataset:
     async def test_upserts_dataset(self):
         er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
         conn, _ = _make_conn()
-        with patch(
-            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer fake-token"}
+        with (
+            patch(
+                "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+            ),
+            patch(
+                "deep_agent.aegra.eval_routes._extract_username",
+                return_value="test-user",
+            ),
         ):
             body = er.DatasetUpsertRequest(
-                cases=[{"query": "test", "expected": "ok"}],
+                cases=[{"id": "c1", "query": "test", "expected": "ok"}],
                 judge_model="gpt-4",
             )
-            result = await er.upsert_dataset(body)
+            result = await er.upsert_dataset(body, request=mock_request)
         assert result["status"] == "ok"
         assert result["case_count"] == 1
         assert conn.execute.call_count == 2
+
+        delete_sql = conn.execute.call_args_list[0].args[0]
+        assert delete_sql == "DELETE FROM eval_dataset_items"
+
+        insert_sql = conn.execute.call_args_list[1].args[0]
+        assert "INSERT INTO eval_dataset_items" in insert_sql
+        assert "eval_datasets" not in insert_sql
+        for col in (
+            "case_id",
+            "case_data",
+            "judge_model",
+            "created_by",
+            "updated_by",
+            "created_at",
+            "updated_at",
+        ):
+            assert col in insert_sql, f"missing column {col}"
+        assert "%s::jsonb" in insert_sql
+
+        params = conn.execute.call_args_list[1].args[1]
+        assert len(params) == 7
+        assert params[0] == "c1"
+        assert json.loads(params[1]) == {"id": "c1", "query": "test", "expected": "ok"}
+        assert params[2] == "gpt-4"
+        assert params[3] == "test-user"
+        assert params[4] == "test-user"
+        assert isinstance(params[5], datetime)
+        assert isinstance(params[6], datetime)
+
         er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
+
+    async def test_rejects_duplicate_case_ids(self):
+        er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer fake-token"}
+        with patch(
+            "deep_agent.aegra.eval_routes._extract_username",
+            return_value="test-user",
+        ):
+            body = er.DatasetUpsertRequest(
+                cases=[
+                    {"id": "dup", "query": "first"},
+                    {"id": "dup", "query": "second"},
+                ],
+            )
+            with pytest.raises(HTTPException) as exc:
+                await er.upsert_dataset(body, request=mock_request)
+            assert exc.value.status_code == 422
+            assert "dup" in exc.value.detail
+        er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
+
+    async def test_rejects_duplicate_blank_ids(self):
+        er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer fake-token"}
+        with patch(
+            "deep_agent.aegra.eval_routes._extract_username",
+            return_value="test-user",
+        ):
+            body = er.DatasetUpsertRequest(
+                cases=[
+                    {"id": "  ", "query": "first"},
+                    {"id": "", "query": "second"},
+                ],
+            )
+            # Blank IDs get UUIDs, so they should NOT collide
+            conn, _ = _make_conn()
+            with patch(
+                "deep_agent.aegra.eval_routes._pg_conn",
+                AsyncMock(return_value=conn),
+            ):
+                result = await er.upsert_dataset(body, request=mock_request)
+            assert result["status"] == "ok"
+        er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
+
+    async def test_upserts_empty_dataset(self):
+        er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
+        conn, _ = _make_conn()
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer fake-token"}
+        with (
+            patch(
+                "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+            ),
+            patch(
+                "deep_agent.aegra.eval_routes._extract_username",
+                return_value="test-user",
+            ),
+        ):
+            body = er.DatasetUpsertRequest(cases=[], judge_model=None)
+            result = await er.upsert_dataset(body, request=mock_request)
+        assert result["status"] == "ok"
+        assert result["case_count"] == 0
+        conn.execute.assert_called_once()
+        er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
 
 
 class TestGetDataset:
     async def test_returns_dataset(self):
         er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
         now = datetime(2025, 1, 1, tzinfo=UTC)
-        dataset = {"cases": [{"query": "hi"}]}
+        case = {"id": "c1", "query": "hi"}
         cursor = _make_cursor(
-            rows=[(dataset, "gpt-4", now)],
+            rows=[(case, "gpt-4", now)],
         )
         conn, _ = _make_conn(cursor)
         with patch(
             "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
         ):
             result = await er.get_dataset()
-        assert result["dataset"] == dataset
+        assert result["dataset"] == {"cases": [case]}
         assert result["judge_model"] == "gpt-4"
         er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
+
+    async def test_multiple_cases_reassembled(self):
+        er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
+        now = datetime(2025, 1, 1, tzinfo=UTC)
+        case1 = {"id": "c1", "query": "hi"}
+        case2 = {"id": "c2", "query": "bye"}
+        cursor = _make_cursor(
+            rows=[(case1, "gpt-4", now), (case2, "gpt-4", now)],
+        )
+        conn, _ = _make_conn(cursor)
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er.get_dataset()
+        assert result["dataset"]["cases"] == [case1, case2]
+        assert result["judge_model"] == "gpt-4"
+        er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
 
     async def test_empty_dataset_returns_default(self):
         er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
         cursor = _make_cursor(rows=[])
         conn, _ = _make_conn(cursor)
         with patch(
@@ -1915,13 +2047,15 @@ class TestGetDataset:
             "created_at": None,
         }
         er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
 
-    async def test_parses_string_dataset(self):
+    async def test_parses_string_case_data(self):
         er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
         now = datetime(2025, 1, 1, tzinfo=UTC)
-        dataset_str = '{"cases": [{"query": "hi"}]}'
+        case_str = '{"id": "c1", "query": "hi"}'
         cursor = _make_cursor(
-            rows=[(dataset_str, None, now)],
+            rows=[(case_str, None, now)],
         )
         conn, _ = _make_conn(cursor)
         with patch(
@@ -1930,11 +2064,13 @@ class TestGetDataset:
             result = await er.get_dataset()
         assert result["dataset"]["cases"][0]["query"] == "hi"
         er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
 
 
 class TestHasPostgresDataset:
     async def test_returns_true_when_exists(self):
         er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
         cursor = _make_cursor(rows=[(1,)])
         conn, _ = _make_conn(cursor)
         with patch(
@@ -1943,9 +2079,11 @@ class TestHasPostgresDataset:
             result = await er._has_postgres_dataset()
         assert result is True
         er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
 
     async def test_returns_false_when_empty(self):
         er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
         cursor = _make_cursor(rows=[])
         conn, _ = _make_conn(cursor)
         with patch(
@@ -1954,9 +2092,11 @@ class TestHasPostgresDataset:
             result = await er._has_postgres_dataset()
         assert result is False
         er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
 
     async def test_returns_false_on_exception(self):
         er._datasets_table_ensured = True
+        er._dataset_items_table_ensured = True
         with patch(
             "deep_agent.aegra.eval_routes._pg_conn",
             AsyncMock(side_effect=Exception("pg down")),
@@ -1964,6 +2104,7 @@ class TestHasPostgresDataset:
             result = await er._has_postgres_dataset()
         assert result is False
         er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
 
 
 class TestEnsureDatasetsTableOnce:
@@ -1978,6 +2119,55 @@ class TestEnsureDatasetsTableOnce:
             await er._ensure_datasets_table_once()
             assert conn.execute.call_count == first_count
         er._datasets_table_ensured = False
+
+
+class TestEnsureDatasetItemsTableOnce:
+    async def test_idempotent(self):
+        er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
+        conn, _ = _make_conn()
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            await er._ensure_dataset_items_table_once()
+            first_count = conn.execute.call_count
+            await er._ensure_dataset_items_table_once()
+            assert conn.execute.call_count == first_count
+        er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
+
+    async def test_does_not_create_old_table(self):
+        er._datasets_table_ensured = False
+        er._dataset_items_table_ensured = False
+        conn, _ = _make_conn()
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            await er._ensure_dataset_items_table_once()
+        assert er._datasets_table_ensured is False
+        assert er._dataset_items_table_ensured is True
+
+        executed_sqls = [c.args[0] for c in conn.execute.call_args_list]
+        ddl_sql = executed_sqls[1]
+        assert "CREATE TABLE" in ddl_sql
+        assert "eval_dataset_items" in ddl_sql
+        for col in (
+            "case_id",
+            "case_data",
+            "judge_model",
+            "created_by",
+            "updated_by",
+            "created_at",
+            "updated_at",
+        ):
+            assert col in ddl_sql, f"missing column {col} in DDL"
+        assert not any(
+            "CREATE TABLE" in s
+            and "eval_datasets" in s
+            and "eval_dataset_items" not in s
+            for s in executed_sqls
+        )
+        er._dataset_items_table_ensured = False
 
 
 class TestRunDdlOnce:
@@ -2027,24 +2217,50 @@ class TestRunDdlOnce:
         conn.execute.assert_not_called()
         er._datasets_table_ensured = False
 
-    async def test_migration_failure_logged_not_raised(self):
+    async def test_undefined_table_migration_suppressed(self):
+        import psycopg.errors
+
         er._datasets_table_ensured = False
         conn, _ = _make_conn()
         ok_result = AsyncMock()
         conn.execute = AsyncMock(
-            side_effect=[ok_result, ok_result, Exception("migration err")]
+            side_effect=[
+                ok_result,  # SET statement_timeout
+                ok_result,  # DDL
+                ok_result,  # first migration succeeds
+                psycopg.errors.UndefinedTable("eval_datasets"),  # second migration
+            ]
         )
         with patch(
             "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
         ):
             await er._run_ddl_once(
                 "CREATE TABLE test (id INT)",
-                ["ALTER OK", "ALTER FAIL"],
+                ["ALTER OK", "MIGRATION REFERENCING OLD TABLE"],
                 "_datasets_table_ensured",
                 "test",
             )
         assert er._datasets_table_ensured is True
         er._datasets_table_ensured = False
+
+    async def test_unexpected_migration_failure_propagates(self):
+        er._datasets_table_ensured = False
+        conn, _ = _make_conn()
+        ok_result = AsyncMock()
+        conn.execute = AsyncMock(
+            side_effect=[ok_result, ok_result, RuntimeError("transient db error")]
+        )
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            with pytest.raises(RuntimeError, match="transient db error"):
+                await er._run_ddl_once(
+                    "CREATE TABLE test (id INT)",
+                    ["ALTER OK", "MIGRATION FAIL"],
+                    "_datasets_table_ensured",
+                    "test",
+                )
+        assert er._datasets_table_ensured is False
 
 
 class TestEvalStatusUndefinedTable:
@@ -2383,3 +2599,280 @@ class TestRequireEvalFilesProductionNoDataset:
             AsyncMock(return_value=True),
         ):
             await er._require_eval_files()
+
+
+# ── _extract_username ────────────────────────────────────────────────────────
+
+
+class TestExtractUsername:
+    def test_returns_preferred_username(self):
+        import base64
+
+        payload = base64.urlsafe_b64encode(
+            b'{"preferred_username":"alice@corp.com","sub":"uuid-123"}'
+        ).rstrip(b"=")
+        header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=")
+        token = f"{header.decode()}.{payload.decode()}."
+        request = MagicMock()
+        request.headers = {"authorization": f"Bearer {token}"}
+        assert er._extract_username(request) == "alice@corp.com"
+
+    def test_falls_back_to_sub(self):
+        import base64
+
+        payload = base64.urlsafe_b64encode(b'{"sub":"uuid-456"}').rstrip(b"=")
+        header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=")
+        token = f"{header.decode()}.{payload.decode()}."
+        request = MagicMock()
+        request.headers = {"authorization": f"Bearer {token}"}
+        assert er._extract_username(request) == "uuid-456"
+
+    def test_returns_none_without_bearer(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Basic abc"}
+        assert er._extract_username(request) is None
+
+    def test_returns_none_on_invalid_token(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer not-a-jwt"}
+        assert er._extract_username(request) is None
+
+
+# ── export_results endpoint ──────────────────────────────────────────────────
+
+
+class TestExportResults:
+    async def test_exports_latest_results(self):
+        er._table_ensured = True
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        eval_cols = [
+            _col("ls_run_ids"),
+            _col("eval_score"),
+            _col("pass"),
+            _col("fail"),
+            _col("error"),
+            _col("completed_at"),
+        ]
+        eval_row = (["run-1"], 0.9, 9, 1, 0, now)
+        count_cols = [_col("count"), _col("distinct_turns")]
+        turn_cols = [
+            _col("conversation_group_id"),
+            _col("turn_id"),
+            _col("result"),
+            _col("score"),
+        ]
+        turn_rows = [
+            ("conv-1", "turn_1", "PASS", 1.0),
+            ("conv-1", "turn_2", "FAIL", 0.0),
+        ]
+
+        queries = []
+
+        async def mock_execute(query, params=None):
+            queries.append((query, params))
+            if len(queries) == 1:
+                return _make_cursor(rows=[eval_row], description=eval_cols)
+            if len(queries) == 2:
+                return _make_cursor(rows=[(2, 2)], description=count_cols)
+            return _make_cursor(rows=turn_rows, description=turn_cols)
+
+        conn, _ = _make_conn()
+        conn.execute = mock_execute
+
+        mock_request = MagicMock()
+        mock_request.query_params = {}
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er.export_results(mock_request)
+
+        assert result["eval_score"] == 0.9
+        assert result["total_evaluations"] == 2
+        assert result["total_turns"] == 2
+        assert len(result["turns"]) == 2
+        assert result["truncated"] is False
+
+        eval_sql = queries[0][0]
+        assert "eval_status='completed'" in eval_sql
+        assert "ORDER BY completed_at DESC" in eval_sql
+        assert "LIMIT 1" in eval_sql
+        assert queries[0][1] is None
+
+        count_sql, count_params = queries[1]
+        assert "COUNT(*)" in count_sql
+        assert "COUNT(DISTINCT" in count_sql
+        assert "evaluation_results" in count_sql
+        assert "run_id = ANY(%s)" in count_sql
+        assert count_params == (["run-1"],)
+
+        turns_sql, turns_params = queries[2]
+        assert "evaluation_results" in turns_sql
+        assert "run_id = ANY(%s)" in turns_sql
+        assert "LIMIT" in turns_sql
+        assert turns_params[0] == ["run-1"]
+
+        er._table_ensured = False
+
+    async def test_404_when_no_completed_eval(self):
+        from fastapi import HTTPException
+
+        er._table_ensured = True
+        cursor = _make_cursor(rows=[])
+        cursor.fetchone = AsyncMock(return_value=None)
+        conn, _ = _make_conn(cursor)
+
+        mock_request = MagicMock()
+        mock_request.query_params = {}
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await er.export_results(mock_request)
+        assert exc.value.status_code == 404
+        er._table_ensured = False
+
+    async def test_404_when_no_run_ids(self):
+        from fastapi import HTTPException
+
+        er._table_ensured = True
+        eval_cols = [
+            _col("ls_run_ids"),
+            _col("eval_score"),
+            _col("pass"),
+            _col("fail"),
+            _col("error"),
+            _col("completed_at"),
+        ]
+        eval_row = ([], 0.9, 9, 1, 0, datetime(2025, 6, 1, tzinfo=UTC))
+        cursor = _make_cursor(rows=[eval_row], description=eval_cols)
+        conn, _ = _make_conn(cursor)
+
+        mock_request = MagicMock()
+        mock_request.query_params = {}
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await er.export_results(mock_request)
+        assert exc.value.status_code == 404
+        er._table_ensured = False
+
+    async def test_exports_with_completed_at_param(self):
+        er._table_ensured = True
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        eval_cols = [
+            _col("ls_run_ids"),
+            _col("eval_score"),
+            _col("pass"),
+            _col("fail"),
+            _col("error"),
+            _col("completed_at"),
+        ]
+        eval_row = (["run-1"], 0.8, 8, 2, 0, now)
+        count_cols = [_col("count"), _col("distinct_turns")]
+        turn_cols = [_col("conversation_group_id"), _col("result")]
+        turn_rows = [("conv-1", "PASS")]
+
+        queries = []
+
+        async def mock_execute(query, params=None):
+            queries.append((query, params))
+            if len(queries) == 1:
+                return _make_cursor(rows=[eval_row], description=eval_cols)
+            if len(queries) == 2:
+                return _make_cursor(rows=[(1, 1)], description=count_cols)
+            return _make_cursor(rows=turn_rows, description=turn_cols)
+
+        conn, _ = _make_conn()
+        conn.execute = mock_execute
+
+        mock_request = MagicMock()
+        mock_request.query_params = {"completed_at": "2025-06-01T00:00:00+00:00"}
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er.export_results(mock_request)
+
+        assert result["eval_score"] == 0.8
+        assert result["total_turns"] == 1
+
+        eval_sql, eval_params = queries[0]
+        assert "completed_at=%s" in eval_sql
+        assert eval_params == ("2025-06-01T00:00:00+00:00",)
+
+        count_sql, count_params = queries[1]
+        assert "evaluation_results" in count_sql
+        assert "run_id = ANY(%s)" in count_sql
+        assert count_params == (["run-1"],)
+
+        er._table_ensured = False
+
+
+# ── eval_results turn fetching ───────────────────────────────────────────────
+
+
+class TestEvalResultsTurnFetching:
+    async def test_fetches_turns_from_evaluation_results(self):
+        er._table_ensured = True
+        now = datetime(2025, 6, 1, tzinfo=UTC)
+        eval_cols = [
+            _col("eval_status"),
+            _col("id"),
+            _col("results_detail"),
+            _col("ls_run_ids"),
+        ]
+        eval_row = ("completed", 1, {"summary": {}}, ["run-1"])
+        turn_cols = [_col("conversation_group_id"), _col("result"), _col("score")]
+        turn_rows = [("conv-1", "PASS", 1.0)]
+
+        call_count = 0
+
+        async def mock_execute(query, params=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                return _make_cursor(rows=[eval_row], description=eval_cols)
+            return _make_cursor(rows=turn_rows, description=turn_cols)
+
+        conn, _ = _make_conn()
+        conn.execute = mock_execute
+
+        mock_request = MagicMock()
+        mock_request.query_params = {}
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er.eval_results(mock_request)
+
+        assert "turns" in result["results_detail"]
+        assert len(result["results_detail"]["turns"]) == 1
+        er._table_ensured = False
+
+    async def test_parses_string_results_detail(self):
+        er._table_ensured = True
+        eval_cols = [
+            _col("eval_status"),
+            _col("id"),
+            _col("results_detail"),
+            _col("ls_run_ids"),
+        ]
+        rd_str = json.dumps({"summary": {}, "turns": [{"result": "PASS"}]})
+        eval_row = ("completed", 1, rd_str, ["run-1"])
+        cursor = _make_cursor(rows=[eval_row], description=eval_cols)
+        conn, _ = _make_conn(cursor)
+
+        mock_request = MagicMock()
+        mock_request.query_params = {}
+
+        with patch(
+            "deep_agent.aegra.eval_routes._pg_conn", AsyncMock(return_value=conn)
+        ):
+            result = await er.eval_results(mock_request)
+
+        assert result["results_detail"]["turns"] == [{"result": "PASS"}]
+        er._table_ensured = False

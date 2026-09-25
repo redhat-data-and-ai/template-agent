@@ -354,10 +354,11 @@ class TestIsUserInGroupSync:
             ms.LDAP_CACHE_TTL_SECONDS = 300
             assert svc._is_user_in_group_sync("alice", "team") is True
 
-    def test_search_returns_false_triggers_retry(self):
+    def test_search_returns_false_fatal_error_triggers_retry_and_unbind(self):
+        """Non-noSuchObject failures (e.g. operationsError) still retry and unbind."""
         mock_conn = MagicMock()
         mock_conn.search.return_value = False
-        mock_conn.result = {"description": "operationsError"}
+        mock_conn.result = {"result": 1, "description": "operationsError"}
         ldap3_mock = MagicMock()
 
         with (
@@ -370,11 +371,88 @@ class TestIsUserInGroupSync:
             assert svc._is_user_in_group_sync("alice", "team") is False
             assert svc._bind_failed is True
             assert ensure_mock.call_count == 2
+            assert mock_conn.unbind.call_count == 2
+
+    def test_search_returns_false_success_empty_skips_without_retry(self):
+        """ldap3 returns False + result 0 when the group CN is missing; that is a miss, not a connection failure."""
+        mock_conn = MagicMock()
+        mock_conn.search.return_value = False
+        mock_conn.result = {
+            "result": 0,
+            "description": "success",
+            "dn": "",
+            "message": "",
+            "referrals": None,
+            "type": "searchResDone",
+        }
+        ldap3_mock = MagicMock()
+
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn) as ensure_mock,
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set") as redis_set,
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
+            ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
+            ms.LDAP_CACHE_TTL_SECONDS = 300
+            assert svc._is_user_in_group_sync("alice", "team") is False
+            assert svc._bind_failed is False
+            assert ensure_mock.call_count == 1
+            mock_conn.unbind.assert_not_called()
+            redis_set.assert_called_once_with("ldap:membership:alice:team", "0", 300)
+
+    def test_search_returns_false_no_such_object_skips_without_retry_no_cache(self):
+        """noSuchObject (code 32) returns False without destroying connection or caching."""
+        mock_conn = MagicMock()
+        mock_conn.search.return_value = False
+        mock_conn.result = {"result": 32, "description": "noSuchObject"}
+        ldap3_mock = MagicMock()
+
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn) as ensure_mock,
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set") as redis_set,
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
+            ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
+            ms.LDAP_CACHE_TTL_SECONDS = 300
+            assert svc._is_user_in_group_sync("alice", "team") is False
+            assert svc._bind_failed is False
+            assert ensure_mock.call_count == 1
+            mock_conn.unbind.assert_not_called()
+            redis_set.assert_not_called()
+
+    def test_search_returns_false_referral_skips_without_retry_no_cache(self):
+        """Referral (code 10) returns False without destroying connection or caching."""
+        mock_conn = MagicMock()
+        mock_conn.search.return_value = False
+        mock_conn.result = {"result": 10, "description": "referral"}
+        ldap3_mock = MagicMock()
+
+        with (
+            patch.object(svc, "_ensure_bound", return_value=mock_conn) as ensure_mock,
+            patch.object(svc, "_derive_base_dn", return_value="dc=example,dc=com"),
+            patch("deep_agent.src.ldap.service.ldap_settings") as ms,
+            patch("deep_agent.aegra.redis.cache_get", return_value=None),
+            patch("deep_agent.aegra.redis.cache_set") as redis_set,
+            patch.dict("sys.modules", {"ldap3": ldap3_mock}),
+        ):
+            ms.get_group_search_base.return_value = "ou=groups,dc=example,dc=com"
+            ms.LDAP_CACHE_TTL_SECONDS = 300
+            assert svc._is_user_in_group_sync("alice", "team") is False
+            assert svc._bind_failed is False
+            assert ensure_mock.call_count == 1
+            mock_conn.unbind.assert_not_called()
+            redis_set.assert_not_called()
 
     def test_search_returns_false_recovers_on_retry(self):
         bad_conn = MagicMock()
         bad_conn.search.return_value = False
-        bad_conn.result = {"description": "operationsError"}
+        bad_conn.result = {"result": 1, "description": "operationsError"}
 
         good_conn = MagicMock()
         good_conn.search.return_value = True
@@ -494,6 +572,32 @@ class TestResolveUserRoleSync:
         ]
         with patch.object(svc, "_is_user_in_group_sync", return_value=True):
             assert svc._resolve_user_role_sync("alice", mappings) == "users"
+
+    def test_failed_group_does_not_block_other_groups(self):
+        """If one group check raises, the user still gets their role from other groups."""
+        mappings = [
+            GroupRoleMapping(role="users", group="bad-group"),
+            GroupRoleMapping(role="owners", group="good-group"),
+        ]
+
+        def check(uid, group):
+            if group == "bad-group":
+                raise Exception("LDAP timeout")
+            return True
+
+        with patch.object(svc, "_is_user_in_group_sync", side_effect=check):
+            assert svc._resolve_user_role_sync("alice", mappings) == "owners"
+
+    def test_all_groups_fail_returns_denied(self):
+        """If all group checks raise, the user gets 'denied'."""
+        mappings = [
+            GroupRoleMapping(role="owners", group="g1"),
+            GroupRoleMapping(role="users", group="g2"),
+        ]
+        with patch.object(
+            svc, "_is_user_in_group_sync", side_effect=Exception("LDAP down")
+        ):
+            assert svc._resolve_user_role_sync("alice", mappings) == "denied"
 
 
 # ── resolve_user_role (async) ────────────────────────────────────────────────
