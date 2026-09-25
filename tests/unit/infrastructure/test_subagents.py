@@ -29,6 +29,16 @@ def _no_user_identity_middleware():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _no_current_datetime_middleware():
+    """Prevent CurrentDatetimeMiddleware from affecting SubAgent call assertions."""
+    with patch(
+        "deep_agent.src.infrastructure.subagents.build_current_datetime_middleware",
+        return_value=None,
+    ):
+        yield
+
+
 class TestLoadSubagents:
     """Tests for load_subagents function."""
 

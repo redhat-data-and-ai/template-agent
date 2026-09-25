@@ -17,6 +17,14 @@ class TestSubagentMiddleware:
         ):
             yield
 
+    @pytest.fixture(autouse=True)
+    def _no_current_datetime_middleware(self):
+        with patch(
+            "deep_agent.src.infrastructure.subagents.build_current_datetime_middleware",
+            return_value=None,
+        ):
+            yield
+
     def test_includes_audit_when_enabled(self):
         tool = MagicMock()
         tool.name = "mcp_search"

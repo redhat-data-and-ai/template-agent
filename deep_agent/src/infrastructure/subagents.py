@@ -36,6 +36,7 @@ from deep_agent.src.exceptions import LLMError, SubAgentError
 from deep_agent.src.infrastructure.middleware import (
     _mcp_tool_names_from_tools,
     build_audit_middleware,
+    build_current_datetime_middleware,
     build_opa_middleware,
     build_user_identity_middleware,
 )
@@ -345,6 +346,9 @@ def _subagent_middleware(
     identity_mw = build_user_identity_middleware()
     if identity_mw is not None:
         middleware.append(identity_mw)
+    datetime_mw = build_current_datetime_middleware()
+    if datetime_mw is not None:
+        middleware.append(datetime_mw)
     middleware.extend(fallback_mw)
     return middleware or None
 

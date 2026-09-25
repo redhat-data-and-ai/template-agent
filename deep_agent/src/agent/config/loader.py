@@ -38,7 +38,7 @@ from .middleware import (
 )
 from .opa import OpaFileConfig
 from .otel import OtelFileConfig
-from .parser import inject_runtime_values, parse_frontmatter
+from .parser import parse_frontmatter
 from .providers import ProvidersFileConfig
 from .resolver import resolve_skill_paths, resolve_tools
 
@@ -350,8 +350,6 @@ class AgentConfig:
         orchestrator_path = self._base_dir / "PROMPT.md"
         try:
             config = parse_frontmatter(orchestrator_path)
-            if "body" in config:
-                config["body"] = inject_runtime_values(config["body"])
 
             agent_name = config.get("name", "orchestrator")
             if "mcps" in config:
@@ -460,8 +458,6 @@ class AgentConfig:
         for agent_file in sorted(subagents_dir.glob("*.md")):
             try:
                 config = parse_frontmatter(agent_file)
-                if "body" in config:
-                    config["body"] = inject_runtime_values(config["body"])
 
                 name = config.get("name", agent_file.stem)
 

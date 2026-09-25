@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextvars
 import importlib
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from deep_agent.src.agent.config.middleware import ResolvedMiddlewareConfig
@@ -53,6 +54,15 @@ def set_user_info(
     raw = {"user_id": user_id, "display_name": display_name, "email": email}
     info = {k: _sanitize_identity_value(v) for k, v in raw.items() if v}
     _current_user_info.set(info or None)
+
+
+def get_current_datetime() -> str:
+    """Get the current date and time (UTC) in a formatted string.
+
+    Returns:
+        The current date and time (UTC) formatted as "Month Day, Year, Hour:Minute:Second" (e.g., "September 25, 2026, 12:00:00").
+    """
+    return datetime.now(timezone.utc).strftime("%B %d, %Y, %H:%M:%S UTC")
 
 
 def build_audit_middleware(
@@ -139,6 +149,47 @@ def build_user_identity_middleware() -> Any | None:
             return await handler(self._inject_identity(request))
 
     return UserIdentityMiddleware()
+
+
+def build_current_datetime_middleware() -> Any | None:
+    """Build middleware that injects the current date and time (UTC) into the system prompt."""
+    try:
+        from langchain.agents.middleware.types import (
+            AgentMiddleware,
+            ModelRequest,
+            ModelResponse,
+        )
+    except ImportError:
+        return None
+
+    class CurrentDatetimeMiddleware(AgentMiddleware):
+        def _inject_current_datetime(
+            self, request: ModelRequest[Any]
+        ) -> ModelRequest[Any]:
+            from deepagents.middleware.subagents import append_to_system_message
+
+            current_datetime = get_current_datetime()
+            current_datetime_block = (
+                "<current-datetime>\n" + current_datetime + "\n</current-datetime>"
+            )
+
+            return request.override(
+                system_message=append_to_system_message(
+                    request.system_message, current_datetime_block
+                ),
+            )
+
+        def wrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return handler(self._inject_current_datetime(request))
+
+        async def awrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return await handler(self._inject_current_datetime(request))
+
+    return CurrentDatetimeMiddleware()
 
 
 def _build_gemini_safety_log_middleware() -> Any | None:
@@ -277,6 +328,10 @@ def build_middleware_list(
     identity_mw = build_user_identity_middleware()
     if identity_mw is not None:
         middlewares.append(identity_mw)
+
+    datetime_mw = build_current_datetime_middleware()
+    if datetime_mw is not None:
+        middlewares.append(datetime_mw)
 
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
