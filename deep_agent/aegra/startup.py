@@ -60,6 +60,7 @@ async def run_startup() -> dict[str, str]:
     results["cache"] = await _warm_caches()
     results["otel"] = _setup_otel()
     results["telemetry"] = _setup_telemetry()
+    results["graph_warmup"] = _warmup_graph_imports()
 
     _upgrade_signal_handlers()
 
@@ -447,3 +448,46 @@ def _setup_telemetry() -> str:
 def is_ready() -> bool:
     """Return True if startup has completed."""
     return _startup_complete
+
+
+def _warmup_graph_imports() -> str:
+    """Eagerly import the graph dependency tree to avoid first-request penalty.
+
+    The agent() graph factory lazy-imports deepagents, langchain, langgraph,
+    and provider SDKs. Pre-importing them during startup moves the ~18s
+    module-load cost out of the user-facing request path.
+    """
+    try:
+        import deepagents  # noqa: F401
+
+        from deep_agent.aegra.mcp import get_mcp_tools  # noqa: F401
+        from deep_agent.aegra.mcp_resource_tools import (
+            get_mcp_resource_tools,  # noqa: F401
+        )
+        from deep_agent.aegra.mcp_tool_auth import wrap_mcp_tools_for_auth  # noqa: F401
+        from deep_agent.src.agent.config import agent_config  # noqa: F401
+        from deep_agent.src.agent.config.model import parse_model_config  # noqa: F401
+        from deep_agent.src.agent.provider_factory import (
+            create_model_from_spec,  # noqa: F401
+        )
+        from deep_agent.src.cache.model_cache import (
+            get_or_create_model_from_spec,  # noqa: F401
+        )
+        from deep_agent.src.infrastructure.async_tasks import (
+            build_async_middleware,  # noqa: F401
+        )
+        from deep_agent.src.infrastructure.backend import (
+            get_configured_backend,  # noqa: F401
+        )
+        from deep_agent.src.infrastructure.middleware import (
+            build_middleware_list,  # noqa: F401
+        )
+        from deep_agent.src.infrastructure.providers import (
+            register_profiles_from_config,  # noqa: F401
+        )
+        from deep_agent.src.infrastructure.subagents import load_subagents  # noqa: F401
+
+        return "ok"
+    except Exception as exc:
+        logger.warning("Graph import warmup failed: %s", exc)
+        return f"warning: {exc}"
