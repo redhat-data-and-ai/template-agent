@@ -140,6 +140,8 @@ class TestAgentFactory:
         mock_user.access_token = "test_access_token"
         mock_user.refresh_token = "test_refresh_token"
         mock_user.identity = None
+        mock_user.display_name = None
+        mock_user.email = None
 
         mock_runtime = MagicMock()
         mock_runtime.user = mock_user
