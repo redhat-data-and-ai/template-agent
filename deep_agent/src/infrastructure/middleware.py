@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextvars
 import importlib
+import re
 from typing import Any
 
 from deep_agent.src.agent.config.middleware import ResolvedMiddlewareConfig
@@ -23,6 +24,20 @@ _current_user_info: contextvars.ContextVar[dict[str, str] | None] = (
     contextvars.ContextVar("_current_user_info", default=None)
 )
 
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_DELIMITER_RE = re.compile(r"[<>\[\]]")
+
+
+def _sanitize_identity_value(value: str) -> str:
+    """Strip control characters and delimiter characters from an identity value.
+
+    Prevents a crafted JWT claim from injecting newlines or fake XML/markdown
+    tags into the system message.
+    """
+    value = _CONTROL_CHAR_RE.sub("", value)
+    value = _DELIMITER_RE.sub("", value)
+    return value.strip()
+
 
 def set_user_info(
     *,
@@ -30,16 +45,13 @@ def set_user_info(
     display_name: str | None = None,
     email: str | None = None,
 ) -> None:
-    """Store the current user's identity fields for system-prompt injection."""
-    info = {
-        k: v
-        for k, v in {
-            "user_id": user_id,
-            "display_name": display_name,
-            "email": email,
-        }.items()
-        if v
-    }
+    """Store the current user's identity fields for system-prompt injection.
+
+    Values are sanitized at storage time to strip control characters and
+    delimiter characters that could be used to inject fake instructions.
+    """
+    raw = {"user_id": user_id, "display_name": display_name, "email": email}
+    info = {k: _sanitize_identity_value(v) for k, v in raw.items() if v}
     _current_user_info.set(info or None)
 
 
@@ -83,7 +95,7 @@ def build_opa_middleware() -> Any | None:
 def build_user_identity_middleware() -> Any | None:
     """Build middleware that injects the current user's identity into the system prompt.
 
-    Reads from ``_current_user_display`` ContextVar at invocation time, so a
+    Reads from ``_current_user_info`` ContextVar at invocation time, so a
     cached graph still picks up the correct user per request.
     """
     try:
@@ -103,7 +115,9 @@ def build_user_identity_middleware() -> Any | None:
             from deepagents.middleware._utils import append_to_system_message
 
             parts = [f"  {k}: {v}" for k, v in info.items()]
-            identity_block = "Current user:\n" + "\n".join(parts)
+            identity_block = (
+                "<authenticated-user>\n" + "\n".join(parts) + "\n</authenticated-user>"
+            )
 
             logger.info(
                 "UserIdentityMiddleware: injected user identity into system prompt"

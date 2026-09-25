@@ -1,6 +1,6 @@
 """Unit tests for the middleware builder module."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -8,10 +8,14 @@ from deep_agent.src.agent.config.middleware import ResolvedMiddlewareConfig
 from deep_agent.src.infrastructure.middleware import (
     _build_model_fallback,
     _build_summarization_tool_middleware,
+    _current_user_info,
     _import_middleware,
+    _sanitize_identity_value,
     build_excluded_middleware,
     build_middleware_list,
+    build_user_identity_middleware,
     resolve_memory_param,
+    set_user_info,
 )
 
 
@@ -325,6 +329,122 @@ class TestGeminiSafetyLogMiddleware:
         )
         state = {"messages": [msg]}
         assert mw.after_model(state, None) is None
+
+
+class TestSanitizeIdentityValue:
+    """Test _sanitize_identity_value strips dangerous characters."""
+
+    def test_normal_value_unchanged(self):
+        assert _sanitize_identity_value("alice@example.com") == "alice@example.com"
+
+    def test_strips_control_characters(self):
+        assert _sanitize_identity_value("alice\x00bob") == "alicebob"
+        assert _sanitize_identity_value("line\nnewline") == "linenewline"
+        assert _sanitize_identity_value("tab\there") == "tabhere"
+        assert _sanitize_identity_value("\x7fDEL") == "DEL"
+
+    def test_strips_delimiter_characters(self):
+        assert (
+            _sanitize_identity_value("<script>alert</script>") == "scriptalert/script"
+        )
+        assert _sanitize_identity_value("user[admin]") == "useradmin"
+
+    def test_strips_whitespace(self):
+        assert _sanitize_identity_value("  padded  ") == "padded"
+
+    def test_empty_string(self):
+        assert _sanitize_identity_value("") == ""
+
+    def test_combined_control_and_delimiter(self):
+        assert _sanitize_identity_value("\n<injected>\x00") == "injected"
+
+
+class TestSetUserInfo:
+    """Test set_user_info stores sanitized identity in ContextVar."""
+
+    def teardown_method(self):
+        _current_user_info.set(None)
+
+    def test_stores_sanitized_values(self):
+        set_user_info(user_id="u1", display_name="Alice", email="a@b.com")
+        info = _current_user_info.get()
+        assert info == {"user_id": "u1", "display_name": "Alice", "email": "a@b.com"}
+
+    def test_filters_none_values(self):
+        set_user_info(user_id="u1", display_name=None, email=None)
+        info = _current_user_info.get()
+        assert info == {"user_id": "u1"}
+
+    def test_all_none_sets_none(self):
+        set_user_info(user_id=None, display_name=None, email=None)
+        assert _current_user_info.get() is None
+
+    def test_sanitizes_at_storage_time(self):
+        set_user_info(user_id="u<1>", display_name="A\nB", email="a@b.com")
+        info = _current_user_info.get()
+        assert info["user_id"] == "u1"
+        assert info["display_name"] == "AB"
+
+
+class TestUserIdentityMiddleware:
+    """Test build_user_identity_middleware and its injection logic."""
+
+    def teardown_method(self):
+        _current_user_info.set(None)
+
+    def test_returns_middleware_instance(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        assert type(mw).__name__ == "UserIdentityMiddleware"
+
+    def test_inject_identity_with_no_user_info(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        request = MagicMock()
+        result = mw._inject_identity(request)
+        assert result is request
+        request.override.assert_not_called()
+
+    def test_inject_identity_with_user_info(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        set_user_info(user_id="u1", display_name="Alice", email="a@b.com")
+        request = MagicMock()
+        request.system_message = MagicMock()
+        with patch(
+            "deepagents.middleware._utils.append_to_system_message"
+        ) as mock_append:
+            mock_append.return_value = MagicMock()
+            mw._inject_identity(request)
+        mock_append.assert_called_once()
+        block_arg = mock_append.call_args[0][1]
+        assert "<authenticated-user>" in block_arg
+        assert "</authenticated-user>" in block_arg
+        assert "user_id: u1" in block_arg
+        assert "display_name: Alice" in block_arg
+        assert "email: a@b.com" in block_arg
+
+    def test_wrap_model_call_delegates(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        handler = MagicMock()
+        request = MagicMock()
+        mw.wrap_model_call(request, handler)
+        handler.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_delegates(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        handler = AsyncMock()
+        request = MagicMock()
+        await mw.awrap_model_call(request, handler)
+        handler.assert_called_once()
 
 
 class _DummyMiddleware:
