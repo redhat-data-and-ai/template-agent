@@ -24,7 +24,7 @@ _current_user_info: contextvars.ContextVar[dict[str, str] | None] = (
     contextvars.ContextVar("_current_user_info", default=None)
 )
 
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 _DELIMITER_RE = re.compile(r"[<>\[\]]")
 
 
@@ -112,7 +112,7 @@ def build_user_identity_middleware() -> Any | None:
             info = _current_user_info.get()
             if not info:
                 return request
-            from deepagents.middleware._utils import append_to_system_message
+            from deepagents.middleware.subagents import append_to_system_message
 
             parts = [f"  {k}: {v}" for k, v in info.items()]
             identity_block = (

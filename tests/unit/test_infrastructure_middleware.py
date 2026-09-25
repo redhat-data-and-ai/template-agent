@@ -358,6 +358,10 @@ class TestSanitizeIdentityValue:
     def test_combined_control_and_delimiter(self):
         assert _sanitize_identity_value("\n<injected>\x00") == "injected"
 
+    def test_strips_unicode_line_separators(self):
+        assert _sanitize_identity_value("alice\u2028bob") == "alicebob"
+        assert _sanitize_identity_value("alice\u2029bob") == "alicebob"
+
 
 class TestSetUserInfo:
     """Test set_user_info stores sanitized identity in ContextVar."""
@@ -415,10 +419,11 @@ class TestUserIdentityMiddleware:
         request = MagicMock()
         request.system_message = MagicMock()
         with patch(
-            "deepagents.middleware._utils.append_to_system_message"
+            "deepagents.middleware.subagents.append_to_system_message"
         ) as mock_append:
-            mock_append.return_value = MagicMock()
-            mw._inject_identity(request)
+            appended_msg = MagicMock()
+            mock_append.return_value = appended_msg
+            result = mw._inject_identity(request)
         mock_append.assert_called_once()
         block_arg = mock_append.call_args[0][1]
         assert "<authenticated-user>" in block_arg
@@ -426,6 +431,8 @@ class TestUserIdentityMiddleware:
         assert "user_id: u1" in block_arg
         assert "display_name: Alice" in block_arg
         assert "email: a@b.com" in block_arg
+        request.override.assert_called_once_with(system_message=appended_msg)
+        assert result is request.override.return_value
 
     def test_wrap_model_call_delegates(self):
         mw = build_user_identity_middleware()
