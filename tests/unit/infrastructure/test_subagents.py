@@ -19,6 +19,16 @@ def _no_mcp_resource_tools():
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def _no_user_identity_middleware():
+    """Prevent UserIdentityMiddleware from affecting SubAgent call assertions."""
+    with patch(
+        "deep_agent.src.infrastructure.subagents.build_user_identity_middleware",
+        return_value=None,
+    ):
+        yield
+
+
 class TestLoadSubagents:
     """Tests for load_subagents function."""
 

@@ -2,11 +2,21 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deep_agent.src.infrastructure.subagents import _subagent_middleware
 from deep_agent.src.audit.middleware import AuditMiddleware
 
 
 class TestSubagentMiddleware:
+    @pytest.fixture(autouse=True)
+    def _no_user_identity_middleware(self):
+        with patch(
+            "deep_agent.src.infrastructure.subagents.build_user_identity_middleware",
+            return_value=None,
+        ):
+            yield
+
     def test_includes_audit_when_enabled(self):
         tool = MagicMock()
         tool.name = "mcp_search"

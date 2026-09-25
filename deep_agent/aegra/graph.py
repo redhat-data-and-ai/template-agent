@@ -292,6 +292,16 @@ async def agent(runtime: ServerRuntime) -> Any:
     # Local has no JWT — use run metadata / request context instead.
     personalization_uid = _personalization_uid(runtime, user, sso_token)
 
+    from deep_agent.src.infrastructure.middleware import set_user_info
+
+    _user_display_name = getattr(user, "display_name", None) if user else None
+    _user_email = getattr(user, "email", None) if user else None
+    set_user_info(
+        user_id=personalization_uid or user_identity,
+        display_name=_user_display_name,
+        email=_user_email,
+    )
+
     if not user_identity and not personalization_uid:
         logger.info("No user identity — skipping personalization rules")
     else:

@@ -37,6 +37,7 @@ from deep_agent.src.infrastructure.middleware import (
     _mcp_tool_names_from_tools,
     build_audit_middleware,
     build_opa_middleware,
+    build_user_identity_middleware,
 )
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -341,6 +342,9 @@ def _subagent_middleware(
     opa_mw = build_opa_middleware()
     if opa_mw is not None:
         middleware.append(opa_mw)
+    identity_mw = build_user_identity_middleware()
+    if identity_mw is not None:
+        middleware.append(identity_mw)
     middleware.extend(fallback_mw)
     return middleware or None
 

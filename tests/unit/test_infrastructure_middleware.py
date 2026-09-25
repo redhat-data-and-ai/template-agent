@@ -39,8 +39,8 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
-        # GeminiSafetyLogMiddleware is always included regardless of master switch
-        assert len(result) == 1
+        # GeminiSafetyLogMiddleware + UserIdentityMiddleware always included
+        assert len(result) == 2
 
     def test_includes_summarization_tool_when_enabled(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
@@ -69,8 +69,8 @@ class TestBuildMiddlewareList:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
             build_sum.assert_not_called()
-        # Default guardrails (model/tool limits + model retry) + safety middleware.
-        assert len(result) == 4
+        # Default guardrails (model/tool limits + model retry) + safety + identity.
+        assert len(result) == 5
 
     def test_includes_extra_middleware(self):
         resolved = ResolvedMiddlewareConfig(
@@ -84,7 +84,7 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert len(result) == 5
+        assert len(result) == 6
         assert any(isinstance(m, _DummyMiddleware) for m in result)
 
 
