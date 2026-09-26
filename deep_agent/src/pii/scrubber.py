@@ -285,27 +285,14 @@ class PIIScrubber:
     # ------------------------------------------------------------------
 
     def set_shared_container(self, container: dict[str, str]) -> None:
-        """Register *container* as the shared token map target for this request.
-
-        Stored both as a ContextVar (for contexts where propagation works) and
-        as an instance attribute (_instance_container) so that snapshot_to_container()
-        can always find it even when LangGraph runs the middleware in an async
-        context that doesn't inherit the ContextVar from the outer PIIAwareRunnable.
-        """
+        """Register *container* as the shared token map target for this request."""
         _shared_token_map_ref.set(container)
-        self._instance_container: "dict[str, str] | None" = container
 
     def _get_shared_container(self) -> "dict[str, str] | None":
-        # Prefer ContextVar (per-request isolation); fall back to instance attr.
-        return _shared_token_map_ref.get() or getattr(self, "_instance_container", None)
+        return _shared_token_map_ref.get()
 
     def snapshot_to_container(self) -> None:
-        """Copy the current token map into the shared container (if registered).
-
-        Uses both the ContextVar and the instance attribute fallback so the
-        middleware can populate the container regardless of which async context
-        it runs in relative to the outer PIIAwareRunnable.
-        """
+        """Copy the current token map into the shared container (if registered)."""
         container = self._get_shared_container()
         if container is not None:
             container.update(self.snapshot_token_map())
