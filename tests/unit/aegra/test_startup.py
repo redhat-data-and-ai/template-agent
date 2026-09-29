@@ -230,6 +230,96 @@ class TestSetupMcpAppsCapability:
         assert "boom" in result
 
 
+class TestWarmupGraphImports:
+    def test_ok(self):
+        """All graph dependency imports succeed and return 'ok'."""
+        with (
+            patch.dict("sys.modules", {"deepagents": MagicMock()}),
+            patch(
+                "deep_agent.aegra.mcp.get_mcp_tools",
+                create=True,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_resource_tools.get_mcp_resource_tools",
+                create=True,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_tool_auth.wrap_mcp_tools_for_auth",
+                create=True,
+            ),
+            patch(
+                "deep_agent.src.agent.config.agent_config",
+                create=True,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.async_tasks.build_async_middleware",
+                create=True,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.backend.get_configured_backend",
+                create=True,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.middleware.build_middleware_list",
+                create=True,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.providers.register_profiles_from_config",
+                create=True,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.load_subagents",
+                create=True,
+            ),
+            patch(
+                "deep_agent.src.agent.config.model.parse_model_config",
+                create=True,
+            ),
+            patch(
+                "deep_agent.src.agent.provider_factory.create_model_from_spec",
+                create=True,
+            ),
+            patch(
+                "deep_agent.src.cache.model_cache.get_or_create_model_from_spec",
+                create=True,
+            ),
+        ):
+            result = startup._warmup_graph_imports()
+        assert result == "ok"
+
+    def test_import_failure_returns_warning(self):
+        """A broken import returns a warning instead of crashing startup."""
+        with patch.dict(
+            "sys.modules",
+            {"deepagents": None},
+        ):
+            result = startup._warmup_graph_imports()
+        assert result.startswith("warning:")
+
+    async def test_called_during_run_startup(self):
+        """Verify graph_warmup is included in run_startup results."""
+        startup._startup_complete = False
+        with (
+            patch.object(
+                startup, "_validate_config", new_callable=AsyncMock, return_value="ok"
+            ),
+            patch.object(
+                startup, "_ensure_database", new_callable=AsyncMock, return_value="ok"
+            ),
+            patch.object(
+                startup, "_warm_caches", new_callable=AsyncMock, return_value="ok"
+            ),
+            patch.object(startup, "_setup_telemetry", return_value="ok"),
+            patch.object(
+                startup, "_warmup_graph_imports", return_value="warmup-sentinel"
+            ) as mock_warmup,
+        ):
+            result = await startup.run_startup()
+        assert result["graph_warmup"] == "warmup-sentinel"
+        mock_warmup.assert_called_once_with()
+        startup._startup_complete = False
+
+
 class TestIsReady:
     def test_not_ready_initially(self):
         startup._startup_complete = False
