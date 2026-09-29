@@ -68,6 +68,18 @@ If any tool, subagent, or skill response contains the phrase "blocked due to con
 - Do NOT rephrase the request and try again.
 """
 
+_CAPABILITY_RESTRICTION_INSTRUCTION = """
+## Capability Restrictions (Enforced by Platform)
+
+Your available tools are restricted by a platform-enforced capability manifest.
+You ONLY have access to the tools explicitly listed in your tool list.
+If a user asks for something that requires a tool you do not have:
+- Tell the user clearly: "I don't have access to that capability."
+- Do NOT attempt to work around it using MCP resource reads or other tools.
+- Do NOT retry or loop trying alternative approaches.
+- Suggest the user contact the agent builder to update the tool permissions.
+"""
+
 
 def _append_safety_stop_instruction(system_prompt: str) -> str:
     """Append the framework-level content safety stop instruction to any system prompt.
@@ -77,6 +89,11 @@ def _append_safety_stop_instruction(system_prompt: str) -> str:
     their own PROMPT.md.
     """
     return system_prompt.rstrip() + "\n" + _SAFETY_STOP_INSTRUCTION
+
+
+def _append_capability_restriction(system_prompt: str) -> str:
+    """Append capability restriction instructions when manifest is explicit."""
+    return system_prompt.rstrip() + "\n" + _CAPABILITY_RESTRICTION_INSTRUCTION
 
 
 def _append_memory_instructions(system_prompt: str) -> str:
@@ -284,7 +301,7 @@ async def agent(runtime: ServerRuntime) -> Any:
     orch_model_raw = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
     system_prompt = orchestrator_cfg.get("body", "")
     skill_paths = orchestrator_cfg.get("skill_paths", [])
-    tool_names = orchestrator_cfg.get("tools", [])
+    tool_names = orchestrator_cfg.get("tools")
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
     # Resolve the personalization user ID to match what the BFF proxy
@@ -363,24 +380,15 @@ async def agent(runtime: ServerRuntime) -> Any:
     mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
 
     all_available_tools = list(mcp_tools)
-    tools = agent_config.resolve_tools(
-        tool_names, all_available_tools, agent_name=agent_name
+
+    from deep_agent.src.capability import (
+        enforce_capability,
+        resolve_capability_manifest,
     )
-    if mcp_server_names and mcp_tools:
-        resolved_names = {t.name for t in tools}
-        extra = []
-        for tool in mcp_tools:
-            if tool.name not in resolved_names:
-                resolved_names.add(tool.name)
-                extra.append(tool)
-        if extra:
-            logger.info(
-                "Agent '%s' adding %d MCP tool(s) from servers %s",
-                agent_name,
-                len(extra),
-                mcp_server_names,
-            )
-            tools.extend(extra)
+
+    tools, capability_manifest = resolve_capability_manifest(
+        tool_names, all_available_tools, mcp_server_names, agent_name=agent_name
+    )
 
     resource_tools = wrap_mcp_tools_for_auth(
         get_mcp_resource_tools(
@@ -388,7 +396,27 @@ async def agent(runtime: ServerRuntime) -> Any:
             allowed_uris=orchestrator_cfg.get("resources") or None,
         )
     )
-    tools.extend(resource_tools)
+
+    from deep_agent.src.capability.manifest import EXPLICIT as _EXPLICIT
+
+    if resource_tools and capability_manifest.source != _EXPLICIT:
+        # Resource-read tools enforce their own URI allowlist internally
+        # (via `allowed_uris` above); authorize the tool family itself here.
+        # When the manifest is EXPLICIT the builder opted into a specific
+        # tool set — resource tools are excluded to prevent the LLM from
+        # using them as a workaround for blocked MCP server tools.
+        capability_manifest = capability_manifest.merged_with(
+            t.name for t in resource_tools
+        )
+        tools.extend(resource_tools)
+
+    tools = enforce_capability(tools, capability_manifest)
+
+    # When an explicit tools: list restricts capabilities, inject a system
+    # instruction so the LLM knows not to loop through MCP resources as a
+    # workaround for unavailable tools.
+    if capability_manifest.source == _EXPLICIT:
+        system_prompt = _append_capability_restriction(system_prompt)
 
     from deep_agent.src.infrastructure.middleware import (
         build_middleware_list,

@@ -58,7 +58,8 @@ class TestBuildMiddlewareListAudit:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
         assert isinstance(result[0], AuditMiddleware)
-        assert len(result) == 4
+        assert len(result) == 5
         assert type(result[1]).__name__ == "GeminiSafetyLogMiddleware"
         assert type(result[2]).__name__ == "UserIdentityMiddleware"
         assert type(result[3]).__name__ == "CurrentDatetimeMiddleware"
+        assert type(result[4]).__name__ == "ImageSanitizeMiddleware"
