@@ -1,0 +1,14 @@
+{
+    "mcpServers": {
+        "my-server": {
+            "url": "https://my-mcp-server.example.com/mcp",
+            "transport": "streamable_http",
+            "enabled": true,
+            "auth": true,
+            "auth_mode": "sso",
+            "ssl_verify": true,
+            "timeout": 30,
+            "tool_prefix": "myserver"
+        }
+    }
+}
