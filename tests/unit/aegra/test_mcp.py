@@ -348,3 +348,142 @@ class TestBuildServerConfig:
                 None,
             )
         assert config["headers"]["X-Trace-ID"] == "trace-abc"
+
+
+class TestTokenInjectorInterceptorFallback:
+    """Verify that the SSO-token fallback only applies to auth_mode='sso'."""
+
+    def _make_interceptor(self, auth_mode, mcp_name="test-mcp"):
+        return mcp_mod._TokenInjectorInterceptor(
+            mcp_name=mcp_name,
+            server_cfg={"auth_mode": auth_mode},
+            server_key=mcp_name,
+        )
+
+    async def test_sso_mode_falls_back_to_sso_token_on_error(self):
+        """auth_mode=sso: resolver failure falls back to the SSO token."""
+        interceptor = self._make_interceptor("sso")
+        handler = AsyncMock(return_value="response")
+        request = MagicMock()
+        request.override = MagicMock(return_value=request)
+
+        mcp_mod._current_access_token.set("sso-tok")
+        mcp_mod._current_refresh_token.set(None)
+        mcp_mod._current_user_id.set("user-1")
+
+        with patch(
+            "deep_agent.aegra.mcp.refresh_access_token",
+            new=AsyncMock(side_effect=RuntimeError("SSO refresh exploded")),
+        ):
+            result = await interceptor(request, handler)
+
+        request.override.assert_called_once()
+        auth_header = request.override.call_args[1]["headers"]["Authorization"]
+        assert auth_header == "Bearer sso-tok"
+        assert result == "response"
+
+    async def test_oauth_mode_raises_on_resolver_failure(self):
+        """auth_mode=oauth: resolver failure must NOT fall back to SSO token."""
+        interceptor = self._make_interceptor("oauth")
+        handler = AsyncMock(return_value="response")
+        request = MagicMock()
+
+        mcp_mod._current_access_token.set("sso-tok")
+        mcp_mod._current_user_id.set("user-1")
+        mcp_mod._mcp_tool_discovery.set(False)
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve = AsyncMock(side_effect=RuntimeError("Vault timeout"))
+        with patch(
+            "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
+            return_value=mock_resolver,
+        ):
+            with pytest.raises(
+                RuntimeError, match=r"\[test-mcp\] oauth credential resolution failed"
+            ) as exc_info:
+                await interceptor(request, handler)
+            assert exc_info.value.__cause__ is not None
+            assert "Vault timeout" in str(exc_info.value.__cause__)
+
+        handler.assert_not_called()
+
+    async def test_dcr_mode_raises_on_resolver_failure(self):
+        """auth_mode=dcr: resolver failure must NOT fall back to SSO token."""
+        interceptor = self._make_interceptor("dcr")
+        handler = AsyncMock(return_value="response")
+        request = MagicMock()
+
+        mcp_mod._current_access_token.set("sso-tok")
+        mcp_mod._current_user_id.set("user-1")
+        mcp_mod._mcp_tool_discovery.set(False)
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve = AsyncMock(side_effect=ConnectionError("network down"))
+        with patch(
+            "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
+            return_value=mock_resolver,
+        ):
+            with pytest.raises(
+                RuntimeError, match=r"\[test-mcp\] dcr credential resolution failed"
+            ) as exc_info:
+                await interceptor(request, handler)
+            assert isinstance(exc_info.value.__cause__, ConnectionError)
+
+        handler.assert_not_called()
+
+    async def test_oauth_needs_authorization_still_propagates(self):
+        """NeedsAuthorization is re-raised for oauth/dcr (unchanged behavior)."""
+        from deep_agent.aegra.mcp_auth import NeedsAuthorization
+
+        interceptor = self._make_interceptor("oauth")
+        handler = AsyncMock()
+        request = MagicMock()
+
+        mcp_mod._current_access_token.set("sso-tok")
+        mcp_mod._current_user_id.set("user-1")
+        mcp_mod._mcp_tool_discovery.set(False)
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve = AsyncMock(
+            side_effect=NeedsAuthorization("test-mcp", "/connect")
+        )
+        with patch(
+            "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
+            return_value=mock_resolver,
+        ):
+            with pytest.raises(NeedsAuthorization):
+                await interceptor(request, handler)
+
+        handler.assert_not_called()
+
+    async def test_sso_needs_authorization_still_propagates(self):
+        """NeedsAuthorization is re-raised for sso mode too (unchanged behavior)."""
+        from deep_agent.aegra.mcp_auth import NeedsAuthorization
+
+        interceptor = self._make_interceptor("sso")
+        handler = AsyncMock()
+        request = MagicMock()
+
+        mcp_mod._current_access_token.set("sso-tok")
+        mcp_mod._current_refresh_token.set(None)
+        mcp_mod._current_user_id.set("user-1")
+
+        with patch(
+            "deep_agent.aegra.mcp.refresh_access_token",
+            new=AsyncMock(side_effect=NeedsAuthorization("test-mcp", "/connect")),
+        ):
+            with pytest.raises(NeedsAuthorization):
+                await interceptor(request, handler)
+
+        handler.assert_not_called()
+
+    async def test_api_key_mode_skips_token_injection(self):
+        """auth_mode=api_key: handler called directly, no token injection."""
+        interceptor = self._make_interceptor("api_key")
+        handler = AsyncMock(return_value="response")
+        request = MagicMock()
+
+        result = await interceptor(request, handler)
+
+        handler.assert_called_once_with(request)
+        assert result == "response"

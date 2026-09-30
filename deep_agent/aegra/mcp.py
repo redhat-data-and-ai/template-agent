@@ -148,11 +148,16 @@ class _TokenInjectorInterceptor:
                     )
         except NeedsAuthorization:
             raise
-        except Exception:
+        except Exception as exc:
             logger.error(
                 "[%s] credential resolution failed", self._mcp_name, exc_info=True
             )
-            access = _current_access_token.get()
+            if auth_mode == "sso":
+                access = _current_access_token.get()
+            else:
+                raise RuntimeError(
+                    f"[{self._mcp_name}] {auth_mode} credential resolution failed"
+                ) from exc
 
         if access:
             request = request.override(headers={"Authorization": f"Bearer {access}"})
