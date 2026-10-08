@@ -1,0 +1,12 @@
+# Scoped to the eval-runner image only — the base and OPA gates must still fail
+# on these CVEs. Loaded alongside the repo-root .trivyignore (shared accepted
+# risks) via the trivyignores input in .github/workflows/build-eval-image.yml.
+
+# CVE-2026-104851: fsspec RCE via crafted reference documents (HIGH)
+# Fixed in fsspec 2026.6.0, but the version is capped by upstream pins:
+# lightspeed-evaluation v0.8.0 requires datasets<=4.0.0, which requires
+# fsspec<=2025.3.0 (even datasets 4.8.5 only allows <=2026.2.0; the cap is not
+# lifted until datasets 5.x). fsspec is a transitive dep — eval-runner never
+# imports it and never opens fsspec reference documents, so the attack vector
+# is not exposed. Revisit when lightspeed-evaluation bumps its datasets pin.
+CVE-2026-104851
