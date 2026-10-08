@@ -18,6 +18,10 @@ RUN pip install --no-cache-dir \
     "msgpack==1.2.1" \
     "setuptools>=78.1.1"
 
+# pip is not needed at runtime and its vendored deps (pip/_vendor/vendor.txt)
+# ship known-vulnerable msgpack/setuptools/urllib3 that cannot be upgraded.
+RUN pip uninstall -y pip
+
 COPY src/ ./
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh && \
