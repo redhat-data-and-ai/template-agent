@@ -124,7 +124,11 @@ async def _check_mcp_auth(request: Request) -> list[dict]:
 
         # B) Token expiry check — re-auth if expired OR expiring within the
         # eval minimum TTL window so the token doesn't expire mid-run.
-        if not needs_auth and token:
+        # Skipped when a refresh_token is present: the credential resolver
+        # refreshes transparently mid-run, and MCPs that issue access tokens
+        # shorter than the buffer (e.g. Atlan at 15 min) could never satisfy
+        # it — re-authenticating would hand back another too-short token.
+        if not needs_auth and token and not token.refresh_token:
             from datetime import timedelta, timezone
 
             min_ttl = timedelta(minutes=_EVAL_TOKEN_MIN_TTL_MINUTES)
@@ -133,7 +137,8 @@ async def _check_mcp_auth(request: Request) -> list[dict]:
                 and token.expires_at < datetime.now(timezone.utc) + min_ttl
             ):
                 log.info(
-                    "mcp_auth_check: mcp=%r token expires at %s (within %d-min buffer)",
+                    "mcp_auth_check: mcp=%r token expires at %s (within %d-min buffer, "
+                    "no refresh_token)",
                     name,
                     token.expires_at,
                     _EVAL_TOKEN_MIN_TTL_MINUTES,
