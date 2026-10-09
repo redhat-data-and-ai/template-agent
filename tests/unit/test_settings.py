@@ -74,6 +74,9 @@ class TestSettings:
         assert s.REQUEST_LOG_HEADERS is True
         assert s.REQUEST_LOG_BODY is True
         assert s.REQUEST_LOG_BODY_MAX_SIZE == 10240
+        assert s.LOG_SANITIZATION_ENABLED is True
+        assert s.LOG_SANITIZATION_CUSTOM_PATTERNS == ""
+        assert s.LOG_REDACT_USER_CONTENT is True
 
 
 class TestEmptyStringToNone:
