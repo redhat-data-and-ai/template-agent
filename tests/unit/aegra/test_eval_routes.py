@@ -1638,6 +1638,7 @@ class TestCheckMcpAuth:
         mock_request.headers = {"authorization": "Bearer tok"}
         expiring_token = MagicMock()
         expiring_token.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        expiring_token.refresh_token = None
         mock_store = AsyncMock()
         mock_store.get_token = AsyncMock(return_value=expiring_token)
         mock_config = MagicMock()
@@ -1672,6 +1673,48 @@ class TestCheckMcpAuth:
         assert len(result) == 1
         assert result[0]["name"] == "mcp1"
 
+    async def test_returns_empty_when_token_expiring_soon_but_refreshable(self):
+        """Short-lived tokens (e.g. Atlan's 15-min) refresh mid-run, not re-auth."""
+        from datetime import datetime, timedelta, timezone
+
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok"}
+        expiring_token = MagicMock()
+        expiring_token.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        expiring_token.refresh_token = "rt-123"
+        mock_store = AsyncMock()
+        mock_store.get_token = AsyncMock(return_value=expiring_token)
+        mock_config = MagicMock()
+        mock_config.get_mcp_servers.return_value = {
+            "mcp1": {
+                "enabled": True,
+                "auth": True,
+                "auth_mode": "dcr",
+                "url": "http://mcp1",
+            },
+        }
+        with (
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user1"),
+            patch(
+                "deep_agent.src.agent.config.agent_config",
+                mock_config,
+            ),
+            patch(
+                "deep_agent.aegra.mcp_token_store.McpTokenStore",
+                return_value=mock_store,
+            ),
+            patch(
+                "deep_agent.src.settings.settings",
+                MagicMock(
+                    database_uri="postgresql://x",
+                    agent_deployment_id="agent1",
+                ),
+            ),
+            patch.object(er, "_EVAL_TOKEN_MIN_TTL_MINUTES", 30),
+        ):
+            result = await er._check_mcp_auth(mock_request)
+        assert result == []
+
     async def test_returns_empty_when_token_valid(self):
         from datetime import datetime, timedelta, timezone
 
@@ -1679,6 +1722,7 @@ class TestCheckMcpAuth:
         mock_request.headers = {"authorization": "Bearer tok"}
         valid_token = MagicMock()
         valid_token.expires_at = datetime.now(timezone.utc) + timedelta(hours=2)
+        valid_token.refresh_token = None
         mock_store = AsyncMock()
         mock_store.get_token = AsyncMock(return_value=valid_token)
         mock_config = MagicMock()
