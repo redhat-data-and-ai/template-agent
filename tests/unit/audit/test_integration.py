@@ -23,6 +23,9 @@ class TestBuildMiddlewareListAudit:
             )
         assert isinstance(result[0], AuditMiddleware)
         assert result[0]._mcp_tool_names == frozenset({"tool_a"})
+        from deep_agent.aegra.mcp_runtime_tools import McpRuntimeToolsMiddleware
+
+        assert any(isinstance(m, McpRuntimeToolsMiddleware) for m in result)
 
     def test_no_audit_middleware_when_disabled(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=False)
@@ -58,8 +61,14 @@ class TestBuildMiddlewareListAudit:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
         assert isinstance(result[0], AuditMiddleware)
-        assert len(result) == 5
+        from deep_agent.aegra.mcp_runtime_tools import McpRuntimeToolsMiddleware
+
+        assert isinstance(result[0], AuditMiddleware)
+        from deep_agent.aegra.mcp_runtime_tools import McpRuntimeToolsMiddleware
+
+        assert len(result) == 6
         assert type(result[1]).__name__ == "GeminiSafetyLogMiddleware"
         assert type(result[2]).__name__ == "UserIdentityMiddleware"
         assert type(result[3]).__name__ == "CurrentDatetimeMiddleware"
         assert type(result[4]).__name__ == "ImageSanitizeMiddleware"
+        assert isinstance(result[5], McpRuntimeToolsMiddleware)

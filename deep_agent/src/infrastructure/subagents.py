@@ -60,8 +60,9 @@ def load_subagents(
     - ``async`` → AsyncSubAgent (remote Agent Protocol server)
 
     Subagents that don't specify a ``model`` inherit the orchestrator's model.
-    Subagents that don't specify ``mcps`` inherit the orchestrator's MCPs
-    (which determines tool visibility).
+    Subagents that omit ``mcps`` inherit the orchestrator's MCPs. Subagents
+    that omit both ``mcps`` and ``tools`` also inherit the orchestrator's
+    tools list.
 
     Args:
         tools: List of available MCP tools.
@@ -110,7 +111,7 @@ def _inherit_from_orchestrator(
     orchestrator_cfg: dict[str, Any],
     name: str,
 ) -> None:
-    """Fill in missing model/mcps from the parent orchestrator config.
+    """Fill in missing model/mcps/tools from the parent orchestrator config.
 
     Mutates *agent_cfg* in place. Model inheritance follows these rules:
     1. If subagent has no model → use orchestrator model (no fallback)
@@ -146,7 +147,10 @@ def _inherit_from_orchestrator(
             subagent_model, parent_model, name
         )
 
-    if not agent_cfg.get("mcps"):
+    mcps_was_omitted = "mcps" not in agent_cfg or not agent_cfg.get("mcps")
+    tools_was_omitted = "tools" not in agent_cfg
+
+    if mcps_was_omitted:
         parent_mcps = orchestrator_cfg.get("mcps", [])
         if parent_mcps:
             logger.info(
@@ -155,6 +159,16 @@ def _inherit_from_orchestrator(
                 len(parent_mcps),
             )
             agent_cfg["mcps"] = list(parent_mcps)
+
+    if tools_was_omitted and mcps_was_omitted:
+        parent_tools = orchestrator_cfg.get("tools") or []
+        if parent_tools:
+            logger.info(
+                "Subagent '%s' inheriting %d tool(s) from orchestrator",
+                name,
+                len(parent_tools),
+            )
+            agent_cfg["tools"] = list(parent_tools)
 
     if "resources" not in agent_cfg:
         parent_resources = orchestrator_cfg.get("resources")
@@ -331,6 +345,9 @@ def _subagent_middleware(
     name: str,
     resolved_tools: list[Any],
     fallback_mw: list[Any],
+    *,
+    declared_tools: list[str] | None = None,
+    declared_mcps: list[str] | None = None,
 ) -> list[Any] | None:
     """Merge audit + OPA middleware with optional fallback middleware."""
     middleware: list[Any] = []
@@ -350,6 +367,16 @@ def _subagent_middleware(
     if datetime_mw is not None:
         middleware.append(datetime_mw)
     middleware.extend(fallback_mw)
+    from deep_agent.aegra.mcp_runtime_tools import (
+        build_mcp_runtime_tools_middleware_from_declared,
+    )
+
+    middleware.append(
+        build_mcp_runtime_tools_middleware_from_declared(
+            declared_tools,
+            declared_mcps,
+        )
+    )
     return middleware or None
 
 
@@ -421,6 +448,7 @@ def _resolve_and_enforce_subagent_tools(
     Builds the capability manifest from declared ``tools:``/``mcps:``,
     adds MCP resource-read tools, then wraps with the dispatch-time gate.
     """
+    from deep_agent.aegra.mcp import resolve_declared_mcp_tools
     from deep_agent.aegra.mcp_resource_tools import get_mcp_resource_tools
     from deep_agent.aegra.mcp_tool_auth import wrap_mcp_tools_for_auth
     from deep_agent.src.capability import (
@@ -432,9 +460,25 @@ def _resolve_and_enforce_subagent_tools(
     mcp_names: list[str] = agent_cfg.get("mcps", [])
     scoped_tools = _filter_tools_by_mcp_names(tools, mcp_names)
 
-    resolved_tools, manifest = resolve_capability_manifest(
-        tool_names, scoped_tools, mcp_names, agent_name=name
+    if tool_names is not None and not tool_names:
+        # Explicit tools: [] is the security rule: no MCP tools, no Connect placeholder.
+        declared_bound = []
+    else:
+        declared_bound = resolve_declared_mcp_tools(
+            list(tool_names or []),
+            list(mcp_names),
+            scoped_tools,
+            agent_name=name,
+        )
+    _, manifest = resolve_capability_manifest(
+        tool_names,
+        scoped_tools,
+        mcp_names,
+        agent_name=name,
     )
+    if declared_bound:
+        manifest = manifest.merged_with(t.name for t in declared_bound)
+    resolved_tools = declared_bound
 
     resource_tools = wrap_mcp_tools_for_auth(
         get_mcp_resource_tools(
@@ -495,7 +539,15 @@ def _build_default_subagent(
         subagent_params["tools"] = resolved_tools
     if skill_paths:
         subagent_params["skills"] = to_virtual_skill_paths(skill_paths)
-    middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
+    middleware = _subagent_middleware(
+        name,
+        resolved_tools,
+        fallback_mw,
+        declared_tools=agent_cfg.get("tools") or [],
+        declared_mcps=[]
+        if "tools" in agent_cfg and not agent_cfg.get("tools")
+        else agent_cfg.get("mcps") or [],
+    )
     if middleware:
         subagent_params["middleware"] = middleware
 
@@ -554,7 +606,15 @@ def _build_compiled_subagent(
         "backend": get_configured_backend(),
     }
 
-    middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
+    middleware = _subagent_middleware(
+        name,
+        resolved_tools,
+        fallback_mw,
+        declared_tools=agent_cfg.get("tools") or [],
+        declared_mcps=[]
+        if "tools" in agent_cfg and not agent_cfg.get("tools")
+        else agent_cfg.get("mcps") or [],
+    )
     if middleware:
         create_kwargs["middleware"] = middleware
 

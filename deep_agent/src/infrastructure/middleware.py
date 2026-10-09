@@ -413,6 +413,8 @@ def build_middleware_list(
     model: Any | None = None,
     backend: Any | None = None,
     mcp_tool_names: frozenset[str] | None = None,
+    declared_tools: list[str] | None = None,
+    declared_mcps: list[str] | None = None,
 ) -> list[Any]:
     """Build a list of middleware instances from resolved config.
 
@@ -426,6 +428,8 @@ def build_middleware_list(
         model: Chat model instance for SummarizationToolMiddleware.
         backend: Backend instance for SummarizationToolMiddleware.
         mcp_tool_names: MCP tool names for platform audit classification.
+        declared_tools: Orchestrator yaml ``tools:`` allowlist (live names).
+        declared_mcps: Orchestrator yaml ``mcps:`` server fence.
 
     Returns:
         List of middleware instances to pass as middleware= parameter.
@@ -456,6 +460,17 @@ def build_middleware_list(
     image_sanitize_mw = _build_image_sanitize_middleware()
     if image_sanitize_mw is not None:
         middlewares.append(image_sanitize_mw)
+
+    from deep_agent.aegra.mcp_runtime_tools import (
+        build_mcp_runtime_tools_middleware_from_declared,
+    )
+
+    middlewares.append(
+        build_mcp_runtime_tools_middleware_from_declared(
+            declared_tools,
+            declared_mcps,
+        )
+    )
 
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")

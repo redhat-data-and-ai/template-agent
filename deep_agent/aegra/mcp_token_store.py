@@ -13,7 +13,12 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from deep_agent.aegra.mcp_crypto import decrypt_secret, encrypt_secret
-from deep_agent.aegra.redis import cache_delete, cache_get, cache_set_persistent
+from deep_agent.aegra.redis import (
+    cache_delete,
+    cache_delete_if_unchanged,
+    cache_get,
+    cache_set_persistent,
+)
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -367,6 +372,62 @@ class McpTokenStore:
             result,
         )
         return result
+
+    async def delete_token_if_access_matches(
+        self,
+        agent_name: str,
+        user_id: str,
+        mcp_name: str,
+        access_token: str,
+    ) -> bool:
+        """Delete the Redis token only when it is still *access_token*.
+
+        The stored value is encrypted, so the bearer is compared after decrypt.
+        The delete itself matches the raw Redis string, and does nothing if
+        another writer replaced that string.
+        """
+        key = self._token_key(agent_name, user_id, mcp_name)
+        raw = await asyncio.to_thread(cache_get, key)
+        if not raw:
+            return False
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.error(
+                "Corrupt MCP OAuth token payload for agent '%s' user '%s' MCP '%s'",
+                agent_name,
+                user_id,
+                mcp_name,
+            )
+            return False
+        if not isinstance(payload, dict):
+            return False
+        try:
+            stored_access = decrypt_secret(payload.get("access_token"))
+        except RuntimeError:
+            logger.warning(
+                "MCP OAuth token decryption failed during 401 cleanup for "
+                "agent '%s' MCP '%s'; leaving Redis value in place",
+                agent_name,
+                mcp_name,
+            )
+            return False
+        if stored_access != access_token:
+            logger.info(
+                "MCP OAuth token kept: stored bearer differs from the rejected "
+                "one (agent='%s' mcp='%s')",
+                agent_name,
+                mcp_name,
+            )
+            return False
+        deleted = await asyncio.to_thread(cache_delete_if_unchanged, key, raw)
+        logger.info(
+            "MCP OAuth token compare-delete: agent='%s' mcp='%s' deleted=%s",
+            agent_name,
+            mcp_name,
+            deleted,
+        )
+        return deleted
 
     @staticmethod
     def expires_at_from_token_response(data: dict[str, Any]) -> datetime | None:

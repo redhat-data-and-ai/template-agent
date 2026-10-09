@@ -121,6 +121,7 @@ def _graph_fingerprint(
     max_tokens: int | None = None,
     mcp_names: list[str] | None = None,
     resource_uris: list[str] | None = None,
+    declared_tools: list[str] | None = None,
 ) -> str:
     """Stable fingerprint for graph cache keying."""
     hitl_flag = (
@@ -131,9 +132,13 @@ def _graph_fingerprint(
     model_flag = f"temp={temperature},max_tokens={max_tokens}"
     mcp_flag = ",".join(sorted(mcp_names or []))
     resources_flag = ",".join(sorted(resource_uris or []))
+    declared_flag = (
+        "absent" if declared_tools is None else ",".join(sorted(declared_tools))
+    )
     raw = (
         f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}"
         f"\0{hitl_flag}\0{model_flag}\0{mcp_flag}\0{resources_flag}"
+        f"\0{declared_flag}"
     )
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
@@ -268,6 +273,7 @@ async def agent(runtime: ServerRuntime) -> Any:
     from deep_agent.aegra.mcp import (
         get_mcp_tools,
         refresh_access_token,
+        resolve_declared_mcp_tools,
         set_mcp_auth_context,
     )
     from deep_agent.aegra.mcp_resource_tools import get_mcp_resource_tools
@@ -380,15 +386,31 @@ async def agent(runtime: ServerRuntime) -> Any:
     mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
 
     all_available_tools = list(mcp_tools)
-
     from deep_agent.src.capability import (
         enforce_capability,
         resolve_capability_manifest,
     )
 
-    tools, capability_manifest = resolve_capability_manifest(
-        tool_names, all_available_tools, mcp_server_names, agent_name=agent_name
+    if tool_names is not None and not tool_names:
+        declared_bound = []
+    else:
+        declared_bound = resolve_declared_mcp_tools(
+            list(tool_names or []),
+            list(mcp_server_names or []),
+            all_available_tools,
+            agent_name=agent_name,
+        )
+    _, capability_manifest = resolve_capability_manifest(
+        tool_names,
+        all_available_tools,
+        mcp_server_names,
+        agent_name=agent_name,
     )
+    tools = declared_bound
+    if declared_bound:
+        capability_manifest = capability_manifest.merged_with(
+            t.name for t in declared_bound
+        )
 
     resource_tools = wrap_mcp_tools_for_auth(
         get_mcp_resource_tools(
@@ -464,6 +486,7 @@ async def agent(runtime: ServerRuntime) -> Any:
         max_tokens=int(orch_max_tokens) if orch_max_tokens else None,
         mcp_names=mcp_server_names or None,
         resource_uris=orchestrator_cfg.get("resources") or None,
+        declared_tools=tool_names,
     )
     now = time.time()
     graph_ttl = float(agent_config.get_cache_config().graph.ttl)
@@ -484,6 +507,10 @@ async def agent(runtime: ServerRuntime) -> Any:
         backend=backend,
         mcp_tool_names=frozenset(t.name for t in mcp_tools)
         | frozenset(t.name for t in resource_tools),
+        declared_tools=tool_names,
+        declared_mcps=[]
+        if tool_names is not None and not tool_names
+        else mcp_server_names,
     )
     memory = resolve_memory_param(resolved_mw) if user_memory_enabled else None
 
@@ -536,8 +563,12 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     if hitl and hitl.enabled and "interrupt_on" in create_sig.parameters:
         try:
+            from deep_agent.aegra.mcp_runtime_tools import (
+                install_compiled_hitl_auth_resume,
+            )
             from deep_agent.src.agent.config.hitl import build_interrupt_on
 
+            install_compiled_hitl_auth_resume()
             interrupt_on = build_interrupt_on(hitl, tools)
             if interrupt_on:
                 create_kwargs["interrupt_on"] = interrupt_on

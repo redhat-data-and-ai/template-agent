@@ -197,6 +197,33 @@ def cache_expire(key: str, ttl_seconds: int) -> bool:
         return False
 
 
+_DELETE_IF_UNCHANGED_LUA = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
+
+def cache_delete_if_unchanged(key: str, expected_raw: str) -> bool:
+    """Delete *key* only when its current value is still *expected_raw*."""
+    client = get_redis_client()
+    if client is None:
+        return False
+    try:
+        deleted = client.eval(
+            _DELETE_IF_UNCHANGED_LUA,
+            1,
+            f"{REDIS_KEY_PREFIX}{key}",
+            expected_raw,
+        )
+        return bool(deleted)
+    except Exception:
+        logger.debug("Conditional cache delete failed for key '%s'", key, exc_info=True)
+        return False
+
+
 _RELEASE_LOCK_LUA = """
 if redis.call("get", KEYS[1]) == ARGV[1] then
     return redis.call("del", KEYS[1])

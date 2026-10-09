@@ -7,6 +7,7 @@ import pytest
 import deep_agent.aegra.redis as redis_mod
 from deep_agent.aegra.redis import (
     cache_delete,
+    cache_delete_if_unchanged,
     cache_expire,
     cache_get,
     cache_sadd,
@@ -200,3 +201,27 @@ class TestCacheExpire:
         mock_client.expire.side_effect = Exception("fail")
         redis_mod._client = mock_client
         assert cache_expire("key", 300) is False
+
+
+class TestCacheDeleteIfUnchanged:
+    def test_returns_false_when_no_client(self):
+        with patch("deep_agent.aegra.redis.get_redis_client", return_value=None):
+            assert cache_delete_if_unchanged("key", "raw") is False
+
+    def test_deletes_when_script_matches(self):
+        mock_client = MagicMock()
+        mock_client.eval.return_value = 1
+        redis_mod._client = mock_client
+        assert cache_delete_if_unchanged("token-key", "raw-value") is True
+        mock_client.eval.assert_called_once_with(
+            redis_mod._DELETE_IF_UNCHANGED_LUA,
+            1,
+            f"{redis_mod.REDIS_KEY_PREFIX}token-key",
+            "raw-value",
+        )
+
+    def test_returns_false_when_value_changed(self):
+        mock_client = MagicMock()
+        mock_client.eval.return_value = 0
+        redis_mod._client = mock_client
+        assert cache_delete_if_unchanged("token-key", "raw-value") is False

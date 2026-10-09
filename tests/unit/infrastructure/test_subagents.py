@@ -4,10 +4,24 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deep_agent.aegra.mcp_runtime_tools import McpRuntimeToolsMiddleware
 from deep_agent.src.agent.config.model import ModelSpec, Provider
 from deep_agent.src.capability.tool_proxy import CapabilityToolProxy
 from deep_agent.src.exceptions import SubAgentError
-from deep_agent.src.infrastructure.subagents import VALID_AGENT_TYPES, load_subagents
+from deep_agent.src.infrastructure.subagents import (
+    VALID_AGENT_TYPES,
+    _inherit_from_orchestrator,
+    load_subagents,
+)
+
+
+def _assert_default_subagent_call(mock_sa: MagicMock, **expected: object) -> None:
+    kwargs = mock_sa.call_args.kwargs
+    for key, value in expected.items():
+        assert kwargs[key] == value
+    if "tools" not in expected:
+        assert "tools" not in kwargs
+    assert any(isinstance(m, McpRuntimeToolsMiddleware) for m in kwargs["middleware"])
 
 
 @pytest.fixture(autouse=True)
@@ -128,8 +142,8 @@ class TestLoadSubagents:
 
             assert result == [mock_subagent]
             mock_create_model.assert_called_once()
-            # Should be called without middleware when no fallback
-            mock_sa.assert_called_once_with(
+            _assert_default_subagent_call(
+                mock_sa,
                 name="analyst",
                 model=mock_model,
                 description="Test analyst",
@@ -148,7 +162,6 @@ class TestLoadSubagents:
         mock_tool2.args_schema = None
         mock_model = MagicMock()
         mock_subagent = MagicMock()
-
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = ""
         with (
@@ -159,9 +172,6 @@ class TestLoadSubagents:
                 "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
                 return_value={},  # No orchestrator config
             ),
-            patch(
-                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools"
-            ) as mock_resolve_tools,
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec"
             ) as mock_create_model,
@@ -185,25 +195,26 @@ class TestLoadSubagents:
                     "tools": ["calculate_bmi", "search_web"],
                 }
             }
-            mock_resolve_tools.return_value = [mock_tool1, mock_tool2]
             mock_create_model.return_value = mock_model
             mock_sa.return_value = mock_subagent
-
             available_tools = [mock_tool1, mock_tool2]
             result = load_subagents(tools=available_tools)
-
             assert result == [mock_subagent]
-            mock_resolve_tools.assert_called_once_with(
-                ["calculate_bmi", "search_web"], available_tools, agent_name="analyst"
-            )
-            # Tools are wrapped by CapabilityToolProxy; compare by name.
-            built_tools = mock_sa.call_args.kwargs["tools"]
+            kwargs = mock_sa.call_args.kwargs
+            assert kwargs["name"] == "analyst"
+            assert kwargs["model"] == mock_model
+            assert kwargs["description"] == "Analyst"
+            assert kwargs["system_prompt"] == "Prompt"
+            built_tools = kwargs["tools"]
             assert [t.name for t in built_tools] == ["calculate_bmi", "search_web"]
             assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
-            assert mock_sa.call_args.kwargs["name"] == "analyst"
-            assert mock_sa.call_args.kwargs["model"] == mock_model
-            assert mock_sa.call_args.kwargs["description"] == "Analyst"
-            assert mock_sa.call_args.kwargs["system_prompt"] == "Prompt"
+            runtime = next(
+                m
+                for m in mock_sa.call_args.kwargs["middleware"]
+                if isinstance(m, McpRuntimeToolsMiddleware)
+            )
+            assert runtime._allowlist == frozenset({"calculate_bmi", "search_web"})
+            assert runtime._mcp_names is None
 
     def test_load_subagent_with_skills(self):
         """Test loading subagent with pre-resolved skill paths."""
@@ -246,7 +257,8 @@ class TestLoadSubagents:
             result = load_subagents(tools=[])
 
             assert result == [mock_subagent]
-            mock_sa.assert_called_once_with(
+            _assert_default_subagent_call(
+                mock_sa,
                 name="analyst",
                 model=mock_model,
                 description="Analyst",
@@ -342,8 +354,8 @@ class TestLoadSubagents:
 
             assert result == [mock_subagent]
             mock_resolve_tools.assert_not_called()
-            # SubAgent should be called without tools parameter
-            mock_sa.assert_called_once_with(
+            _assert_default_subagent_call(
+                mock_sa,
                 name="analyst",
                 model=mock_model,
                 description="Analyst",
@@ -390,7 +402,8 @@ class TestLoadSubagents:
             result = load_subagents(tools=[])
 
             assert result == [mock_subagent]
-            mock_sa.assert_called_once_with(
+            _assert_default_subagent_call(
+                mock_sa,
                 name="analyst",
                 model=mock_model,
                 description="",
@@ -968,10 +981,6 @@ class TestGuardianActivationGate:
                 return_value=self._guardrail_cfg(enabled=True),
             ),
             patch(
-                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[mock_tool],
-            ),
-            patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
@@ -1031,10 +1040,6 @@ class TestGuardianActivationGate:
                 return_value=self._guardrail_cfg(enabled=False),
             ),
             patch(
-                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[mock_tool],
-            ),
-            patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
@@ -1085,10 +1090,6 @@ class TestGuardianActivationGate:
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_guardrails_config",
                 return_value=self._guardrail_cfg(enabled=True),
-            ),
-            patch(
-                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[mock_tool],
             ),
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
@@ -1330,10 +1331,6 @@ class TestMcpResourceToolsOnSubagents:
                 return_value={},
             ),
             patch(
-                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[mock_tool],
-            ),
-            patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
@@ -1389,10 +1386,6 @@ class TestMcpResourceToolsOnSubagents:
                 return_value={},
             ),
             patch(
-                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[mock_tool],
-            ),
-            patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
@@ -1442,10 +1435,6 @@ class TestMcpResourceToolsOnSubagents:
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
                 return_value={},
-            ),
-            patch(
-                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[mock_tool],
             ),
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
@@ -1499,10 +1488,6 @@ class TestMcpResourceToolsOnSubagents:
             patch(
                 "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
                 return_value={"resources": ["template://about"]},
-            ),
-            patch(
-                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[mock_tool],
             ),
             patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
@@ -1563,10 +1548,6 @@ class TestMcpResourceToolsOnSubagents:
                 return_value={},
             ),
             patch(
-                "deep_agent.src.infrastructure.subagents.agent_config.resolve_tools",
-                return_value=[mock_tool],
-            ),
-            patch(
                 "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
                 return_value=MagicMock(),
             ),
@@ -1617,3 +1598,35 @@ class TestMcpResourceToolsOnSubagents:
             load_subagents(tools=[])
 
         _no_mcp_resource_tools.assert_not_called()
+
+
+class TestInheritMcpYaml:
+    """Subagent yaml inherit: omit both keys copies parent mcps and tools."""
+
+    def test_omitted_both_copies_parent_mcps_and_tools(self):
+        child = {"model": "gemini-2.5-flash"}
+        parent = {"mcps": ["acme-jira"], "tools": ["search"]}
+        _inherit_from_orchestrator(child, parent, "child")
+        assert child["mcps"] == ["acme-jira"]
+        assert child["tools"] == ["search"]
+
+    def test_explicit_empty_tools_does_not_inherit_tools(self):
+        child = {"model": "gemini-2.5-flash", "tools": []}
+        parent = {"mcps": ["acme-jira"], "tools": ["search"]}
+        _inherit_from_orchestrator(child, parent, "child")
+        assert child["mcps"] == ["acme-jira"]
+        assert child["tools"] == []
+
+    def test_explicit_mcps_does_not_inherit_parent_tools(self):
+        child = {"model": "gemini-2.5-flash", "mcps": ["acme-vault"]}
+        parent = {"mcps": ["acme-jira"], "tools": ["search"]}
+        _inherit_from_orchestrator(child, parent, "child")
+        assert child["mcps"] == ["acme-vault"]
+        assert "tools" not in child
+
+    def test_explicit_tools_inherits_mcps_keeps_own_tools(self):
+        child = {"model": "gemini-2.5-flash", "tools": ["search"]}
+        parent = {"mcps": ["acme-jira"], "tools": ["search", "create_issue"]}
+        _inherit_from_orchestrator(child, parent, "child")
+        assert child["mcps"] == ["acme-jira"]
+        assert child["tools"] == ["search"]

@@ -209,6 +209,55 @@ class TestMcpTokenStoreRedis:
 
         assert deleted_keys == ["mcp_oauth_token:default:user-1:oauth-mcp"]
 
+    async def test_delete_token_if_access_matches_same_bearer(self, store, fernet_key):
+        from deep_agent.aegra.mcp_crypto import encrypt_secret
+
+        raw = json.dumps({"access_token": encrypt_secret("bearer-a")})
+        seen: dict[str, str] = {}
+
+        def fake_cas(key: str, expected_raw: str) -> bool:
+            seen["key"] = key
+            seen["raw"] = expected_raw
+            return True
+
+        with (
+            patch("deep_agent.aegra.mcp_token_store.cache_get", return_value=raw),
+            patch(
+                "deep_agent.aegra.mcp_token_store.cache_delete_if_unchanged",
+                fake_cas,
+            ),
+        ):
+            deleted = await store.delete_token_if_access_matches(
+                "default", "user-1", "oauth-mcp", "bearer-a"
+            )
+
+        assert deleted is True
+        assert seen["key"] == "mcp_oauth_token:default:user-1:oauth-mcp"
+        assert seen["raw"] == raw
+
+    async def test_delete_token_if_access_matches_keeps_newer_bearer(
+        self, store, fernet_key
+    ):
+        from deep_agent.aegra.mcp_crypto import encrypt_secret
+
+        raw = json.dumps({"access_token": encrypt_secret("bearer-b")})
+
+        def fake_cas(key: str, expected_raw: str) -> bool:
+            raise AssertionError("newer token must not be deleted")
+
+        with (
+            patch("deep_agent.aegra.mcp_token_store.cache_get", return_value=raw),
+            patch(
+                "deep_agent.aegra.mcp_token_store.cache_delete_if_unchanged",
+                fake_cas,
+            ),
+        ):
+            deleted = await store.delete_token_if_access_matches(
+                "default", "user-1", "oauth-mcp", "bearer-a"
+            )
+
+        assert deleted is False
+
     async def test_delete_client_returns_true_when_row_exists(self, store):
         mock_cur = AsyncMock()
         mock_cur.rowcount = 1
