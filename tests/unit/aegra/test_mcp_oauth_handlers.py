@@ -227,6 +227,7 @@ class TestHandleMcpOauthCallback:
             ) as mock_resolver,
             patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache"),
             patch("deep_agent.aegra.graph.invalidate_graph_cache"),
+            patch("deep_agent.aegra.mcp_oauth_handlers.cache_sadd") as mock_sadd,
         ):
             mock_settings.oauth_callback_url = (
                 "https://agent.example.com/mcp/oauth/callback"
@@ -246,6 +247,9 @@ class TestHandleMcpOauthCallback:
         assert response.status_code == 200
         assert b"Connected" in response.body
         assert b"mcp_oauth_done" in response.body
+        mock_sadd.assert_called_once_with(
+            "mcp_auth_set:test-agent:user-1", "oauth-mcp", ttl_seconds=604800
+        )
 
     async def test_ok_false_returns_error_with_message(self):
         state_payload = json.dumps(
@@ -760,6 +764,7 @@ class TestHandleMcpDisconnect:
             ),
             patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache") as mock_tools,
             patch("deep_agent.aegra.graph.invalidate_graph_cache") as mock_graph,
+            patch("deep_agent.aegra.mcp_oauth_handlers.cache_srem") as mock_srem,
         ):
             mock_settings.database_uri = "postgresql://test"
             mock_settings.agent_deployment_id = "test-agent"
@@ -767,6 +772,7 @@ class TestHandleMcpDisconnect:
 
         assert result == {"mcp_name": "oauth-mcp", "connected": False}
         store.delete_token.assert_awaited_once_with("test-agent", "user-1", "oauth-mcp")
+        mock_srem.assert_called_once_with("mcp_auth_set:test-agent:user-1", "oauth-mcp")
         resolver.invalidate_cache.assert_called_once_with("user-1", "oauth-mcp")
         mock_tools.assert_called_once_with(user_id="user-1")
         mock_graph.assert_called_once_with()

@@ -7,8 +7,12 @@ import pytest
 import deep_agent.aegra.redis as redis_mod
 from deep_agent.aegra.redis import (
     cache_delete,
+    cache_expire,
     cache_get,
+    cache_sadd,
     cache_set,
+    cache_smembers,
+    cache_srem,
     get_redis_client,
     get_redis_config,
 )
@@ -104,3 +108,95 @@ class TestCacheDelete:
         mock_client.delete.side_effect = Exception("fail")
         redis_mod._client = mock_client
         assert cache_delete("key") is False
+
+
+class TestCacheSadd:
+    def test_returns_false_when_no_client(self):
+        with patch("deep_agent.aegra.redis.get_redis_client", return_value=None):
+            assert cache_sadd("key", "val") is False
+
+    def test_returns_true_on_success(self):
+        mock_client = MagicMock()
+        redis_mod._client = mock_client
+        assert cache_sadd("key", "val") is True
+        mock_client.sadd.assert_called_once_with("aegra:key", "val")
+
+    def test_returns_false_on_error(self):
+        mock_client = MagicMock()
+        mock_client.sadd.side_effect = Exception("fail")
+        redis_mod._client = mock_client
+        assert cache_sadd("key", "val") is False
+
+    def test_sets_ttl_when_provided(self):
+        mock_client = MagicMock()
+        redis_mod._client = mock_client
+        assert cache_sadd("key", "val", ttl_seconds=604800) is True
+        mock_client.sadd.assert_called_once_with("aegra:key", "val")
+        mock_client.expire.assert_called_once_with("aegra:key", 604800)
+
+    def test_no_expire_when_ttl_omitted(self):
+        mock_client = MagicMock()
+        redis_mod._client = mock_client
+        assert cache_sadd("key", "val") is True
+        mock_client.expire.assert_not_called()
+
+
+class TestCacheSrem:
+    def test_returns_false_when_no_client(self):
+        with patch("deep_agent.aegra.redis.get_redis_client", return_value=None):
+            assert cache_srem("key", "val") is False
+
+    def test_returns_true_on_success(self):
+        mock_client = MagicMock()
+        redis_mod._client = mock_client
+        assert cache_srem("key", "val") is True
+        mock_client.srem.assert_called_once_with("aegra:key", "val")
+
+    def test_returns_false_on_error(self):
+        mock_client = MagicMock()
+        mock_client.srem.side_effect = Exception("fail")
+        redis_mod._client = mock_client
+        assert cache_srem("key", "val") is False
+
+
+class TestCacheSmembers:
+    def test_returns_none_when_no_client(self):
+        with patch("deep_agent.aegra.redis.get_redis_client", return_value=None):
+            assert cache_smembers("key") is None
+
+    def test_returns_members_on_success(self):
+        mock_client = MagicMock()
+        mock_client.smembers.return_value = {"a", "b"}
+        redis_mod._client = mock_client
+        assert cache_smembers("key") == {"a", "b"}
+        mock_client.smembers.assert_called_once_with("aegra:key")
+
+    def test_returns_none_on_error(self):
+        mock_client = MagicMock()
+        mock_client.smembers.side_effect = Exception("fail")
+        redis_mod._client = mock_client
+        assert cache_smembers("key") is None
+
+    def test_returns_empty_set_when_key_missing(self):
+        mock_client = MagicMock()
+        mock_client.smembers.return_value = None
+        redis_mod._client = mock_client
+        assert cache_smembers("key") == set()
+
+
+class TestCacheExpire:
+    def test_returns_false_when_no_client(self):
+        with patch("deep_agent.aegra.redis.get_redis_client", return_value=None):
+            assert cache_expire("key", 300) is False
+
+    def test_returns_true_on_success(self):
+        mock_client = MagicMock()
+        redis_mod._client = mock_client
+        assert cache_expire("key", 604800) is True
+        mock_client.expire.assert_called_once_with("aegra:key", 604800)
+
+    def test_returns_false_on_error(self):
+        mock_client = MagicMock()
+        mock_client.expire.side_effect = Exception("fail")
+        redis_mod._client = mock_client
+        assert cache_expire("key", 300) is False

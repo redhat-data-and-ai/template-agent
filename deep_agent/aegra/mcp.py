@@ -45,8 +45,10 @@ _SSO_TOKEN_URL: str = ""
 _mcp_breaker: CircuitBreaker | None = None
 
 _MCP_TOOL_CACHE_TTL: float = float(agent_config.get_cache_config().mcp.ttl)
+_MCP_AUTH_SET_TTL: int = 604800  # 7 days
 _cached_tools: dict[str | None, list[Any]] = {}
 _cached_tools_ts: dict[str | None, float] = {}
+_cached_connected_set: dict[str | None, set[str]] = {}
 
 _current_access_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "_current_access_token", default=None
@@ -732,9 +734,11 @@ def invalidate_mcp_tool_cache(user_id: str | None = None) -> None:
         for k in keys:
             _cached_tools.pop(k, None)
             _cached_tools_ts.pop(k, None)
+            _cached_connected_set.pop(k, None)
     else:
         _cached_tools.clear()
         _cached_tools_ts.clear()
+        _cached_connected_set.clear()
 
 
 async def get_mcp_tools(
@@ -776,14 +780,34 @@ async def get_mcp_tools(
     cached = _cached_tools.get(cache_key) if cache_key else None
     cached_ts = _cached_tools_ts.get(cache_key, 0.0) if cache_key else 0.0
 
+    from deep_agent.aegra.redis import cache_expire, cache_smembers
+
+    auth_set_key = f"mcp_auth_set:{settings.agent_deployment_id}:{user_id}"
+
     if cached and len(cached) > 0 and (time.time() - cached_ts) < _MCP_TOOL_CACHE_TTL:
-        logger.info(
-            "MCP tool cache hit (%d tools, %.0fs old, user=%s)",
-            len(cached),
-            time.time() - cached_ts,
-            cache_key or "anonymous",
-        )
-        return cached
+        redis_set = await asyncio.to_thread(cache_smembers, auth_set_key)
+        if redis_set is None:
+            return cached
+        await asyncio.to_thread(cache_expire, auth_set_key, _MCP_AUTH_SET_TTL)
+        local_set = _cached_connected_set.get(cache_key, set())
+        if redis_set == local_set:
+            logger.info(
+                "MCP tool cache hit (%d tools, %.0fs old, user=%s)",
+                len(cached),
+                time.time() - cached_ts,
+                cache_key or "anonymous",
+            )
+            return cached
+        else:
+            logger.info(
+                "MCP auth set changed (redis=%s, local=%s), invalidating cache for %s",
+                redis_set,
+                local_set,
+                cache_key,
+            )
+            _cached_tools.pop(cache_key, None)
+            _cached_tools_ts.pop(cache_key, None)
+            _cached_connected_set.pop(cache_key, None)
 
     servers: dict[str, dict[str, Any]] = _get_server_configs()
     enabled: dict[str, dict[str, Any]] = {
@@ -798,6 +822,12 @@ async def get_mcp_tools(
 
     logger.warning(
         "Connecting to %d MCP server(s): %s", len(enabled), ", ".join(enabled)
+    )
+
+    pre_discovery_set = (
+        await asyncio.to_thread(cache_smembers, auth_set_key)
+        if cache_key is not None
+        else None
     )
 
     has_auth: bool = bool(sso_token or user_id)
@@ -867,6 +897,11 @@ async def get_mcp_tools(
     if cache_key is not None:
         _cached_tools[cache_key] = tools
         _cached_tools_ts[cache_key] = time.time()
+        _cached_connected_set[cache_key] = (
+            pre_discovery_set
+            if pre_discovery_set is not None
+            else _cached_connected_set.get(cache_key, set())
+        )
     logger.info(
         "Loaded %d MCP tool(s): %s (cached for %.0fs, user=%s)",
         len(tools),

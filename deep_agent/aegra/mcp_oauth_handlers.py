@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import html
@@ -25,10 +26,12 @@ from deep_agent.aegra.mcp_oauth_scopes import (
     validate_granted_scopes,
 )
 from deep_agent.aegra.mcp_token_store import McpTokenStore
-from deep_agent.aegra.redis import cache_get, cache_set
+from deep_agent.aegra.redis import cache_get, cache_sadd, cache_set, cache_srem
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
+
+_MCP_AUTH_SET_TTL: int = 604800  # 7 days
 
 logger = get_python_logger()
 
@@ -333,6 +336,12 @@ async def handle_mcp_oauth_callback(
         expires_at=expires_at,
         scopes=scopes,
     )
+    await asyncio.to_thread(
+        cache_sadd,
+        f"mcp_auth_set:{current_agent_name}:{user_id}",
+        mcp_name,
+        ttl_seconds=_MCP_AUTH_SET_TTL,
+    )
     get_mcp_credential_resolver().invalidate_cache(user_id, mcp_name)
     from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
 
@@ -456,6 +465,11 @@ async def handle_mcp_disconnect(user_id: str, mcp_name: str) -> dict[str, Any]:
 
     store = McpTokenStore(settings.database_uri)
     await store.delete_token(settings.agent_deployment_id, user_id, mcp_name)
+    await asyncio.to_thread(
+        cache_srem,
+        f"mcp_auth_set:{settings.agent_deployment_id}:{user_id}",
+        mcp_name,
+    )
     get_mcp_credential_resolver().invalidate_cache(user_id, mcp_name)
     from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
 

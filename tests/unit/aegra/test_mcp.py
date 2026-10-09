@@ -149,23 +149,224 @@ class TestInvalidateMcpToolCache:
     def test_clears_specific_user(self):
         mcp_mod._cached_tools["user1:server1"] = [MagicMock()]
         mcp_mod._cached_tools_ts["user1:server1"] = 1.0
+        mcp_mod._cached_connected_set["user1:server1"] = {"gitlab"}
         mcp_mod._cached_tools["user2:server1"] = [MagicMock()]
         mcp_mod._cached_tools_ts["user2:server1"] = 2.0
+        mcp_mod._cached_connected_set["user2:server1"] = {"jira"}
 
         mcp_mod.invalidate_mcp_tool_cache("user1")
         assert "user1:server1" not in mcp_mod._cached_tools
+        assert "user1:server1" not in mcp_mod._cached_connected_set
         assert "user2:server1" in mcp_mod._cached_tools
+        assert "user2:server1" in mcp_mod._cached_connected_set
 
         mcp_mod._cached_tools.clear()
         mcp_mod._cached_tools_ts.clear()
+        mcp_mod._cached_connected_set.clear()
 
     def test_clears_all_when_none(self):
         mcp_mod._cached_tools["user1:a"] = [MagicMock()]
         mcp_mod._cached_tools["user2:b"] = [MagicMock()]
+        mcp_mod._cached_connected_set["user1:a"] = {"gitlab"}
+        mcp_mod._cached_connected_set["user2:b"] = {"jira"}
 
         mcp_mod.invalidate_mcp_tool_cache(None)
         assert len(mcp_mod._cached_tools) == 0
         assert len(mcp_mod._cached_tools_ts) == 0
+        assert len(mcp_mod._cached_connected_set) == 0
+
+
+class TestGetMcpToolsCrossPodCache:
+    """Tests for cross-pod cache invalidation via the Redis auth set."""
+
+    def _seed_cache(self, user_id: str, server_key: str, tools: list, connected: set):
+        cache_key = f"{user_id}:{server_key}"
+        mcp_mod._cached_tools[cache_key] = tools
+        mcp_mod._cached_tools_ts[cache_key] = time.time()
+        mcp_mod._cached_connected_set[cache_key] = connected
+
+    def _cleanup(self):
+        mcp_mod._cached_tools.clear()
+        mcp_mod._cached_tools_ts.clear()
+        mcp_mod._cached_connected_set.clear()
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_when_redis_set_matches(self):
+        """If the Redis set matches the local snapshot, return cached tools."""
+        fake_tool = MagicMock()
+        fake_tool.name = "tool1"
+        self._seed_cache("user1", "gitlab", [fake_tool], {"gitlab"})
+
+        with (
+            patch(
+                "deep_agent.aegra.redis.cache_smembers",
+                return_value={"gitlab"},
+            ),
+            patch("deep_agent.aegra.mcp.settings") as mock_settings,
+        ):
+            mock_settings.agent_deployment_id = "test-agent"
+            result = await mcp_mod.get_mcp_tools(
+                sso_token=None, server_names=["gitlab"], user_id="user1"
+            )
+
+        assert result == [fake_tool]
+        self._cleanup()
+
+    @pytest.mark.asyncio
+    async def test_cache_evicted_when_redis_set_differs(self):
+        """If the Redis set changed (server added), evict cache and reload."""
+        stale_tool = MagicMock()
+        stale_tool.name = "stale"
+        self._seed_cache("user1", "gitlab", [stale_tool], {"gitlab"})
+
+        fresh_tool = MagicMock()
+        fresh_tool.name = "fresh"
+
+        with (
+            patch(
+                "deep_agent.aegra.redis.cache_smembers",
+                return_value={"gitlab", "jira"},
+            ),
+            patch("deep_agent.aegra.mcp.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={
+                    "gitlab": {
+                        "enabled": True,
+                        "url": "http://mcp:8080",
+                        "auth_mode": "sso",
+                    },
+                },
+            ),
+            patch(
+                "deep_agent.aegra.mcp._connect_single_server",
+                new_callable=AsyncMock,
+                return_value=[fresh_tool],
+            ),
+            patch(
+                "deep_agent.aegra.mcp._resolve_connection_token",
+                new_callable=AsyncMock,
+                return_value="tok",
+            ),
+        ):
+            mock_settings.agent_deployment_id = "test-agent"
+            result = await mcp_mod.get_mcp_tools(
+                sso_token="tok", server_names=["gitlab"], user_id="user1"
+            )
+
+        assert result == [fresh_tool]
+        assert stale_tool not in result
+        self._cleanup()
+
+    @pytest.mark.asyncio
+    async def test_cache_evicted_when_server_removed(self):
+        """If the Redis set shrinks (server disconnected), evict cache and reload."""
+        stale_tool = MagicMock()
+        stale_tool.name = "stale"
+        self._seed_cache("user1", "gitlab", [stale_tool], {"gitlab", "jira"})
+
+        fresh_tool = MagicMock()
+        fresh_tool.name = "fresh"
+
+        with (
+            patch(
+                "deep_agent.aegra.redis.cache_smembers",
+                return_value={"gitlab"},
+            ),
+            patch("deep_agent.aegra.mcp.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={
+                    "gitlab": {
+                        "enabled": True,
+                        "url": "http://mcp:8080",
+                        "auth_mode": "sso",
+                    },
+                },
+            ),
+            patch(
+                "deep_agent.aegra.mcp._connect_single_server",
+                new_callable=AsyncMock,
+                return_value=[fresh_tool],
+            ),
+            patch(
+                "deep_agent.aegra.mcp._resolve_connection_token",
+                new_callable=AsyncMock,
+                return_value="tok",
+            ),
+        ):
+            mock_settings.agent_deployment_id = "test-agent"
+            result = await mcp_mod.get_mcp_tools(
+                sso_token="tok", server_names=["gitlab"], user_id="user1"
+            )
+
+        assert result == [fresh_tool]
+        self._cleanup()
+
+    @pytest.mark.asyncio
+    async def test_set_order_does_not_matter(self):
+        """{'gitlab', 'jira'} == {'jira', 'gitlab'} — no false invalidation."""
+        fake_tool = MagicMock()
+        fake_tool.name = "tool1"
+        self._seed_cache("user1", "gitlab,jira", [fake_tool], {"jira", "gitlab"})
+
+        with (
+            patch(
+                "deep_agent.aegra.redis.cache_smembers",
+                return_value={"gitlab", "jira"},
+            ),
+            patch("deep_agent.aegra.mcp.settings") as mock_settings,
+        ):
+            mock_settings.agent_deployment_id = "test-agent"
+            result = await mcp_mod.get_mcp_tools(
+                sso_token=None, server_names=["gitlab", "jira"], user_id="user1"
+            )
+
+        assert result == [fake_tool]
+        self._cleanup()
+
+    @pytest.mark.asyncio
+    async def test_snapshot_saved_after_fresh_load(self):
+        """After a fresh tool load, the connected set snapshot is persisted."""
+        fresh_tool = MagicMock()
+        fresh_tool.name = "tool1"
+
+        with (
+            patch(
+                "deep_agent.aegra.redis.cache_smembers",
+                return_value={"gitlab"},
+            ),
+            patch("deep_agent.aegra.mcp.settings") as mock_settings,
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={
+                    "gitlab": {
+                        "enabled": True,
+                        "url": "http://mcp:8080",
+                        "auth_mode": "sso",
+                    },
+                },
+            ),
+            patch(
+                "deep_agent.aegra.mcp._connect_single_server",
+                new_callable=AsyncMock,
+                return_value=[fresh_tool],
+            ),
+            patch(
+                "deep_agent.aegra.mcp._resolve_connection_token",
+                new_callable=AsyncMock,
+                return_value="tok",
+            ),
+        ):
+            mock_settings.agent_deployment_id = "test-agent"
+            await mcp_mod.get_mcp_tools(
+                sso_token="tok", server_names=["gitlab"], user_id="user1"
+            )
+
+        cache_key = "user1:gitlab"
+        assert cache_key in mcp_mod._cached_connected_set
+        assert mcp_mod._cached_connected_set[cache_key] == {"gitlab"}
+        self._cleanup()
 
 
 class TestResolveConnectionToken:
