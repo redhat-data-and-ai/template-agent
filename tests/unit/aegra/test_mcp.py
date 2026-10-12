@@ -684,7 +684,10 @@ class TestTokenInjectorInterceptorFallback:
         handler = AsyncMock(return_value="response")
         request = MagicMock()
 
+        mcp_mod._current_access_token.set("sso-tok-should-not-leak")
+
         result = await interceptor(request, handler)
 
         handler.assert_called_once_with(request)
+        request.override.assert_not_called()
         assert result == "response"
