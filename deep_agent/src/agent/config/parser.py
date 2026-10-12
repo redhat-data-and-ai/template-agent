@@ -10,35 +10,12 @@ Why this exists:
 
 Functions:
     parse_frontmatter: Parse markdown file with YAML frontmatter
-    inject_runtime_values: Replace template variables with actual values
 """
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
-
-
-def get_current_date() -> str:
-    """Get the current date in a formatted string.
-
-    Returns:
-        The current date formatted as "Month Day, Year" (e.g., "December 25, 2024").
-    """
-    return datetime.now().strftime("%B %d, %Y")
-
-
-def inject_runtime_values(content: str) -> str:
-    """Inject runtime values into content.
-
-    Args:
-        content: String content with template variables.
-
-    Returns:
-        Content with template variables replaced.
-    """
-    return content.replace("{{current_date}}", get_current_date())
 
 
 def parse_frontmatter(path: Path) -> dict[str, Any]:

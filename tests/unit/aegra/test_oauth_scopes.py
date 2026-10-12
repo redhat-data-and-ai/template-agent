@@ -78,7 +78,14 @@ class TestValidateGrantedScopes:
             )
         assert any("missing requested scopes" in r.message for r in caplog.records)
 
-    def test_rejects_empty_granted_when_scopes_requested(self, caplog):
+    def test_assumes_requested_when_granted_absent(self):
+        # RFC 6749 §5.1: omitted scope => assume requested were granted
+        assert validate_granted_scopes(None, ["read", "write"], "oauth-mcp") == [
+            "read",
+            "write",
+        ]
+
+    def test_rejects_empty_granted_list(self, caplog):
         with caplog.at_level("ERROR"):
-            assert validate_granted_scopes(None, ["read"], "oauth-mcp") is None
-        assert any("returned no scopes" in r.message for r in caplog.records)
+            assert validate_granted_scopes([], ["read"], "oauth-mcp") is None
+        assert any("missing requested scopes" in r.message for r in caplog.records)

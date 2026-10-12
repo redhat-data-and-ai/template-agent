@@ -78,6 +78,7 @@ Issues = "https://github.com/redhat-data-and-ai/template-agent/issues"
 
 [dependency-groups]
 dev = [
+    "pytest-asyncio>=1.4.0",
     "pytest-cov>=6.2.1",
 ]
 

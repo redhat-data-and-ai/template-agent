@@ -76,10 +76,10 @@ class Settings(BaseSettings):
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
 
     # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────
-    SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_MEDIUM_AND_ABOVE")
-    SAFETY_HATE_SPEECH: SafetyThreshold = Field(default="BLOCK_MEDIUM_AND_ABOVE")
-    SAFETY_HARASSMENT: SafetyThreshold = Field(default="BLOCK_LOW_AND_ABOVE")
-    SAFETY_SEXUALLY_EXPLICIT: SafetyThreshold = Field(default="BLOCK_LOW_AND_ABOVE")
+    SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
+    SAFETY_HATE_SPEECH: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
+    SAFETY_HARASSMENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
+    SAFETY_SEXUALLY_EXPLICIT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
 
     # ── Database (PostgreSQL) ─────────────────────────────────────────
     POSTGRES_HOST: str = Field(default="pgvector")

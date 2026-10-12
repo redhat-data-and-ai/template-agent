@@ -89,7 +89,7 @@ jobs:
           format: table
           severity: CRITICAL,HIGH
           scanners: vuln
-          trivyignores: .trivyignore
+          trivyignores: .trivyignore,eval-runner/.trivyignore
           exit-code: '1'
 
       - name: Generate Trivy JSON report
