@@ -33,6 +33,7 @@ GEMINI_MODELS: list[str] = [
     "gemini-2.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
+    "gemini-3.8-flash",
 ]
 
 CLAUDE_MODELS: list[str] = [
