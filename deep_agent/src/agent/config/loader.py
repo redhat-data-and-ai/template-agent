@@ -656,6 +656,15 @@ class AgentConfig:
         self._ensure_loaded()
         return self._mcp_servers
 
+    def get_available_skills(self) -> list[str]:
+        """Get the available skills in the agent configuration.
+
+        Returns:
+            Dict of available skills.
+        """
+        self._ensure_loaded()
+        return list(self._available_skills.keys())
+
     def get_providers_config(self) -> ProvidersFileConfig:
         """Get the pre-loaded providers configuration.
 
