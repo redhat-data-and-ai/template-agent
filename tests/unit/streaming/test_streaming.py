@@ -1,7 +1,9 @@
 """Unit tests for streaming components."""
 
+import json
+
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langgraph.types import Overwrite
 
 from deep_agent.src.streaming import (
@@ -544,7 +546,7 @@ class TestUpdateEventHandler:
     """Tests for UpdateEventHandler."""
 
     def test_handle_interrupt_event(self, deduplicator, stream_context):
-        """Test handling of interrupt events."""
+        """Test handling of interrupt events as first-class SSE events."""
         handler = UpdateEventHandler(deduplicator)
 
         event = {
@@ -556,8 +558,65 @@ class TestUpdateEventHandler:
         events = handler.handle(event, stream_context)
 
         assert len(events) == 1
-        assert events[0]["type"] == "message"
-        assert events[0]["content"]["content"] == "Please confirm action"
+        assert events[0]["type"] == "interrupt"
+        assert events[0]["content"]["value"] == "Please confirm action"
+        assert events[0]["content"]["thread_id"] == stream_context.thread_id
+        assert events[0]["content"]["run_id"] == stream_context.run_id
+        assert events[0]["content"]["trace_id"] == stream_context.trace_id
+        assert events[0]["content"]["session_id"] == stream_context.session_id
+        assert events[0]["content"]["user_id"] == stream_context.user_id
+
+    def test_handle_interrupt_event_parses_json_string(
+        self, deduplicator, stream_context
+    ):
+        """MCP auth interrupts arrive as JSON strings and should be parsed."""
+        handler = UpdateEventHandler(deduplicator)
+        payload = {
+            "type": "mcp_auth_required",
+            "mcp_name": "alpaca",
+            "connect_url": "/mcp/alpaca/connect",
+            "message": "Connect to alpaca to use these tools",
+        }
+
+        event = {
+            "__interrupt__": [type("Interrupt", (), {"value": json.dumps(payload)})()]
+        }
+
+        events = handler.handle(event, stream_context)
+
+        assert len(events) == 1
+        assert events[0]["type"] == "interrupt"
+        assert events[0]["content"]["value"] == payload
+
+    def test_handle_interrupt_event_malformed_json_string(
+        self, deduplicator, stream_context
+    ):
+        """Malformed JSON strings should be returned unchanged."""
+        handler = UpdateEventHandler(deduplicator)
+        malformed = "{not valid json"
+
+        event = {"__interrupt__": [type("Interrupt", (), {"value": malformed})()]}
+
+        events = handler.handle(event, stream_context)
+
+        assert len(events) == 1
+        assert events[0]["type"] == "interrupt"
+        assert events[0]["content"]["value"] == malformed
+
+    def test_handle_interrupt_event_raw_interrupt_object(
+        self, deduplicator, stream_context
+    ):
+        """Interrupts without a .value attribute are passed through as-is."""
+        handler = UpdateEventHandler(deduplicator)
+        raw_interrupt = {"type": "hitl", "prompt": "Approve?"}
+
+        event = {"__interrupt__": [raw_interrupt]}
+
+        events = handler.handle(event, stream_context)
+
+        assert len(events) == 1
+        assert events[0]["type"] == "interrupt"
+        assert events[0]["content"]["value"] == raw_interrupt
 
     def test_handle_regular_messages(self, deduplicator, stream_context):
         """Test handling of regular message updates."""
