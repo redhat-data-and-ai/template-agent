@@ -375,7 +375,7 @@ def _populate(
         seen += 1
         if seen > settings.UPLOAD_MAX_FILE_COUNT:
             raise UploadRejected(
-                f"archive exceeds {settings.UPLOAD_MAX_FILE_COUNT} entries"
+                f"upload exceeds {settings.UPLOAD_MAX_FILE_COUNT} entries"
             )
 
         # Directory entries carry nothing to write -- the directories are
@@ -494,20 +494,46 @@ def _upload_lock(data_root: Path) -> Iterator[None]:
             raise UploadBusy("another upload is in progress") from None
         if age < settings.UPLOAD_LOCK_TIMEOUT_SECONDS:
             raise UploadBusy("another upload is in progress") from None
+
+        # Steal the stale lock by RENAMING it aside, not by unlinking it.
+        # Unlinking by path is unsafe: if two holders both see the same
+        # stale lock, the second one's unlink deletes the *fresh* lock the
+        # first just created, and both go on to publish concurrently.
+        # rename() is atomic and names a specific directory entry, so of N
+        # racing stealers exactly one succeeds and the rest get ENOENT.
+        stolen = data_root / f"{_LOCK_NAME}.stale-{uuid.uuid4().hex}"
+        try:
+            os.rename(lock, stolen)
+        except OSError:
+            # Someone else stole it first; they now hold it.
+            raise UploadBusy("another upload is in progress") from None
         logger.warning("upload_lock_stale_broken", age_seconds=int(age))
-        lock.unlink(missing_ok=True)
+        Path(stolen).unlink(missing_ok=True)
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
-            # Another writer broke the stale lock first and took it.
+            # Stole the stale entry but lost the race to recreate it.
             raise UploadBusy("another upload is in progress") from None
 
+    # Identify *our* lock by inode so release cannot delete a successor's.
+    # Without this, a release after our lock was stolen would unlink the
+    # new holder's file and let a third upload in alongside them.
     try:
+        our_inode = os.fstat(fd).st_ino
         os.write(fd, f"{os.getpid()}\n".encode())
+    finally:
         os.close(fd)
+
+    try:
         yield
     finally:
-        lock.unlink(missing_ok=True)
+        try:
+            if lock.stat().st_ino == our_inode:
+                lock.unlink(missing_ok=True)
+            else:
+                logger.warning("upload_lock_not_ours_on_release")
+        except FileNotFoundError:
+            pass
 
 
 def _ingest(

@@ -677,6 +677,59 @@ class TestLocking:
         # Whichever won, the tree is exactly one upload's content.
         assert _live(data_root) in ({"a.md": "A" * 500}, {"b.md": "B" * 500})
 
+    def test_stale_lock_loser_does_not_also_acquire(self, data_root):
+        """Of several callers breaking the same stale lock, only one wins.
+
+        Deterministic rather than raced: os.rename is made to fail exactly
+        as it would if another caller had stolen the entry a moment
+        earlier. Breaking the lock by unlinking the path cannot express
+        that failure -- the unlink simply succeeds and both callers
+        proceed, which is the bug.
+        """
+        lock = data_root / upload_routes._LOCK_NAME
+        lock.write_text("99999\n")
+        stale = time.time() - 10_000
+        os.utime(lock, (stale, stale))
+
+        real_rename = os.rename
+
+        def someone_else_got_there_first(src, dst):
+            if str(src) == str(lock):
+                raise FileNotFoundError(2, "No such file or directory", str(src))
+            return real_rename(src, dst)
+
+        with patch.object(upload_routes.os, "rename", someone_else_got_there_first):
+            with pytest.raises(upload_routes.UploadBusy):
+                with upload_routes._upload_lock(data_root):
+                    pytest.fail("acquired a lock another caller had already stolen")
+
+    def test_release_does_not_delete_a_successors_lock(self, data_root):
+        """If our lock was stolen, releasing must not unlink the new holder's."""
+        lock = data_root / upload_routes._LOCK_NAME
+
+        with upload_routes._upload_lock(data_root):
+            # Simulate a stale-breaker stealing ours and installing its own.
+            lock.unlink()
+            lock.write_text("other-holder\n")
+            successor_inode = lock.stat().st_ino
+
+        # Our release saw a different inode and left it alone.
+        assert lock.exists(), "release deleted the successor's lock"
+        assert lock.stat().st_ino == successor_inode
+        lock.unlink()
+
+    def test_no_stale_sidecar_files_left_behind(self, data_root):
+        lock = data_root / upload_routes._LOCK_NAME
+        lock.write_text("99999\n")
+        stale = time.time() - 10_000
+        os.utime(lock, (stale, stale))
+
+        with upload_routes._upload_lock(data_root):
+            pass
+
+        leftovers = [p.name for p in data_root.iterdir() if ".stale-" in p.name]
+        assert leftovers == []
+
     def test_orphans_are_swept(self, client, data_root):
         """Scratch left by a crashed upload is cleaned on the next one."""
         (data_root / f"{upload_routes._STAGING_PREFIX}dead").mkdir()
