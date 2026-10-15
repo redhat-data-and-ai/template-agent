@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     UPLOAD_MAX_ARCHIVE_BYTES: int = Field(default=10 * 1024 * 1024)  # 10MB
     UPLOAD_MAX_EXTRACTED_BYTES: int = Field(default=30 * 1024 * 1024)  # 30MB
     UPLOAD_MAX_FILE_BYTES: int = Field(default=5 * 1024 * 1024)  # 5MB
-    UPLOAD_MAX_FILE_COUNT: int = Field(default=5000)
+    UPLOAD_MAX_FILE_COUNT: int = Field(default=500)
     UPLOAD_LOCK_TIMEOUT_SECONDS: int = Field(
         default=300,
         ge=1,
