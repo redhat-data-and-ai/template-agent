@@ -59,16 +59,36 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     Default limit: 10MB (configurable via REQUEST_BODY_MAX_SIZE).
     """
 
-    def __init__(self, app: Any, max_size_bytes: int = 10 * 1024 * 1024):
-        """Initialize with configurable max request body size."""
+    def __init__(
+        self,
+        app: Any,
+        max_size_bytes: int = 10 * 1024 * 1024,
+        exempt_paths: set[str] | None = None,
+    ):
+        """Initialize with configurable max request body size.
+
+        Args:
+            app: The ASGI app.
+            max_size_bytes: Global body size limit.
+            exempt_paths: Paths that enforce their own limit instead (e.g.
+                /upload, which streams a larger payload with its own cap).
+        """
         super().__init__(app)
         self.max_size_bytes = max_size_bytes
-        logger.info("Request body size limit: %d bytes", max_size_bytes)
+        self.exempt_paths = exempt_paths or set()
+        logger.info(
+            "Request body size limit: %d bytes (exempt: %s)",
+            max_size_bytes,
+            sorted(self.exempt_paths) or "none",
+        )
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:
         """Check request body size before processing."""
         # Skip for GET/HEAD/OPTIONS (no body)
         if request.method in ("GET", "HEAD", "OPTIONS"):
+            return await call_next(request)
+
+        if request.url.path in self.exempt_paths:
             return await call_next(request)
 
         content_length = request.headers.get("content-length")

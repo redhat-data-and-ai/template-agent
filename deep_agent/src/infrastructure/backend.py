@@ -621,9 +621,10 @@ def _build_composite_backend(fs_config: Any) -> Any:
     state_backend = StateBackend()
     routes: dict[str, Any] = {}
 
+    roots = getattr(fs_config.backend, "roots", None) or {}
     for path_prefix, backend_name in fs_config.backend.routes.items():
         if backend_name == "filesystem_readonly":
-            dir_name = path_prefix.strip("/")
+            dir_name = roots.get(path_prefix, path_prefix.strip("/"))
             routes[path_prefix] = _build_filesystem_readonly_backend(
                 agent_config.base_dir / dir_name
             )
@@ -689,7 +690,8 @@ def _build_filesystem_readonly_backend(root_dir: Path) -> ReadOnlyFilesystemBack
 
     Args:
         root_dir: Directory to use as the filesystem root. Derived from
-            the route prefix in agent.yaml (e.g., "/skills/" → base_dir/skills).
+            the route prefix in agent.yaml (e.g., "/skills/" → base_dir/skills),
+            or from an explicit ``backend.roots`` override.
     """
     if not root_dir.is_dir():
         logger.warning(

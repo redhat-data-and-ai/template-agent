@@ -51,6 +51,13 @@ class BackendConfig(BaseModel):
     state: StateConfig = Field(default_factory=StateConfig)
     store: StoreConfig = Field(default_factory=StoreConfig)
     routes: dict[str, str] = Field(default_factory=dict)
+    roots: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-route directory override, relative to the config base "
+            'dir. Defaults to the route prefix itself (e.g. "/skills/" → skills).'
+        ),
+    )
 
 
 class PermissionRule(BaseModel):

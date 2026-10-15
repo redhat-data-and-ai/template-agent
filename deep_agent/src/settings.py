@@ -72,6 +72,36 @@ class Settings(BaseSettings):
         description="Maximum request body size in bytes (DoS protection)",
     )
 
+    # ── Upload (POST /upload → agent data directory) ──────────────────
+    UPLOAD_ENABLED: bool = Field(default=False)
+    DATA_PATH: str = Field(
+        default="/app/data",
+        description="Writable directory holding the live data tree and staging dirs",
+    )
+    UPLOAD_MAX_ARCHIVE_BYTES: int = Field(default=10 * 1024 * 1024)  # 10MB
+    UPLOAD_MAX_EXTRACTED_BYTES: int = Field(default=30 * 1024 * 1024)  # 30MB
+    UPLOAD_MAX_FILE_BYTES: int = Field(default=5 * 1024 * 1024)  # 5MB
+    UPLOAD_MAX_FILE_COUNT: int = Field(default=5000)
+    UPLOAD_LOCK_TIMEOUT_SECONDS: int = Field(
+        default=300,
+        ge=1,
+        description=(
+            "Age at which a held upload lock is treated as stale and broken, "
+            "so a process killed mid-upload cannot wedge ingestion forever."
+        ),
+    )
+    UPLOAD_ALLOWED_EXTENSIONS: str = Field(
+        default=(
+            ".md,.markdown,.rst,.txt,.csv,.json,.yaml,.yml,.toml,"
+            ".ini,.cfg,.xml,.html,.py,.js,.ts,.go,.java,.sh,.sql,.lock"
+        ),
+        description=(
+            "Comma-separated, case-insensitive. Applies to individually "
+            "uploaded files only -- archives are taken whole. Non-matching "
+            "files are skipped, not fatal."
+        ),
+    )
+
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
 

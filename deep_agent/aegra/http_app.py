@@ -26,6 +26,7 @@ from deep_agent.aegra.security_middleware import (
     SecurityHeadersMiddleware,
 )
 from deep_agent.aegra.thread_cleanup import thread_cleanup_router
+from deep_agent.aegra.upload_routes import upload_router
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import (
     bind_request_context,
@@ -188,7 +189,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
-    RequestSizeLimitMiddleware, max_size_bytes=settings.REQUEST_BODY_MAX_SIZE
+    RequestSizeLimitMiddleware,
+    max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
+    # /upload streams a larger payload and enforces UPLOAD_MAX_ARCHIVE_BYTES
+    # itself; exempting it keeps the tighter global cap on every other route.
+    exempt_paths={"/upload"},
 )
 app.include_router(thread_cleanup_router)
 app.include_router(personalization_router)
@@ -197,6 +202,7 @@ app.include_router(mcp_router)
 app.include_router(feedback_router)
 app.include_router(eval_router)
 app.include_router(eval_mgmt_router)
+app.include_router(upload_router)
 
 
 @app.get("/version")

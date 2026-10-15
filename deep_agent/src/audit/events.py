@@ -18,6 +18,12 @@ SUBAGENT_DELEGATION: Final = "subagent_delegation"
 CAPABILITY_IMPLICIT_GRANT: Final = "capability_implicit_grant"
 CAPABILITY_DENIED: Final = "capability_denied"
 
+# Emitted by the /upload HTTP routes rather than by AuditMiddleware: these are
+# externally triggered writes to the agent's data directory, not tool calls.
+DATA_UPLOAD: Final = "data_upload"
+DATA_DELETE: Final = "data_delete"
+DATA_UPLOAD_REJECTED: Final = "data_upload_rejected"
+
 # Event types audited via AuditMiddleware (orchestrator + in-process subagents).
 AUDITED_MIDDLEWARE_EVENTS: frozenset[str] = frozenset(
     {LLM_CALL, MCP_TOOL_CALL, MEMORY_WRITE, SUBAGENT_DELEGATION}
@@ -33,3 +39,6 @@ class AuditEventType:
     SUBAGENT_DELEGATION = SUBAGENT_DELEGATION
     CAPABILITY_IMPLICIT_GRANT = CAPABILITY_IMPLICIT_GRANT
     CAPABILITY_DENIED = CAPABILITY_DENIED
+    DATA_UPLOAD = DATA_UPLOAD
+    DATA_DELETE = DATA_DELETE
+    DATA_UPLOAD_REJECTED = DATA_UPLOAD_REJECTED
