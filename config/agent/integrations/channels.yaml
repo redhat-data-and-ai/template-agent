@@ -1,0 +1,62 @@
+# Inbound channels — ways for something other than the UI to start a run.
+#
+# Off by default. An inbound surface that appears without anyone deciding
+# to expose it is how an agent ends up reachable from the internet by
+# accident.
+#
+# Enabling this is two changes, not one:
+#   1. `enabled: true` here, plus at least one channel.
+#   2. The `external-route` component in deployment/, which publishes
+#      /channels and nothing else. The main agent Route stays
+#      `shard: internal`.
+#
+# Every channel verifies an HMAC signature and maps its sender to a
+# platform user. There is no unauthenticated path and no anonymous run.
+
+enabled: false
+
+channels:
+  # Slack Events API. Point your app's Request URL at
+  # https://<external-host>/channels/slack — Slack will send a signed
+  # url_verification challenge first, which this answers automatically.
+  slack:
+    type: slack
+    enabled: false
+    # The *name* of the env var, not the secret. Comes from the app's
+    # "Signing Secret", not a bot token.
+    signing_secret_env: SLACK_SIGNING_SECRET
+    # Slack's own recommendation. Older requests are replays.
+    max_age_seconds: 300
+    assistant_id: agent
+    timeout_seconds: 300
+    identity:
+      # Slack user ID -> platform user id. Find an ID in Slack under
+      # Profile -> More -> Copy member ID.
+      map: {}
+        # U01ABCDEFGH: alice@example.com
+      # Unset means unmapped senders are refused. Setting it makes every
+      # Slack run look like one person in the audit trail — do that only
+      # if you genuinely do not need per-user attribution.
+      default_user: null
+
+  # Generic signed webhook, for CI jobs and internal services.
+  #
+  #   POST /channels/webhook
+  #   X-Timestamp: <unix seconds>
+  #   X-Signature: <hex HMAC-SHA256 of "{timestamp}.{raw body}">
+  #   {"sender": "ci-bot", "text": "...", "conversation": "build-4821",
+  #    "callback_url": "https://..."}
+  #
+  # `conversation` is optional; supplying a stable one keeps context
+  # across calls instead of starting a new thread each time.
+  webhook:
+    type: webhook
+    enabled: false
+    signing_secret_env: WEBHOOK_SIGNING_SECRET
+    max_age_seconds: 300
+    assistant_id: agent
+    timeout_seconds: 600
+    identity:
+      map: {}
+        # ci-bot: automation@example.com
+      default_user: null

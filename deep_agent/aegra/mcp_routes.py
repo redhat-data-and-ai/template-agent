@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from deep_agent.src.agent.config import agent_config
@@ -107,6 +107,179 @@ async def mcp_connections(request: Request) -> JSONResponse:
     return JSONResponse(content=result)
 
 
+@router.get("/.well-known/oauth-client")
+async def oauth_client_metadata() -> JSONResponse:
+    """This agent's OAuth client, as a document (CIMD).
+
+    An authorization server that supports Client ID Metadata
+    Documents accepts a **URL** as the `client_id` and fetches that
+    URL to learn who the client is. No registration step, no issued
+    secret, nothing to go stale.
+
+    This is how a client gets into a provider that publishes no
+    `registration_endpoint` — Sumologic and ServiceNow both advertise
+    `client_id_metadata_document_supported`, which is why an MCP
+    client can reach them from a bare URL while dynamic registration
+    is impossible.
+
+    Deliberately unauthenticated: the authorization server fetches it
+    server-to-server, with no credentials, before any user is
+    involved. It contains nothing secret — it is the public
+    description of this client.
+    """
+    from deep_agent.src.settings import settings as _settings
+
+    base = _settings.agent_public_base_url
+    document = {
+        "client_id": f"{base}/.well-known/oauth-client",
+        "client_name": _settings.agent_deployment_id or "Agent",
+        "client_uri": base,
+        "redirect_uris": [_settings.oauth_callback_url],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        # No secret exists to present, which is the point.
+        "token_endpoint_auth_method": "none",
+    }
+    return JSONResponse(content=document)
+
+
+# Fetched icons, kept for the life of the process. A favicon is a
+# few kilobytes and does not change; re-fetching one per page load
+# would put thirteen third-party requests behind every render.
+_ICON_CACHE: dict[str, tuple[bytes, str]] = {}
+
+# Enough for any favicon. A URL that returns something larger is not
+# serving an icon.
+_MAX_ICON_BYTES = 256 * 1024
+
+
+@router.get("/mcp/{mcp_name}/icon")
+async def mcp_icon(mcp_name: str, request: Request) -> Response:
+    """Serve a server's icon from this origin.
+
+    Proxied rather than linked. The UI's CSP allows images from
+    `self` only, and widening it to `https:` to show a favicon would
+    trade a real control for decoration. It also keeps the browser
+    from announcing to thirteen vendors every time somebody opens
+    Settings, and it is the only way the internal hosts work at all:
+    their certificates chain to the corporate CA, which the pod
+    trusts and a laptop browser may not.
+    """
+    await _authenticated_user_id(request)
+
+    from deep_agent.src.agent.config import agent_config
+
+    cached = _ICON_CACHE.get(mcp_name)
+    if cached is None:
+        cfg = (agent_config.get_mcp_servers() or {}).get(mcp_name) or {}
+        url = str(cfg.get("icon") or "")
+        if not url.startswith("https://"):
+            raise HTTPException(status_code=404, detail="No icon for this server")
+
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                # A plain fetch with a browser agent: some CDNs serve
+                # a 403 to anything that does not look like one.
+                response = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            if response.status_code >= 400 or len(response.content) > _MAX_ICON_BYTES:
+                raise HTTPException(status_code=404, detail="Icon unavailable")
+            media = response.headers.get("content-type", "image/x-icon").split(";")[0]
+            if not media.startswith("image/"):
+                raise HTTPException(status_code=404, detail="Not an image")
+            cached = (response.content, media)
+            _ICON_CACHE[mcp_name] = cached
+        except HTTPException:
+            raise
+        except Exception as exc:
+            from deep_agent.utils.pylogger import get_python_logger
+
+            get_python_logger().debug("Icon fetch failed for %s: %s", mcp_name, exc)
+            raise HTTPException(status_code=404, detail="Icon unavailable") from None
+
+    body, media = cached
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/mcp/servers")
+async def mcp_servers(request: Request) -> JSONResponse:
+    """Every configured MCP server, enabled or not.
+
+    `/mcp/oauth/connections` only reports servers that use OAuth and
+    have a connection record, so a server that is configured and
+    switched off is invisible everywhere — which looks exactly like a
+    server that was never configured. An operator who has just added
+    one to `mcp.json` has no way to tell the two apart.
+
+    Secrets are omitted: no api keys, no client secrets, no tokens.
+    The URL is included because a wrong URL is the usual reason a
+    server does not work, and it is already in a committed file.
+    """
+    await _authenticated_user_id(request)
+
+    from deep_agent.src.agent.config import agent_config
+
+    try:
+        servers = agent_config.get_mcp_servers() or {}
+    except Exception as exc:
+        # Module-level `logger` does not exist here — the one in this
+        # file is local to another function.
+        from deep_agent.utils.pylogger import get_python_logger
+
+        get_python_logger().warning("Could not read MCP servers: %s", exc)
+        servers = {}
+
+    listed = [
+        {
+            "name": name,
+            "url": cfg.get("url", ""),
+            # For the people choosing what to connect. The agent
+            # learns what a server does from its tools, not from
+            # these.
+            "display_name": cfg.get("display_name") or name,
+            "description": cfg.get("description", ""),
+            "has_icon": bool(cfg.get("icon")),
+            "transport": cfg.get("transport", ""),
+            "enabled": bool(cfg.get("enabled", False)),
+            # Effective values, not raw ones. `auth` defaults to
+            # true and `tool_prefix` falls back to the server name at
+            # use time, so reporting the literal config made a
+            # URL-only entry look unauthenticated and unprefixed —
+            # and the UI, reading auth_mode "none", greyed out its
+            # own Connect button.
+            "auth_mode": cfg.get("auth_mode", "dcr")
+            if cfg.get("auth", True)
+            else "none",
+            "tool_prefix": cfg.get("tool_prefix") or name,
+        }
+        for name, cfg in servers.items()
+        if isinstance(cfg, dict)
+    ]
+    # Ordered by the name on screen. Sorting by key put "gworkspace"
+    # under G when the row reads "Google Workspace", which is a list
+    # that looks unsorted to the person reading it.
+    listed.sort(key=lambda s: s["display_name"].lower())
+
+    from deep_agent.src.settings import settings as _settings
+
+    return JSONResponse(
+        content={
+            "servers": listed,
+            "enabled_count": sum(1 for s in listed if s["enabled"]),
+            # Whether re-registration is available, so the UI can
+            # offer the action instead of rendering a button that
+            # always 403s. Off by default: each re-registration mints
+            # a new client at the provider and orphans the old one.
+            "reregister_enabled": bool(_settings.ENABLE_DCR_REREGISTER_API),
+        }
+    )
+
+
 @router.post("/mcp/{mcp_name}/reregister")
 async def mcp_reregister(mcp_name: str, request: Request) -> JSONResponse:
     """Delete stale DCR client credentials and re-register with current config URLs."""
@@ -161,6 +334,58 @@ async def get_agent_info() -> dict[str, Any]:
 
     oauth_mcps = [name for name, _ in _interactive_oauth_servers()]
     return {"name": agent_config.get_name(), "oauth_mcps": oauth_mcps}
+
+
+@router.get("/mcp/{mcp_name}/capabilities")
+async def mcp_capabilities(mcp_name: str, request: Request) -> JSONResponse:
+    """Counts of tools, resources and prompts for a connected server.
+
+    Reaching the server requires a working connection, so a failure
+    here is reported as empty counts rather than an error: the row in
+    Settings should still render, showing that the server is connected
+    but did not answer.
+    """
+    from deep_agent.aegra.mcp_host import count_capabilities
+
+    user_id = await _authenticated_user_id(request)
+    try:
+        counts = await count_capabilities(
+            mcp_name,
+            user_id=user_id,
+            sso_token=_sso_bearer_from_request(request),
+        )
+    except HTTPException as exc:
+        as_json = _http_exception_response(exc)
+        if as_json is not None:
+            return as_json
+        raise
+    except Exception as exc:
+        from deep_agent.utils.pylogger import get_python_logger
+
+        get_python_logger().info(
+            "Could not read capabilities for '%s': %s", mcp_name, exc
+        )
+        counts = {"tools": None, "resources": None, "prompts": None}
+
+    return JSONResponse(content={"mcp_name": mcp_name, **counts})
+
+
+@router.get("/mcp/{mcp_name}/inventory")
+async def mcp_inventory(mcp_name: str, request: Request) -> JSONResponse:
+    """What a connected server actually offers, with descriptions."""
+    from deep_agent.aegra.mcp_host import inventory
+
+    user_id = await _authenticated_user_id(request)
+    try:
+        found = await inventory(
+            mcp_name, user_id=user_id, sso_token=_sso_bearer_from_request(request)
+        )
+    except HTTPException as exc:
+        as_json = _http_exception_response(exc)
+        if as_json is not None:
+            return as_json
+        raise
+    return JSONResponse(content={"mcp_name": mcp_name, **found})
 
 
 @router.post("/mcp/{mcp_name}/tools/list")

@@ -1,0 +1,18 @@
+{
+  "skill_name": "data-discovery",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need customer churn data. The catalogue has a table dim_acct_lifecycle_v3 that matches semantically. It has no listed owner, was last updated 14 months ago, and is classified as containing PII. Can I use it?",
+      "expected_output": "An answer that leads with the PII classification and treats unowned plus stale as a serious caveat rather than a footnote.",
+      "files": [],
+      "assertions": [
+        "States the PII classification prominently rather than only at the end",
+        "Flags that the table has no owner as a risk",
+        "Flags the 14 month staleness as a risk",
+        "Does not present the table as straightforwardly safe to use",
+        "Gives the user a way forward, such as finding an owner or an alternative"
+      ]
+    }
+  ]
+}

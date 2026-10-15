@@ -7,5 +7,18 @@ data:
   # Config path — mount config/agent at this path (see Containerfile)
   CONFIG_PATH: "/app/config/agent"
 
+  # Prometheus metrics on /metrics. On by default: the in-flight run
+  # gauge drives autoscaling, and an unscraped agent cannot scale on
+  # anything but CPU. Aegra itself defaults this to false.
+  ENABLE_PROMETHEUS_METRICS: "true"
+
+  # Dispatch runs through the Redis worker queue rather than local asyncio
+  # tasks. On by default, and not optional in practice: the queue is what
+  # gives a run a lease, and a run with no lease cannot be reclaimed by the
+  # LeaseReaper when the pod holding it dies — crash recovery is silently a
+  # no-op. Multi-instance SSE needs it too, and every overlay runs more than
+  # one replica. Aegra itself defaults this to false.
+  REDIS_BROKER_ENABLED: "true"
+
   # Note: PostgreSQL and Redis environment variables are added by
   # optional components when postgres or redis components are included

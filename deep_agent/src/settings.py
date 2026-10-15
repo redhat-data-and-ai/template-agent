@@ -171,6 +171,13 @@ class Settings(BaseSettings):
     VLLM_BASE_URL: Optional[str] = Field(default=None)
     VLLM_API_KEY: str = Field(default="EMPTY")
 
+    # Replaces every model name in config — orchestrator, subagents, fallbacks
+    # — with this one. Exists so a cluster with no provider credentials can
+    # still exercise the agent end to end against a stub served over
+    # VLLM_BASE_URL. Leave unset everywhere except test environments; the
+    # whole point of naming models in config is lost if this is on.
+    MODEL_OVERRIDE: Optional[str] = Field(default=None)
+
     # ── Granite Guardian guardrails ───────────────────────────────────
     # Guardrails are active when GUARDIAN_API_BASE is set.
     # Model and behavior config live in config/agent/runtime/guardrails.yaml.

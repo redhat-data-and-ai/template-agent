@@ -61,6 +61,11 @@ async def run_startup() -> dict[str, str]:
     results["otel"] = _setup_otel()
     results["telemetry"] = _setup_telemetry()
     results["graph_warmup"] = _warmup_graph_imports()
+    # Separate from the cache step on purpose: that one returns early
+    # when CACHE_ENABLED is false, and building the graph is worth doing
+    # whether or not the model cache is on.
+    results["graph_build"] = await _warm_graph()
+    results["inflight_metrics"] = _start_inflight_metrics()
 
     _upgrade_signal_handlers()
 
@@ -396,6 +401,30 @@ async def _ensure_database() -> str:
         raise
 
 
+def _start_inflight_metrics() -> str:
+    """Publish `aegra_runs_in_flight` for autoscaling to measure.
+
+    Optional: an agent without Prometheus or KEDA does not need it, and
+    a failure here must never block startup.
+    """
+    import os
+
+    # On by default: the gauge drives autoscaling, so an operator who
+    # forgets the flag gets working scale-down rather than a silent
+    # fallback to CPU-only scaling.
+    if os.getenv("ENABLE_PROMETHEUS_METRICS", "true").lower() not in ("true", "1"):
+        return "skipped: metrics disabled"
+
+    try:
+        from deep_agent.aegra.inflight_metrics import start_inflight_metrics
+
+        start_inflight_metrics()
+    except Exception as exc:
+        logger.warning("In-flight metrics unavailable: %s", exc)
+        return f"error: {exc}"
+    return "ok"
+
+
 async def _warm_caches() -> str:
     """Pre-populate caches if caching is enabled."""
     try:
@@ -411,6 +440,38 @@ async def _warm_caches() -> str:
     except Exception as exc:
         logger.warning("Cache warming failed: %s", exc)
         return f"warning: {exc}"
+
+
+async def _warm_graph() -> str:
+    """Build the graph once before any request arrives.
+
+    The first request to a fresh pod otherwise pays for the full build —
+    config load, tool resolution, MCP discovery — and measured ~500ms
+    against ~45ms warm. That is paid on every deploy, every scale-up,
+    and with the scale-to-zero component on *every* first request after
+    an idle period, which is exactly when someone is watching.
+
+    The cache key is derived from resolved config, not from the caller,
+    so a build with no user populates the same entry the first real
+    request will look for. Users who have turned memory off resolve to a
+    second key and still pay once; warming the default covers the common
+    case.
+    """
+    try:
+        from deep_agent.aegra.graph import agent
+
+        class _NoUser:
+            """Minimal runtime: the factory skips MCP when user is None."""
+
+            user = None
+
+        await agent(_NoUser())
+        return "graph warmed"
+    except Exception as exc:
+        # Never fatal. A pod that cannot pre-build will still serve,
+        # just with the old first-request cost.
+        logger.warning("Graph warm-up skipped: %s", exc)
+        return f"graph not warmed: {exc}"
 
 
 def _setup_otel() -> str:
@@ -433,11 +494,13 @@ def _setup_telemetry() -> str:
             setup_langfuse_tracing,
             setup_pii_middleware,
             setup_token_budget_tracking,
+            setup_usage_recording,
         )
 
         setup_pii_middleware()  # must be first — Langfuse handler depends on the scrubber
         setup_langfuse_tracing()
         setup_token_budget_tracking()
+        setup_usage_recording()
         setup_guardian_guardrails()
         return "ok"
     except Exception as exc:

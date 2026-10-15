@@ -410,6 +410,14 @@ async def agent(runtime: ServerRuntime) -> Any:
         )
         tools.extend(resource_tools)
 
+    # No `search_knowledge`. Documents are attached to the conversation
+    # that needs them and read with `read_file`; there is no separate
+    # library to search, and no UI that can put anything in one. A tool
+    # that is always present and can never return a result is worse
+    # than an absent one — the model calls it, gets nothing, and
+    # reports that it found no relevant documents rather than reading
+    # the file the user just attached.
+
     tools = enforce_capability(tools, capability_manifest)
 
     # When an explicit tools: list restricts capabilities, inject a system
@@ -485,6 +493,40 @@ async def agent(runtime: ServerRuntime) -> Any:
         mcp_tool_names=frozenset(t.name for t in mcp_tools)
         | frozenset(t.name for t in resource_tools),
     )
+    # Announce attachments to the model. Without it an uploaded file is
+    # invisible and the user has to name its path, which is not
+    # something anyone should have to know.
+    from deep_agent.src.attachments.config import AttachmentsConfig
+    from deep_agent.src.attachments.middleware import build_attachment_middleware
+
+    try:
+        mount = AttachmentsConfig(
+            **(agent_config.get_raw_section("attachments") or {})
+            if hasattr(agent_config, "get_raw_section")
+            else {}
+        ).mount_path
+    except Exception:
+        mount = AttachmentsConfig().mount_path
+    middleware.append(build_attachment_middleware(mount))
+
+    # Name the integrations that actually work. Every enabled MCP
+    # server contributes a tool whether or not anyone has connected
+    # to it, so without this the model cannot tell a usable
+    # integration from one that will answer "authorization
+    # required" — it picks one, fails, and has nothing useful to
+    # tell the user.
+    if mcp_tools:
+        from deep_agent.src.mcp_status.middleware import build_mcp_status_middleware
+
+        # The identity is passed in, not discovered inside the
+        # middleware. The contextvar is not reliably set by the time
+        # a model call is wrapped, and resolving to the wrong user
+        # finds no tokens and reports everything as disconnected —
+        # confidently, which is worse than silence. This is the same
+        # value `get_mcp_tools` was given above, so the notice and
+        # the tool list cannot disagree.
+        middleware.append(build_mcp_status_middleware(user_identity))
+
     memory = resolve_memory_param(resolved_mw) if user_memory_enabled else None
 
     if skill_paths and resolved_mw.skills_enabled:

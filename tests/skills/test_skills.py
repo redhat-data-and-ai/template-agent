@@ -19,10 +19,21 @@ from deep_agent.src.infrastructure.backend import get_backend
 # Skills are self-contained - no external tools needed
 # ============================================================================
 #
-# All skills use only local scripts and reference documents:
-# - client-intake: uses scripts/convert_units.py and reference docs
-# - bmi-report: uses reference docs (bmi_categories.md, health_tips, etc.)
-# - email-formatter: uses reference docs (template.html, css rules, etc.)
+# The skills drive live integrations (GitLab, Datadog, Atlan, Miro,
+# Google Workspace, Atlassian), and this harness has none of them: it
+# builds an agent from the skill alone.
+#
+# So the evals do not test tool use. They test the judgment each skill
+# encodes — the guardrails whose failure is dangerous — by stating the
+# scenario in the prompt and judging the response. "Refuses to merge",
+# "does not report a proposal as a decision", "leads with the PII
+# classification", "says which integration was unavailable instead of
+# inventing figures".
+#
+# That is the half worth testing here anyway. Whether a tool call is
+# wired up is an integration concern; whether the agent approves a
+# merge request because someone asked nicely is a behavioural one, and
+# it is the half that does damage.
 #
 # No mock tools required for skill testing!
 

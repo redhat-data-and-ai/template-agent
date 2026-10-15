@@ -5,8 +5,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from deep_agent.src.agent.llm import (
-    CLAUDE_MODELS,
-    GEMINI_MODELS,
     create_model,
     safety_settings,
 )
@@ -36,6 +34,10 @@ class TestCreateModel:
                     max_retries=2,
                     streaming=True,
                     safety_settings=safety_settings,
+                    # 2.5-pro reasons before answering and its thinking
+                    # tokens come out of max_output_tokens. Unbounded, it
+                    # spends the lot and returns an empty message.
+                    thinking_budget=2048,
                 )
 
     def test_create_claude_model(self):
@@ -86,7 +88,7 @@ class TestCreateModel:
 
             error_msg = str(exc_info.value)
             assert "gpt-4" in error_msg
-            assert "not a known Vertex AI model" in error_msg
+            assert "is not a Vertex AI model name" in error_msg
 
     def test_model_creation_errors_are_raised(self):
         """Test that model creation errors are raised."""
@@ -104,8 +106,15 @@ class TestCreateModel:
                 with pytest.raises(LLMError, match="API error"):
                     create_model("gemini-2.5-pro")
 
-    def test_all_supported_models_work(self):
-        """Test that all models in GEMINI_MODELS and CLAUDE_MODELS are supported."""
+    def test_vertex_models_route_by_name_not_by_allowlist(self):
+        """A model released after this code was written must still work.
+
+        There used to be explicit GEMINI_MODELS / CLAUDE_MODELS lists,
+        so anything newer fell through to the vLLM branch and failed
+        with a connection error to an endpoint nobody had configured.
+        The names deliberately include ones that did not exist when the
+        lists did.
+        """
         mock_creds = MagicMock()
 
         with patch(
@@ -113,10 +122,30 @@ class TestCreateModel:
         ) as mock_get_creds:
             mock_get_creds.return_value = (mock_creds, "test-project")
 
-            with patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI"):
-                for model_name in GEMINI_MODELS:
+            with patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI") as gemini:
+                for model_name in (
+                    "gemini-2.5-pro",
+                    "gemini-2.5-flash",
+                    "gemini-3.1-pro-preview",
+                    "gemini-3.1-flash",
+                    "gemini-9-not-invented-yet",
+                ):
                     create_model(model_name)
+                assert gemini.call_count == 5
 
-            with patch("deep_agent.src.agent.llm.ChatAnthropicVertex"):
-                for model_name in CLAUDE_MODELS:
+            with patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as claude:
+                for model_name in (
+                    "claude-sonnet-4",
+                    "claude-sonnet-4-6@default",
+                    "claude-opus-5-5",
+                ):
                     create_model(model_name)
+                assert claude.call_count == 3
+
+    def test_an_unknown_name_still_needs_a_vllm_endpoint(self):
+        """Prefix routing must not swallow genuinely unknown models."""
+        mock_settings = MagicMock()
+        mock_settings.VLLM_BASE_URL = ""
+        with patch("deep_agent.src.agent.llm.settings", mock_settings):
+            with pytest.raises(ValueError, match="gemini-' or 'claude-'"):
+                create_model("llama-3.1-70b")

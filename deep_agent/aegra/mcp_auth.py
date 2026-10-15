@@ -345,7 +345,15 @@ class McpCredentialResolver:
         server_cfg: dict[str, Any],
     ) -> str | None:
         """Refresh an expired token using the stored refresh_token."""
-        oauth_cfg = server_cfg.get("oauth") or {}
+        # Discovered, like the authorize and exchange steps. A
+        # discovered server has no token_endpoint in its config, so
+        # reading the raw block here worked until the first access
+        # token expired and then failed quietly — the connection would
+        # simply stop working an hour after it was made.
+        from deep_agent.aegra.mcp_oauth_handlers import resolve_oauth_config
+
+        mcp_name = getattr(stored, "mcp_name", "")
+        oauth_cfg = await resolve_oauth_config(mcp_name, server_cfg)
         token_endpoint = oauth_cfg.get("token_endpoint")
         if not token_endpoint:
             logger.error(
@@ -393,16 +401,38 @@ class McpCredentialResolver:
 
         new_refresh = body.get("refresh_token", stored.refresh_token)
         expires_at = McpTokenStore.expires_at_from_token_response(body)
-        requested_scope_list = requested_scopes(oauth_cfg)
+        # The baseline for a refresh is what this token already holds,
+        # not what discovery advertises.
+        #
+        # A refresh request carries no `scope` parameter — see `data`
+        # above — so RFC 6749 §6 keeps the scopes of the original
+        # grant. Comparing the response against the discovery
+        # document's `scopes_supported` therefore checks it against
+        # something nobody requested. Dataverse advertises
+        # `session:role-any` and has only ever granted `read write`, so
+        # every refresh was rejected for "missing" a scope the token
+        # was never issued with, and the integration dropped out an
+        # hour after each connect.
+        #
+        # Same rule as the Harbor fix on the authorize path: what the
+        # provider actually granted wins over what it advertises. A
+        # refresh returning *less* than the token already had is a real
+        # downgrade, and still rejected.
+        held_scopes = list(stored.scopes or [])
         parsed_scopes = parse_token_scopes(body)
         if parsed_scopes is not None:
             scopes = validate_granted_scopes(
-                parsed_scopes, requested_scope_list, stored.mcp_name
+                parsed_scopes, held_scopes, stored.mcp_name
             )
-            if scopes is None and requested_scope_list:
+            if scopes is None and held_scopes:
+                # Reached only when the refresh granted nothing at all.
+                # A narrower grant is kept: discarding it would turn a
+                # partly-capable integration into a dead one, and the
+                # reconnect produces the same narrower grant.
                 logger.error(
-                    "MCP token refresh for '%s' returned insufficient scopes",
+                    "MCP token refresh for '%s' granted no scopes (had: %s)",
                     stored.mcp_name,
+                    held_scopes,
                 )
                 return None
         else:

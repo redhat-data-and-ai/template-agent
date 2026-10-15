@@ -191,6 +191,154 @@ async def list_tools(
     return payload
 
 
+async def count_capabilities(
+    mcp_name: str, *, user_id: str, sso_token: str | None
+) -> dict[str, int | None]:
+    """How many tools, resources and prompts *mcp_name* exposes.
+
+    One session for all three, because the connection handshake is the
+    expensive part and the Settings list asks this for every connected
+    server at once.
+
+    A count is `None`, not `0`, when the server does not implement that
+    capability — "no prompts" and "does not do prompts" are different
+    facts, and a column of zeroes hides which is which. Counts are of
+    the first page only; servers that paginate will under-report, and
+    that is better than walking every cursor to put a number in a list.
+    """
+    counts: dict[str, int | None] = {"tools": None, "resources": None, "prompts": None}
+
+    async with mcp_session(mcp_name, user_id=user_id, sso_token=sso_token) as session:
+        for key, method in (
+            ("tools", "list_tools"),
+            ("resources", "list_resources"),
+            ("prompts", "list_prompts"),
+        ):
+            call = getattr(session, method, None)
+            if call is None:
+                continue
+            try:
+                result = await call()
+            except Exception as exc:
+                # One unsupported capability must not cost the other
+                # two: servers routinely reject `prompts/list` with a
+                # method-not-found rather than an empty list.
+                logger.debug("MCP %s %s failed on %s: %s", mcp_name, method, key, exc)
+                continue
+            items = getattr(result, key, None)
+            if items is not None:
+                counts[key] = len(items)
+
+    logger.info("MCP capabilities server=%s %s", mcp_name, counts)
+    return counts
+
+
+async def inventory(
+    mcp_name: str, *, user_id: str, sso_token: str | None
+) -> dict[str, list[dict[str, str]]]:
+    """Name and description for every tool, resource and prompt.
+
+    One session for all three: the handshake is the expensive part,
+    and a reader opening a server wants the whole picture, not three
+    spinners.
+
+    Descriptions are what make this worth showing — a list of forty
+    tool names tells you nothing about whether the server is useful.
+    They are truncated here because a tool description can be a page
+    of prompt engineering, and this is a list, not a manual.
+    """
+    out: dict[str, list[dict[str, str]]] = {
+        "tools": [],
+        "resources": [],
+        "prompts": [],
+    }
+
+    async with mcp_session(mcp_name, user_id=user_id, sso_token=sso_token) as session:
+        for key, method in (
+            ("tools", "list_tools"),
+            ("resources", "list_resources"),
+            ("prompts", "list_prompts"),
+        ):
+            call = getattr(session, method, None)
+            if call is None:
+                continue
+            try:
+                result = await call()
+            except Exception as exc:
+                # A server that does not implement prompts answers
+                # with method-not-found; that must not cost the
+                # tools we already have.
+                logger.debug("MCP %s %s failed: %s", mcp_name, method, exc)
+                continue
+            for item in getattr(result, key, None) or []:
+                uri = str(getattr(item, "uri", "") or "")
+                # `title` is the spec's display name and wins when the
+                # server bothers to set one.
+                label = str(
+                    getattr(item, "title", "") or getattr(item, "name", "") or uri
+                )
+                if not label:
+                    continue
+                description = str(getattr(item, "description", "") or "")
+                entry: dict[str, Any] = {
+                    "name": label,
+                    "description": description[:300],
+                }
+                if uri and uri != label:
+                    entry["uri"] = uri
+
+                # The server's own statement about what the tool does,
+                # which beats guessing from the name — there is no
+                # `write_*` convention across providers, and the names
+                # are theirs: `merge_merge_request`, `create_issue`,
+                # `canvas_update_from_svg`.
+                #
+                # 261 of 323 tools across the eight configured servers
+                # populate `readOnlyHint` (gworkspace 101/101, gitlab
+                # 63/116, dataverse 0/6). Absent stays absent rather
+                # than defaulting to either value: "unknown" and
+                # "writes" must be distinguishable, because the caller
+                # treats unknown as needing approval.
+                annotations = getattr(item, "annotations", None)
+                if annotations is not None:
+                    read_only = getattr(annotations, "readOnlyHint", None)
+                    destructive = getattr(annotations, "destructiveHint", None)
+                    if read_only is not None:
+                        entry["read_only"] = bool(read_only)
+                    if destructive is not None:
+                        entry["destructive"] = bool(destructive)
+
+                out[key].append(entry)
+
+        # A label repeated across the list identifies nothing. Atlan
+        # returns six resources all called `_resource` — FastMCP uses
+        # the decorated function's name, and theirs is a private
+        # helper — while every `uri` is distinct and meaningful
+        # (`ui://atlan/asset-detail`, `ui://atlan/query-results`).
+        #
+        # Keyed on repetition rather than on the string `_resource`,
+        # because the next server will produce its own flavour of the
+        # same uselessness and a name that is unique is worth keeping
+        # even when it is ugly.
+        for key, items in out.items():
+            seen: dict[str, int] = {}
+            for entry in items:
+                seen[entry["name"]] = seen.get(entry["name"], 0) + 1
+            for entry in items:
+                if seen[entry["name"]] > 1 and entry.get("uri"):
+                    entry["name"] = entry["uri"]
+                    entry.pop("uri", None)
+
+    logger.info(
+        "MCP inventory server=%s tools=%d resources=%d prompts=%d",
+        mcp_name,
+        len(out["tools"]),
+        len(out["resources"]),
+        len(out["prompts"]),
+    )
+    return out
+
+
 async def list_resources(
     mcp_name: str,
     *,

@@ -1,0 +1,253 @@
+# An OpenAI-compatible stub, for Kind only.
+#
+# The nightly kill-and-restart tier asserts that a run interrupted by a pod
+# delete finishes anyway. It needs the agent to actually produce tokens, but
+# a durability test that depends on a paid provider gets switched off the
+# first time it flakes — and the credential cannot live in a local cluster
+# anyway. So the agent points at this instead: MODEL_OVERRIDE names a model
+# outside the built-in Gemini/Claude lists, which routes every call to
+# VLLM_BASE_URL.
+#
+# Deliberately slow so there is a window in which to kill the worker. A stub
+# that answers instantly would let the run finish before the kill lands, and
+# the nightly test would pass without testing anything.
+#
+# The delay is split the way a real model's is, which matters for anyone
+# using this cluster to look at the UI:
+#   MOCK_LLM_DELAY_MS       time to first token
+#   MOCK_LLM_CHUNK_DELAY_MS pause between tokens
+# Spending it all up front made the reply arrive in one burst — technically
+# streaming, visibly not.
+#
+# Defaults are tuned for looking at the UI. The nightly tier opts into a
+# slow response per request, with SLOW_MARKER in its prompt, rather than
+# slowing the whole cluster down while it runs.
+#
+# Runs on the agent image: it already has Python and a non-root user, so this
+# needs no second build. The script is stdlib only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-llm-script
+data:
+  server.py: |
+    """Minimal OpenAI-compatible chat-completions stub."""
+
+    import json
+    import os
+    import time
+    import uuid
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    # Time to first token, then per-token pacing. Roughly a real model.
+    # Fast by default: this cluster is also how people look at the UI,
+    # and an artificial 4s wait on "hey" is indistinguishable from a bug.
+    # `make test-nightly-kind` raises DELAY_MS for the duration of its
+    # run — see the Makefile — because that tier needs a window in which
+    # to kill the pod mid-stream.
+    DELAY_MS = int(os.getenv("MOCK_LLM_DELAY_MS", "250"))
+    CHUNK_DELAY_MS = int(os.getenv("MOCK_LLM_CHUNK_DELAY_MS", "80"))
+
+    # The nightly tier needs a run that is still going two seconds in,
+    # so it has something to interrupt. It asks for that per request, by
+    # putting SLOW_MARKER in the prompt — the earlier design raised the
+    # delay cluster-wide for the duration of the test, which meant
+    # anyone looking at the UI got a 20-second wait with no explanation.
+    SLOW_MARKER = os.getenv("MOCK_LLM_SLOW_MARKER", "__slow__")
+    SLOW_DELAY_MS = int(os.getenv("MOCK_LLM_SLOW_DELAY_MS", "20000"))
+    REPLY = os.getenv(
+        "MOCK_LLM_REPLY", "1 2 3 4 5 6 7 8 9 10"
+    )
+
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def _send(self, payload, status=200):
+            body = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path.rstrip("/").endswith("/models"):
+                self._send(
+                    {
+                        "object": "list",
+                        "data": [{"id": "mock-model", "object": "model"}],
+                    }
+                )
+                return
+            self._send({"status": "ok"})
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                request = json.loads(raw or b"{}")
+            except json.JSONDecodeError:
+                request = {}
+
+            time.sleep(self._delay_for(request) / 1000.0)
+
+            if request.get("stream"):
+                self._send_stream(request)
+                return
+
+            self._send(
+                {
+                    "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": request.get("model", "mock-model"),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": REPLY},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                }
+            )
+
+        def _delay_for(self, request):
+            """Per-request latency: slow only if this caller asked for it."""
+            blob = json.dumps(request.get("messages") or [])
+            return SLOW_DELAY_MS if SLOW_MARKER in blob else DELAY_MS
+
+        def _send_stream(self, request):
+            """SSE form of the same reply.
+
+            LangChain calls chat models with stream=True by default, and a
+            stub that only answers the non-streaming shape fails with
+            "No generations found in stream" — which looks like a model
+            problem, not a stub problem.
+            """
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+
+            completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+            model = request.get("model", "mock-model")
+
+            def chunk(delta, finish_reason=None):
+                payload = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": delta,
+                            "finish_reason": finish_reason,
+                        }
+                    ],
+                }
+                body = f"data: {json.dumps(payload)}\n\n".encode()
+                self.wfile.write(f"{len(body):X}\r\n".encode() + body + b"\r\n")
+                self.wfile.flush()
+
+            chunk({"role": "assistant", "content": ""})
+            for word in REPLY.split():
+                # Paced, so the UI shows text arriving rather than
+                # appearing. Also keeps the run in flight long enough for
+                # the crash-recovery tier to kill the pod mid-stream.
+                time.sleep(CHUNK_DELAY_MS / 1000.0)
+                chunk({"content": word + " "})
+            chunk({}, finish_reason="stop")
+
+            done = b"data: [DONE]\n\n"
+            self.wfile.write(f"{len(done):X}\r\n".encode() + done + b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+
+        def log_message(self, fmt, *args):
+            print("mock-llm " + fmt % args, flush=True)
+
+
+    if __name__ == "__main__":
+        # Not MOCK_LLM_PORT: Kubernetes injects that name for the mock-llm
+        # Service itself, as "tcp://10.x.x.x:8000".
+        port = int(os.getenv("MOCK_LLM_LISTEN_PORT", "8000"))
+        print(f"mock-llm listening on :{port} (delay {DELAY_MS}ms)", flush=True)
+        ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-llm
+spec:
+  selector:
+    component: mock-llm
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-llm
+  labels:
+    component: mock-llm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: mock-llm
+  template:
+    metadata:
+      labels:
+        component: mock-llm
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+      containers:
+        - name: mock-llm
+          image: agent
+          command: ["/app/.venv/bin/python", "/mock/server.py"]
+          env:
+            - name: MOCK_LLM_DELAY_MS
+              value: "250"
+            - name: MOCK_LLM_CHUNK_DELAY_MS
+              value: "80"
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: script
+              mountPath: /mock
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+      volumes:
+        - name: script
+          configMap:
+            name: mock-llm-script

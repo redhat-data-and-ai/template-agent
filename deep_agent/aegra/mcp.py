@@ -18,6 +18,7 @@ import asyncio
 import base64
 import contextvars
 import json
+import math
 import os
 import time
 from typing import Any
@@ -42,9 +43,17 @@ ensure_mcp_apps_capability_advertised()
 
 _SSO_TOKEN_URL: str = ""
 
-_mcp_breaker: CircuitBreaker | None = None
+_mcp_breakers: dict[str, CircuitBreaker] = {}
+
+# Used when a caller does not name a server; keeps the old behaviour
+# rather than silently sharing one server's breaker with another.
+_SHARED_BREAKER_KEY = "mcp-servers"
 
 _MCP_TOOL_CACHE_TTL: float = float(agent_config.get_cache_config().mcp.ttl)
+
+# Cache keys with a background refresh already in flight, so a burst
+# of requests triggers one rebuild rather than one each.
+_refreshing: set[str] = set()
 _MCP_AUTH_SET_TTL: int = 604800  # 7 days
 _cached_tools: dict[str | None, list[Any]] = {}
 _cached_tools_ts: dict[str | None, float] = {}
@@ -171,14 +180,22 @@ class _TokenInjectorInterceptor:
         return await handler(request)
 
 
-def _get_mcp_breaker() -> CircuitBreaker:
-    """Lazy-init the MCP circuit breaker (Redis auto-detected on first call)."""
-    global _mcp_breaker  # noqa: PLW0603
-    if _mcp_breaker is None:
-        _mcp_breaker = create_circuit_breaker(
-            "mcp-servers", threshold=5, reset_timeout=60.0
+def _get_mcp_breaker(server_name: str | None = None) -> CircuitBreaker:
+    """Lazy-init a circuit breaker for one MCP server.
+
+    Breakers are per-server. A shared breaker lets one flaky server strip
+    the tools of every other, which is the opposite of the fault isolation
+    ``_connect_single_server`` is there to provide — and the agent then
+    answers with no tools at all rather than a reduced set.
+    """
+    key = server_name or _SHARED_BREAKER_KEY
+    breaker = _mcp_breakers.get(key)
+    if breaker is None:
+        breaker = create_circuit_breaker(
+            f"mcp-server:{key}", threshold=5, reset_timeout=60.0
         )
-    return _mcp_breaker
+        _mcp_breakers[key] = breaker
+    return breaker
 
 
 def _get_token_endpoint() -> str:
@@ -201,6 +218,42 @@ def _jwt_exp(token: str) -> float:
         return float(data.get("exp", 0))
     except Exception:
         return 0.0
+
+
+def _jwt_exp_or_none(token: str) -> float | None:
+    """``exp`` from a JWT, or ``None`` when there is no readable claim.
+
+    Distinct from :func:`_jwt_exp`, which collapses "unparseable" and
+    "exp is 0" into the same ``0.0``. Those mean opposite things: one is a
+    token we cannot measure, the other is one that expired at the epoch.
+    """
+    try:
+        payload: str = token.split(".")[1]
+        payload += "=" * (4 - len(payload) % 4)
+        data: dict[str, Any] = json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return None
+    exp = data.get("exp")
+    return float(exp) if exp is not None else None
+
+
+def _token_remaining(token: str) -> float:
+    """Seconds of life left in a token, or ``inf`` if it has no readable exp.
+
+    Opaque (non-JWT) tokens carry no parseable expiry. Treating that as
+    "expired at epoch" makes every call refresh, hammering the IdP and
+    adding a round trip per tool call. We cannot measure what we cannot
+    read, so assume valid and let the server reject it if it is not.
+
+    A JWT that genuinely declares ``exp: 0`` is expired, not unreadable,
+    and still refreshes.
+    """
+    exp = _jwt_exp(token)
+    # 0.0 is ambiguous: it means both "unparseable" and "exp is literally
+    # 0". Only the former should be treated as immeasurable.
+    if exp == 0.0 and _jwt_exp_or_none(token) is None:
+        return math.inf
+    return exp - time.time()
 
 
 _SSO_REFRESH_BUFFER_SECS: float = 60.0
@@ -233,7 +286,7 @@ async def refresh_access_token(
         A valid access token (refreshed if necessary, original if refresh
         is unavailable or fails).
     """
-    remaining: float = _jwt_exp(access_token) - time.time()
+    remaining: float = _token_remaining(access_token)
     if remaining > _SSO_REFRESH_BUFFER_SECS:
         logger.debug("Access token still valid (%.0fs remaining)", remaining)
         return access_token
@@ -276,7 +329,7 @@ async def _locked_sso_refresh(
                 if cached:
                     cached_at, cached_rt = cached
                     if cached_at != access_token:
-                        check_remaining = _jwt_exp(cached_at) - time.time()
+                        check_remaining = _token_remaining(cached_at)
                         if check_remaining > _SSO_REFRESH_BUFFER_SECS:
                             logger.debug(
                                 "SSO token already refreshed by peer (no-redis path)"
@@ -288,7 +341,7 @@ async def _locked_sso_refresh(
             if cached:
                 cached_at, _ = cached
                 if cached_at != access_token:
-                    check_remaining = _jwt_exp(cached_at) - time.time()
+                    check_remaining = _token_remaining(cached_at)
                     if check_remaining > _SSO_REFRESH_BUFFER_SECS:
                         logger.info(
                             "SSO refresh lock timeout — another task refreshed (%.0fs left)",
@@ -302,7 +355,7 @@ async def _locked_sso_refresh(
             if cached:
                 cached_at, cached_rt = cached
                 if cached_at != access_token:
-                    check_remaining = _jwt_exp(cached_at) - time.time()
+                    check_remaining = _token_remaining(cached_at)
                     if check_remaining > _SSO_REFRESH_BUFFER_SECS:
                         logger.debug("SSO token already refreshed by another task")
                         return cached_at
@@ -321,7 +374,7 @@ async def _do_sso_refresh(
         from deep_agent.aegra.auth import EVAL_TOKEN_REFRESH_ENABLED, _oidc_refresh
 
         new_token, new_rt = await _oidc_refresh(refresh_token)
-        new_remaining: float = _jwt_exp(new_token) - time.time()
+        new_remaining: float = _token_remaining(new_token)
         logger.info("SSO token refreshed (%.0fs lifetime)", new_remaining)
 
         _current_access_token.set(new_token)
@@ -568,7 +621,7 @@ async def _connect_single_server(
             ``server_key`` is provided.
     """
     auth_key = server_key or mcp_server or name
-    breaker = _get_mcp_breaker()
+    breaker = _get_mcp_breaker(mcp_server or name)
     if breaker.is_open:
         logger.warning(f"[{name}] circuit breaker open — skipping connection")
         return []
@@ -788,6 +841,55 @@ async def get_mcp_tools(
     from deep_agent.aegra.redis import cache_expire, cache_smembers
 
     auth_set_key = f"mcp_auth_set:{settings.agent_deployment_id}:{user_id}"
+
+    # Stale-while-revalidate.
+    #
+    # Rebuilding the list means a session to every connected server
+    # and a tools/list on each: 27 seconds for eight servers against
+    # remote SaaS, measured. With a hard TTL that cost lands on
+    # whichever user's request happens to arrive first after it
+    # expires, and they wait half a minute for a first token through
+    # no fault of their own.
+    #
+    # So an expired-but-present list is served immediately and
+    # refreshed behind the request. The data is a tool catalogue that
+    # changes when somebody connects or disconnects a server, and
+    # both of those already invalidate the cache explicitly — being a
+    # few seconds stale costs nothing, and the next request has the
+    # fresh list.
+    if (
+        cached
+        and len(cached) > 0
+        and (time.time() - cached_ts) >= _MCP_TOOL_CACHE_TTL
+        and cache_key
+        and cache_key not in _refreshing
+    ):
+        _refreshing.add(cache_key)
+        # Bound to a narrowed local: the `and cache_key` guard above
+        # does not reach into a default-argument expression. The
+        # default itself is the point — it captures the value now
+        # rather than whatever the name holds when the task runs.
+        revalidate_key: str = cache_key
+
+        async def _revalidate(key: str = revalidate_key) -> None:
+            try:
+                _cached_tools_ts.pop(key, None)
+                await get_mcp_tools(
+                    sso_token=sso_token, server_names=server_names, user_id=user_id
+                )
+            except Exception:
+                logger.debug("Background MCP tool refresh failed", exc_info=True)
+            finally:
+                _refreshing.discard(key)
+
+        logger.info(
+            "MCP tool cache stale for %s — serving %d cached tools and "
+            "refreshing in the background",
+            cache_key,
+            len(cached),
+        )
+        asyncio.create_task(_revalidate())
+        return cached
 
     if cached and len(cached) > 0 and (time.time() - cached_ts) < _MCP_TOOL_CACHE_TTL:
         redis_set = await asyncio.to_thread(cache_smembers, auth_set_key)

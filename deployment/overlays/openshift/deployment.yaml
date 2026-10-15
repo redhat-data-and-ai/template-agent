@@ -24,6 +24,54 @@ spec:
     spec:
       serviceAccountName: agent
       terminationGracePeriodSeconds: 60
+      # Migrations run once, before any app pod starts. With replicas > 1
+      # and the startup hook enabled, every replica queues on Alembic's
+      # advisory lock and later pods are killed by the kubelet when they
+      # miss their probe deadline.
+      initContainers:
+        - name: db-migrate
+          image: agent:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/app/.venv/bin/aegra", "db", "upgrade"]
+          env:
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_PASSWORD
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "2Gi"
+              cpu: "500m"
       containers:
         - name: agent
           image: agent:latest
@@ -58,6 +106,20 @@ spec:
                 configMapKeyRef:
                   name: agent-config
                   key: LANGFUSE_TRACING_ENVIRONMENT
+            # Corporate root CAs, fetched at container start and
+            # appended to the system trust bundle by entrypoint.sh.
+            # Internal MCP servers and any internal HTTPS dependency
+            # fail the TLS handshake without it.
+            #
+            # `optional: true` so a fork with no corporate CA — or
+            # one that prefers mounting a Secret via CUSTOM_CA_PATH —
+            # still starts.
+            - name: CUSTOM_CA_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: CUSTOM_CA_URL
+                  optional: true
             - name: POSTGRES_HOST
               valueFrom:
                 configMapKeyRef:
@@ -149,6 +211,14 @@ spec:
                 configMapKeyRef:
                   name: agent-config
                   key: REDIS_URL
+            # This container has no envFrom, so a ConfigMap key that is not
+            # named here never reaches the pod. Omitting it left Aegra on its
+            # own default of false and crash recovery inert in preprod/prod.
+            - name: REDIS_BROKER_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: REDIS_BROKER_ENABLED
             - name: SSL_KEYFILE
               valueFrom:
                 secretKeyRef:
@@ -181,6 +251,25 @@ spec:
                 configMapKeyRef:
                   name: agent-config
                   key: REQUEST_LOG_BODY_MAX_SIZE
+            - name: RUN_MIGRATIONS_ON_STARTUP
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: RUN_MIGRATIONS_ON_STARTUP
+            - name: ENABLE_PROMETHEUS_METRICS
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: ENABLE_PROMETHEUS_METRICS
+            # Where the documents volume is mounted, and the cap the
+            # upload API enforces. Configured rather than read from
+            # statvfs: that reports the *node* disk in Kind, so a
+            # 500Mi claim would accept gigabytes and fail later at an
+            # unrelated write.
+            - name: DOCUMENTS_PATH
+              value: "/app/data/documents"
+            - name: DOCUMENTS_MAX_BYTES
+              value: "524288000"
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false
@@ -217,4 +306,16 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "1000m"
+          volumeMounts:
+            # Documents, exposed to the agent at /documents/.
+            # Writable at the mount: uploads arrive over HTTP from a
+            # person. The *model* still cannot write — the filesystem
+            # route is `filesystem_readonly` and the permission rules
+            # deny write on `documents/**`. Human writes, model reads.
+            - name: agent-documents
+              mountPath: /app/data/documents
+      volumes:
+        - name: agent-documents
+          persistentVolumeClaim:
+            claimName: agent-documents-pvc
       restartPolicy: Always

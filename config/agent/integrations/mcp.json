@@ -1,0 +1,175 @@
+{
+    // One entry per server: what it is called, what it does, where
+    // it points, and an icon. Everything else has a default:
+    // `enabled` true, `auth_mode` dcr, `timeout` 30s. Set any of
+    // them on an entry to override.
+    //
+    // `display_name` is what a reader sees. Derived title-casing was
+    // the alternative and it produces "Rhsc", "Gworkspace" and
+    // "Sumologic". Proper nouns are data, not a transformation.
+    //
+    // `tool_prefix` is written out rather than left to default to
+    // the server key. It is what the model sees in a tool name, so a
+    // renamed key should not silently rename every tool.
+    //
+    // `type` is the same key a VS Code mcp.json uses, so an entry
+    // can move between the two unchanged.
+    //
+    // Nothing about a provider's OAuth is written here. Endpoints,
+    // scopes, the resource identifier and the client itself are all
+    // discovered at connect time from the server's own metadata.
+    //
+    // ── Commented-out servers ──────────────────────────────────
+    // Everything below the active list is commented out because it
+    // is not connected, each with the reason measured against the
+    // live endpoint. They are kept rather than deleted: the URL and
+    // the diagnosis are the expensive part, and re-deriving them
+    // costs an afternoon. Uncomment one when its blocker is cleared.
+    "mcpServers": {
+        "atlan": {
+            "type": "http",
+            "display_name": "Atlan",
+            "url": "https://mcp.atlan.com/mcp",
+            "description": "Atlan data catalogue, lineage and governance.",
+            "icon": "https://atlan.com/favicon.ico",
+            "tool_prefix": "atlan"
+        },
+        "atlassian": {
+            "type": "http",
+            "display_name": "Atlassian",
+            "url": "https://mcp.atlassian.com/v2/mcp",
+            "description": "Jira and Confluence issues, boards and pages.",
+            "icon": "https://www.atlassian.com/favicon.ico",
+            "tool_prefix": "atlassian"
+        },
+        "datadog": {
+            "type": "http",
+            "display_name": "Datadog",
+            "url": "https://mcp.datadoghq.com/v1/mcp",
+            "description": "Datadog metrics, traces, logs and monitors.",
+            "icon": "https://www.datadoghq.com/favicon.ico",
+            "tool_prefix": "datadog"
+        },
+        "dataverse": {
+            "type": "http",
+            "display_name": "Dataverse",
+            "url": "https://mcp.dataverse.redhat.com/mcp/",
+            "description": "Dataverse data products, domains and ownership.",
+            "icon": "https://www.redhat.com/favicon.ico",
+            "tool_prefix": "dataverse"
+        },
+        "gitlab": {
+            "type": "http",
+            "display_name": "GitLab",
+            "url": "https://gitlab-mcp.apps.int.spoke.prod.us-east-1.aws.paas.redhat.com/mcp",
+            "description": "Red Hat GitLab projects, merge requests, issues and pipelines.",
+            "icon": "https://gitlab.com/favicon.ico",
+            "tool_prefix": "gitlab"
+        },
+        "gworkspace": {
+            "type": "http",
+            "display_name": "Google Workspace",
+            "url": "https://gworkspace.corp.redhat.com/mcp",
+            "description": "Google Workspace mail, calendar, docs and drive.",
+            "icon": "https://www.google.com/favicon.ico",
+            "tool_prefix": "gworkspace"
+        },
+        "miro": {
+            "type": "http",
+            "display_name": "Miro",
+            "url": "https://mcp.miro.com/",
+            "description": "Miro boards, frames and sticky notes.",
+            "icon": "https://miro.com/favicon.ico",
+            "tool_prefix": "miro"
+        },
+        "unstructured-data": {
+            "type": "http",
+            "display_name": "Unstructured Data",
+            "url": "https://unstructured-data-mcp-server-prod.apps.int.spoke.prod.us-east-1.aws.paas.redhat.com/mcp/",
+            "description": "Dataverse unstructured data: pipelines that turn documents into queryable data.",
+            "icon": "https://www.redhat.com/favicon.ico",
+            "tool_prefix": "unstructured"
+        }
+
+        // Discovery works (scope mcp:connect) but Figma returns 403 to every registration. Needs an app from their developer console.
+        // "figma": {
+        //     "type": "http",
+        //     "display_name": "Figma",
+        //     "url": "https://mcp.figma.com/mcp",
+        //     "description": "Figma files, frames and design components.",
+        //     "icon": "https://www.figma.com/favicon.ico",
+        //     "tool_prefix": "figma"
+        // },
+
+        // No OAuth at all: the public API uses Basic auth with a key pair. Needs auth_mode api_key.
+        // "langfuse": {
+        //     "type": "http",
+        //     "display_name": "Langfuse",
+        //     "url": "https://us.cloud.langfuse.com/api/public/mcp",
+        //     "description": "Langfuse traces, prompts and evaluation scores.",
+        //     "icon": "https://langfuse.com/favicon.ico",
+        //     "tool_prefix": "langfuse"
+        // },
+
+        // Publishes endpoints but no registration endpoint. Needs a client registered with Smartsheet, then auth_mode oauth.
+        // "smartsheet": {
+        //     "type": "http",
+        //     "display_name": "Smartsheet",
+        //     "url": "https://mcp.smartsheet.com",
+        //     "description": "Smartsheet sheets, rows and reports.",
+        //     "icon": "https://www.smartsheet.com/favicon.ico",
+        //     "tool_prefix": "smartsheet"
+        // },
+
+        // Connects, but the token exchange returns invalid_grant. Uncomment to retry.
+        // "harbor": {
+        //     "type": "http",
+        //     "display_name": "Harbor",
+        //     "url": "https://harbor-mcp-server.apps.int.spoke.prod.us-west-2.aws.paas.redhat.com/mcp/",
+        //     "description": "Snowflake-backed data warehouse access.",
+        //     "icon": "https://www.redhat.com/favicon.ico",
+        //     "tool_prefix": "harbor"
+        // },
+
+        // Same as sumologic: CIMD rather than registration.
+        // "snow-hub": {
+        //     "type": "http",
+        //     "display_name": "ServiceNow Hub",
+        //     "url": "https://hub.redhat.com/sncapps/mcp-server/mcp/red_hat_hub_mcp",
+        //     "description": "ServiceNow incidents, requests and the Red Hat Hub catalogue.",
+        //     "icon": "https://redhathub.service-now.com/favicon.ico",
+        //     "tool_prefix": "snow"
+        // },
+
+        // No dynamic registration and no CIMD. Needs a Slack app: auth_mode oauth with client_id and client_secret_env.
+        // "slack": {
+        //     "type": "http",
+        //     "display_name": "Slack",
+        //     "url": "https://mcp.slack.com/mcp",
+        //     "description": "Slack channels, messages and search.",
+        //     "icon": "https://slack.com/favicon.ico",
+        //     "tool_prefix": "slack"
+        // },
+
+        // No registration endpoint. Advertises CIMD, so it may work once AGENT_PUBLIC_BASE_URL is reachable by the provider.
+        // "sumologic": {
+        //     "type": "http",
+        //     "display_name": "Sumo Logic",
+        //     "url": "https://rhcorporate.mcp.sumologic.com/mcp",
+        //     "description": "Sumo Logic log search, alerts and dashboards.",
+        //     "icon": "https://www.sumologic.com/favicon.ico",
+        //     "tool_prefix": "sumologic"
+        // },
+
+        // Connects; the browser flow was never completed. Uncomment to finish it.
+        // "rhsc": {
+        //     "type": "http",
+        //     "display_name": "Red Hat Sales Cloud",
+        //     "url": "https://25951.apim.mcp.workato.com/",
+        //     "description": "Red Hat Sales Cloud via Workato.",
+        //     "icon": "https://www.workato.com/favicon.ico",
+        //     "tool_prefix": "rhsc"
+        // },
+
+    }
+}

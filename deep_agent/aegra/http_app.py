@@ -15,16 +15,26 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from deep_agent.aegra.admin_routes import router as admin_router
+from deep_agent.aegra.analytics_routes import router as analytics_router
+from deep_agent.aegra.attachment_routes import router as attachment_router
+from deep_agent.aegra.channel_routes import router as channel_router
+from deep_agent.aegra.document_routes import router as document_router
 from deep_agent.aegra.eval_routes import eval_mgmt_router
 from deep_agent.aegra.eval_routes import router as eval_router
 from deep_agent.aegra.feedback import feedback_router
+from deep_agent.aegra.fork_routes import router as fork_router
 from deep_agent.aegra.mcp_routes import router as mcp_router
 from deep_agent.aegra.personalization_routes import router as personalization_router
 from deep_agent.aegra.projects_routes import projects_router
+from deep_agent.aegra.search_routes import router as search_router
 from deep_agent.aegra.security_middleware import (
     RequestSizeLimitMiddleware,
     SecurityHeadersMiddleware,
 )
+from deep_agent.aegra.share_routes import router as share_router
+from deep_agent.aegra.skill_routes import router as skill_router
+from deep_agent.aegra.tag_routes import router as tag_router
 from deep_agent.aegra.thread_cleanup import thread_cleanup_router
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import (
@@ -191,12 +201,23 @@ app.add_middleware(
     RequestSizeLimitMiddleware, max_size_bytes=settings.REQUEST_BODY_MAX_SIZE
 )
 app.include_router(thread_cleanup_router)
+app.include_router(skill_router)
+app.include_router(document_router)
 app.include_router(personalization_router)
 app.include_router(projects_router)
 app.include_router(mcp_router)
 app.include_router(feedback_router)
+app.include_router(admin_router)
 app.include_router(eval_router)
 app.include_router(eval_mgmt_router)
+# Externally reachable — see deep_agent/aegra/channel_routes.py.
+app.include_router(channel_router)
+app.include_router(search_router)
+app.include_router(fork_router)
+app.include_router(attachment_router)
+app.include_router(analytics_router)
+app.include_router(tag_router)
+app.include_router(share_router)
 
 
 @app.get("/version")

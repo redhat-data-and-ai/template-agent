@@ -151,6 +151,38 @@ class AgentConfig:
         self._base_dir = base_dir if base_dir is not None else _AGENT_CONFIG_DIR
         self._initialized = True
         self._configs_loaded = False
+        self._config_signature: tuple | None = None
+
+    def _disk_signature(self) -> tuple:
+        """Cheap fingerprint of everything `_ensure_loaded` reads.
+
+        Mtime and size of each config file, so an edit is noticed but an
+        unchanged tree costs only stat() calls. Directories are walked
+        because adding a skill or a subagent is a config change too.
+        """
+        root = self._base_dir
+        if not root.is_dir():
+            # A missing root rglobs to nothing, which is a *stable*
+            # empty signature — so a config volume that briefly
+            # disappears would pin whatever was loaded before it went,
+            # forever. Force a reload instead and let that fail loudly.
+            return (object(),)
+
+        marks: list[tuple[str, float, int]] = []
+        try:
+            for path in sorted(root.rglob("*")):
+                if path.is_dir() or path.name.startswith("."):
+                    continue
+                if path.suffix not in (".yaml", ".yml", ".json", ".md"):
+                    continue
+                stat = path.stat()
+                marks.append((str(path), stat.st_mtime, stat.st_size))
+        except OSError:
+            # An unreadable tree must not pin a stale config in place;
+            # returning a unique value forces the reload to happen and
+            # fail loudly there instead.
+            return (object(),)
+        return tuple(marks)
 
     def _load_agent_yaml(self) -> dict[str, Any]:
         """Load the unified runtime/agent.yaml once.
@@ -158,7 +190,7 @@ class AgentConfig:
         Returns:
             Raw dict from agent.yaml, or empty dict if missing.
         """
-        agent_yaml = self._base_dir / "runtime" / "agent.yaml"
+        agent_yaml = self._resolve("agent", "runtime/agent.yaml")
         if not agent_yaml.is_file():
             logger.warning("No runtime/agent.yaml found — using defaults")
             return {}
@@ -202,7 +234,7 @@ class AgentConfig:
         Returns PIIConfig with enabled=False if the file does not exist —
         absence of the file is the canonical way to disable PII.
         """
-        pii_yaml = self._base_dir / "runtime" / "pii.yaml"
+        pii_yaml = self._resolve("pii", "runtime/pii.yaml")
         if not pii_yaml.is_file():
             logger.info("No pii.yaml found — PII disabled")
             return PIIConfig()
@@ -222,7 +254,7 @@ class AgentConfig:
         Returns:
             OtelFileConfig with OTEL settings, or defaults if missing.
         """
-        otel_yaml = self._base_dir / "runtime" / "observability.yaml"
+        otel_yaml = self._resolve("observability", "runtime/observability.yaml")
         if not otel_yaml.is_file():
             logger.info("No observability.yaml found — OTEL disabled by default")
             return OtelFileConfig()
@@ -241,11 +273,23 @@ class AgentConfig:
 
         This ensures logging is properly configured before we try to log.
         """
-        # If auto-reload is enabled, always reload from disk
-        if settings.CONFIG_AUTO_RELOAD:
-            if self._configs_loaded:
-                logger.debug("CONFIG_AUTO_RELOAD=true: reloading configs from disk")
-            self._configs_loaded = False
+        # Auto-reload used to mean "re-read everything on every access".
+        # Config is read many times while building one graph, and each
+        # pass parsed every YAML, every subagent and every skill from
+        # disk — roughly 250ms of the time to first token, on every
+        # single request.
+        #
+        # Checking mtimes instead keeps hot reload (edit a prompt, see
+        # it on the next message) and costs a few stat() calls. The
+        # whole point of a config-driven template is that editing
+        # config/ is cheap; it should not be expensive to *not* edit it.
+        if settings.CONFIG_AUTO_RELOAD and self._configs_loaded:
+            signature = self._disk_signature()
+            if signature != self._config_signature:
+                logger.info("Config changed on disk — reloading")
+                self._configs_loaded = False
+            else:
+                return
 
         if self._configs_loaded:
             return
@@ -307,10 +351,28 @@ class AgentConfig:
         self._mcp_servers: dict[str, Any] = self._load_mcp_servers()
 
         self._configs_loaded = True
+        # Recorded after a successful load, so a failed one retries.
+        self._config_signature = self._disk_signature()
         logger.info(
             f"Agent config loaded: orchestrator={self._orchestrator.get('name')}, "
             f"subagents={len(self._subagents)}, skills={len(self._available_skills)}"
         )
+
+    def _resolve(self, name: str, fallback: str) -> Path:
+        """Locate a config file, honouring legacy paths.
+
+        Renames go through `config.paths` so a fork using the old layout
+        keeps working and is warned once. When this instance points at a
+        directory other than CONFIG_PATH, resolve relative to that
+        directory instead.
+        """
+        from deep_agent.src.agent.config.paths import config_file, config_root
+
+        if self._base_dir == config_root():
+            resolved = config_file(name)
+            if resolved is not None:
+                return resolved
+        return self._base_dir / fallback
 
     @property
     def base_dir(self) -> Path:
@@ -347,7 +409,7 @@ class AgentConfig:
         Raises:
             AppException: If orchestrator/main.md is missing or invalid.
         """
-        orchestrator_path = self._base_dir / "PROMPT.md"
+        orchestrator_path = self._resolve("prompt", "PROMPT.md")
         try:
             config = parse_frontmatter(orchestrator_path)
 
@@ -501,11 +563,24 @@ class AgentConfig:
 
         oauth = cfg.get("oauth")
         if not isinstance(oauth, dict):
-            logger.error(
-                "MCP server '%s': auth_mode '%s' requires an 'oauth' block",
-                name,
-                auth_mode,
-            )
+            # No oauth block is fine for `dcr`: the endpoints are read
+            # from the server's published metadata on first connect,
+            # which is the whole point of dynamic registration and the
+            # reason these entries can be a URL and nothing else. An
+            # `oauth` server still needs one — it has a client_id that
+            # cannot be discovered.
+            if auth_mode == "dcr":
+                logger.info(
+                    "MCP server '%s': no oauth block — endpoints will be "
+                    "discovered from the server's metadata on first connect",
+                    name,
+                )
+            else:
+                logger.error(
+                    "MCP server '%s': auth_mode '%s' requires an 'oauth' block",
+                    name,
+                    auth_mode,
+                )
             return
 
         grant_type = oauth.get("grant_type", "authorization_code")
@@ -563,7 +638,7 @@ class AgentConfig:
         Returns:
             Dict of MCP server configurations.
         """
-        mcp_path = self._base_dir / "mcp.json"
+        mcp_path = self._resolve("mcp", "mcp.json")
         if not mcp_path.is_file():
             logger.warning(f"MCP config not found at {mcp_path}")
             return {}
@@ -571,9 +646,40 @@ class AgentConfig:
         try:
             data = _load_jsonc(mcp_path)
             servers: dict[str, Any] = data.get("mcpServers", {})
+
             for name, cfg in servers.items():
-                if isinstance(cfg, dict):
-                    self._validate_mcp_server(name, cfg)
+                if not isinstance(cfg, dict):
+                    continue
+
+                # Defaults applied here, once, rather than at each of
+                # the twenty-odd places downstream that read them.
+                # Those all pass their own fallback to `.get`; filling
+                # the keys in now means none of those fallbacks ever
+                # fires, so there is one place to look for what an
+                # unspecified field means.
+                #
+                # `enabled` is true because a server written into this
+                # file is one somebody wants used — a list where every
+                # line needs a second line saying "yes, really" is a
+                # list with a redundant column.
+                #
+                # `auth_mode` is "dcr" because everything about a
+                # provider is discovered at connect time; "sso" only
+                # makes sense for a server that takes the caller's own
+                # bearer token, which is the exception now.
+                cfg.setdefault("enabled", True)
+                cfg.setdefault("auth", True)
+                cfg.setdefault("auth_mode", "dcr")
+
+                # `type` is what a VS Code mcp.json calls transport.
+                # Accepting the alias means an entry can be pasted
+                # across unchanged.
+                if "transport" not in cfg and cfg.get("type"):
+                    cfg["transport"] = (
+                        "streamable_http" if cfg["type"] == "http" else cfg["type"]
+                    )
+
+                self._validate_mcp_server(name, cfg)
             logger.info(f"Loaded {len(servers)} MCP server config(s)")
             return servers
         except Exception as e:
@@ -617,6 +723,18 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return self._model_configs.get(model_id, {})
+
+    def get_available_skills(self) -> dict[str, Path]:
+        """Every skill on disk, name to directory.
+
+        Public because reading `_available_skills` directly only works
+        once something else has triggered the lazy load — callers that
+        happened to call an accessor first worked, and a caller that
+        read the attribute first got AttributeError. That is an
+        ordering dependency nobody can see at the call site.
+        """
+        self._ensure_loaded()
+        return self._available_skills
 
     def get_all_subagent_configs(self) -> dict[str, dict[str, Any]]:
         """Get all subagent configurations.

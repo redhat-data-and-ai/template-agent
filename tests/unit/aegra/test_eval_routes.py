@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 import deep_agent.aegra.eval_routes as er
+from deep_agent.aegra.auth import DEV_USER_ID
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -1375,6 +1376,13 @@ class TestInternalCleanupEndpoint:
         assert "status" in result
 
 
+def _bearer_request(token: str | None):
+    """A Request carrying (or lacking) an Authorization header."""
+    request = MagicMock()
+    request.headers = {"authorization": f"Bearer {token}"} if token else {}
+    return request
+
+
 class TestRequireDeveloper:
     """Tests the Developer/Dataset/Eval column from the behavior matrix.
 
@@ -1389,33 +1397,53 @@ class TestRequireDeveloper:
     """
 
     @pytest.mark.asyncio
-    async def test_raises_401_when_no_creds(self):
+    async def test_raises_401_when_no_creds(self, monkeypatch):
+        # Only when auth is on. These two previously passed in either
+        # mode, because the bearer check ran before the mode check —
+        # which is exactly the bug: the row above says local dev has
+        # access, and it did not.
+        monkeypatch.setattr("deep_agent.aegra.auth.ENABLE_AUTH", True)
         with pytest.raises(HTTPException) as exc:
-            await er._require_developer(None)
+            await er._require_developer(_bearer_request(None))
         assert exc.value.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_raises_401_when_empty_credentials(self):
-        creds = MagicMock()
-        creds.credentials = ""
+    async def test_raises_401_when_empty_credentials(self, monkeypatch):
+        monkeypatch.setattr("deep_agent.aegra.auth.ENABLE_AUTH", True)
+        request = _bearer_request("")
         with pytest.raises(HTTPException) as exc:
-            await er._require_developer(creds)
+            await er._require_developer(request)
         assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_dev_mode_passes_through_without_a_token(self, monkeypatch):
+        # The first row of the table above. Nothing issues a token when
+        # auth is off, so demanding one made /admin, /evals and
+        # /analytics unreachable from the local UI.
+        monkeypatch.setattr("deep_agent.aegra.auth.ENABLE_AUTH", False)
+        assert await er._require_developer(_bearer_request(None))
+
+    @pytest.mark.asyncio
+    async def test_dev_mode_reports_the_dev_user(self, monkeypatch):
+        # It used to echo back whatever bearer it was handed, which was
+        # an identity nobody had verified. Every other endpoint answers
+        # DEV_USER_ID here; no caller reads this return value anyway.
+        monkeypatch.setattr("deep_agent.aegra.auth.ENABLE_AUTH", False)
+        request = _bearer_request("alice")
+        assert await er._require_developer(request) == DEV_USER_ID
 
     @pytest.mark.asyncio
     async def test_auth_disabled_passes(self):
         """AUTH_ENABLED=false → eval=Yes (full access)."""
-        creds = MagicMock()
-        creds.credentials = "dev-token"
+        request = _bearer_request("dev-token")
         with patch("deep_agent.aegra.auth.ENABLE_AUTH", False):
-            result = await er._require_developer(creds)
-        assert result == "dev-token"
+            result = await er._require_developer(request)
+        assert result == DEV_USER_ID
 
     @pytest.mark.asyncio
     async def test_owners_pass(self):
         """Groups defined, user is owner → eval=Yes."""
-        creds = MagicMock()
-        creds.credentials = "valid-token"
+        request = _bearer_request("valid-token")
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
             patch(
@@ -1428,13 +1456,12 @@ class TestRequireDeveloper:
                 return_value="owners",
             ),
         ):
-            result = await er._require_developer(creds)
-        assert result == "valid-token"
+            result = await er._require_developer(request)
+        assert result == "alice"
 
     @pytest.mark.asyncio
     async def test_admins_pass(self):
-        creds = MagicMock()
-        creds.credentials = "valid-token"
+        request = _bearer_request("valid-token")
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
             patch(
@@ -1447,13 +1474,12 @@ class TestRequireDeveloper:
                 return_value="admins",
             ),
         ):
-            result = await er._require_developer(creds)
-        assert result == "valid-token"
+            result = await er._require_developer(request)
+        assert result == "alice"
 
     @pytest.mark.asyncio
     async def test_builders_pass(self):
-        creds = MagicMock()
-        creds.credentials = "valid-token"
+        request = _bearer_request("valid-token")
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
             patch(
@@ -1466,14 +1492,13 @@ class TestRequireDeveloper:
                 return_value="builders",
             ),
         ):
-            result = await er._require_developer(creds)
-        assert result == "valid-token"
+            result = await er._require_developer(request)
+        assert result == "builder"
 
     @pytest.mark.asyncio
     async def test_users_role_rejected(self):
         """Groups defined, user is users role → eval=No (403)."""
-        creds = MagicMock()
-        creds.credentials = "valid-token"
+        request = _bearer_request("valid-token")
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
             patch(
@@ -1487,15 +1512,14 @@ class TestRequireDeveloper:
             ),
             pytest.raises(HTTPException) as exc,
         ):
-            await er._require_developer(creds)
+            await er._require_developer(request)
         assert exc.value.status_code == 403
         assert "Developer access" in exc.value.detail
 
     @pytest.mark.asyncio
     async def test_denied_role_rejected(self):
         """Groups defined, private, no match → eval=403."""
-        creds = MagicMock()
-        creds.credentials = "valid-token"
+        request = _bearer_request("valid-token")
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
             patch(
@@ -1509,7 +1533,7 @@ class TestRequireDeveloper:
             ),
             pytest.raises(HTTPException) as exc,
         ):
-            await er._require_developer(creds)
+            await er._require_developer(request)
         assert exc.value.status_code == 403
         assert "not a member" in exc.value.detail
 
@@ -1517,8 +1541,7 @@ class TestRequireDeveloper:
     async def test_expired_token_raises_401(self):
         import jwt as pyjwt
 
-        creds = MagicMock()
-        creds.credentials = "expired-token"
+        request = _bearer_request("expired-token")
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
             patch(
@@ -1527,15 +1550,14 @@ class TestRequireDeveloper:
             ),
             pytest.raises(HTTPException) as exc,
         ):
-            await er._require_developer(creds)
+            await er._require_developer(request)
         assert exc.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_invalid_token_raises_401(self):
         import jwt as pyjwt
 
-        creds = MagicMock()
-        creds.credentials = "bad-token"
+        request = _bearer_request("bad-token")
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
             patch(
@@ -1544,13 +1566,12 @@ class TestRequireDeveloper:
             ),
             pytest.raises(HTTPException) as exc,
         ):
-            await er._require_developer(creds)
+            await er._require_developer(request)
         assert exc.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_missing_user_identity_raises_401(self):
-        creds = MagicMock()
-        creds.credentials = "valid-token"
+        request = _bearer_request("valid-token")
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
             patch(
@@ -1559,7 +1580,7 @@ class TestRequireDeveloper:
             ),
             pytest.raises(HTTPException) as exc,
         ):
-            await er._require_developer(creds)
+            await er._require_developer(request)
         assert exc.value.status_code == 401
 
 

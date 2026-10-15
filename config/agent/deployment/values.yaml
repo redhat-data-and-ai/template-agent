@@ -1,8 +1,37 @@
 # Deployment configuration for the agent.
-# Reference values for ArgoCD/Helm-style deployments.
-# Kustomize overlays in deployment/overlays/ use their own patches.
+#
+# This file is the source of truth. `make render-deployment` turns it into
+# the kustomize patches under deployment/overlays/*/generated.yaml — so
+# changing a replica count or a memory limit is a config edit, not a code
+# edit. Run `make render-deployment-check` to see if they have drifted.
+#
+# Structural choices (which manifests exist, init containers, volumes) stay
+# hand-written in the overlays. Only values come from here.
 #
 # ArgoCD Vault Plugin (AVP) injects secrets at deploy time.
+
+# --- Optional components ---
+# Each maps to a directory under deployment/components/. Toggling one here
+# adds or removes it from every overlay's `components:` list.
+components:
+  postgres: true
+  redis: true
+  opa: false
+  evalRunner: true
+  # Scales the agent to zero pods. Mutually exclusive with autoscaling
+  # below — the HPA and the ScaledObject would fight over the same
+  # Deployment. See deployment/components/scale-to-zero/README.yaml.
+  scaleToZero: false
+  # Publishes /channels on an external Route so Slack and webhooks can
+  # reach the agent. The main Route stays internal. Enable this and
+  # config/agent/integrations/channels.yaml together — neither works
+  # alone.
+  externalChannels: false
+  # A volume holding documents, mounted read-only at /documents/ in the
+  # agent's filesystem. Data does not belong in the config image: it
+  # is large, it changes without a release, and CONFIG_PATH is walked
+  # on every reload check.
+  documentsPvc: true
 
 app:
   name: agent
@@ -23,16 +52,18 @@ resources:
     memory: "512Mi"
     cpu: "250m"
   limits:
-    memory: "1Gi"
+    # 2Gi, not 1Gi: the LangChain/deepagents import graph alone exceeds
+    # 512Mi and the pod was OOMKilled on boot at the old limit.
+    memory: "2Gi"
     cpu: "1000m"
 
 # --- Horizontal Pod Autoscaler ---
 autoscaling:
   enabled: true
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 10
   targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 75
   scaleDown:
     stabilizationWindowSeconds: 300
 
@@ -117,3 +148,19 @@ secrets:
   VLLM_BASE_URL: "<path:secret/data/<team>/<env>/agent#VLLM_BASE_URL>"
   VLLM_API_KEY: "<path:secret/data/<team>/<env>/agent#VLLM_API_KEY>"
   REDIS_URL: "<path:secret/data/<team>/<env>/agent#REDIS_URL>"
+
+# --- Per-target overrides ---
+# Deep-merged over everything above, keyed by overlay directory name.
+# Only genuine environment differences belong here; anything listed in two
+# targets with the same value should move up into the shared block.
+targets:
+  kind:
+    components:
+      # The eval-runner mounts an `agent-source-data` PVC that nothing in
+      # deployment/ creates, so it can never schedule on a local cluster.
+      evalRunner: false
+    app:
+      # Two, as in preprod and prod: one replica makes the agent
+      # unreachable for the whole of a rollout or a pod delete, which the
+      # nightly crash-recovery tier cannot tell apart from a failure.
+      replicas: 2

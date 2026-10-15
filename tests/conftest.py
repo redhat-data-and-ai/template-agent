@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -155,3 +156,55 @@ def mock_agent_config():
 def mock_mcp_tools() -> list[Any]:
     """Return an empty list of MCP tools for unit tests."""
     return []
+
+
+# ── Deterministic LLM transport (P1) ────────────────────────────
+
+
+@pytest.fixture()
+def llm_cassette(request):
+    """Record/replay HTTP traffic for one test.
+
+    Yields a factory that builds an `httpx.AsyncClient` bound to this
+    test's cassette. In replay mode an unrecorded request raises rather
+    than reaching the network.
+
+        async def test_x(llm_cassette):
+            async with llm_cassette() as client:
+                ...
+    """
+    from tests.support.cassette import (
+        CASSETTE_DIR,
+        Cassette,
+        CassetteTransport,
+        cassette_mode,
+    )
+
+    mode = cassette_mode()
+    cassette = Cassette(CASSETTE_DIR / f"{request.node.name}.json", mode)
+
+    def _client(**kwargs):
+        return httpx.AsyncClient(transport=CassetteTransport(cassette), **kwargs)
+
+    yield _client
+
+    if mode == "record":
+        cassette.save()
+
+
+# ── Controllable time (P2) ──────────────────────────────────────
+
+
+@pytest.fixture()
+def fake_clock(monkeypatch):
+    """A clock the test advances by hand.
+
+    Patches `time.time`, `time.monotonic`, `time.sleep` and
+    `asyncio.sleep`, so time-dependent paths run instantly and
+    deterministically.
+    """
+    from tests.support.clock import FakeClock, install
+
+    clock = FakeClock()
+    install(monkeypatch, clock)
+    return clock

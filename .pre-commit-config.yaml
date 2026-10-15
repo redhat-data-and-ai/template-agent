@@ -21,7 +21,10 @@ repos:
       - id: check-case-conflict
       - id: check-docstring-first
       - id: check-json
-        exclude: ^config/agent/mcp\.json$
+        # JSONC: comments are intentional and `_load_jsonc` strips
+        # them. Matches both the current path and the pre-rename one,
+        # since `config.paths` still accepts the latter.
+        exclude: ^config/agent/(integrations/)?mcp\.json$
       - id: check-toml
       - id: detect-private-key
         exclude: ^tests/

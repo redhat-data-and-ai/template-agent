@@ -9,20 +9,33 @@ resources:
   - service.yaml
   - ui.yaml
   - ingress.yaml
+  - mock-llm.yaml
 
 # Include postgres and redis for local development
 components:
   - ../../components/postgres
   - ../../components/redis
-  - ../../components/eval-runner
+  # opa: disabled in values.yaml
+  # evalRunner: disabled in values.yaml
+  # scaleToZero: disabled in values.yaml
+  # externalChannels: disabled in values.yaml
+  - ../../components/documents-pvc
+
+patches:
+  - path: generated.yaml
+  - path: datastore-uid-patch.yaml
+  - path: configmap-patch.yaml
 
 labels:
   - pairs:
       app: template-agent
 
 images:
+  # The config-bearing derived image (Containerfile.config), not the bare
+  # agent image — Kind has no config mount and the agent will not start
+  # without one.
   - name: agent
-    newName: localhost/template-agent
+    newName: localhost/template-agent-config
     newTag: local
   - name: template-ui
     newName: localhost/template-ui

@@ -54,8 +54,9 @@ class TestLoadMemoryInstructions:
         import deep_agent.src.memory.instructions as instr
 
         missing = tmp_path / "missing.j2"
-        monkeypatch.setattr(instr, "_INSTRUCTIONS_PATH", missing)
+        monkeypatch.setattr(instr, "_instructions_path", lambda: missing)
         monkeypatch.setattr(instr, "_instructions_cache", None)
+        monkeypatch.setattr(instr, "_instructions_source", None)
         assert instr.load_memory_instructions() == ""
         assert instr.append_memory_instructions("keep me") == "keep me"
 
@@ -97,3 +98,60 @@ class TestMemoryFileText:
         assert memory_file_text(None) == ""
         assert memory_file_text({}) == ""
         assert memory_file_text({"content": 3}) == ""
+
+
+class TestInstructionsOverride:
+    """Memory instructions are a prompt, so they are domain-specific.
+
+    The bundled default is written around the demo agent — it names BMI
+    and height/weight. An agent built from this template must be able to
+    replace it by dropping a file in its config directory, with no code
+    change.
+    """
+
+    def test_bundled_default_is_used_when_no_override_exists(
+        self, monkeypatch, tmp_path
+    ):
+        import deep_agent.src.memory.instructions as instr
+
+        monkeypatch.setenv("CONFIG_PATH", str(tmp_path))
+        assert instr._instructions_path() == instr._BUNDLED_INSTRUCTIONS_PATH
+
+    def test_config_override_wins(self, monkeypatch, tmp_path):
+        import deep_agent.src.memory.instructions as instr
+
+        override = tmp_path / "memory_instructions.md"
+        override.write_text("## Remember only invoice totals.")
+        monkeypatch.setenv("CONFIG_PATH", str(tmp_path))
+
+        assert instr._instructions_path() == override
+
+    def test_override_content_reaches_the_system_prompt(self, monkeypatch, tmp_path):
+        import deep_agent.src.memory.instructions as instr
+
+        override = tmp_path / "memory_instructions.md"
+        override.write_text("## Remember only invoice totals.")
+        monkeypatch.setenv("CONFIG_PATH", str(tmp_path))
+        monkeypatch.setattr(instr, "_instructions_cache", None)
+        monkeypatch.setattr(instr, "_instructions_source", None)
+
+        prompt = instr.append_memory_instructions("You are an invoice agent.")
+
+        assert "invoice totals" in prompt
+        # The demo domain must not leak into an agent that overrode it.
+        assert "BMI" not in prompt
+
+    def test_switching_source_busts_the_cache(self, monkeypatch, tmp_path):
+        """Source is part of the cache key: an override added later has no
+        reason to differ in mtime from the bundled default."""
+        import deep_agent.src.memory.instructions as instr
+
+        monkeypatch.setenv("CONFIG_PATH", str(tmp_path))
+        monkeypatch.setattr(instr, "_instructions_cache", None)
+        monkeypatch.setattr(instr, "_instructions_source", None)
+
+        bundled = instr.load_memory_instructions()
+        assert "BMI" in bundled
+
+        (tmp_path / "memory_instructions.md").write_text("## Custom rules.")
+        assert instr.load_memory_instructions() == "## Custom rules."

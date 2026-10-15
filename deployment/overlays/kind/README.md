@@ -60,6 +60,38 @@ kubectl -n template-agent port-forward svc/mcp-server 5001:5001
 | Security | Default PSA | SCC (restricted) |
 | Storage | Default StorageClass | OpenShift PVs |
 
+## Reclaiming disk — `make kind-gc`
+
+`kind load image-archive` imports each image under a dated
+`docker.io/library/import-<date>` ref and takes a containerd **lease**
+on its content. Neither is cleaned up, so every load of a ~3 GB image
+is kept forever. This reached 176 GB across 150 orphaned imports and
+broke three deploys with `no space left on device`.
+
+The failure is nastier than a full disk, because it is quiet: `podman
+save` fails, but `kubectl rollout status` still reports
+**"successfully rolled out"** — correctly, since the rollout did
+happen, on the *previous* image. You end up debugging code that is not
+running.
+
+`make kind-deploy` now runs `kind-gc` after loading. Run it by hand
+any time:
+
+```sh
+make kind-gc
+```
+
+Deleting the image refs alone reclaims nothing — the leases still pin
+the content. Both go, in that order.
+
+**Verify a deploy by reading something back out of the pod**, not by
+trusting the rollout:
+
+```sh
+kubectl -n template-agent exec deploy/agent -- \
+  grep -c some_new_symbol /app/deep_agent/.../file.py
+```
+
 ## Teardown
 
 ```bash

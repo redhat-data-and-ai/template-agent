@@ -6,7 +6,10 @@ metadata:
     app: agent
     component: agent
 spec:
-  replicas: 1
+  # Two, like preprod/prod. One replica makes the agent unreachable for the
+  # whole of a rollout or a pod delete, which the nightly crash-recovery tier
+  # cannot distinguish from a recovery failure.
+  replicas: 2
   selector:
     matchLabels:
       app: agent
@@ -25,6 +28,11 @@ spec:
             - containerPort: 5002
               name: http
               protocol: TCP
+          # Kind reads the whole ConfigMap; the per-key `env:` entries below
+          # still win where they overlap.
+          envFrom:
+            - configMapRef:
+                name: agent-config
           env:
             - name: AGENT_HOST
               value: "0.0.0.0"
@@ -32,6 +40,73 @@ spec:
               value: "5002"
             - name: PYTHON_LOG_LEVEL
               value: "INFO"
+            # Per-user MCP OAuth tokens are encrypted with this before
+            # they reach Postgres. Optional so a cluster without it
+            # still starts; Connect then fails loudly rather than
+            # writing tokens in the clear.
+            # Corporate root CAs, fetched at container start and
+            # appended to the system bundle by entrypoint.sh. Four of
+            # the MCP servers in mcp.json are internal Red Hat hosts
+            # whose certificates chain to this CA; without it the pod
+            # fails their TLS handshake with
+            # CERTIFICATE_VERIFY_FAILED and Connect cannot discover
+            # anything.
+            #
+            # A URL rather than a mounted Secret so a fork needs no
+            # out-of-band file. The cost is one fetch per pod start,
+            # and the fetch itself is verified against the *system*
+            # trust store — a CA bundle pulled over an unverified
+            # connection would be trust-on-first-use, which is not
+            # trust. Startup continues if it fails; the log says so.
+            # Lets an operator re-register a stale DCR client from
+            # the UI. Off by default because each call mints a new
+            # client at the provider and orphans the previous one;
+            # on in Kind because a dev cluster is exactly where a
+            # client goes stale after a config change.
+            - name: ENABLE_DCR_REREGISTER_API
+              value: "true"
+            # Where the *browser* reaches this agent, which is not
+            # where the agent reaches itself. Unset, this falls back
+            # to http://localhost:${AGENT_PORT}, and that address is
+            # what gets registered as the OAuth redirect URI — so the
+            # provider sends the user back to a port nothing is
+            # listening on and the connection dies at the last step
+            # with no error on this side. Kind publishes the ingress
+            # on host port 8081, and it must be bare `localhost`
+            # rather than `agent.localhost`: that is the only origin
+            # the MCP providers whitelist as a redirect target.
+            - name: AGENT_PUBLIC_BASE_URL
+              value: "http://localhost:8081"
+            # postMessage target for the callback page, which has to
+            # be the UI's origin rather than the agent's or the
+            # browser drops the message and the popup never closes.
+            - name: UI_ORIGIN
+              value: "http://localhost:8081"
+            # Where the documents volume is mounted, and the cap the
+            # upload API enforces. Configured rather than read from
+            # statvfs: that reports the *node* disk in Kind, so a
+            # 500Mi claim would accept gigabytes and fail later at an
+            # unrelated write.
+            - name: DOCUMENTS_PATH
+              value: "/app/data/documents"
+            - name: DOCUMENTS_MAX_BYTES
+              value: "524288000"
+            - name: CUSTOM_CA_URL
+              value: "https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem"
+            # A Fernet key — 32 url-safe base64 bytes, not hex:
+            #   python -c "from cryptography.fernet import Fernet; \
+            #              print(Fernet.generate_key().decode())"
+            # In its own Secret so `kubectl apply -k` cannot reset it:
+            #   kubectl -n template-agent create secret generic agent-mcp-key \
+            #     --from-file=MCP_TOKEN_ENCRYPTION_KEY=./key.txt
+            # Optional, so a cluster without it still starts; Connect
+            # then fails at the point tokens would be written.
+            - name: MCP_TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-mcp-key
+                  key: MCP_TOKEN_ENCRYPTION_KEY
+                  optional: true
             - name: POSTGRES_HOST
               valueFrom:
                 configMapKeyRef:
@@ -117,9 +192,25 @@ spec:
             failureThreshold: 3
           resources:
             requests:
-              memory: "256Mi"
+              memory: "512Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              memory: "2Gi"
               cpu: "500m"
+          volumeMounts:
+            # Documents, exposed to the agent at /documents/. readOnly
+            # at the mount as well as in the backend and the
+            # permission rules: three independent places, because a
+            # data volume the agent can write to is one prompt
+            # injection away from being modified.
+            # Writable at the mount: uploads arrive over HTTP from a
+            # person. The *model* still cannot write — the filesystem
+            # route is `filesystem_readonly` and the permission rules
+            # deny write on `documents/**`. Human writes, model reads.
+            - name: agent-documents
+              mountPath: /app/data/documents
+      volumes:
+        - name: agent-documents
+          persistentVolumeClaim:
+            claimName: agent-documents-pvc
       restartPolicy: Always

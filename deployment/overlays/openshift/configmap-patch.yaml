@@ -8,6 +8,10 @@ data:
   AGENT_PORT: "5002"
   PYTHON_LOG_LEVEL: "INFO"
 
+  # Migrations run in the db-migrate init container, once per rollout.
+  # Leaving this true makes every replica race Alembic's advisory lock.
+  RUN_MIGRATIONS_ON_STARTUP: "false"
+
   # Environment & Security
   ENVIRONMENT: "production"
   ENABLE_AUTH: "true"

@@ -29,17 +29,64 @@ class SummarizationToolConfig(BaseModel):
     enabled: bool = True
 
 
+class ApprovalPolicy(BaseModel):
+    """What to do when a matching tool is about to run.
+
+    ``tools`` holds shell-style patterns (``delete_*``, ``mcp-db:*``), so a
+    policy covers a family of tools without being rewritten each time one
+    is added.
+    """
+
+    tools: list[str] = Field(default_factory=list)
+    decision: Literal["allow", "ask", "deny"] = "ask"
+
+    # Surfaced to the client so a destructive call can be presented
+    # differently from a routine one.
+    risk: Literal["low", "medium", "high"] = "medium"
+
+    reason: str = ""
+
+
+class ExecutionConfig(BaseModel):
+    """What a run is allowed to actually do.
+
+    The other execution axes — trigger, lifetime, surface — are Aegra's
+    and are set per run (`durability`, `stream_mode`, cron, stateless
+    runs). Effects has no equivalent, so it lives here.
+
+    `dry_run` is enforced through the approval policy: tools that would
+    pause for a human are refused instead, while read-only tools still
+    run. The agent can therefore investigate and propose a plan, and
+    cannot change anything.
+    """
+
+    effects: Literal["live", "dry_run"] = "live"
+
+
 class HumanApprovalConfig(BaseModel):
     """Config for human-in-the-loop tool approval.
 
-    When enabled, the agent pauses before executing any tool call and
-    waits for the user to approve, reject, or always-allow it.
+    Graded rather than all-or-nothing: each tool resolves to allow (run
+    without prompting), ask (pause for a decision), or deny (refuse). A
+    single global gate forces a choice between interrupting every
+    directory listing and interrupting nothing, and teams pick nothing —
+    which stops the destructive calls being reviewed too.
+
     Backed by deepagents HumanInTheLoopMiddleware via interrupt_on.
     """
 
     enabled: bool = True
     mode: Literal["all", "none"] = "all"
+
+    # Legacy: tools that never prompt. Equivalent to a leading
+    # ``decision: allow`` policy, kept so existing agent.yaml files work.
     exclude: list[str] = Field(default_factory=list)
+
+    policies: list[ApprovalPolicy] = Field(default_factory=list)
+
+    # Applied when no policy matches. "ask" keeps the safe default that an
+    # unrecognised tool is surfaced rather than run silently.
+    default_decision: Literal["allow", "ask", "deny"] = "ask"
 
 
 class MemoryConfig(BaseModel):

@@ -25,56 +25,26 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-_bearer = HTTPBearer(auto_error=False)
+from deep_agent.aegra.auth_helpers import check_ldap_role
 
 
-async def _require_developer(
-    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> str:
-    """Validate JWT and enforce privileged LDAP role for eval endpoints.
+async def _require_developer(request: Request) -> str:
+    """Enforce a privileged LDAP role on the operator endpoints.
 
-    Requires owners/admins/builders role. Users with 'users' or 'denied' role get 403.
-    When ENABLE_AUTH=false (dev mode), passes through without LDAP check.
+    A thin alias for the shared helper. It used to be a second,
+    hand-rolled copy of the same decode-and-resolve logic, which is how
+    two endpoints with identical requirements came to answer a missing
+    bearer with two different sentences — "Bearer token required" here,
+    "Missing or invalid Authorization header" on /documents. A client
+    cannot branch on a message that depends on which route it hit.
+
+    Returns the user id rather than the token: every call site takes it
+    as `_token` and ignores it, and the one handler that needs the
+    credential reads the header itself to forward it.
     """
-    if creds is None or not creds.credentials:
-        raise HTTPException(status_code=401, detail="Bearer token required")
-
-    from deep_agent.aegra.auth import ENABLE_AUTH, _decode_token
-
-    if not ENABLE_AUTH:
-        return str(creds.credentials)
-
-    import asyncio as _asyncio
-
-    import jwt
-
-    try:
-        payload = await _asyncio.to_thread(_decode_token, creds.credentials)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired") from None
-    except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}") from None
-
-    user_id = str(payload.get("preferred_username") or payload.get("sub") or "").strip()
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Token missing user identity")
-
-    from deep_agent.src.ldap import PRIVILEGED_ROLES, resolve_user_role
-
-    role = await resolve_user_role(user_id)
-
-    if role == "denied":
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied: not a member of any configured LDAP group",
-        )
-    if role is not None and role not in PRIVILEGED_ROLES:
-        raise HTTPException(status_code=403, detail="Developer access required")
-
-    return str(creds.credentials)
+    return await check_ldap_role(request, developer_only=True)
 
 
 async def _check_mcp_auth(request: Request) -> list[dict]:

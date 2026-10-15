@@ -8,6 +8,7 @@ image without a config-volume change.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from deep_agent.utils.pylogger import get_python_logger
@@ -50,27 +51,56 @@ def memory_file_text(value: dict | None) -> str:
     return ""
 
 
-_INSTRUCTIONS_PATH = Path(__file__).resolve().parent / "memory_instructions.j2"
+# Shipped default, used when the agent's config directory has no override.
+_BUNDLED_INSTRUCTIONS_PATH = Path(__file__).resolve().parent / "memory_instructions.j2"
+
+
+def _instructions_path() -> Path:
+    """Where to read memory instructions from.
+
+    These instructions are a *prompt*, and prompts are domain-specific —
+    the bundled default is written around the demo agent. An agent built
+    from this template overrides it by dropping the file into its config
+    directory, with no code change.
+
+    Reads ``CONFIG_PATH`` directly rather than the ``agent_config``
+    singleton: this runs on the prompt-building path, and coupling it to
+    a lazily-loaded global pulls config loading into graph construction.
+    """
+    config_dir = os.getenv("CONFIG_PATH")
+    if config_dir:
+        override = Path(config_dir) / "memory_instructions.md"
+        if override.is_file():
+            return override
+    return _BUNDLED_INSTRUCTIONS_PATH
+
+
 _instructions_cache: str | None = None
 _instructions_mtime: float | None = None
+_instructions_source: Path | None = None
 
 
 def load_memory_instructions() -> str:
     """Load the memory save/recall instructions (re-read when the template changes)."""
-    global _instructions_cache, _instructions_mtime  # noqa: PLW0603
+    global _instructions_cache, _instructions_mtime, _instructions_source  # noqa: PLW0603
+    path = _instructions_path()
     try:
-        mtime = _INSTRUCTIONS_PATH.stat().st_mtime
+        mtime = path.stat().st_mtime
     except FileNotFoundError:
-        logger.warning(
-            "Memory instructions template not found at %s",
-            _INSTRUCTIONS_PATH,
-        )
+        logger.warning("Memory instructions template not found at %s", path)
         _instructions_cache = ""
         _instructions_mtime = None
         return _instructions_cache
-    if _instructions_cache is None or _instructions_mtime != mtime:
-        _instructions_cache = _INSTRUCTIONS_PATH.read_text()
+    # Source is part of the cache key: switching between the bundled
+    # default and a config override need not change the mtime.
+    if (
+        _instructions_cache is None
+        or _instructions_mtime != mtime
+        or _instructions_source != path
+    ):
+        _instructions_cache = path.read_text()
         _instructions_mtime = mtime
+        _instructions_source = path
     return _instructions_cache
 
 

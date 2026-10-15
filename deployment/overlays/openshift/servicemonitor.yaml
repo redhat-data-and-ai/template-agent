@@ -1,0 +1,30 @@
+# Scrape the agent's /metrics endpoint.
+#
+# Without this, ENABLE_PROMETHEUS_METRICS only publishes metrics that
+# nothing collects — and the scale-to-zero component's Prometheus
+# trigger queries a series that does not exist, so KEDA falls back to
+# treating in-flight work as zero.
+#
+# Requires user-workload monitoring to be enabled on the cluster:
+#   oc -n openshift-monitoring get cm cluster-monitoring-config
+# with `enableUserWorkload: true`. That is a platform setting.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: agent
+  labels:
+    app: agent
+    component: agent
+spec:
+  selector:
+    matchLabels:
+      app: agent
+      component: agent
+  endpoints:
+    - port: http
+      path: /metrics
+      # Faster than the gauge's own 10s refresh would be pointless;
+      # slower than KEDA's 15s poll would make the scaler read stale
+      # data and risk scaling down on a value from before a run started.
+      interval: 15s
+      scrapeTimeout: 10s

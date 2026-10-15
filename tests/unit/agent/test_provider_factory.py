@@ -309,3 +309,57 @@ class TestMaasModelNameNormalization:
                 Provider.MAAS, input_name, temperature=0.0, max_output_tokens=4096
             )
         mock_vllm.assert_called_once_with(expected, 0.0, 4096)
+
+
+class TestModelOverride:
+    """MODEL_OVERRIDE replaces every model name, from one seam.
+
+    It exists so a cluster with no provider credentials can still run the
+    agent end to end against a stub; the nightly crash-recovery tier depends
+    on it. A bug here silently points production at the wrong model, so the
+    off-by-default behaviour is worth pinning.
+    """
+
+    @staticmethod
+    def _set(monkeypatch, value):
+        from deep_agent.src import settings as settings_module
+
+        monkeypatch.setattr(
+            settings_module.settings, "MODEL_OVERRIDE", value, raising=False
+        )
+
+    def test_absent_by_default(self, monkeypatch):
+        self._set(monkeypatch, None)
+        assert parse_model_config("gemini-2.5-pro").name == "gemini-2.5-pro"
+
+    def test_whitespace_is_not_an_override(self, monkeypatch):
+        self._set(monkeypatch, "  ")
+        assert parse_model_config("gemini-2.5-pro").name == "gemini-2.5-pro"
+
+    def test_a_mocked_settings_object_is_not_an_override(self, monkeypatch):
+        """Suites that mock `settings` wholesale must not trip the override."""
+        self._set(monkeypatch, MagicMock())
+        assert parse_model_config("gemini-2.5-pro").name == "gemini-2.5-pro"
+
+    def test_replaces_a_plain_name(self, monkeypatch):
+        self._set(monkeypatch, "mock-model")
+        spec = parse_model_config("gemini-2.5-pro")
+        assert spec.name == "mock-model"
+        # Not a Gemini or Claude name, so it routes to VLLM_BASE_URL.
+        assert spec.provider is Provider.MAAS
+
+    def test_replaces_an_object_config_and_drops_its_fallback(self, monkeypatch):
+        self._set(monkeypatch, "mock-model")
+        spec = parse_model_config(
+            {
+                "provider": "vertex",
+                "name": "gemini-2.5-pro",
+                "fallback": {"name": "gemini-2.5-flash"},
+            }
+        )
+        assert spec.name == "mock-model"
+        assert spec.fallback is None
+
+    def test_the_replaced_config_is_never_validated(self, monkeypatch):
+        self._set(monkeypatch, "mock-model")
+        assert parse_model_config("").name == "mock-model"

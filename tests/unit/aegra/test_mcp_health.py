@@ -1,6 +1,6 @@
 """Unit tests for MCP and LLM provider health checks."""
 
-import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -8,7 +8,6 @@ import pytest
 
 from deep_agent.aegra import mcp_health
 from deep_agent.aegra.mcp_health import (
-    _HEALTH_CACHE_TTL,
     _ping_mcp_server,
     check_llm_provider,
     check_mcp_servers,
@@ -375,3 +374,39 @@ class TestOtelGauges:
             mcp_health._ensure_gauges()
 
         assert mcp_health._mcp_health_gauge is None
+
+
+class TestPerServerBreakerHealth:
+    """Health must report each server's own circuit, not one global state."""
+
+    @pytest.mark.asyncio
+    async def test_one_open_breaker_does_not_mark_others_down(self):
+        from deep_agent.aegra import mcp_health as health_mod
+
+        servers = {
+            "alpha": {"enabled": True, "url": "http://alpha/mcp"},
+            "beta": {"enabled": True, "url": "http://beta/mcp"},
+        }
+
+        def breaker_for(name=None):
+            return SimpleNamespace(is_open=(name == "alpha"))
+
+        health_mod._cached_mcp_health = None
+        health_mod._cached_mcp_health_ts = 0.0
+
+        with (
+            patch("deep_agent.aegra.mcp._get_mcp_breaker", side_effect=breaker_for),
+            patch.object(
+                health_mod,
+                "_ping_mcp_server",
+                AsyncMock(return_value={"status": "healthy"}),
+            ),
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_mcp_servers",
+                return_value=servers,
+            ),
+        ):
+            result = await health_mod.check_mcp_servers()
+
+        assert result["servers"]["alpha"]["status"] == "breaker-open"
+        assert result["servers"]["beta"]["status"] == "healthy"

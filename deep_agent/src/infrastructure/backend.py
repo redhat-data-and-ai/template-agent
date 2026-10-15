@@ -622,10 +622,9 @@ def _build_composite_backend(fs_config: Any) -> Any:
     routes: dict[str, Any] = {}
 
     for path_prefix, backend_name in fs_config.backend.routes.items():
-        if backend_name == "filesystem_readonly":
-            dir_name = path_prefix.strip("/")
+        if backend_name.split(":", 1)[0] == "filesystem_readonly":
             routes[path_prefix] = _build_filesystem_readonly_backend(
-                agent_config.base_dir / dir_name
+                _readonly_root(path_prefix, backend_name)
             )
 
     if any(v == "local_shell" for v in fs_config.backend.routes.values()):
@@ -666,8 +665,10 @@ def _build_composite_backend(fs_config: Any) -> Any:
                 routes[prefix] = state_backend
 
     known_types = {"filesystem_readonly", "local_shell", "store", "state"}
+    # `filesystem_readonly:/abs/path` is the same backend with an
+    # explicit root, so validate on the part before the colon.
     for path_prefix, backend_name in fs_config.backend.routes.items():
-        if backend_name not in known_types:
+        if backend_name.split(":", 1)[0] not in known_types:
             logger.warning(
                 "Unknown backend '%s' in route for '%s'", backend_name, path_prefix
             )
@@ -679,6 +680,27 @@ def _build_composite_backend(fs_config: Any) -> Any:
 
     default_backend = routes.pop("/", state_backend)
     return CompositeBackend(default=default_backend, routes=routes)
+
+
+def _readonly_root(path_prefix: str, backend_name: str) -> Path:
+    """Where a `filesystem_readonly` route reads from.
+
+    `filesystem_readonly` resolves under the config directory, so
+    `/skills/` is `$CONFIG_PATH/skills`. That is right for content
+    shipped with the agent and wrong for anything on a volume:
+    documents are mounted from a PVC and do not belong inside the
+    config tree, which `_disk_signature` rglobs on every reload check
+    — a gigabyte of Parquet there would make every config read slow.
+
+    `filesystem_readonly:/app/data/documents` gives an explicit root
+    instead. Relative paths stay relative to the config directory so
+    the existing form keeps working unchanged.
+    """
+    _, _, explicit = backend_name.partition(":")
+    if not explicit:
+        return agent_config.base_dir / path_prefix.strip("/")
+    root = Path(explicit)
+    return root if root.is_absolute() else agent_config.base_dir / root
 
 
 def _build_filesystem_readonly_backend(root_dir: Path) -> ReadOnlyFilesystemBackend:

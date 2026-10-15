@@ -19,7 +19,13 @@ import sys
 from pathlib import Path
 
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", "/app/config/agent"))
-REQUIRED_FILES = ["PROMPT.md", "mcp.json"]
+
+# Logical names, resolved through config.paths rather than hardcoded
+# filenames. `mcp` lives at `integrations/mcp.json` with the old
+# root-level `mcp.json` still accepted; a literal name here would have
+# aborted startup the moment the file moved — the entrypoint refusing
+# to boot over a rename the rest of the code handles.
+REQUIRED_CONFIGS = ["prompt", "mcp"]
 
 
 def validate_config_mount() -> None:
@@ -30,9 +36,17 @@ def validate_config_mount() -> None:
         print("   Check deployment spec for volume mount.", file=sys.stderr)
         sys.exit(1)
 
-    missing_files = [
-        name for name in REQUIRED_FILES if not (CONFIG_PATH / name).exists()
-    ]
+    from deep_agent.src.agent.config.paths import candidates_for
+
+    def _find(name: str) -> Path | None:
+        for relative in candidates_for(name):
+            path = CONFIG_PATH / relative
+            if path.is_file():
+                return path
+        return None
+
+    resolved = {name: _find(name) for name in REQUIRED_CONFIGS}
+    missing_files = [name for name, path in resolved.items() if path is None]
 
     if missing_files:
         print(
@@ -49,13 +63,16 @@ def validate_config_mount() -> None:
         sys.exit(1)
 
     print(f"Config validation passed: {CONFIG_PATH}")
-    print(f"   PROMPT.md: {(CONFIG_PATH / 'PROMPT.md').stat().st_size} bytes")
-    print(f"   mcp.json: {(CONFIG_PATH / 'mcp.json').stat().st_size} bytes")
+    for path in resolved.values():
+        assert path is not None  # missing names exited above
+        print(f"   {path.relative_to(CONFIG_PATH)}: {path.stat().st_size} bytes")
 
     try:
         from deep_agent.src.agent.config.loader import _strip_jsonc_comments
 
-        with open(CONFIG_PATH / "mcp.json") as f:
+        mcp_path = resolved["mcp"]
+        assert mcp_path is not None  # asserted for every name above
+        with open(mcp_path) as f:
             mcp_config = json.loads(_strip_jsonc_comments(f.read()))
             servers = list(mcp_config.get("mcpServers", {}).keys())
             print(f"   MCP servers: {servers if servers else 'none'}")

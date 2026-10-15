@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-documents-pvc
+  labels:
+    app: template-agent
+    component: documents
+spec:
+  # 500Mi, and the API refuses an upload that would exceed it rather
+  # than letting the filesystem return ENOSPC. A full PVC fails every
+  # subsequent write, including ones unrelated to the upload that
+  # filled it, so the limit is enforced before the bytes land.
+  accessModes:
+    # RWO while a single agent reads it. Several replicas reading the
+    # same datasets need RWX, and on OpenShift that is usually not the
+    # default storage class — a conscious change, not a number bump.
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Mi

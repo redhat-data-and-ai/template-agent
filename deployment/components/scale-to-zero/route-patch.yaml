@@ -1,0 +1,17 @@
+# With scale-to-zero the Route must target the KEDA interceptor, not the
+# agent Service. Pointing at the agent directly returns 503 at zero
+# replicas — nothing is listening, and nothing triggers a scale-up.
+#
+# The interceptor accepts the connection, holds it while KEDA scales the
+# Deployment, then forwards. Service name and port are the add-on's
+# defaults; confirm against the operator's install namespace.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: agent
+spec:
+  to:
+    kind: Service
+    name: keda-add-ons-http-interceptor-proxy
+  port:
+    targetPort: 8080

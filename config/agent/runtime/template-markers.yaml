@@ -1,0 +1,26 @@
+# Example content a fork should have replaced.
+#
+# The validator warns while any needle below is still present in its
+# file. This list lives in config rather than in Python so that the
+# shipped example's name appears in exactly one place: renaming the
+# example is a config change, not a code change.
+#
+# Each needle must track whatever the shipped config carries. Renaming
+# the example without renaming its needle leaves a check that can never
+# fire — it would pass silently for a fork that changed nothing.
+#
+# Deleting this file turns the checks off. That is a reasonable thing
+# for a fork to do once it has finished customising, and it is an
+# explicit act rather than a silent one.
+markers:
+  - needle: "Workpilot"
+    file: runtime/agent.yaml
+    message: agent name is still the example's
+
+  - needle: "Workpilot"
+    file: PROMPT.md
+    message: prompt is still the example's
+
+  - needle: "template-mcp-server"
+    file: integrations/mcp.json
+    message: MCP server is still the example's

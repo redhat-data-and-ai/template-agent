@@ -8,8 +8,50 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # nginx defaults to 1 MB and rejects larger uploads itself, with an
+    # HTML 413 that never reaches the agent and that the UI cannot
+    # parse into a message. Must stay above the agent's own
+    # max_file_bytes so the *application* is what refuses a too-large
+    # file, with an error naming the file and the limit.
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
 spec:
   rules:
+    # Bare `localhost`, because that is the only host the MCP providers
+    # whitelist as a redirect target. `agent.localhost` is a different
+    # origin to them and the authorize request is rejected, so the
+    # OAuth callback has to arrive here.
+    #
+    # One origin serving both: `/mcp` and the client-ID metadata
+    # document go to the agent, everything else to the UI. That also
+    # makes the callback popup same-origin with the UI, so its
+    # postMessage lands without a cross-origin target.
+    #
+    # Longest-prefix wins in nginx-ingress, so the two agent paths are
+    # matched ahead of the UI's `/`.
+    - host: localhost
+      http:
+        paths:
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: agent
+                port:
+                  number: 5002
+          - path: /.well-known/oauth-client
+            pathType: Prefix
+            backend:
+              service:
+                name: agent
+                port:
+                  number: 5002
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ui
+                port:
+                  number: 8080
     - host: ui.localhost
       http:
         paths:

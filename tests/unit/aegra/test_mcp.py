@@ -691,3 +691,113 @@ class TestTokenInjectorInterceptorFallback:
         handler.assert_called_once_with(request)
         request.override.assert_not_called()
         assert result == "response"
+
+
+class TestTokenRemaining:
+    """Opaque tokens must not be mistaken for expired ones.
+
+    `_jwt_exp` returns 0.0 both for a token it cannot parse and for one
+    that declares `exp: 0`. Treating the first as expired makes every
+    tool call refresh, adding an IdP round trip per call.
+    """
+
+    @staticmethod
+    def _jwt(exp: float) -> str:
+        import base64
+        import json
+
+        header = base64.urlsafe_b64encode(b'{"alg":"RS256"}').rstrip(b"=").decode()
+        payload = (
+            base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode())
+            .rstrip(b"=")
+            .decode()
+        )
+        return f"{header}.{payload}.sig"
+
+    def test_opaque_token_is_treated_as_immeasurable(self):
+        import math
+
+        from deep_agent.aegra import mcp as mcp_mod
+
+        assert mcp_mod._token_remaining("opaque-reference-token") == math.inf
+
+    def test_jwt_without_exp_claim_is_immeasurable(self):
+        import base64
+        import json
+        import math
+
+        from deep_agent.aegra import mcp as mcp_mod
+
+        header = base64.urlsafe_b64encode(b'{"alg":"RS256"}').rstrip(b"=").decode()
+        payload = (
+            base64.urlsafe_b64encode(json.dumps({"sub": "u1"}).encode())
+            .rstrip(b"=")
+            .decode()
+        )
+        assert mcp_mod._token_remaining(f"{header}.{payload}.sig") == math.inf
+
+    def test_explicit_zero_exp_is_expired_not_immeasurable(self):
+        """`exp: 0` is a real claim — expired at the epoch, so refresh it."""
+        from deep_agent.aegra import mcp as mcp_mod
+
+        assert mcp_mod._token_remaining(self._jwt(0)) < 0
+
+    def test_future_expiry_reports_remaining_seconds(self):
+        import time
+
+        from deep_agent.aegra import mcp as mcp_mod
+
+        remaining = mcp_mod._token_remaining(self._jwt(time.time() + 3600))
+        assert 3500 < remaining <= 3600
+
+    def test_past_expiry_is_negative(self):
+        import time
+
+        from deep_agent.aegra import mcp as mcp_mod
+
+        assert mcp_mod._token_remaining(self._jwt(time.time() - 60)) < 0
+
+
+class TestPerServerCircuitBreakers:
+    """One flaky MCP server must not strip every other server's tools."""
+
+    def test_breakers_are_distinct_per_server(self):
+        from deep_agent.aegra import mcp as mcp_mod
+
+        mcp_mod._mcp_breakers.clear()
+        first = mcp_mod._get_mcp_breaker("server-a")
+        second = mcp_mod._get_mcp_breaker("server-b")
+
+        assert first is not second
+        assert first is mcp_mod._get_mcp_breaker("server-a")
+
+    def test_breaker_names_are_namespaced(self):
+        from deep_agent.aegra import mcp as mcp_mod
+
+        mcp_mod._mcp_breakers.clear()
+        assert mcp_mod._get_mcp_breaker("server-a").name == "mcp-server:server-a"
+
+    def test_unnamed_caller_gets_the_shared_breaker(self):
+        """Back-compat: callers that name no server keep one shared circuit."""
+        from deep_agent.aegra import mcp as mcp_mod
+
+        mcp_mod._mcp_breakers.clear()
+        assert (
+            mcp_mod._get_mcp_breaker().name
+            == f"mcp-server:{mcp_mod._SHARED_BREAKER_KEY}"
+        )
+
+    def test_tripping_one_breaker_leaves_others_closed(self):
+        from deep_agent.aegra import mcp as mcp_mod
+        from deep_agent.src.error_handling import CircuitBreaker
+
+        mcp_mod._mcp_breakers.clear()
+        # In-memory breakers, so the assertion does not depend on whether a
+        # Redis backend happens to be reachable in this test session.
+        tripped = CircuitBreaker(name="mcp-server:a", threshold=1)
+        tripped.record_failure()
+        mcp_mod._mcp_breakers["a"] = tripped
+        mcp_mod._mcp_breakers["b"] = CircuitBreaker(name="mcp-server:b", threshold=1)
+
+        assert mcp_mod._get_mcp_breaker("a").is_open is True
+        assert mcp_mod._get_mcp_breaker("b").is_open is False

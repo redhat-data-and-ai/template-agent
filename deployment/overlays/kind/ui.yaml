@@ -31,6 +31,15 @@ spec:
               value: "development"
             - name: AUTH_ENABLED
               value: "false"
+            # Required by the server, which refuses to start without a
+            # 32-character value — the UI had never started on Kind
+            # because nothing set it. A fixed literal is correct here and
+            # only here: Kind is a throwaway local cluster, the cookies
+            # it signs never leave the laptop, and a generated value
+            # would invalidate every session on each redeploy. The
+            # OpenShift overlay takes this from a Secret.
+            - name: COOKIE_SIGN
+              value: "kind-local-development-cookie-signing-key"
             - name: AGENT_HOST
               value: "http://agent:5002"
             - name: UI_CONFIG_PATH
@@ -57,11 +66,18 @@ spec:
             periodSeconds: 5
           resources:
             requests:
-              memory: "128Mi"
+              memory: "256Mi"
               cpu: "100m"
             limits:
-              memory: "256Mi"
-              cpu: "250m"
+              # The BFF buffers a whole multipart upload in memory
+              # (Fastify `parseAs: 'buffer'`), so the ceiling has to
+              # clear the upload cap with room for Node's baseline and
+              # a second concurrent request. At 256Mi a 60 MB upload
+              # OOMKilled the pod, which surfaced as nginx 503 and
+              # "the agent didn't respond" — blaming the agent for a
+              # UI that was not running.
+              memory: "1Gi"
+              cpu: "500m"
       volumes:
         - name: ui-config
           configMap:
@@ -76,6 +92,14 @@ metadata:
     component: ui
 data:
   ui.yaml: |
+    # The name and mark are config, never constants in code. The
+    # mounted ConfigMap is what the UI actually reads, so omitting
+    # branding here left the masthead on its generic fallback while
+    # the repo's own config/ui/settings.yaml said Workpilot.
+    branding:
+      title: "Workpilot"
+      logo_url: "https://cdn.prod.website-files.com/6447ad3a38d5f03bc4e0a3b2/69e9fcfe18543c02af4fde56_WorkPilot.jpg"
+      favicon_url: "https://cdn.prod.website-files.com/6447ad3a38d5f03bc4e0a3b2/69e9fcfe18543c02af4fde56_WorkPilot.jpg"
     server:
       host: "0.0.0.0"
       port: 8080
@@ -99,8 +123,15 @@ data:
         cross_origin_embedder_policy: false
       rate_limit:
         enabled: true
-        max: 100
+        # Matches template-ui's own default. A chat UI is chattier
+        # than a REST client — one analytics page load is four calls
+        # — and 100/min fired during ordinary use.
+        max: 600
         window: "1 minute"
+        # One hop: nginx-ingress in Kind, the Route in OpenShift.
+        # Without it every request carries the ingress pod's address
+        # and the whole deployment shares a single bucket.
+        trust_proxy: 1
         exclude_paths:
           - "/api/health"
           - "/_health"

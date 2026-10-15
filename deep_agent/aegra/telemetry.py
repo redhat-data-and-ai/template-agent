@@ -29,6 +29,7 @@ logger = get_python_logger()
 
 _langfuse_tracing_initialized = False
 _token_budget_tracing_initialized = False
+_usage_recording_initialized = False
 _guardian_initialized = False
 _pii_initialized = False
 
@@ -592,6 +593,43 @@ def setup_token_budget_tracking() -> None:
         logger.warning(
             "Failed to register token budget observability provider", exc_info=True
         )
+
+
+def setup_usage_recording() -> None:
+    """Register the analytics usage callback for all LangChain runs.
+
+    Unconditional, unlike token budget tracking. The Usage tab is not
+    a feature a deployment opts into — it is the only view of whether
+    the thing works — and gating its data source behind a flag is how
+    the previous version came to report zero tokens for 79% of runs.
+    """
+    global _usage_recording_initialized  # noqa: PLW0603
+    if _usage_recording_initialized:
+        return
+    _usage_recording_initialized = True
+
+    try:
+        from langchain_core.tracers.context import register_configure_hook
+
+        from deep_agent.src.analytics.usage_callback import (
+            UsageRecorderCallbackHandler,
+        )
+
+        _usage_ctx_var: contextvars.ContextVar = contextvars.ContextVar(
+            "analytics_usage_handler", default=None
+        )
+        os.environ.setdefault("ANALYTICS_USAGE_RECORDING", "1")
+        register_configure_hook(
+            _usage_ctx_var,
+            True,
+            UsageRecorderCallbackHandler,
+            env_var="ANALYTICS_USAGE_RECORDING",
+        )
+        logger.info("Analytics usage callback registered for all LangChain runs")
+    except ImportError:
+        logger.warning("langchain_core not available — usage recording disabled")
+    except Exception:
+        logger.warning("Failed to register analytics usage callback", exc_info=True)
 
 
 def setup_guardian_guardrails() -> None:

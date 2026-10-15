@@ -407,6 +407,19 @@ def _build_image_sanitize_middleware() -> Any | None:
     return ImageSanitizeMiddleware()
 
 
+def _build_model_router_middleware() -> Any | None:
+    """Per-request model tier selection, when router.yaml enables it."""
+    try:
+        from deep_agent.src.routing import build_model_router_middleware
+
+        return build_model_router_middleware()
+    except Exception as exc:
+        # Routing is an optimisation; it must never stop the agent
+        # starting.
+        logger.error("Model router unavailable: %s", exc, exc_info=True)
+        return None
+
+
 def build_middleware_list(
     resolved: ResolvedMiddlewareConfig,
     *,
@@ -440,6 +453,12 @@ def build_middleware_list(
     opa_mw = build_opa_middleware()
     if opa_mw is not None:
         middlewares.append(opa_mw)
+
+    # Registered after policy, before anything that inspects the response:
+    # routing only swaps which model serves the call.
+    router_mw = _build_model_router_middleware()
+    if router_mw is not None:
+        middlewares.append(router_mw)
 
     safety_mw = _build_gemini_safety_log_middleware()
     if safety_mw is not None:
@@ -605,8 +624,14 @@ def _build_model_retry(config: Any) -> Any | None:
                 return "I wasn't able to complete this task due to a content safety policy issue."
             if isinstance(exc, (InputContentSafetyError, ContentSafetyError)):
                 return "I can't help with that request due to content safety policy."
-            # All other errors: preserve the standard format.
+            # All other errors: preserve the standard format for the
+            # user, but log the traceback. Returning only the string
+            # meant failures like "ValueError: string argument should
+            # contain only ASCII characters" reached the transcript
+            # with nothing in the logs to locate them by — no frame, no
+            # field, no value.
             exc_type = type(exc).__name__
+            logger.exception("Model call failed: %s: %s", exc_type, exc)
             return f"Model call failed with {exc_type}: {exc}"
 
         return ModelRetryMiddleware(

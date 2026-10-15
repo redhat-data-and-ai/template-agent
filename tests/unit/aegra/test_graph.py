@@ -681,8 +681,10 @@ class TestAgentFactory:
         assert len(call_kwargs["interrupt_on"]) > 0, (
             "interrupt_on dict must not be empty"
         )
+        # Every entry is a config dict carrying a description (risk and
+        # rationale); path-conditional ones also carry a `when`.
         assert all(
-            v is True or (isinstance(v, dict) and "when" in v)
+            isinstance(v, dict) and "description" in v
             for v in call_kwargs["interrupt_on"].values()
         )
 

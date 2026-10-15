@@ -1,0 +1,20 @@
+# Kind-only agent settings.
+#
+# Auth is off here. The cluster has no SSO issuer to point at, and every
+# request would 401 — including the nightly kill-and-restart tier. The
+# OpenShift overlay sets ENABLE_AUTH: "true" and is unaffected by this file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+data:
+  ENABLE_AUTH: "false"
+  SSO_DEV_USERNAME: "Kind Dev"
+  SSO_DEV_USER_ID: "kind-dev-user"
+
+  # Point every model at the in-cluster stub (mock-llm.yaml). `mock-model` is
+  # in neither GEMINI_MODELS nor CLAUDE_MODELS, so create_model() routes it to
+  # VLLM_BASE_URL. Without this the agent needs Vertex AI credentials that a
+  # local cluster has no business holding.
+  MODEL_OVERRIDE: "mock-model"
+  VLLM_BASE_URL: "http://mock-llm:8000/v1"
