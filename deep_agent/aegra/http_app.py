@@ -24,6 +24,7 @@ from deep_agent.aegra.projects_routes import projects_router
 from deep_agent.aegra.security_middleware import (
     RequestSizeLimitMiddleware,
     SecurityHeadersMiddleware,
+    StreamingBodyLimitMiddleware,
 )
 from deep_agent.aegra.thread_cleanup import thread_cleanup_router
 from deep_agent.aegra.upload_routes import upload_router
@@ -188,12 +189,33 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+# Multipart framing (boundary, part headers) sits on top of the archive
+# bytes; 64KB is ample for a handful of parts and keeps the body cap from
+# rejecting an archive that is itself within UPLOAD_MAX_ARCHIVE_BYTES.
+_MULTIPART_OVERHEAD_ALLOWANCE = 64 * 1024
+
+# /upload legitimately carries more than the global cap, but it is never
+# exempt: FastAPI parses and spools a multipart body before the route can
+# check the feature flag or authorization, so an unlimited route would let
+# an unauthenticated caller fill the disk. It gets a higher limit instead,
+# with headroom over UPLOAD_MAX_ARCHIVE_BYTES for multipart framing --
+# the archive itself is still capped exactly while it is buffered.
+_UPLOAD_BODY_LIMIT = settings.UPLOAD_MAX_ARCHIVE_BYTES + _MULTIPART_OVERHEAD_ALLOWANCE
+_BODY_LIMITS = {"/upload": _UPLOAD_BODY_LIMIT}
+
+# Counts bytes as they stream in, so an oversized body is cut off before
+# the multipart parser ever sees it. Added first so it wraps outermost.
+app.add_middleware(
+    StreamingBodyLimitMiddleware,
+    max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
+    path_limits=_BODY_LIMITS,
+)
+# Cheap pre-check on the declared Content-Length, so a well-behaved client
+# is rejected before sending anything at all.
 app.add_middleware(
     RequestSizeLimitMiddleware,
     max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
-    # /upload streams a larger payload and enforces UPLOAD_MAX_ARCHIVE_BYTES
-    # itself; exempting it keeps the tighter global cap on every other route.
-    exempt_paths={"/upload"},
+    path_limits=_BODY_LIMITS,
 )
 app.include_router(thread_cleanup_router)
 app.include_router(personalization_router)

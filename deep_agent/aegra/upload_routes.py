@@ -515,25 +515,32 @@ def _upload_lock(data_root: Path) -> Iterator[None]:
             # Stole the stale entry but lost the race to recreate it.
             raise UploadBusy("another upload is in progress") from None
 
-    # Identify *our* lock by inode so release cannot delete a successor's.
-    # Without this, a release after our lock was stolen would unlink the
-    # new holder's file and let a third upload in alongside them.
+    # Stamp the lock with a unique token so release can tell our own lock
+    # from a successor's. Identifying it by inode instead would be wrong on
+    # Linux: ext4 recycles inode numbers, so a lock unlinked and recreated
+    # can land on the same st_ino and a stale-breaker's lock would look
+    # like ours. File contents are not recycled.
+    our_token = uuid.uuid4().hex
     try:
-        our_inode = os.fstat(fd).st_ino
-        os.write(fd, f"{os.getpid()}\n".encode())
+        os.write(fd, f"{our_token}\n{os.getpid()}\n".encode())
     finally:
         os.close(fd)
 
     try:
         yield
     finally:
+        held_by: str | None
         try:
-            if lock.stat().st_ino == our_inode:
-                lock.unlink(missing_ok=True)
-            else:
-                logger.warning("upload_lock_not_ours_on_release")
-        except FileNotFoundError:
-            pass
+            held_by = lock.read_text().split("\n", 1)[0]
+        except OSError:
+            # Already gone, or unreadable — nothing of ours left to release.
+            held_by = None
+        if held_by == our_token:
+            lock.unlink(missing_ok=True)
+        elif held_by is not None:
+            # Our lock was broken as stale and someone else holds it now.
+            # Deleting theirs would admit a third writer alongside them.
+            logger.warning("upload_lock_not_ours_on_release")
 
 
 def _ingest(

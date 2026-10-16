@@ -704,19 +704,28 @@ class TestLocking:
                     pytest.fail("acquired a lock another caller had already stolen")
 
     def test_release_does_not_delete_a_successors_lock(self, data_root):
-        """If our lock was stolen, releasing must not unlink the new holder's."""
+        """If our lock was stolen as stale, releasing must leave the new one.
+
+        Identity is the token written into the file, not the inode: ext4
+        recycles inode numbers, so a lock unlinked and recreated can reuse
+        the same st_ino and a successor's lock would look like our own.
+        """
         lock = data_root / upload_routes._LOCK_NAME
 
         with upload_routes._upload_lock(data_root):
             # Simulate a stale-breaker stealing ours and installing its own.
             lock.unlink()
-            lock.write_text("other-holder\n")
-            successor_inode = lock.stat().st_ino
+            lock.write_text("a-different-token\n12345\n")
 
-        # Our release saw a different inode and left it alone.
         assert lock.exists(), "release deleted the successor's lock"
-        assert lock.stat().st_ino == successor_inode
+        assert lock.read_text().startswith("a-different-token")
         lock.unlink()
+
+    def test_release_removes_our_own_lock(self, data_root):
+        lock = data_root / upload_routes._LOCK_NAME
+        with upload_routes._upload_lock(data_root):
+            assert lock.exists()
+        assert not lock.exists()
 
     def test_no_stale_sidecar_files_left_behind(self, data_root):
         lock = data_root / upload_routes._LOCK_NAME
