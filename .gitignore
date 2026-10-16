@@ -248,3 +248,6 @@ docker-compose.override.yml
 # Aegra-generated scaffolding (conflicts with existing compose.yaml + k8s deployment)
 Dockerfile
 docker-compose.yml
+
+# Uploaded data (POST /upload) — runtime state on the PVC, never committed
+config/agent/data/
