@@ -29,8 +29,8 @@ from deep_agent.aegra.security_middleware import (
     StreamingBodyLimitMiddleware,
 )
 from deep_agent.aegra.thread_cleanup import thread_cleanup_router
-from deep_agent.src.agent.config import agent_config
 from deep_agent.aegra.upload_routes import upload_router
+from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import (
     bind_request_context,
