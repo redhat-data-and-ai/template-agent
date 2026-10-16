@@ -505,19 +505,19 @@ class TestResolveRouteRoot:
         from deep_agent.src.agent.config import agent_config
         from deep_agent.src.infrastructure.backend import _resolve_route_root
 
-        assert _resolve_route_root("skills") == agent_config.base_dir / "skills"
+        assert _resolve_route_root("skills", "skills") == agent_config.base_dir / "skills"
 
     def test_absolute_root_is_used_as_given(self):
         from deep_agent.src.infrastructure.backend import _resolve_route_root
 
-        assert _resolve_route_root("/mnt/data/current") == Path("/mnt/data/current")
+        assert _resolve_route_root("/mnt/data/current", "data") == Path("/mnt/data/current")
 
     def test_env_var_is_expanded(self):
         """Lets the data route follow DATA_PATH without hardcoding a mount."""
         from deep_agent.src.infrastructure.backend import _resolve_route_root
 
         with patch.dict(os.environ, {"DATA_PATH": "/app/data"}):
-            assert _resolve_route_root("${DATA_PATH}/current") == Path(
+            assert _resolve_route_root("${DATA_PATH}/current", "data") == Path(
                 "/app/data/current"
             )
 
@@ -528,9 +528,33 @@ class TestResolveRouteRoot:
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("DEFINITELY_UNSET_VAR", None)
-            resolved = _resolve_route_root("${DEFINITELY_UNSET_VAR}/current")
+            resolved = _resolve_route_root("${DEFINITELY_UNSET_VAR}/current", "data")
 
         assert resolved.is_relative_to(agent_config.base_dir)
+
+    def test_empty_variable_falls_back_instead_of_escaping_to_the_root(self):
+        """An empty ${VAR} collapses "${VAR}/current" to the filesystem root."""
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        for value in ("", "   "):
+            with patch.dict(os.environ, {"DATA_PATH": value}):
+                resolved = _resolve_route_root("${DATA_PATH}/current", "data")
+
+            assert resolved == agent_config.base_dir / "data"
+            assert resolved != Path("/current")
+
+    def test_fallback_uses_the_route_name_not_the_raw_pattern(self):
+        """The old fallback produced a directory literally named "${VAR}"."""
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DEFINITELY_UNSET_VAR", None)
+            resolved = _resolve_route_root("${DEFINITELY_UNSET_VAR}/current", "data")
+
+        assert resolved == agent_config.base_dir / "data"
+        assert "$" not in str(resolved)
 
     def test_shipped_data_route_points_at_the_data_volume(self):
         """The template default must follow DATA_PATH, not the config tree."""
@@ -539,7 +563,7 @@ class TestResolveRouteRoot:
 
         root = agent_config.get_filesystem_config().backend.roots["/data/"]
         with patch.dict(os.environ, {"DATA_PATH": "/app/data"}):
-            resolved = _resolve_route_root(root)
+            resolved = _resolve_route_root(root, "data")
 
         assert resolved == Path("/app/data/current")
         assert not resolved.is_relative_to(agent_config.base_dir)
