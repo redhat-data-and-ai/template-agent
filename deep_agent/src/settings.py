@@ -104,6 +104,10 @@ class Settings(BaseSettings):
 
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
+    LLM_PROVIDER: Optional[str] = Field(
+        default=None,
+        description="LLM provider override injected by agent-engine (e.g. 'models_corp' for models.corp / APIcast-fronted vLLM).",
+    )
 
     # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────
     SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")

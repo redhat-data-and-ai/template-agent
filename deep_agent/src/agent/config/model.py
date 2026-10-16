@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import BaseModel, model_validator
 
 from deep_agent.src.agent.llm import CLAUDE_MODELS, GEMINI_MODELS
+from deep_agent.src.settings import settings
 
 
 class Provider(str, Enum):
@@ -20,6 +21,7 @@ class Provider(str, Enum):
     VERTEX = "vertex"
     OPENAI = "openai"
     MAAS = "maas"  # Model as a Service (VLLM)
+    MODELS_CORP = "models_corp"  # models.corp / APIcast-fronted vLLM
 
 
 class ModelSpec(BaseModel):
@@ -49,12 +51,15 @@ def infer_provider(model_name: str) -> Provider:
     Inference logic:
     - Known Gemini/Claude models → VERTEX
     - GPT models (gpt-*, case-insensitive) → OPENAI
+    - LLM_PROVIDER env var == "models_corp" → MODELS_CORP (models.corp / APIcast-fronted vLLM)
     - All other models → MAAS (VLLM for custom models)
     """
     if model_name in GEMINI_MODELS or model_name in CLAUDE_MODELS:
         return Provider.VERTEX
     if model_name.lower().startswith("gpt-"):
         return Provider.OPENAI
+    if getattr(settings, "LLM_PROVIDER", None) == "models_corp":
+        return Provider.MODELS_CORP
     return Provider.MAAS
 
 

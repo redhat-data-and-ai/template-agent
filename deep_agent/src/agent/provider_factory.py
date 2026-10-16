@@ -63,11 +63,15 @@ def _create_by_provider(
     Routes:
     - VERTEX → Google Vertex AI (Gemini, Claude)
     - OPENAI → OpenAI API (GPT models)
-    - MAAS → VLLM (Model as a Service for custom models)
+    - MODELS_CORP → models.corp / APIcast-fronted vLLM (no /data/ prefix)
+    - MAAS → VLLM (Model as a Service for custom models; prepends /data/ prefix)
     """
     if provider == Provider.VERTEX:
         return _create_vertex_model(model_name, temperature, max_output_tokens)
     if provider == Provider.OPENAI:
+        return _create_vllm_model(model_name, temperature, max_output_tokens)
+    if provider == Provider.MODELS_CORP:
+        # models.corp / APIcast-fronted vLLM: model IDs are served as-is (no /data/ prefix).
         return _create_vllm_model(model_name, temperature, max_output_tokens)
     if provider == Provider.MAAS:
         # MaaS: managed open-source model serving without owning infrastructure.
