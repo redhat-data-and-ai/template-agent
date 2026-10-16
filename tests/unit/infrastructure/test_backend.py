@@ -505,12 +505,16 @@ class TestResolveRouteRoot:
         from deep_agent.src.agent.config import agent_config
         from deep_agent.src.infrastructure.backend import _resolve_route_root
 
-        assert _resolve_route_root("skills", "skills") == agent_config.base_dir / "skills"
+        assert (
+            _resolve_route_root("skills", "skills") == agent_config.base_dir / "skills"
+        )
 
     def test_absolute_root_is_used_as_given(self):
         from deep_agent.src.infrastructure.backend import _resolve_route_root
 
-        assert _resolve_route_root("/mnt/data/current", "data") == Path("/mnt/data/current")
+        assert _resolve_route_root("/mnt/data/current", "data") == Path(
+            "/mnt/data/current"
+        )
 
     def test_env_var_is_expanded(self):
         """Lets the data route follow DATA_PATH without hardcoding a mount."""
