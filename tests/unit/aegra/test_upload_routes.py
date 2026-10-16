@@ -666,11 +666,27 @@ class TestMalformedArchives:
             yield spy
 
     def _corrupt_zip(self):
+        """A zip whose directory is valid but whose payload is garbage.
+
+        Corrupt only the compressed bytes, located from the local header
+        rather than guessed at a fixed offset: `is_zipfile` must still
+        return True (it reads the end-of-central-directory record) so the
+        failure lands during the read, which is the case under test. A
+        blind smash at a fixed offset damages headers on some Python
+        versions and the file is then rejected earlier, for a different
+        reason.
+        """
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("a.md", "hello world" * 200)
         raw = bytearray(buf.getvalue())
-        raw[40:80] = b"\x00" * 40  # smash the compressed stream
+
+        with zipfile.ZipFile(io.BytesIO(bytes(raw))) as zf:
+            info = zf.infolist()[0]
+        # Local header: 30 fixed bytes, then the name and extra fields.
+        start = info.header_offset + 30 + len(info.filename) + len(info.extra)
+        end = start + info.compress_size
+        raw[start:end] = b"\x00" * (end - start)
         return bytes(raw)
 
     def _truncated_targz(self):
@@ -832,7 +848,12 @@ class TestLocking:
         def swap_in_a_fresh_lock_first(src, dst):
             if str(src) == str(lock):
                 # Another breaker got here between our stat and our rename.
-                lock.unlink()
+                # It renames the stale entry aside, exactly as the real
+                # code does, so the stale inode stays allocated and the
+                # replacement is guaranteed a different one. Unlinking
+                # instead would let ext4 recycle the number and the test
+                # would depend on the filesystem.
+                real_rename(lock, data_root / "taken-by-other-breaker")
                 lock.write_text("fresh-holder-token\n2\n")
             return real_rename(src, dst)
 
