@@ -140,6 +140,10 @@ services:
       - ./deep_agent:/app/deep_agent:ro
       - ./config:/app/config:ro
       - ${CUSTOM_CA_FILE:-/dev/null}:/etc/custom-ca/ca.pem:ro
+      # Uploads publish into DATA_PATH, which defaults to /app/data. Without a
+      # volume here they land on the container filesystem and vanish on the
+      # next restart, while POST /upload still returns 200.
+      - agent_upload_data:/app/data
     networks:
       - agent-network
 
@@ -159,6 +163,8 @@ services:
       - agent-network
 
 volumes:
+  agent_upload_data:
+    driver: local
   agent_pgvector_data:
     driver: local
   agent_redis_data:

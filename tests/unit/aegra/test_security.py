@@ -4,6 +4,7 @@ import os
 from unittest.mock import patch
 
 import pytest
+from fastapi import Request
 from starlette.testclient import TestClient
 
 from deep_agent.src.exceptions import AppException
@@ -269,3 +270,102 @@ class TestErrorResponseScrubbing:
         assert response["detail"] == "Error occurred"
         assert response["exception_type"] == "ValueError"
         assert "exception_message" not in response
+
+
+class TestBodySizeLimits:
+    """Body caps must hold before anything parses or spools the body.
+
+    FastAPI resolves UploadFile parameters as dependencies, so
+    python-multipart writes the whole body to disk *before* the route can
+    check its feature flag or authorization. A route exempted from the
+    size limit therefore lets an unauthenticated caller fill the disk and
+    only then receive a 404 or 401. See adrs/upload-data-pvc.md.
+    """
+
+    GLOBAL = 1024
+    UPLOAD = 4096
+
+    def _app(self):
+        from fastapi import FastAPI
+
+        from deep_agent.aegra.security_middleware import (
+            RequestSizeLimitMiddleware,
+            StreamingBodyLimitMiddleware,
+        )
+
+        limits = {"/upload": self.UPLOAD}
+        app = FastAPI()
+        app.add_middleware(
+            StreamingBodyLimitMiddleware,
+            max_size_bytes=self.GLOBAL,
+            path_limits=limits,
+        )
+        app.add_middleware(
+            RequestSizeLimitMiddleware,
+            max_size_bytes=self.GLOBAL,
+            path_limits=limits,
+        )
+
+        @app.post("/upload")
+        async def _upload(request: Request):
+            body = await request.body()
+            return {"read": len(body)}
+
+        @app.post("/other")
+        async def _other(request: Request):
+            body = await request.body()
+            return {"read": len(body)}
+
+        return app
+
+    def test_global_limit_applies_to_ordinary_routes(self):
+        client = TestClient(self._app())
+        assert (
+            client.post("/other", content=b"x" * (self.GLOBAL - 10)).status_code == 200
+        )
+        assert (
+            client.post("/other", content=b"x" * (self.GLOBAL + 10)).status_code == 413
+        )
+
+    def test_upload_gets_a_higher_limit_but_is_not_exempt(self):
+        client = TestClient(self._app())
+        # Above the global cap, below the upload cap.
+        ok = client.post("/upload", content=b"x" * (self.GLOBAL + 100))
+        assert ok.status_code == 200
+        # Above the upload cap too.
+        assert (
+            client.post("/upload", content=b"x" * (self.UPLOAD + 100)).status_code
+            == 413
+        )
+
+    def test_chunked_body_without_content_length_is_still_capped(self):
+        """Content-Length is caller-controlled and absent when chunked."""
+        client = TestClient(self._app())
+
+        def body():
+            for _ in range(20):
+                yield b"x" * 1024  # 20KB total, far over the 4KB upload cap
+
+        res = client.post("/upload", content=body())
+        assert res.status_code == 413, "chunked body bypassed the cap"
+
+    def test_handler_never_sees_an_oversized_body(self):
+        """The cap must cut in before the route runs, not inside it."""
+        reached = []
+
+        from fastapi import FastAPI
+
+        from deep_agent.aegra.security_middleware import StreamingBodyLimitMiddleware
+
+        app = FastAPI()
+        app.add_middleware(StreamingBodyLimitMiddleware, max_size_bytes=self.GLOBAL)
+
+        @app.post("/sink")
+        async def _sink(request: Request):
+            await request.body()
+            reached.append(1)
+            return {"ok": True}
+
+        res = TestClient(app).post("/sink", content=b"x" * (self.GLOBAL * 10))
+        assert res.status_code == 413
+        assert reached == [], "handler ran despite an oversized body"
