@@ -183,14 +183,16 @@ filesystem:
     store:
       enabled: true
       scope: user
-    # Optional per-route directory override, relative to the config base dir.
-    # Defaults to the route prefix itself ("/skills/" -> skills).
-    # /data/ points one level deeper: the upload endpoint publishes into
-    # data/current so it has a regular directory to rename over (data/ is a
-    # mount point). "current" stays invisible to the agent, which sees
+    # Optional per-route directory override. A relative value is resolved
+    # inside the config tree ("/skills/" -> skills); an absolute one points
+    # elsewhere, and ${VAR} is expanded first.
+    # /data/ lives on its own volume rather than in the config tree, so it
+    # follows DATA_PATH and the same file works in a pod and locally. The
+    # extra "current" level exists because DATA_PATH is a mount point and
+    # cannot be renamed over; it stays invisible to the agent, which sees
     # /data/<exactly what was uploaded>.
     roots:
-      "/data/": "data/current"
+      "/data/": "${DATA_PATH}/current"
     routes:
       "/skills/": filesystem_readonly
       "/data/": filesystem_readonly

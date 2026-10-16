@@ -613,6 +613,44 @@ def _build_store_backend(fs_config: Any) -> Any:
         return _build_state_backend()
 
 
+def _resolve_route_root(dir_name: str) -> Path:
+    """Resolve a filesystem route's directory to an absolute path.
+
+    A route's directory normally lives inside the agent's config tree and
+    is named relative to it ("/skills/" -> <config>/skills). Uploaded data
+    sits on its own volume, mounted somewhere else entirely, so a root may
+    also be given as an absolute path.
+
+    Environment variables are expanded first, so a config can point at a
+    mount without hardcoding it: "${DATA_PATH}/current" follows DATA_PATH
+    wherever it is set, which keeps the same agent.yaml working in a pod
+    and on a developer's machine.
+
+    Args:
+        dir_name: Route directory from ``backend.roots``, or the route
+            prefix when no override is configured.
+
+    Returns:
+        Absolute path to use as the backend's root.
+    """
+    expanded = os.path.expandvars(dir_name)
+    if "$" in expanded:
+        # An unset variable would otherwise become a literal path segment
+        # and the agent would silently read an empty directory.
+        logger.warning(
+            "Unresolved variable in filesystem route root %r; "
+            "falling back to the config tree",
+            dir_name,
+        )
+        fallback: Path = agent_config.base_dir / dir_name
+        return fallback
+    path = Path(expanded)
+    if path.is_absolute():
+        return path
+    relative: Path = agent_config.base_dir / path
+    return relative
+
+
 def _build_composite_backend(fs_config: Any) -> Any:
     """Build a CompositeBackend instance with configured routes."""
     from deepagents.backends.composite import CompositeBackend
@@ -626,7 +664,7 @@ def _build_composite_backend(fs_config: Any) -> Any:
         if backend_name == "filesystem_readonly":
             dir_name = roots.get(path_prefix, path_prefix.strip("/"))
             routes[path_prefix] = _build_filesystem_readonly_backend(
-                agent_config.base_dir / dir_name
+                _resolve_route_root(dir_name)
             )
 
     if any(v == "local_shell" for v in fs_config.backend.routes.values()):

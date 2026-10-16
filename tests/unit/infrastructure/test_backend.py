@@ -2,13 +2,14 @@
 
 import inspect
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from deepagents.backends.protocol import EditResult, ReadResult, WriteResult
 
 from deep_agent.src.infrastructure.backend import (
-    DeduplicatingStoreBackend,
     _STORE_NAMESPACE_FACTORIES,
+    DeduplicatingStoreBackend,
     _as_runtime,
     _backend_accepts_runtime,
     _base_python,
@@ -489,3 +490,56 @@ class TestDeduplicatingStoreBackendWrite:
         written = inner.writes[-1]
         assert "date of birth" in written
         assert "joining date" in written
+
+
+class TestResolveRouteRoot:
+    """Filesystem route roots may point outside the agent's config tree.
+
+    Uploaded data lives on its own volume, so the /data/ route cannot be
+    named relative to CONFIG_PATH the way /skills/ is. Roots accept an
+    absolute path, and expand ${VAR} first so one agent.yaml works both in
+    a pod and on a developer's machine. See adrs/upload-data-pvc.md.
+    """
+
+    def test_relative_root_stays_inside_the_config_tree(self):
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        assert _resolve_route_root("skills") == agent_config.base_dir / "skills"
+
+    def test_absolute_root_is_used_as_given(self):
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        assert _resolve_route_root("/mnt/data/current") == Path("/mnt/data/current")
+
+    def test_env_var_is_expanded(self):
+        """Lets the data route follow DATA_PATH without hardcoding a mount."""
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        with patch.dict(os.environ, {"DATA_PATH": "/app/data"}):
+            assert _resolve_route_root("${DATA_PATH}/current") == Path(
+                "/app/data/current"
+            )
+
+    def test_unset_variable_falls_back_instead_of_making_a_literal_path(self):
+        """An unexpanded ${VAR} would silently become an empty directory."""
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DEFINITELY_UNSET_VAR", None)
+            resolved = _resolve_route_root("${DEFINITELY_UNSET_VAR}/current")
+
+        assert resolved.is_relative_to(agent_config.base_dir)
+
+    def test_shipped_data_route_points_at_the_data_volume(self):
+        """The template default must follow DATA_PATH, not the config tree."""
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        root = agent_config.get_filesystem_config().backend.roots["/data/"]
+        with patch.dict(os.environ, {"DATA_PATH": "/app/data"}):
+            resolved = _resolve_route_root(root)
+
+        assert resolved == Path("/app/data/current")
+        assert not resolved.is_relative_to(agent_config.base_dir)

@@ -249,5 +249,3 @@ docker-compose.override.yml
 Dockerfile
 docker-compose.yml
 
-# Uploaded data (POST /upload) — runtime state on the PVC, never committed
-config/agent/data/
