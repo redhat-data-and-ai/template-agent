@@ -118,6 +118,7 @@ def _create_vertex_model(
             return ChatAnthropicVertex(
                 model=model_name,
                 project=project,
+                location=settings.CLAUDE_LOCATION,
                 credentials=credentials,
                 # temperature=temperature, # this is not supported in the latest version of the library
                 max_tokens=max_output_tokens,
