@@ -25,6 +25,7 @@ import tempfile
 import time
 import uuid
 import zipfile
+import zlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -33,8 +34,9 @@ from pathlib import Path, PurePosixPath
 from typing import IO, Literal, TypeAlias
 from urllib.parse import unquote
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
+from starlette.datastructures import UploadFile
 
 from deep_agent.aegra.auth_helpers import check_ldap_role
 from deep_agent.src.audit.context import bind_audit_context
@@ -56,6 +58,21 @@ LIVE_DIR = "current"
 _STAGING_PREFIX = ".staging-"
 _OLD_PREFIX = ".old-"
 _LOCK_NAME = ".upload.lock"
+
+# Raised while reading a damaged, truncated or encrypted archive. None of
+# these is an OSError, so without catching them explicitly the caller gets
+# an unhandled 500 and the rejection goes unaudited. A bad archive is a bad
+# request: sniffing magic bytes proves only that the header is plausible.
+_ARCHIVE_ERRORS = (
+    zipfile.BadZipFile,
+    zipfile.LargeZipFile,
+    tarfile.TarError,
+    zlib.error,
+    EOFError,
+    ValueError,  # zipfile raises this for a truncated local header
+    RuntimeError,  # zipfile: "File ... is encrypted, password required"
+    NotImplementedError,  # unsupported compression method
+)
 
 # Rejected anywhere in a path: NUL, newline, and the rest of the C0 range.
 _CONTROL_CHARS = frozenset(chr(c) for c in range(32)) | {chr(127)}
@@ -217,7 +234,13 @@ def _tar_entries(archive: tarfile.TarFile) -> Iterator[_Entry]:
             raise UploadRejected(f"unreadable archive member: {member.name}")
         return fh
 
-    for member in archive.getmembers():
+    # Iterate lazily. `getmembers()` reads every header in the archive up
+    # front, so a small compressed tar of empty entries expands into
+    # millions of TarInfo objects before the entry-count cap is consulted
+    # -- a 1.4MB gzip tar of 300k entries costs ~131MB of RSS. Iterating
+    # the TarFile yields one header at a time, so the cap stops the read
+    # a few entries in.
+    for member in archive:
         yield _Entry(
             name=member.name,
             is_dir=member.isdir(),
@@ -488,10 +511,11 @@ def _upload_lock(data_root: Path) -> Iterator[None]:
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:
         try:
-            age = time.time() - lock.stat().st_mtime
+            stale_stat = lock.stat()
         except FileNotFoundError:
             # Released between our attempt and the stat — caller can retry.
             raise UploadBusy("another upload is in progress") from None
+        age = time.time() - stale_stat.st_mtime
         if age < settings.UPLOAD_LOCK_TIMEOUT_SECONDS:
             raise UploadBusy("another upload is in progress") from None
 
@@ -499,14 +523,39 @@ def _upload_lock(data_root: Path) -> Iterator[None]:
         # Unlinking by path is unsafe: if two holders both see the same
         # stale lock, the second one's unlink deletes the *fresh* lock the
         # first just created, and both go on to publish concurrently.
-        # rename() is atomic and names a specific directory entry, so of N
-        # racing stealers exactly one succeeds and the rest get ENOENT.
         stolen = data_root / f"{_LOCK_NAME}.stale-{uuid.uuid4().hex}"
         try:
             os.rename(lock, stolen)
         except OSError:
             # Someone else stole it first; they now hold it.
             raise UploadBusy("another upload is in progress") from None
+
+        # rename() acts on whatever sits at the path *now*, which is not
+        # necessarily the file we judged stale: a faster breaker may have
+        # already swapped in its own fresh lock, and we would have taken
+        # that. Confirm we got the stale inode before destroying it.
+        #
+        # Inode identity is sound here, unlike on the release path: the
+        # stale file is still allocated under its new name, so its number
+        # cannot have been recycled for the replacement.
+        try:
+            stolen_ino = os.stat(stolen).st_ino
+        except OSError:
+            raise UploadBusy("another upload is in progress") from None
+
+        if stolen_ino != stale_stat.st_ino:
+            # We took a live lock. Put it back under its original name and
+            # stand down; os.link recreates the entry for the same inode,
+            # so the holder's lock survives intact.
+            try:
+                os.link(stolen, lock)
+            except OSError:
+                # Another entry already occupies the path — the holder is
+                # represented there, so there is nothing to restore.
+                logger.warning("upload_lock_restore_skipped")
+            Path(stolen).unlink(missing_ok=True)
+            raise UploadBusy("another upload is in progress") from None
+
         logger.warning("upload_lock_stale_broken", age_seconds=int(age))
         Path(stolen).unlink(missing_ok=True)
         try:
@@ -584,29 +633,40 @@ def _ingest(
             # The extension allowlist applies to loose files only. An archive
             # is a snapshot the caller assembled on purpose, so it is taken
             # whole; filtering it would silently deliver less than they sent.
-            if isinstance(payload, list):
-                written, skipped, written_bytes = _populate(
-                    _loose_entries(payload),
-                    staging,
-                    baseline,
-                    apply_allowlist=True,
-                )
-            elif zipfile.is_zipfile(payload):
-                with zipfile.ZipFile(payload) as archive:
+            #
+            # A damaged or encrypted archive is the caller's problem, not a
+            # server fault: sniffing the magic bytes only proves the header
+            # is plausible, so the failure surfaces here, part-way through
+            # the read. Translate it so the caller gets a 400 and the
+            # rejection is audited, rather than an unhandled 500.
+            try:
+                if isinstance(payload, list):
                     written, skipped, written_bytes = _populate(
-                        _zip_entries(archive),
+                        _loose_entries(payload),
                         staging,
                         baseline,
-                        apply_allowlist=False,
+                        apply_allowlist=True,
                     )
-            else:
-                with tarfile.open(payload) as archive:
-                    written, skipped, written_bytes = _populate(
-                        _tar_entries(archive),
-                        staging,
-                        baseline,
-                        apply_allowlist=False,
-                    )
+                elif zipfile.is_zipfile(payload):
+                    with zipfile.ZipFile(payload) as archive:
+                        written, skipped, written_bytes = _populate(
+                            _zip_entries(archive),
+                            staging,
+                            baseline,
+                            apply_allowlist=False,
+                        )
+                else:
+                    with tarfile.open(payload) as archive:
+                        written, skipped, written_bytes = _populate(
+                            _tar_entries(archive),
+                            staging,
+                            baseline,
+                            apply_allowlist=False,
+                        )
+            except _ARCHIVE_ERRORS as exc:
+                raise UploadRejected(
+                    f"archive could not be read: {type(exc).__name__}"
+                ) from exc
 
             _publish(staging, live)
         finally:
@@ -648,6 +708,35 @@ def _clear(data_root: Path) -> DeleteResponse:
         shutil.rmtree(condemned, ignore_errors=True)
 
     return DeleteResponse(files_deleted=count, bytes_deleted=size)
+
+
+def _sniff_archive(path: Path) -> bool:
+    """Return whether a buffered payload is a readable zip or tar.
+
+    Content decides, never the filename or the client's content-type. The
+    probes themselves can fail on a malformed payload -- `is_tarfile`
+    raises EOFError on a truncated gzip rather than returning False -- and
+    that is a bad request, not a server fault, so it surfaces as a
+    rejection instead of escaping as a 500.
+
+    Raises:
+        UploadRejected: If the payload looks like an archive but cannot be
+            read.
+    """
+    try:
+        if zipfile.is_zipfile(path):
+            return True
+    except _ARCHIVE_ERRORS as exc:
+        raise UploadRejected(
+            f"archive could not be read: {type(exc).__name__}"
+        ) from exc
+
+    try:
+        return tarfile.is_tarfile(path)
+    except _ARCHIVE_ERRORS as exc:
+        raise UploadRejected(
+            f"archive could not be read: {type(exc).__name__}"
+        ) from exc
 
 
 async def _looks_like_archive(upload: UploadFile) -> bool:
@@ -695,26 +784,63 @@ async def _buffer(upload: UploadFile, destination: Path) -> None:
 
 # ── Route ─────────────────────────────────────────────────────────────
 
+# The body is read manually (see the route docstring), so FastAPI cannot
+# infer its schema. Declare it so /docs and generated clients still show a
+# multipart file field.
+_UPLOAD_REQUEST_BODY_SCHEMA = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "files": {
+                            "type": "array",
+                            "items": {"type": "string", "format": "binary"},
+                            "description": (
+                                "One .zip/.tar archive, which replaces the "
+                                "whole tree, or one or more loose files, "
+                                "which are merged into it."
+                            ),
+                        }
+                    },
+                    "required": ["files"],
+                }
+            }
+        },
+    }
+}
 
-@upload_router.post("/upload", response_model=UploadResponse)
-async def upload(
-    request: Request, files: list[UploadFile] = File(...)
-) -> UploadResponse:
+
+@upload_router.post(
+    "/upload",
+    response_model=UploadResponse,
+    openapi_extra=_UPLOAD_REQUEST_BODY_SCHEMA,
+)
+async def upload(request: Request) -> UploadResponse:
     """Publish an archive or a set of files to the agent's data directory.
 
     A single ``.zip``/``.tar`` replaces the whole tree; loose files are merged
     into it. Caller-supplied names are preserved verbatim.
 
+    The multipart body is read **after** the feature flag and authorization
+    checks, which is why this takes a raw Request rather than declaring
+    ``files: list[UploadFile] = File(...)``. FastAPI parses the body before
+    it solves dependencies, so with a declared file parameter no dependency,
+    decorator or security scheme can run first -- an unauthenticated caller
+    would get their body spooled to temp disk before being told 404 or 401.
+
     Args:
-        request: The incoming request, used for authorization.
-        files: One or more multipart file fields.
+        request: The incoming request. Authorized before its body is read.
 
     Returns:
         Counts describing what was published.
 
     Raises:
         HTTPException: 400 rejected payload, 401/403 unauthorized,
-            404 feature disabled, 413 payload too large.
+            404 feature disabled, 409 another upload in progress,
+            413 payload too large.
     """
     _require_enabled()
     user_id = await check_ldap_role(request, developer_only=True)
@@ -722,73 +848,109 @@ async def upload(
     # covered by AuditMiddleware, which binds this for agent runs.
     bind_audit_context(user=user_id)
 
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided")
-
     data_root = _data_root()
     scratch = Path(tempfile.mkdtemp(prefix="upload-"))
     try:
-        payload: Path | list[UploadFile]
-        mode: Mode
-        if len(files) == 1:
-            buffered = scratch / "payload"
-            await _buffer(files[0], buffered)
-            # Mode is decided by content, never by filename or content-type.
-            if zipfile.is_zipfile(buffered) or tarfile.is_tarfile(buffered):
-                payload, mode = buffered, "replace"
-            else:
-                name = (files[0].filename or "").lower()
-                if name.endswith((".zip", ".tar")):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "File is named as an archive but is not a valid zip or tar"
-                        ),
-                    )
-                payload, mode = files, "merge"
-        else:
-            # An archive is a snapshot and replaces the tree; loose files are
-            # merged into it. Mixing them in one request has no coherent
-            # meaning, and silently skipping the archive (it isn't on the
-            # extension allowlist) would look like a successful upload.
-            for candidate in files:
-                if await _looks_like_archive(candidate):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"Archive '{candidate.filename}' must be uploaded on "
-                            f"its own, not alongside other files"
-                        ),
-                    )
-            payload, mode = files, "merge"
-
+        # Only now is the body touched. max_files/max_fields bound the part
+        # count during parsing itself, before our own per-entry cap sees it.
         try:
-            result = await asyncio.to_thread(_ingest, payload, mode, data_root)
-        except UploadRejected as exc:
-            logger.warning("upload_rejected", user_id=user_id, reason=str(exc))
-            # Audited too: a rejected push onto shared storage is exactly the
-            # kind of event worth seeing a pattern of.
-            emit_audit_event(
-                AuditEventType.DATA_UPLOAD_REJECTED,
-                user=user_id,
-                mode=mode,
-                reason=str(exc),
-            )
-            raise HTTPException(status_code=400, detail=str(exc)) from None
-        except UploadBusy as exc:
-            logger.info("upload_busy", user_id=user_id)
-            raise HTTPException(status_code=409, detail=str(exc)) from None
-        except OSError as exc:
-            # Staging is cleaned up and the previous tree restored by _ingest /
-            # _publish before this point; the upload simply didn't land.
-            # The OSError text carries absolute staging paths; log it, but
-            # do not hand internal filesystem layout back to the caller.
-            logger.exception("upload_publish_failed", user_id=user_id, error=str(exc))
+            async with request.form(
+                max_files=settings.UPLOAD_MAX_FILE_COUNT,
+                max_fields=settings.UPLOAD_MAX_FILE_COUNT,
+            ) as form:
+                # request.form() yields starlette's UploadFile; fastapi's is a
+                # subclass of it, so filtering on the fastapi class drops
+                # every part.
+                files = [f for f in form.getlist("files") if isinstance(f, UploadFile)]
+                return await _handle_upload(files, data_root, scratch, user_id)
+        except HTTPException:
+            raise
+        except (ValueError, AssertionError) as exc:
+            # Malformed multipart, or more parts than the parser allows.
             raise HTTPException(
-                status_code=500, detail="Failed to publish upload"
+                status_code=400, detail=f"Malformed multipart body: {exc}"
             ) from None
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+async def _handle_upload(
+    files: list[UploadFile], data_root: Path, scratch: Path, user_id: str
+) -> UploadResponse:
+    """Validate the parsed parts and publish them. Body is already read."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    payload: Path | list[UploadFile]
+    mode: Mode
+    if len(files) == 1:
+        buffered = scratch / "payload"
+        await _buffer(files[0], buffered)
+        # Mode is decided by content, never by filename or content-type.
+        try:
+            is_archive = _sniff_archive(buffered)
+        except UploadRejected as exc:
+            logger.warning("upload_rejected", user_id=user_id, reason=str(exc))
+            emit_audit_event(
+                AuditEventType.DATA_UPLOAD_REJECTED,
+                user=user_id,
+                mode="unknown",
+                reason=str(exc),
+            )
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        if is_archive:
+            payload, mode = buffered, "replace"
+        else:
+            name = (files[0].filename or "").lower()
+            if name.endswith((".zip", ".tar")):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "File is named as an archive but is not a valid zip or tar"
+                    ),
+                )
+            payload, mode = files, "merge"
+    else:
+        # An archive is a snapshot and replaces the tree; loose files are
+        # merged into it. Mixing them in one request has no coherent
+        # meaning, and silently skipping the archive (it isn't on the
+        # extension allowlist) would look like a successful upload.
+        for candidate in files:
+            if await _looks_like_archive(candidate):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Archive '{candidate.filename}' must be uploaded on "
+                        f"its own, not alongside other files"
+                    ),
+                )
+        payload, mode = files, "merge"
+
+    try:
+        result = await asyncio.to_thread(_ingest, payload, mode, data_root)
+    except UploadRejected as exc:
+        logger.warning("upload_rejected", user_id=user_id, reason=str(exc))
+        # Audited too: a rejected push onto shared storage is exactly the
+        # kind of event worth seeing a pattern of.
+        emit_audit_event(
+            AuditEventType.DATA_UPLOAD_REJECTED,
+            user=user_id,
+            mode=mode,
+            reason=str(exc),
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except UploadBusy as exc:
+        logger.info("upload_busy", user_id=user_id)
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except OSError as exc:
+        # Staging is cleaned up and the previous tree restored by _ingest /
+        # _publish before this point; the upload simply didn't land.
+        # The OSError text carries absolute staging paths; log it, but
+        # do not hand internal filesystem layout back to the caller.
+        logger.exception("upload_publish_failed", user_id=user_id, error=str(exc))
+        raise HTTPException(
+            status_code=500, detail="Failed to publish upload"
+        ) from None
 
     logger.info(
         "upload_published",

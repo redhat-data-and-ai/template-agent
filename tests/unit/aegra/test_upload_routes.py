@@ -432,6 +432,44 @@ class TestCaps:
         assert res.status_code == 400
         assert "entries" in res.json()["detail"]
 
+    def test_tar_headers_are_read_lazily(self, client, data_root):
+        """A compressed tar of many empty entries must not be read whole.
+
+        `getmembers()` loads every header before the count cap is checked,
+        so a ~1MB gzip tar of 300k entries costs ~131MB of RSS. Iterating
+        the TarFile yields one header at a time, so the cap stops the read
+        a few entries in.
+        """
+        import tarfile as _tarfile
+
+        buf = io.BytesIO()
+        with _tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for i in range(20_000):
+                info = _tarfile.TarInfo(f"d{i // 1000}/f{i}.md")
+                info.size = 0
+                tf.addfile(info)
+
+        seen = []
+        real_next = _tarfile.TarFile.next
+
+        def counting_next(self):
+            member = real_next(self)
+            if member is not None:
+                seen.append(member)
+            return member
+
+        with patch.object(_tarfile.TarFile, "next", counting_next):
+            res = client.post(
+                "/upload", files={"files": ("bomb.tar.gz", buf.getvalue())}
+            )
+
+        assert res.status_code == 400
+        assert "exceeds" in res.json()["detail"]
+        # Stopped at the cap rather than walking all 20k headers.
+        assert len(seen) <= upload_routes.settings.UPLOAD_MAX_FILE_COUNT + 5, (
+            f"read {len(seen)} headers; the count cap should have stopped it"
+        )
+
     def test_body_over_archive_cap_rejected(self, client, data_root):
         with patch.object(upload_routes.settings, "UPLOAD_MAX_ARCHIVE_BYTES", 10):
             res = client.post("/upload", files={"files": ("a.md", b"x" * 100)})
@@ -613,6 +651,79 @@ class TestReupload:
         assert _live(data_root) == {"fresh.md": "F"}
 
 
+class TestMalformedArchives:
+    """A damaged archive is a bad request, not a server fault.
+
+    Sniffing magic bytes only proves the header is plausible, so the real
+    failure surfaces part-way through the read as BadZipFile, TarError,
+    EOFError, zlib.error and friends -- none of them OSError. Unhandled,
+    they become a 500 with no audit trail.
+    """
+
+    @pytest.fixture
+    def audit(self):
+        with patch.object(upload_routes, "emit_audit_event") as spy:
+            yield spy
+
+    def _corrupt_zip(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("a.md", "hello world" * 200)
+        raw = bytearray(buf.getvalue())
+        raw[40:80] = b"\x00" * 40  # smash the compressed stream
+        return bytes(raw)
+
+    def _truncated_targz(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            info = tarfile.TarInfo("a.md")
+            data = b"x" * 5000
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        return buf.getvalue()[: len(buf.getvalue()) // 2]
+
+    def _truncated_tar(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            info = tarfile.TarInfo("a.md")
+            data = b"x" * 9000
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        return buf.getvalue()[:2048]
+
+    def test_corrupt_zip_is_400_not_500(self, client, data_root, audit):
+        res = client.post("/upload", files={"files": ("x.zip", self._corrupt_zip())})
+
+        assert res.status_code == 400
+        assert "could not be read" in res.json()["detail"]
+        assert audit.call_args[0][0] == "data_upload_rejected"
+
+    def test_truncated_gzip_tar_is_400_not_500(self, client, data_root, audit):
+        """is_tarfile() itself raises EOFError here, before the read begins."""
+        res = client.post(
+            "/upload", files={"files": ("x.tar.gz", self._truncated_targz())}
+        )
+
+        assert res.status_code == 400
+        assert "could not be read" in res.json()["detail"]
+        assert audit.call_args[0][0] == "data_upload_rejected"
+
+    def test_truncated_tar_is_400_not_500(self, client, data_root, audit):
+        res = client.post("/upload", files={"files": ("x.tar", self._truncated_tar())})
+
+        assert res.status_code == 400
+        assert audit.call_args[0][0] == "data_upload_rejected"
+
+    def test_a_damaged_archive_leaves_the_previous_tree_intact(self, client, data_root):
+        client.post("/upload", files={"files": ("good.zip", _zip({"keep.md": "K"}))})
+
+        res = client.post("/upload", files={"files": ("x.zip", self._corrupt_zip())})
+
+        assert res.status_code == 400
+        assert _live(data_root) == {"keep.md": "K"}
+        assert _scratch(data_root) == []
+
+
 class TestLocking:
     def test_lock_released_after_success(self, client, data_root):
         res = client.post("/upload", files={"files": ("x.zip", _zip({"a.md": "A"}))})
@@ -702,6 +813,38 @@ class TestLocking:
             with pytest.raises(upload_routes.UploadBusy):
                 with upload_routes._upload_lock(data_root):
                     pytest.fail("acquired a lock another caller had already stolen")
+
+    def test_stealing_a_lock_replaced_since_the_age_check(self, data_root):
+        """rename() takes whatever sits at the path, not what we judged stale.
+
+        If a faster breaker already swapped in its own fresh lock, the
+        rename grabs that one and both uploads proceed. Verify the inode
+        is checked after the rename, the live lock is put back, and we
+        stand down.
+        """
+        lock = data_root / upload_routes._LOCK_NAME
+        lock.write_text("stale-token\n1\n")
+        stale = time.time() - 10_000
+        os.utime(lock, (stale, stale))
+
+        real_rename = os.rename
+
+        def swap_in_a_fresh_lock_first(src, dst):
+            if str(src) == str(lock):
+                # Another breaker got here between our stat and our rename.
+                lock.unlink()
+                lock.write_text("fresh-holder-token\n2\n")
+            return real_rename(src, dst)
+
+        with patch.object(upload_routes.os, "rename", swap_in_a_fresh_lock_first):
+            with pytest.raises(upload_routes.UploadBusy):
+                with upload_routes._upload_lock(data_root):
+                    pytest.fail("acquired alongside the live holder")
+
+        # The live holder's lock was restored, not destroyed.
+        assert lock.exists(), "the live holder's lock was consumed"
+        assert lock.read_text().startswith("fresh-holder-token")
+        assert [p.name for p in data_root.iterdir() if ".stale-" in p.name] == []
 
     def test_release_does_not_delete_a_successors_lock(self, data_root):
         """If our lock was stolen as stale, releasing must leave the new one.
@@ -947,3 +1090,76 @@ class TestAtomicity:
         for rel in _live(data_root):
             assert "current" not in rel
             assert ".staging-" not in rel and ".old-" not in rel
+
+
+class TestAuthBeforeBodyParsing:
+    """The body must not be read until the flag and authorization pass.
+
+    FastAPI parses a declared ``files: list[UploadFile] = File(...)``
+    parameter *before* it solves dependencies, so no dependency, decorator
+    or security scheme can run first. The route therefore takes a raw
+    Request and calls request.form() itself, after the checks. Otherwise an
+    unauthenticated caller gets their body spooled to temp disk and only
+    then receives a 404 or 401. See adrs/upload-data-pvc.md.
+    """
+
+    def _app(self):
+        app = FastAPI()
+        app.include_router(upload_router)
+        return app
+
+    def test_route_declares_no_file_parameter(self):
+        """A declared File() param would reintroduce parse-before-auth."""
+        import inspect
+
+        sig = inspect.signature(upload_routes.upload)
+        assert list(sig.parameters) == ["request"], (
+            "a declared body parameter makes FastAPI parse before auth"
+        )
+
+    def test_disabled_feature_does_not_read_the_body(self, data_root):
+        consumed = []
+
+        def body():
+            yield (
+                b'--b\r\nContent-Disposition: form-data; name="files";'
+                b' filename="x.md"\r\n\r\n'
+            )
+            for _ in range(8):
+                consumed.append(1)
+                yield b"x" * 65536
+            yield b"\r\n--b--\r\n"
+
+        with patch.object(upload_routes.settings, "UPLOAD_ENABLED", False):
+            res = TestClient(self._app(), raise_server_exceptions=False).post(
+                "/upload",
+                content=body(),
+                headers={"Content-Type": "multipart/form-data; boundary=b"},
+            )
+
+        assert res.status_code == 404
+
+    def test_unauthorized_does_not_read_the_body(self, data_root):
+        from fastapi import HTTPException
+
+        parsed = []
+        real_form = upload_routes.Request.form
+
+        def tracking_form(self, **kw):
+            parsed.append(1)
+            return real_form(self, **kw)
+
+        async def deny(*a, **k):
+            raise HTTPException(status_code=403, detail="denied")
+
+        with (
+            patch.object(upload_routes.settings, "UPLOAD_ENABLED", True),
+            patch.object(upload_routes, "check_ldap_role", side_effect=deny),
+            patch.object(upload_routes.Request, "form", tracking_form),
+        ):
+            res = TestClient(self._app(), raise_server_exceptions=False).post(
+                "/upload", files={"files": ("x.md", b"hello")}
+            )
+
+        assert res.status_code == 403
+        assert parsed == [], "the body was parsed despite authorization failing"
