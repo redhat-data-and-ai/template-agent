@@ -41,6 +41,39 @@
             "ssl_verify": false,
             "timeout": 30,
             "tool_prefix": "template-api-key"
+        },
+        "template-mcp-server-custom-header": {
+            // Flexible API-key placement: the raw key is sent under the
+            // configured name instead of "Authorization: Bearer <token>".
+            // api_key_location may be "header" (default) or "query".
+            "url": "http://localhost:5001/mcp",
+            "transport": "streamable_http",
+            "enabled": false,
+            "auth": true,
+            "auth_mode": "api_key",
+            "auth_env_var": "template_mcp_api_key",
+            "api_key_name": "X-API-Key",
+            "api_key_location": "header",
+            "api_key_scheme": "none",
+            "ssl_verify": false,
+            "timeout": 30,
+            "tool_prefix": "template-custom-header"
+        },
+        "template-mcp-server-basic-auth": {
+            // api_key_scheme prefixes the key with an RFC 7235 scheme, so the
+            // header becomes "Authorization: Basic <token>". Used by Langfuse.
+            "url": "http://localhost:5001/mcp",
+            "transport": "streamable_http",
+            "enabled": false,
+            "auth": true,
+            "auth_mode": "api_key",
+            "auth_env_var": "template_mcp_api_key",
+            "api_key_name": "Authorization",
+            "api_key_location": "header",
+            "api_key_scheme": "basic",
+            "ssl_verify": false,
+            "timeout": 30,
+            "tool_prefix": "template-basic"
         }
     }
 }
