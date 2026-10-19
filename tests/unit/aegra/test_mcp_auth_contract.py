@@ -152,3 +152,52 @@ def test_unknown_scheme_falls_back_to_raw_key():
         "raw-key",
     )
     assert cfg["headers"]["X-API-Key"] == "raw-key"
+
+
+# --- scheme set without a key name (CodeRabbit, PR #399) ---
+
+
+def test_basic_scheme_without_name_uses_authorization_header():
+    """Previously sent 'Bearer <key>' when 'Basic' was requested."""
+    cfg = _build_server_config(
+        _entry(
+            auth_mode="api_key",
+            auth_env_var="MCP_X_API_KEY",
+            api_key_scheme="basic",
+        ),
+        "k",
+    )
+    assert cfg["headers"]["Authorization"] == "Basic k"
+
+
+def test_bearer_scheme_without_name_is_unchanged():
+    cfg = _build_server_config(
+        _entry(
+            auth_mode="api_key",
+            auth_env_var="MCP_X_API_KEY",
+            api_key_scheme="bearer",
+        ),
+        "k",
+    )
+    assert cfg["headers"]["Authorization"] == "Bearer k"
+
+
+def test_no_scheme_and_no_name_keeps_default_path():
+    cfg = _build_server_config(
+        _entry(auth_mode="api_key", auth_env_var="MCP_X_API_KEY"), "k"
+    )
+    assert cfg["headers"]["Authorization"] == "Bearer k"
+
+
+def test_explicit_name_still_wins_over_the_default():
+    cfg = _build_server_config(
+        _entry(
+            auth_mode="api_key",
+            auth_env_var="MCP_X_API_KEY",
+            api_key_name="X-API-Key",
+            api_key_scheme="none",
+        ),
+        "k",
+    )
+    assert cfg["headers"]["X-API-Key"] == "k"
+    assert "Authorization" not in cfg["headers"]

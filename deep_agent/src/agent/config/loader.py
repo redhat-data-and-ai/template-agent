@@ -621,14 +621,21 @@ class AgentConfig:
                     scheme,
                     location,
                 )
-            if (
-                cfg.get("api_key_location")
-                and not str(cfg.get("api_key_name") or "").strip()
-            ):
+            has_name = bool(str(cfg.get("api_key_name") or "").strip())
+            if cfg.get("api_key_location") and not has_name:
                 logger.error(
                     "MCP server '%s': api_key_location is set but 'api_key_name' "
                     "is missing",
                     name,
+                )
+            elif scheme != "none" and not has_name:
+                # Without a name the runtime would fall back to
+                # "Authorization: Bearer", silently ignoring the scheme.
+                logger.error(
+                    "MCP server '%s': api_key_scheme '%s' requires "
+                    "'api_key_name' (defaulting to Authorization)",
+                    name,
+                    scheme,
                 )
             return
 

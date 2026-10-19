@@ -461,8 +461,21 @@ def _api_key_placement(entry: dict[str, Any]) -> tuple[str | None, str]:
     """
     if entry.get("auth_mode") != "api_key":
         return None, ""
+
     key_name = str(entry.get("api_key_name") or "").strip()
     if not key_name:
+        scheme = str(entry.get("api_key_scheme") or "none").strip().lower()
+        if scheme in ("basic", "bearer"):
+            # An explicit scheme with no name can only mean the Authorization
+            # header. Without this the default path would send
+            # "Authorization: Bearer" even when "basic" was requested.
+            logger.warning(
+                "MCP server '%s': api_key_scheme '%s' set without "
+                "api_key_name — defaulting to the Authorization header",
+                entry.get("name", entry.get("url", "unknown")),
+                scheme,
+            )
+            return "Authorization", "header"
         return None, ""
 
     location = str(entry.get("api_key_location") or "header").strip().lower()
