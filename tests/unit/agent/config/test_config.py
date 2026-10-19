@@ -399,3 +399,85 @@ Test prompt.
         ):
             result = cfg._load_guardrails_config({"enabled": True, "model": "x"})
         assert result.enabled is False
+
+
+class TestValidateMcpServerApiKey:
+    """_validate_mcp_server api_key branches (RHITAIF-894).
+
+    Validation logs errors rather than raising, so a misconfigured MCP is
+    visible at config load without failing the whole agent.
+    """
+
+    @staticmethod
+    def _cfg(**overrides):
+        base = {
+            "auth_mode": "api_key",
+            "auth_env_var": "MCP_X_API_KEY",
+            "api_key_name": "X-API-Key",
+            "api_key_location": "header",
+            "api_key_scheme": "none",
+        }
+        base.update(overrides)
+        return base
+
+    def test_valid_config_logs_no_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", self._cfg())
+        assert caplog.text == ""
+
+    def test_defaults_are_valid_when_optional_keys_absent(self, caplog):
+        """Only auth_env_var is mandatory; location/scheme/name default cleanly."""
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server(
+                "m", {"auth_mode": "api_key", "auth_env_var": "MCP_X_API_KEY"}
+            )
+        assert caplog.text == ""
+
+    def test_missing_auth_env_var_logs_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", self._cfg(auth_env_var=""))
+        assert "requires 'auth_env_var'" in caplog.text
+
+    def test_invalid_location_logs_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", self._cfg(api_key_location="cookie"))
+        assert "invalid api_key_location 'cookie'" in caplog.text
+
+    def test_invalid_scheme_logs_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", self._cfg(api_key_scheme="digest"))
+        assert "invalid api_key_scheme 'digest'" in caplog.text
+
+    def test_scheme_with_non_header_location_logs_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server(
+                "m", self._cfg(api_key_scheme="basic", api_key_location="query")
+            )
+        assert "requires api_key_location 'header'" in caplog.text
+
+    def test_location_without_name_logs_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", self._cfg(api_key_name=""))
+        assert "'api_key_name' is missing" in caplog.text
+
+    def test_invalid_auth_mode_returns_before_api_key_checks(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", {"auth_mode": "magic"})
+        assert "invalid auth_mode 'magic'" in caplog.text
+        assert "auth_env_var" not in caplog.text
