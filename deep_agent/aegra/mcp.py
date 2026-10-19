@@ -414,6 +414,76 @@ async def _resolve_connection_token(
         return None
 
 
+_API_KEY_LOCATIONS = ("header", "query", "body")
+_API_KEY_SCHEMES = ("none", "basic", "bearer")
+
+
+def _apply_api_key_scheme(value: str, scheme: str | None) -> str:
+    """Prefix *value* with its RFC 7235 scheme, e.g. ``Basic <token>``.
+
+    ``none`` (the default) sends the raw value, which is what a custom header
+    such as ``X-API-Key`` expects. Mirrors the registry helper of the same
+    name; both are pinned by the cross-repo contract tests.
+    """
+    normalized = (scheme or "none").strip().lower()
+    if normalized in ("", "none"):
+        return value
+    if normalized not in _API_KEY_SCHEMES:
+        logger.warning(
+            "MCP api_key_scheme '%s' is not recognised — sending the raw key",
+            normalized,
+        )
+        return value
+    return f"{normalized.capitalize()} {value}"
+
+
+def _with_query_param(url: str, name: str, value: str) -> str:
+    """Return *url* with ``name=value`` appended to its query string."""
+    from urllib.parse import urlencode, urlparse, urlunparse
+
+    parsed = urlparse(url)
+    appended = urlencode({name: value})
+    query = f"{parsed.query}&{appended}" if parsed.query else appended
+    return urlunparse(parsed._replace(query=query))
+
+
+def _api_key_placement(entry: dict[str, Any]) -> tuple[str | None, str]:
+    """Return ``(key_name, location)`` for a flexible API key, or ``(None, "")``.
+
+    ``None`` means "use the default ``Authorization: Bearer`` placement", which
+    is what every pre-existing config (sso / oauth / dcr / plain bearer) wants.
+
+    ``body`` placement is accepted and normalised to a header: the MCP
+    streamable-http transport owns the JSON-RPC envelope, so there is no
+    supported hook to inject a credential into the request body without
+    corrupting the protocol frame. This is logged once per server so the
+    behaviour is visible rather than silent.
+    """
+    if entry.get("auth_mode") != "api_key":
+        return None, ""
+    key_name = str(entry.get("api_key_name") or "").strip()
+    if not key_name:
+        return None, ""
+
+    location = str(entry.get("api_key_location") or "header").strip().lower()
+    if location not in _API_KEY_LOCATIONS:
+        logger.warning(
+            "MCP server '%s': unknown api_key_location '%s' — falling back to header",
+            entry.get("name", entry.get("url", "unknown")),
+            location,
+        )
+        location = "header"
+    elif location == "body":
+        logger.warning(
+            "MCP server '%s': api_key_location 'body' is not supported by the "
+            "streamable-http transport — sending '%s' as a header instead",
+            entry.get("name", entry.get("url", "unknown")),
+            key_name,
+        )
+        location = "header"
+    return key_name, location
+
+
 def _build_server_config(
     entry: dict[str, Any],
     bearer_token: str | None,
@@ -429,16 +499,29 @@ def _build_server_config(
     """
     from deep_agent.utils.pylogger import _trace_id_var
 
+    url = entry["url"]
     headers: dict[str, str] = {}
     if entry.get("auth", True) and bearer_token:
-        headers["Authorization"] = f"Bearer {bearer_token}"
+        key_name, location = _api_key_placement(entry)
+        if key_name is None:
+            # Default placement: Authorization: Bearer <token>. Covers sso,
+            # oauth, dcr, and api_key entries configured as a bearer token.
+            headers["Authorization"] = f"Bearer {bearer_token}"
+        elif location == "query":
+            url = _with_query_param(url, key_name, bearer_token)
+        else:
+            # "header" (default) and "body" both send the key as a header;
+            # see _api_key_placement for why body is normalised to a header.
+            headers[key_name] = _apply_api_key_scheme(
+                bearer_token, entry.get("api_key_scheme")
+            )
 
     trace_id = _trace_id_var.get()
     if trace_id:
         headers["X-Trace-ID"] = trace_id
 
     config: dict[str, Any] = {
-        "url": entry["url"],
+        "url": url,
         "transport": entry.get("transport", "streamable_http"),
         "headers": headers,
     }

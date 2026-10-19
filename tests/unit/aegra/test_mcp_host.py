@@ -1492,3 +1492,113 @@ class TestListToolsAndFindTool:
 
         assert await _find_mcp_tool(session, "missing") is None
         assert session.list_tools.await_count == mcp_host._MAX_TOOLS_LIST_PAGES
+
+
+# ---------------------------------------------------------------------------
+# Flexible API-key placement — RHITAIF-894
+# ---------------------------------------------------------------------------
+
+
+class TestApiKeyPlacement:
+    """_build_server_config honours api_key_name / api_key_location."""
+
+    @staticmethod
+    def _cfg(**extra):
+        return {
+            "url": "https://x.example.com/mcp",
+            "transport": "streamable_http",
+            "auth": True,
+            "ssl_verify": True,
+            **extra,
+        }
+
+    def test_defaults_to_authorization_bearer(self):
+        from deep_agent.aegra.mcp import _build_server_config
+
+        cfg = _build_server_config(self._cfg(auth_mode="api_key"), "tok-123")
+        assert cfg["headers"]["Authorization"] == "Bearer tok-123"
+
+    def test_sso_mode_unaffected(self):
+        from deep_agent.aegra.mcp import _build_server_config
+
+        cfg = _build_server_config(self._cfg(auth_mode="sso"), "tok-123")
+        assert cfg["headers"]["Authorization"] == "Bearer tok-123"
+
+    def test_custom_header_name_sends_raw_key(self):
+        from deep_agent.aegra.mcp import _build_server_config
+
+        cfg = _build_server_config(
+            self._cfg(
+                auth_mode="api_key",
+                api_key_name="X-API-Key",
+                api_key_location="header",
+            ),
+            "secret-key",
+        )
+        assert cfg["headers"]["X-API-Key"] == "secret-key"
+        assert "Authorization" not in cfg["headers"]
+
+    def test_query_location_appends_to_url(self):
+        from deep_agent.aegra.mcp import _build_server_config
+
+        cfg = _build_server_config(
+            self._cfg(
+                auth_mode="api_key",
+                api_key_name="apikey",
+                api_key_location="query",
+            ),
+            "secret-key",
+        )
+        assert cfg["url"] == "https://x.example.com/mcp?apikey=secret-key"
+        assert "Authorization" not in cfg["headers"]
+        assert "apikey" not in cfg["headers"]
+
+    def test_query_location_preserves_existing_query(self):
+        from deep_agent.aegra.mcp import _build_server_config
+
+        cfg = _build_server_config(
+            self._cfg(
+                url="https://x.example.com/mcp?v=2",
+                auth_mode="api_key",
+                api_key_name="apikey",
+                api_key_location="query",
+            ),
+            "k",
+        )
+        assert cfg["url"] == "https://x.example.com/mcp?v=2&apikey=k"
+
+    def test_body_location_falls_back_to_header(self):
+        """Body placement is unsupported by streamable-http; degrade to header."""
+        from deep_agent.aegra.mcp import _build_server_config
+
+        cfg = _build_server_config(
+            self._cfg(
+                auth_mode="api_key",
+                api_key_name="X-API-Key",
+                api_key_location="body",
+            ),
+            "secret-key",
+        )
+        assert cfg["headers"]["X-API-Key"] == "secret-key"
+
+    def test_unknown_location_falls_back_to_header(self):
+        from deep_agent.aegra.mcp import _build_server_config
+
+        cfg = _build_server_config(
+            self._cfg(
+                auth_mode="api_key",
+                api_key_name="X-API-Key",
+                api_key_location="cookie",
+            ),
+            "secret-key",
+        )
+        assert cfg["headers"]["X-API-Key"] == "secret-key"
+
+    def test_no_token_means_no_auth_headers(self):
+        from deep_agent.aegra.mcp import _build_server_config
+
+        cfg = _build_server_config(
+            self._cfg(auth_mode="api_key", api_key_name="X-API-Key"), None
+        )
+        assert "X-API-Key" not in cfg["headers"]
+        assert "Authorization" not in cfg["headers"]

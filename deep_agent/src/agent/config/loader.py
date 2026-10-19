@@ -591,6 +591,47 @@ class AgentConfig:
             )
             return
 
+        if auth_mode == "api_key":
+            if not str(cfg.get("auth_env_var") or "").strip():
+                logger.error(
+                    "MCP server '%s': auth_mode 'api_key' requires 'auth_env_var'",
+                    name,
+                )
+            location = str(cfg.get("api_key_location") or "header").strip().lower()
+            if location not in ("header", "query", "body"):
+                logger.error(
+                    "MCP server '%s': invalid api_key_location '%s' "
+                    "(expected header, query, or body)",
+                    name,
+                    location,
+                )
+            scheme = str(cfg.get("api_key_scheme") or "none").strip().lower()
+            if scheme not in ("none", "basic", "bearer"):
+                logger.error(
+                    "MCP server '%s': invalid api_key_scheme '%s' "
+                    "(expected none, basic, or bearer)",
+                    name,
+                    scheme,
+                )
+            elif scheme != "none" and location != "header":
+                logger.error(
+                    "MCP server '%s': api_key_scheme '%s' requires "
+                    "api_key_location 'header' (got '%s')",
+                    name,
+                    scheme,
+                    location,
+                )
+            if (
+                cfg.get("api_key_location")
+                and not str(cfg.get("api_key_name") or "").strip()
+            ):
+                logger.error(
+                    "MCP server '%s': api_key_location is set but 'api_key_name' "
+                    "is missing",
+                    name,
+                )
+            return
+
         if auth_mode not in ("oauth", "dcr"):
             return
 
