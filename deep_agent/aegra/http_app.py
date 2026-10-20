@@ -245,14 +245,12 @@ async def agent_structure(request: Request) -> dict:
     name: str = agent_config.get_name()
 
     orchestrator: dict[str, Any] = copy.deepcopy(agent_config.get_orchestrator_config())
-    orchestrator.pop("body", None)
     orchestrator.pop("skill_paths", None)
 
     subagents: dict[str, dict[str, Any]] = copy.deepcopy(
         agent_config.get_all_subagent_configs()
     )
     for key in subagents:
-        subagents[key].pop("body", None)
         subagents[key].pop("skill_paths", None)
 
     mcp_servers: dict[str, Any] = copy.deepcopy(agent_config.get_mcp_servers())
@@ -262,6 +260,9 @@ async def agent_structure(request: Request) -> dict:
         mcp_servers[key].pop("auth_env_var", None)
 
     available_skills: list[str] = copy.deepcopy(agent_config.get_available_skills())
+    skill_contents: dict[str, str] = copy.deepcopy(
+        agent_config.get_available_skill_contents()
+    )
 
     return {
         "name": name,
@@ -269,4 +270,5 @@ async def agent_structure(request: Request) -> dict:
         "subagents": subagents,
         "mcp_servers": mcp_servers,
         "available_skills": available_skills,
+        "skill_contents": skill_contents,
     }

@@ -107,6 +107,32 @@ Test orchestrator prompt.
 
         assert "unknown skills" in caplog.text.lower()
 
+    def test_available_skill_contents_reads_each_skill_instruction_file(self, tmp_path):
+        """Expose complete skill instructions and tolerate an incomplete skill."""
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+        (config_dir / "PROMPT.md").write_text(
+            "---\nname: test-orchestrator\n---\nTest prompt.\n"
+        )
+        skills_dir = config_dir / "skills"
+        skills_dir.mkdir()
+
+        documented_skill = skills_dir / "client-intake"
+        documented_skill.mkdir()
+        (documented_skill / "SKILL.md").write_text(
+            "# Client intake\n\nGather requirements.\n"
+        )
+
+        undocumented_skill = skills_dir / "draft"
+        undocumented_skill.mkdir()
+
+        contents = AgentConfig(config_dir).get_available_skill_contents()
+
+        assert contents == {
+            "client-intake": "# Client intake\n\nGather requirements.\n",
+            "draft": "",
+        }
+
 
 class TestMcpsValidation:
     """Test mcps field validation for orchestrator and subagents."""

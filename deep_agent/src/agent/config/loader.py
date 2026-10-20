@@ -665,6 +665,25 @@ class AgentConfig:
         self._ensure_loaded()
         return list(self._available_skills.keys())
 
+    def get_available_skill_contents(self) -> dict[str, str]:
+        """Return the complete SKILL.md content for every available skill.
+
+        This is intentionally separate from :meth:`get_available_skills` so
+        callers that only need discovery metadata do not read every skill file.
+        Skills without a readable ``SKILL.md`` are represented by an empty
+        string, allowing the developer UI to explain that no instructions were
+        supplied instead of failing the whole configuration response.
+        """
+        self._ensure_loaded()
+        contents: dict[str, str] = {}
+        for name, skill_path in self._available_skills.items():
+            try:
+                contents[name] = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+            except OSError:
+                logger.warning("Unable to read instructions for skill '%s'", name)
+                contents[name] = ""
+        return contents
+
     def get_providers_config(self) -> ProvidersFileConfig:
         """Get the pre-loaded providers configuration.
 
