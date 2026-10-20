@@ -1,7 +1,8 @@
 """Unit tests for agent_config skill path resolution."""
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from deep_agent.src.agent.config import AgentConfig
 from deep_agent.src.exceptions import AppException
@@ -107,7 +108,7 @@ Test orchestrator prompt.
 
         assert "unknown skills" in caplog.text.lower()
 
-    def test_available_skill_contents_reads_each_skill_instruction_file(self, tmp_path):
+    def test_available_skills_reads_each_skill_instruction_file(self, tmp_path):
         """Expose complete skill instructions and tolerate an incomplete skill."""
         config_dir = tmp_path / "agent_config"
         config_dir.mkdir()
@@ -126,7 +127,7 @@ Test orchestrator prompt.
         undocumented_skill = skills_dir / "draft"
         undocumented_skill.mkdir()
 
-        contents = AgentConfig(config_dir).get_available_skill_contents()
+        contents = AgentConfig(config_dir).get_available_skills()
 
         assert contents == {
             "client-intake": "# Client intake\n\nGather requirements.\n",

@@ -656,23 +656,12 @@ class AgentConfig:
         self._ensure_loaded()
         return self._mcp_servers
 
-    def get_available_skills(self) -> list[str]:
-        """Get the available skills in the agent configuration.
+    def get_available_skills(self) -> dict[str, str]:
+        """Return every available skill name and its complete instructions.
 
         Returns:
-            Dict of available skills.
-        """
-        self._ensure_loaded()
-        return list(self._available_skills.keys())
-
-    def get_available_skill_contents(self) -> dict[str, str]:
-        """Return the complete SKILL.md content for every available skill.
-
-        This is intentionally separate from :meth:`get_available_skills` so
-        callers that only need discovery metadata do not read every skill file.
-        Skills without a readable ``SKILL.md`` are represented by an empty
-        string, allowing the developer UI to explain that no instructions were
-        supplied instead of failing the whole configuration response.
+            Dict mapping each available skill name to its complete ``SKILL.md``
+            content, or an empty string when the instruction file is unreadable.
         """
         self._ensure_loaded()
         contents: dict[str, str] = {}

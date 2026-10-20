@@ -50,11 +50,6 @@ def test_agent_structure_returns_prompt_and_skill_details_without_auth_internals
     monkeypatch.setattr(
         http_app.agent_config,
         "get_available_skills",
-        lambda: ["client-intake", "bmi-report"],
-    )
-    monkeypatch.setattr(
-        http_app.agent_config,
-        "get_available_skill_contents",
         lambda: {
             "client-intake": "# Client intake\n\nGather requirements.",
             "bmi-report": "# BMI report\n\nCalculate BMI.",
@@ -84,8 +79,7 @@ def test_agent_structure_returns_prompt_and_skill_details_without_auth_internals
                 "transport": "streamable_http",
             },
         },
-        "available_skills": ["client-intake", "bmi-report"],
-        "skill_contents": {
+        "skills": {
             "client-intake": "# Client intake\n\nGather requirements.",
             "bmi-report": "# BMI report\n\nCalculate BMI.",
         },
