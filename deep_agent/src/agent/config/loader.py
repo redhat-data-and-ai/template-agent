@@ -46,6 +46,14 @@ from .resolver import resolve_skill_paths, resolve_tools
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
 
+# Model configs are keyed by a canonical (provider, model_id) pair rather than
+# a ":"-joined string: model_id has no character restrictions, so names like
+# Ollama's "llama3:8b" would otherwise be re-split into a bogus provider half
+# and collide with a genuinely provider-scoped entry.
+ModelConfigKey = tuple[str | None, str]
+ModelConfigs = dict[ModelConfigKey, dict[str, Any]]
+
+
 def _canonical_provider(provider_raw: Any, source: str) -> str | None:
     """Canonical provider string for keying a model config, or None.
 
@@ -75,8 +83,8 @@ def _canonical_provider(provider_raw: Any, source: str) -> str | None:
     )
 
 
-def _index_declared_providers(configs: dict[str, dict[str, Any]]) -> dict[str, str]:
-    """Reverse-index model_id → declared provider from scoped config keys.
+def _index_declared_providers(configs: ModelConfigs) -> dict[str, str]:
+    """Reverse-index model_id → declared provider from the config keys.
 
     Lets frontmatter that omits ``provider:`` pick up the provider declared
     alongside the model in ``models/*.yaml``. A model_id declared under two
@@ -84,7 +92,7 @@ def _index_declared_providers(configs: dict[str, dict[str, Any]]) -> dict[str, s
     dropped from the index and inference falls through to the default.
 
     Args:
-        configs: The loaded model configs, keyed provider:model_id or model_id.
+        configs: The loaded model configs, keyed (provider | None, model_id).
 
     Returns:
         Mapping of model_id to its unambiguous declared provider.
@@ -92,10 +100,9 @@ def _index_declared_providers(configs: dict[str, dict[str, Any]]) -> dict[str, s
     index: dict[str, str] = {}
     ambiguous: set[str] = set()
 
-    for key in configs:
-        provider, sep, model_id = key.partition(":")
-        if not sep:
-            continue  # bare model_id: declares no provider
+    for provider, model_id in configs:
+        if provider is None:
+            continue  # declares no provider
         existing = index.get(model_id)
         if existing is not None and existing != provider:
             ambiguous.add(model_id)
@@ -189,7 +196,7 @@ class AgentConfig:
     _token_budget_config: TokenBudgetConfig
     _guardrails_config: GuardrailsConfig
     _pii_config: PIIConfig
-    _model_configs: dict[str, dict[str, Any]]
+    _model_configs: ModelConfigs
     _name: str
 
     def __new__(cls, base_dir: Path | None = None) -> "AgentConfig":
@@ -369,7 +376,7 @@ class AgentConfig:
         self._name = raw.get("name", "Agent")
         # Scan skills first, as orchestrator and subagents need them for resolution
         self._available_skills: dict[str, Path] = self._scan_available_skills()
-        self._model_configs: dict[str, dict[str, Any]] = self._load_model_configs()
+        self._model_configs: ModelConfigs = self._load_model_configs()
         self._model_declared_providers: dict[str, str] = _index_declared_providers(
             self._model_configs
         )
@@ -453,16 +460,16 @@ class AgentConfig:
                 ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
             )
 
-    def _load_model_configs(self) -> dict[str, dict[str, Any]]:
+    def _load_model_configs(self) -> ModelConfigs:
         """Load model config YAML files from config/agent/models/.
 
         Each file provides runtime LLM parameters (temperature, max_tokens,
         location) that the agent-engine materialized from the registry's
         MODEL.yaml packages. ``project`` is carried through but not read.
 
-        Entries are keyed ``"<provider>:<model_id>"`` when the file declares a
+        Entries are keyed ``(provider, model_id)`` when the file declares a
         recognised ``provider:``, so the same model name served by two
-        providers stays distinct, and plain ``"<model_id>"`` otherwise for
+        providers stays distinct, and ``(None, model_id)`` otherwise for
         provider-agnostic matching. See :meth:`get_model_params` for the
         corresponding lookup order.
 
@@ -473,13 +480,13 @@ class AgentConfig:
         if not models_dir.is_dir():
             return {}
 
-        configs: dict[str, dict[str, Any]] = {}
+        configs: ModelConfigs = {}
         for model_file in sorted(models_dir.glob("*.yaml")):
             try:
                 data = yaml.safe_load(model_file.read_text()) or {}
                 if not isinstance(data, dict):
                     continue
-                model_id = data.get("model_id", model_file.stem)
+                model_id = str(data.get("model_id", model_file.stem))
 
                 raw_temp = data.get("temperature")
                 if raw_temp is not None:
@@ -506,18 +513,20 @@ class AgentConfig:
                         data.pop("max_tokens")
 
                 provider = _canonical_provider(data.get("provider"), model_file.name)
-                key = f"{provider}:{model_id}" if provider else model_id
+                key: ModelConfigKey = (provider, model_id)
                 if key in configs:
                     logger.warning(
-                        "Duplicate model config key %r in %s, overriding previous",
-                        key,
+                        "Duplicate model config for provider=%s model_id=%r in %s, "
+                        "overriding previous",
+                        provider or "any",
+                        model_id,
                         model_file.name,
                     )
 
                 configs[key] = data
                 logger.info(
                     "Loaded model config: %s (provider=%s, temp=%s, max_tokens=%s)",
-                    key,
+                    model_id,
                     provider or "any",
                     data.get("temperature", "default"),
                     data.get("max_tokens", "default"),
@@ -703,10 +712,9 @@ class AgentConfig:
         """Look up runtime LLM parameters for a model.
 
         Lookup order mirrors the harness-profile convention: the
-        provider-scoped key wins, then the bare model_id as a
-        provider-agnostic fallback. Passing ``provider`` is what lets the
-        same model name served by two providers resolve to different
-        configs.
+        provider-scoped key wins, then the provider-agnostic one. Passing
+        ``provider`` is what lets the same model name served by two providers
+        resolve to different configs.
 
         Args:
             model_id: Model name as written in agent frontmatter.
@@ -723,11 +731,11 @@ class AgentConfig:
                 "model lookup",
             )
             if canonical is not None:
-                scoped = self._model_configs.get(f"{canonical}:{model_id}")
+                scoped = self._model_configs.get((canonical, model_id))
                 if scoped is not None:
                     return scoped
 
-        return self._model_configs.get(model_id, {})
+        return self._model_configs.get((None, model_id), {})
 
     def get_declared_provider(self, model_id: str) -> str | None:
         """Provider declared for this model in ``models/*.yaml``, if any.

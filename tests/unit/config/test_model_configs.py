@@ -43,7 +43,7 @@ class TestModelConfigKeys:
         )
         cfg = AgentConfig(config_dir)
         cfg._ensure_loaded()
-        assert list(cfg._model_configs) == ["vertex:gemini-2.5-pro"]
+        assert list(cfg._model_configs) == [("vertex", "gemini-2.5-pro")]
 
     def test_missing_provider_produces_bare_key(self, tmp_path):
         config_dir = self._make_config_dir(
@@ -51,7 +51,7 @@ class TestModelConfigKeys:
         )
         cfg = AgentConfig(config_dir)
         cfg._ensure_loaded()
-        assert list(cfg._model_configs) == ["gemini-2.5-pro"]
+        assert list(cfg._model_configs) == [(None, "gemini-2.5-pro")]
 
     def test_provider_alias_normalised_in_key(self, tmp_path):
         """vertex_ai and vertex must not produce two different keys."""
@@ -61,7 +61,7 @@ class TestModelConfigKeys:
         )
         cfg = AgentConfig(config_dir)
         cfg._ensure_loaded()
-        assert list(cfg._model_configs) == ["vertex:gemini-2.5-pro"]
+        assert list(cfg._model_configs) == [("vertex", "gemini-2.5-pro")]
 
     @pytest.mark.parametrize(
         "bad", ["watsonx", "openai-compatible", '""', "[1, 2]", "123"]
@@ -287,7 +287,7 @@ class TestDuplicateKeys:
         )
         cfg = AgentConfig(config_dir)
         cfg._ensure_loaded()
-        assert list(cfg._model_configs) == ["vertex:dup"]
+        assert list(cfg._model_configs) == [("vertex", "dup")]
         assert cfg.get_model_params("dup", Provider.VERTEX)["temperature"] == 0.9
         # One provider, so still unambiguous for inference.
         assert cfg.get_declared_provider("dup") == "vertex"
@@ -368,3 +368,83 @@ class TestFrontmatterInheritsDeclaredProvider:
             {"provider": "openai", "name": "granite-3.3-8b-instruct"}
         )
         assert spec.provider is Provider.OPENAI
+
+
+class TestModelIdContainingColon:
+    """model_id has no character restrictions — e.g. Ollama's "llama3:8b"."""
+
+    def setup_method(self):
+        AgentConfig._instance = None
+
+    def _config_dir(self, tmp_path, models: dict[str, str]):
+        config_dir = tmp_path / "agent"
+        (config_dir / "runtime").mkdir(parents=True)
+        (config_dir / "PROMPT.md").write_text(
+            "---\nname: test\nmodel: gemini-2.5-flash\n---\nPrompt.\n"
+        )
+        (config_dir / "models").mkdir()
+        for filename, body in models.items():
+            (config_dir / "models" / filename).write_text(body)
+        return config_dir
+
+    def test_colon_in_model_id_is_not_split_into_a_provider(self, tmp_path):
+        cfg = AgentConfig(
+            self._config_dir(
+                tmp_path, {"a.yaml": "model_id: llama3:8b\ntemperature: 0.1\n"}
+            )
+        )
+        cfg._ensure_loaded()
+        assert list(cfg._model_configs) == [(None, "llama3:8b")]
+        # "llama3" must not be mistaken for a declared provider of "8b".
+        assert cfg.get_declared_provider("8b") is None
+        assert cfg.get_declared_provider("llama3:8b") is None
+        assert cfg.get_model_params("llama3:8b")["temperature"] == 0.1
+
+    def test_bare_colon_name_does_not_collide_with_scoped_entry(self, tmp_path):
+        """(None, "vertex:8b") and ("vertex", "8b") are distinct keys."""
+        cfg = AgentConfig(
+            self._config_dir(
+                tmp_path,
+                {
+                    "a.yaml": "model_id: vertex:8b\ntemperature: 0.1\n",
+                    "b.yaml": "model_id: 8b\nprovider: vertex\ntemperature: 0.9\n",
+                },
+            )
+        )
+        cfg._ensure_loaded()
+        assert len(cfg._model_configs) == 2
+        assert cfg.get_model_params("vertex:8b")["temperature"] == 0.1
+        assert cfg.get_model_params("8b", Provider.VERTEX)["temperature"] == 0.9
+        # The bare entry must not pollute or ambiguate the real declaration.
+        assert cfg.get_declared_provider("8b") == "vertex"
+
+    def test_colon_name_still_scopes_by_provider(self, tmp_path):
+        cfg = AgentConfig(
+            self._config_dir(
+                tmp_path,
+                {
+                    "a.yaml": (
+                        "model_id: llama3:8b\nprovider: openai-compatibility\n"
+                        "temperature: 0.2\n"
+                    )
+                },
+            )
+        )
+        cfg._ensure_loaded()
+        assert list(cfg._model_configs) == [("openai-compatibility", "llama3:8b")]
+        assert cfg.get_declared_provider("llama3:8b") == "openai-compatibility"
+        assert (
+            cfg.get_model_params("llama3:8b", Provider.OPENAI_COMPATIBILITY)[
+                "temperature"
+            ]
+            == 0.2
+        )
+
+    def test_non_string_model_id_is_coerced(self, tmp_path):
+        """A YAML-numeric model_id must stay reachable by its string form."""
+        cfg = AgentConfig(
+            self._config_dir(tmp_path, {"a.yaml": "model_id: 123\nprovider: vertex\n"})
+        )
+        cfg._ensure_loaded()
+        assert list(cfg._model_configs) == [("vertex", "123")]
+        assert cfg.get_declared_provider("123") == "vertex"
