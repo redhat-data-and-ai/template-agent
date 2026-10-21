@@ -13,13 +13,37 @@ from pydantic import BaseModel, model_validator
 
 from deep_agent.src.agent.llm import CLAUDE_MODELS, GEMINI_MODELS
 
+# Alternate spellings accepted in config, mapped to their canonical value.
+# Keys are compared lowercased with surrounding whitespace stripped.
+_PROVIDER_ALIASES: dict[str, str] = {
+    "vertex_ai": "vertex",
+    "vertex-ai": "vertex",
+}
+
 
 class Provider(str, Enum):
-    """Supported LLM provider backends."""
+    """Supported LLM provider backends.
+
+    Alternate spellings in :data:`_PROVIDER_ALIASES` resolve to the canonical
+    member, so ``Provider("vertex_ai") is Provider.VERTEX``. Normalising here
+    rather than at the parse site keeps ``value``, cache keys, and equality
+    checks canonical no matter which spelling the config used.
+    """
 
     VERTEX = "vertex"
     OPENAI = "openai"
-    MAAS = "maas"  # Model as a Service (VLLM)
+    # Any other endpoint speaking the OpenAI chat API: vLLM, TGI, Ollama, or a
+    # managed open-source serving platform.
+    OPENAI_COMPATIBILITY = "openai-compatibility"
+
+    @classmethod
+    def _missing_(cls, value: object) -> Provider | None:
+        if not isinstance(value, str):
+            return None
+        canonical = _PROVIDER_ALIASES.get(value.strip().lower())
+        if canonical is None:
+            return None
+        return cls._value2member_map_[canonical]  # type: ignore[return-value]
 
 
 class ModelSpec(BaseModel):
@@ -43,19 +67,55 @@ class ModelSpec(BaseModel):
         return base
 
 
-def infer_provider(model_name: str) -> Provider:
-    """Infer provider from a legacy model name string.
+def supported_provider_values() -> list[str]:
+    """Every accepted ``provider:`` spelling: canonical values plus aliases."""
+    return sorted({p.value for p in Provider} | set(_PROVIDER_ALIASES))
 
-    Inference logic:
-    - Known Gemini/Claude models → VERTEX
-    - GPT models (gpt-*, case-insensitive) → OPENAI
-    - All other models → MAAS (VLLM for custom models)
+
+def _declared_provider(model_name: str) -> Provider | None:
+    """Provider declared for this model in ``models/*.yaml``, if resolvable.
+
+    Imported lazily because the loader imports :class:`Provider` from this
+    module; a module-level import would be circular. Config problems must not
+    turn provider inference into a hard failure, so any error degrades to
+    "no declaration" and lets the caller fall through to the default.
     """
+    try:
+        from deep_agent.src.agent.config.loader import agent_config
+
+        declared = agent_config.get_declared_provider(model_name)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    if declared is None:
+        return None
+    try:
+        return Provider(declared)
+    except ValueError:  # pragma: no cover - loader already canonicalises
+        return None
+
+
+def infer_provider(model_name: str) -> Provider:
+    """Infer the provider for a frontmatter ``model:`` that declares none.
+
+    Resolution order:
+    1. The provider declared alongside this model in ``models/*.yaml``
+    2. Known Gemini/Claude model names → VERTEX
+    3. GPT models (gpt-*, case-insensitive) → OPENAI
+    4. OPENAI_COMPATIBILITY for everything else
+
+    Steps 2-4 only run when neither the frontmatter nor ``models/*.yaml``
+    declares a provider. The known-model lists are the discriminator there:
+    a name on them is served by Vertex, and anything else is assumed to come
+    from the OpenAI-compatible endpoint at VLLM_BASE_URL.
+    """
+    declared = _declared_provider(model_name)
+    if declared is not None:
+        return declared
     if model_name in GEMINI_MODELS or model_name in CLAUDE_MODELS:
         return Provider.VERTEX
     if model_name.lower().startswith("gpt-"):
         return Provider.OPENAI
-    return Provider.MAAS
+    return Provider.OPENAI_COMPATIBILITY
 
 
 def parse_model_config(raw: str | dict[str, Any]) -> ModelSpec:
@@ -107,7 +167,7 @@ def parse_model_config(raw: str | dict[str, Any]) -> ModelSpec:
         except ValueError as e:
             raise ValueError(
                 f"invalid provider '{provider_raw}'; "
-                f"must be one of: {[p.value for p in Provider]}"
+                f"must be one of: {supported_provider_values()}"
             ) from e
 
     fallback_raw = raw.get("fallback")

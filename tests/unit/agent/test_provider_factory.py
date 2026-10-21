@@ -17,8 +17,39 @@ from deep_agent.src.agent.provider_factory import (
 )
 
 
+class TestProviderAliases:
+    """Tests for alternate provider spellings accepted in config."""
+
+    @pytest.mark.parametrize("alias", ["vertex_ai", "vertex-ai", "VERTEX_AI"])
+    def test_alias_resolves_to_canonical_member(self, alias):
+        assert Provider(alias) is Provider.VERTEX
+
+    def test_canonical_values_unaffected(self):
+        assert Provider("vertex") is Provider.VERTEX
+        assert Provider("openai") is Provider.OPENAI
+        assert Provider("openai-compatibility") is Provider.OPENAI_COMPATIBILITY
+
+    def test_unknown_value_still_raises(self):
+        with pytest.raises(ValueError):
+            Provider("azure")
+
+    def test_non_string_value_still_raises(self):
+        with pytest.raises(ValueError):
+            Provider(42)
+
+
+@pytest.fixture
+def no_declared_providers():
+    """Isolate name-based inference from whatever models/*.yaml is on disk."""
+    with patch(
+        "deep_agent.src.agent.config.model._declared_provider", return_value=None
+    ):
+        yield
+
+
+@pytest.mark.usefixtures("no_declared_providers")
 class TestInferProvider:
-    """Tests for legacy model name provider inference."""
+    """Name-based inference, with no models/*.yaml declaration to defer to."""
 
     def test_gemini_models_infer_vertex(self):
         assert infer_provider("gemini-2.5-pro") == Provider.VERTEX
@@ -35,12 +66,40 @@ class TestInferProvider:
         assert infer_provider("GPT-4") == Provider.OPENAI
         assert infer_provider("Gpt-4o") == Provider.OPENAI
 
-    def test_unknown_models_infer_maas(self):
-        assert infer_provider("mistral-7b") == Provider.MAAS
-        assert infer_provider("llama-3-70b") == Provider.MAAS
-        assert infer_provider("custom-model") == Provider.MAAS
+    def test_unknown_models_infer_openai_compatibility(self):
+        """Names off the known Vertex lists are assumed OpenAI-compatible."""
+        assert infer_provider("mistral-7b") == Provider.OPENAI_COMPATIBILITY
+        assert infer_provider("llama-3-70b") == Provider.OPENAI_COMPATIBILITY
+        assert infer_provider("custom-model") == Provider.OPENAI_COMPATIBILITY
 
 
+class TestInferProviderFromModelConfigs:
+    """A models/*.yaml declaration is consulted before any name heuristic."""
+
+    def test_declaration_supplies_provider_for_unknown_name(self):
+        with patch(
+            "deep_agent.src.agent.config.model._declared_provider",
+            return_value=Provider.OPENAI_COMPATIBILITY,
+        ):
+            assert infer_provider("granite-3.3-8b") == Provider.OPENAI_COMPATIBILITY
+
+    def test_declaration_beats_gpt_name_heuristic(self):
+        """A gpt-* model served via a proxy can be declared as such."""
+        with patch(
+            "deep_agent.src.agent.config.model._declared_provider",
+            return_value=Provider.OPENAI_COMPATIBILITY,
+        ):
+            assert infer_provider("gpt-4o-mini") == Provider.OPENAI_COMPATIBILITY
+
+    def test_falls_through_when_no_declaration(self):
+        with patch(
+            "deep_agent.src.agent.config.model._declared_provider", return_value=None
+        ):
+            assert infer_provider("granite-3.3-8b") == Provider.OPENAI_COMPATIBILITY
+            assert infer_provider("gemini-2.5-pro") == Provider.VERTEX
+
+
+@pytest.mark.usefixtures("no_declared_providers")
 class TestParseModelConfig:
     """Tests for parse_model_config()."""
 
@@ -55,9 +114,9 @@ class TestParseModelConfig:
         assert spec.provider == Provider.OPENAI
         assert spec.name == "gpt-4o-mini"
 
-    def test_parses_legacy_string_maas(self):
+    def test_parses_legacy_string_openai_compatibility(self):
         spec = parse_model_config("mistral-7b")
-        assert spec.provider == Provider.MAAS
+        assert spec.provider == Provider.OPENAI_COMPATIBILITY
         assert spec.name == "mistral-7b"
 
     def test_parses_object_without_provider_infers(self):
@@ -70,7 +129,7 @@ class TestParseModelConfig:
         assert spec2.provider == Provider.VERTEX  # Inferred
 
         spec3 = parse_model_config({"name": "mistral-7b"})
-        assert spec3.provider == Provider.MAAS  # Inferred
+        assert spec3.provider == Provider.OPENAI_COMPATIBILITY  # Inferred
 
     def test_parses_object_form(self):
         spec = parse_model_config({"provider": "vertex", "name": "gemini-2.5-pro"})
@@ -106,6 +165,17 @@ class TestParseModelConfig:
     def test_rejects_empty_string(self):
         with pytest.raises(ValueError, match="cannot be empty"):
             parse_model_config("")
+
+    @pytest.mark.parametrize(
+        "alias", ["vertex_ai", "vertex-ai", "VERTEX_AI", "  vertex_ai  "]
+    )
+    def test_accepts_vertex_aliases(self, alias):
+        """Alternate Vertex spellings normalise to the canonical member."""
+        spec = parse_model_config({"provider": alias, "name": "gemini-2.5-pro"})
+        assert spec.provider is Provider.VERTEX
+        assert spec.provider.value == "vertex"
+        # Normalising at the enum keeps derived identities canonical.
+        assert model_spec_cache_key(spec) == "vertex:gemini-2.5-pro"
 
     def test_rejects_invalid_provider(self):
         with pytest.raises(ValueError, match="invalid provider"):
@@ -192,9 +262,9 @@ class TestCreateModelFromSpec:
         assert result is mock_model
         assert mock_create.call_args[0][0] == Provider.OPENAI
 
-    def test_routes_maas_provider(self):
+    def test_routes_openai_compatibility_provider(self):
         mock_model = MagicMock()
-        spec = ModelSpec(provider=Provider.MAAS, name="mistral-7b")
+        spec = ModelSpec(provider=Provider.OPENAI_COMPATIBILITY, name="mistral-7b")
 
         with patch(
             "deep_agent.src.agent.provider_factory._create_by_provider",
@@ -203,7 +273,7 @@ class TestCreateModelFromSpec:
             result = create_model_from_spec(spec)
 
         assert result is mock_model
-        assert mock_create.call_args[0][0] == Provider.MAAS
+        assert mock_create.call_args[0][0] == Provider.OPENAI_COMPATIBILITY
 
 
 class TestFallbackChain:
@@ -274,38 +344,61 @@ class TestCreateByProvider:
         assert result is mock_model
         mock_vllm.assert_called_once_with("gpt-4o-mini", 0.0, 4096)
 
-    def test_maas_delegates_to_vllm_model(self):
+    def test_openai_compatibility_delegates_to_vllm_model(self):
         mock_model = MagicMock()
         with patch(
             "deep_agent.src.agent.provider_factory._create_vllm_model",
             return_value=mock_model,
         ) as mock_vllm:
             result = _create_by_provider(
-                Provider.MAAS, "mistral-7b", temperature=0.0, max_output_tokens=4096
+                Provider.OPENAI_COMPATIBILITY,
+                "mistral-7b",
+                temperature=0.0,
+                max_output_tokens=4096,
             )
         assert result is mock_model
-        mock_vllm.assert_called_once_with("/data/mistral-7b", 0.0, 4096)
+        mock_vllm.assert_called_once_with("mistral-7b", 0.0, 4096)
+
+    def test_rejects_unsupported_provider(self):
+        with pytest.raises(ValueError, match="unsupported provider"):
+            _create_by_provider(
+                "azure",  # type: ignore[arg-type]
+                "some-model",
+                temperature=0.0,
+                max_output_tokens=4096,
+            )
 
 
-class TestMaasModelNameNormalization:
-    """Tests for the /data/ prefix normalization applied to MAAS model names."""
+class TestModelNamePassthrough:
+    """Model names reach the endpoint verbatim — no prefixing or rewriting.
+
+    Deployments that namespace their models (e.g. a serving platform exposing
+    ``/data/<model>``) must spell the prefix out in the config.
+    """
 
     @pytest.mark.parametrize(
-        "input_name, expected",
+        "provider",
+        [Provider.OPENAI, Provider.OPENAI_COMPATIBILITY],
+    )
+    @pytest.mark.parametrize(
+        "model_name",
         [
-            ("granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
-            ("/data/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
-            ("data/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
-            ("/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+            "granite-guardian-3.1-8b",
+            "/data/granite-guardian-3.1-8b",
+            "data/granite-guardian-3.1-8b",
+            "gpt-4o-mini",
         ],
     )
-    def test_maas_normalizes_model_name(self, input_name, expected):
+    def test_model_name_passed_through_unchanged(self, provider, model_name):
         mock_model = MagicMock()
         with patch(
             "deep_agent.src.agent.provider_factory._create_vllm_model",
             return_value=mock_model,
         ) as mock_vllm:
             _create_by_provider(
-                Provider.MAAS, input_name, temperature=0.0, max_output_tokens=4096
+                provider,
+                model_name,
+                temperature=0.0,
+                max_output_tokens=4096,
             )
-        mock_vllm.assert_called_once_with(expected, 0.0, 4096)
+        mock_vllm.assert_called_once_with(model_name, 0.0, 4096)

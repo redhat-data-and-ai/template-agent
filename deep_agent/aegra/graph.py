@@ -350,7 +350,7 @@ async def agent(runtime: ServerRuntime) -> Any:
     orch_spec = parse_model_config(orch_model_raw)
     model_name = orch_spec.name  # For logging and cache key
 
-    model_params = agent_config.get_model_params(orch_spec.name)
+    model_params = agent_config.get_model_params(orch_spec.name, orch_spec.provider)
     orch_temperature = model_params.get("temperature", 0.0)
     orch_max_tokens = model_params.get("max_tokens") or None
     orch_location = model_params.get("location")

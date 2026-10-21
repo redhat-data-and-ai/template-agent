@@ -70,17 +70,17 @@ def _create_by_provider(
     Routes:
     - VERTEX → Google Vertex AI (Gemini, Claude)
     - OPENAI → OpenAI API (GPT models)
-    - MAAS → VLLM (Model as a Service for custom models)
+    - OPENAI_COMPATIBILITY → any other OpenAI-compatible endpoint
+
+    Both OpenAI routes share the VLLM_BASE_URL / VLLM_API_KEY endpoint
+    settings, and model names are sent verbatim — no prefixing or rewriting.
+    Deployments that namespace their models (e.g. a serving platform exposing
+    ``/data/granite-3.3-8b-instruct``) must spell that out in the config.
     """
     if provider == Provider.VERTEX:
         return _create_vertex_model(
             model_name, temperature, max_output_tokens, location=location
         )
-    if provider == Provider.OPENAI:
-        return _create_vllm_model(model_name, temperature, max_output_tokens)
-    if provider == Provider.MAAS:
-        # MaaS: managed open-source model serving without owning infrastructure.
-        # https://www.redhat.com/en/topics/ai/what-is-models-as-a-service
-        model_name = "/data/" + model_name.lstrip("/").removeprefix("data/")
+    if provider in (Provider.OPENAI, Provider.OPENAI_COMPATIBILITY):
         return _create_vllm_model(model_name, temperature, max_output_tokens)
     raise ValueError(f"unsupported provider: {provider}")
