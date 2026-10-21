@@ -324,3 +324,60 @@ def test_http_client_log_filter_masks_lazy_args():
     )
     RedactUrlQueryFilter().filter(record)
     assert "s3cret" not in record.getMessage()
+
+
+def test_log_filter_masks_non_string_url_objects():
+    """httpx passes Request.url as httpx.URL, not str, via lazy %s."""
+    import logging
+
+    import httpx
+
+    from deep_agent.utils.pylogger import RedactUrlQueryFilter
+
+    record = logging.LogRecord(
+        name="httpx",
+        level=logging.INFO,
+        pathname="f.py",
+        lineno=1,
+        msg='HTTP Request: %s %s "%s %d %s"',
+        args=(
+            "POST",
+            httpx.URL("https://x.example.com/mcp?apikey=s3cret"),
+            "HTTP/1.1",
+            200,
+            "OK",
+        ),
+        exc_info=None,
+    )
+    RedactUrlQueryFilter().filter(record)
+    msg = record.getMessage()
+    assert "s3cret" not in msg
+    assert "apikey=REDACTED" in msg
+
+
+def test_log_filter_masks_exception_tracebacks():
+    """httpx.HTTPStatusError embeds the raw URL in its message."""
+    import logging
+    import sys
+
+    import httpx
+
+    from deep_agent.utils.pylogger import RedactUrlQueryFilter
+
+    request = httpx.Request("POST", "https://x.example.com/mcp?apikey=s3cret")
+    try:
+        httpx.Response(500, request=request).raise_for_status()
+    except httpx.HTTPStatusError:
+        record = logging.LogRecord(
+            name="deep_agent.aegra.mcp",
+            level=logging.ERROR,
+            pathname="f.py",
+            lineno=1,
+            msg="connection failed",
+            args=(),
+            exc_info=sys.exc_info(),
+        )
+        RedactUrlQueryFilter().filter(record)
+        assert record.exc_text is not None
+        assert "s3cret" not in record.exc_text
+        assert "apikey=REDACTED" in record.exc_text

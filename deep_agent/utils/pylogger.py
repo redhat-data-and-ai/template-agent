@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import sys
+import traceback
 from contextvars import ContextVar
 from typing import Any
 
@@ -202,21 +203,36 @@ class RedactUrlQueryFilter(logging.Filter):
     masked; host and path are preserved for debugging.
     """
 
+    @staticmethod
+    def _mask_arg(value: Any) -> Any:
+        """Mask one log argument, including non-string URL objects.
+
+        HTTPX passes ``Request.url`` as an :class:`httpx.URL`, not a ``str``,
+        and relies on lazy ``%s`` formatting — so a type check alone would let
+        the credential through.
+        """
+        if isinstance(value, str):
+            return _mask_url_queries(value) if "?" in value else value
+        text = str(value)
+        return _mask_url_queries(text) if "?" in text else value
+
     def filter(self, record: logging.LogRecord) -> bool:
         """Mask query values on *record*, in place. Always returns True."""
         if isinstance(record.msg, str) and "?" in record.msg:
             record.msg = _mask_url_queries(record.msg)
         if record.args:
             if isinstance(record.args, tuple):
-                record.args = tuple(
-                    _mask_url_queries(a) if isinstance(a, str) and "?" in a else a
-                    for a in record.args
-                )
+                record.args = tuple(self._mask_arg(a) for a in record.args)
             elif isinstance(record.args, dict):
-                record.args = {
-                    k: (_mask_url_queries(v) if isinstance(v, str) and "?" in v else v)
-                    for k, v in record.args.items()
-                }
+                record.args = {k: self._mask_arg(v) for k, v in record.args.items()}
+        # Tracebacks repeat the raw URL — httpx.HTTPStatusError embeds it in
+        # its message. Pre-render and mask so formatters reuse the safe text.
+        if record.exc_info and record.exc_info[0] is not None:
+            if not record.exc_text:
+                record.exc_text = "".join(traceback.format_exception(*record.exc_info))
+            record.exc_text = _mask_url_queries(record.exc_text)
+        elif record.exc_text and "?" in record.exc_text:
+            record.exc_text = _mask_url_queries(record.exc_text)
         return True
 
 
@@ -293,6 +309,13 @@ def get_python_logger(log_level: str = "INFO") -> structlog.BoundLogger:
             wrapper_class=structlog.stdlib.BoundLogger,
             cache_logger_on_first_use=True,
         )
+
+        # Handler-level filter so it also sees records propagated from app
+        # loggers (logger-level filters do not apply to propagated records).
+        # This is what redacts exc_info tracebacks from deep_agent.aegra.mcp.
+        _redactor = RedactUrlQueryFilter()
+        for _handler in logging.getLogger().handlers:
+            _handler.addFilter(_redactor)
 
         _LOGGING_CONFIGURED = True
 
