@@ -14,7 +14,7 @@ description: >
 #     group: template-builders
 #   - role: users
 #     group: template-owner
-model: gemini-2.5-pro
+model: gemini-3.1-pro-preview
 # MaaS (Models as a Service) lets you serve open-source models via a managed
 # API without owning the infrastructure — see:
 # https://www.redhat.com/en/topics/ai/what-is-models-as-a-service

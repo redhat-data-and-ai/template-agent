@@ -260,7 +260,7 @@ class TestCreateByProvider:
                 max_output_tokens=8192,
             )
         assert result is mock_model
-        mock_vertex.assert_called_once_with("gemini-2.5-pro", 0.0, 8192)
+        mock_vertex.assert_called_once_with("gemini-2.5-pro", 0.0, 8192, location=None)
 
     def test_openai_delegates_to_vllm_model(self):
         mock_model = MagicMock()

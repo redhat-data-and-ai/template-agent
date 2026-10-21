@@ -1617,3 +1617,97 @@ class TestMcpResourceToolsOnSubagents:
             load_subagents(tools=[])
 
         _no_mcp_resource_tools.assert_not_called()
+
+
+class TestLocationThreading:
+    """Tests for per-model location flowing through subagent model resolution."""
+
+    def test_resolve_subagent_model_passes_location_from_model_params(self):
+        """Location from model_params flows through _create_primary_model to cache."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_model_params",
+                return_value={"location": "us-east5"},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ) as mock_from_spec,
+        ):
+            from deep_agent.src.infrastructure.subagents import _resolve_subagent_model
+
+            result = _resolve_subagent_model({"model": "claude-sonnet-4"})
+
+            assert result is mock_model
+            call_kwargs = mock_from_spec.call_args[1]
+            assert call_kwargs["location"] == "us-east5"
+
+    def test_resolve_subagent_model_omits_location_when_not_configured(self):
+        """No location in model_params → location kwarg not passed."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_model_params",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ) as mock_from_spec,
+        ):
+            from deep_agent.src.infrastructure.subagents import _resolve_subagent_model
+
+            result = _resolve_subagent_model({"model": "gemini-2.5-flash"})
+
+            assert result is mock_model
+            call_kwargs = mock_from_spec.call_args[1]
+            assert "location" not in call_kwargs
+
+    def test_load_subagent_threads_location_end_to_end(self):
+        """Location from model_params reaches get_or_create_model_from_spec via load_subagents."""
+        mock_model = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_all_subagent_configs",
+                return_value={
+                    "researcher": {
+                        "name": "researcher",
+                        "model": "claude-sonnet-4",
+                        "description": "Researcher",
+                        "body": "Research prompt",
+                    }
+                },
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_orchestrator_config",
+                return_value={},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.agent_config.get_model_params",
+                return_value={"location": "europe-west1"},
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.get_or_create_model_from_spec",
+                return_value=mock_model,
+            ) as mock_from_spec,
+            patch(
+                "deep_agent.src.infrastructure.subagents.SubAgent",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_audit_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_opa_middleware",
+                return_value=None,
+            ),
+        ):
+            load_subagents(tools=[])
+
+            call_kwargs = mock_from_spec.call_args[1]
+            assert call_kwargs["location"] == "europe-west1"

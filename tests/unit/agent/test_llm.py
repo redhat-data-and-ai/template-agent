@@ -52,6 +52,7 @@ class TestCreateModel:
                 mock_chat.assert_called_once_with(
                     model="claude-sonnet-4",
                     project="test-project",
+                    location="us-east5",
                     credentials=mock_creds,
                     max_tokens=8192,
                     max_retries=2,

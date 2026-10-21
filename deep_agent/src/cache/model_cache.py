@@ -27,7 +27,9 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 _LegacyCacheKey = tuple[str, float, int]
-_SpecCacheKey = tuple[str, float, int]  # (cache_id, temperature, tokens)
+_SpecCacheKey = tuple[
+    str, float, int, str | None
+]  # (cache_id, temperature, tokens, location)
 
 _lock = threading.Lock()
 _legacy_cache: TTLCache[_LegacyCacheKey, object] | None = None
@@ -109,6 +111,7 @@ def get_or_create_model_from_spec(
     spec: ModelSpec,
     temperature: float = 0.0,
     max_output_tokens: int | None = None,
+    location: str | None = None,
 ) -> object:
     """Return a cached model for a :class:`ModelSpec` or create a new one.
 
@@ -126,10 +129,10 @@ def get_or_create_model_from_spec(
 
     if not cache_settings.is_enabled("model"):
         return create_model_from_spec(
-            spec, temperature=temperature, max_output_tokens=tokens
+            spec, temperature=temperature, max_output_tokens=tokens, location=location
         )
 
-    key: _SpecCacheKey = (cache_id, temperature, tokens)
+    key: _SpecCacheKey = (cache_id, temperature, tokens, location)
 
     with _lock:
         cache = _get_spec_cache()
@@ -142,7 +145,7 @@ def get_or_create_model_from_spec(
     metrics.record_miss("model")
     logger.debug("Model cache MISS: %s — creating", cache_id)
     model = create_model_from_spec(
-        spec, temperature=temperature, max_output_tokens=tokens
+        spec, temperature=temperature, max_output_tokens=tokens, location=location
     )
 
     with _lock:

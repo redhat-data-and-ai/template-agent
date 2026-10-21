@@ -104,6 +104,7 @@ class Settings(BaseSettings):
 
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
+    CLAUDE_LOCATION: str = Field(default="us-east5")
 
     # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────
     SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
