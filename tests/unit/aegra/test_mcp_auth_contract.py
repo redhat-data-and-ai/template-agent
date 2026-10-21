@@ -260,3 +260,67 @@ def test_query_placement_on_configured_url_with_stale_key():
     )
     assert cfg["url"] == "https://x.example.com/mcp?apikey=fresh"
     assert "stale" not in cfg["url"]
+
+
+# --- query-placed credentials must not reach the logs (PR #399 review) ---
+
+
+def test_redact_url_query_masks_every_value():
+    from deep_agent.aegra.mcp import redact_url_query
+
+    assert (
+        redact_url_query("https://x.example.com/mcp?apikey=s3cret&v=2")
+        == "https://x.example.com/mcp?apikey=REDACTED&v=REDACTED"
+    )
+
+
+def test_redact_url_query_keeps_host_and_path():
+    from deep_agent.aegra.mcp import redact_url_query
+
+    out = redact_url_query("https://x.example.com/mcp?apikey=s3cret")
+    assert "x.example.com/mcp" in out
+    assert "s3cret" not in out
+
+
+def test_redact_url_query_passes_through_a_bare_url():
+    from deep_agent.aegra.mcp import redact_url_query
+
+    assert redact_url_query("https://x.example.com/mcp") == "https://x.example.com/mcp"
+
+
+def test_http_client_log_filter_masks_request_urls():
+    """httpx logs the full URL at INFO; the filter must scrub it."""
+    import logging
+
+    from deep_agent.utils.pylogger import RedactUrlQueryFilter
+
+    record = logging.LogRecord(
+        name="httpx",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg='HTTP Request: POST https://x.example.com/mcp?apikey=s3cret "200 OK"',
+        args=(),
+        exc_info=None,
+    )
+    assert RedactUrlQueryFilter().filter(record) is True
+    assert "s3cret" not in record.msg
+    assert "apikey=REDACTED" in record.msg
+
+
+def test_http_client_log_filter_masks_lazy_args():
+    import logging
+
+    from deep_agent.utils.pylogger import RedactUrlQueryFilter
+
+    record = logging.LogRecord(
+        name="httpx",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="calling %s",
+        args=("https://x.example.com/mcp?apikey=s3cret",),
+        exc_info=None,
+    )
+    RedactUrlQueryFilter().filter(record)
+    assert "s3cret" not in record.getMessage()

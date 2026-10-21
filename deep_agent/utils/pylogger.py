@@ -18,6 +18,7 @@ Context binding:
 
 import logging
 import os
+import re
 import sys
 from contextvars import ContextVar
 from typing import Any
@@ -184,6 +185,41 @@ def _clear_handlers(logger: logging.Logger) -> None:
     logger.filters.clear()
 
 
+_URL_QUERY_RE = re.compile(r"(\?|&)([^=&\s]+)=([^&\s]*)")
+
+
+def _mask_url_queries(text: str) -> str:
+    """Mask every query-string value in *text*."""
+    return _URL_QUERY_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}=REDACTED", text)
+
+
+class RedactUrlQueryFilter(logging.Filter):
+    """Mask query-string values in log records that carry a URL.
+
+    HTTP clients log the full request URL, so an MCP credential configured
+    with ``api_key_location: query`` would otherwise appear in plain text on
+    every request. The parameter name is user-configured, so all values are
+    masked; host and path are preserved for debugging.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Mask query values on *record*, in place. Always returns True."""
+        if isinstance(record.msg, str) and "?" in record.msg:
+            record.msg = _mask_url_queries(record.msg)
+        if record.args:
+            if isinstance(record.args, tuple):
+                record.args = tuple(
+                    _mask_url_queries(a) if isinstance(a, str) and "?" in a else a
+                    for a in record.args
+                )
+            elif isinstance(record.args, dict):
+                record.args = {
+                    k: (_mask_url_queries(v) if isinstance(v, str) and "?" in v else v)
+                    for k, v in record.args.items()
+                }
+        return True
+
+
 def _setup_logger(logger_name: str, level: str) -> None:
     lgr = logging.getLogger(logger_name)
     _clear_handlers(lgr)
@@ -193,6 +229,8 @@ def _setup_logger(logger_name: str, level: str) -> None:
         lgr.setLevel(logging.ERROR)
     else:
         lgr.setLevel(level)
+    if logger_name in HTTP_CLIENT_LOGGERS:
+        lgr.addFilter(RedactUrlQueryFilter())
     lgr.propagate = True
 
 

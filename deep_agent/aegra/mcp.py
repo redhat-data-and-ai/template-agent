@@ -437,6 +437,28 @@ def _apply_api_key_scheme(value: str, scheme: str | None) -> str:
     return f"{normalized.capitalize()} {value}"
 
 
+def redact_url_query(url: str) -> str:
+    """Return *url* with every query value masked, for safe logging.
+
+    A credential placed with ``api_key_location: query`` is part of the URL,
+    so any log line carrying the raw URL leaks it. The parameter name is
+    user-configured, so rather than guessing which key is sensitive every
+    value is masked; host and path, which is what debugging needs, are kept.
+    """
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return "<unparseable-url>"
+    if not parsed.query:
+        return url
+    masked = [
+        (k, "REDACTED") for k, _ in parse_qsl(parsed.query, keep_blank_values=True)
+    ]
+    return urlunparse(parsed._replace(query=urlencode(masked)))
+
+
 def _with_query_param(url: str, name: str, value: str) -> str:
     """Return *url* with ``name=value`` set on its query string.
 
@@ -712,7 +734,10 @@ async def _connect_single_server(
                 )
                 continue
             breaker.record_failure()
-            logger.error(f"[{name}] timeout after {timeout}s ({config.get('url')})")
+            logger.error(
+                f"[{name}] timeout after {timeout}s "
+                f"({redact_url_query(str(config.get('url', '')))})"
+            )
         except Exception as exc:
             if _is_needs_authorization(exc):
                 logger.info(
@@ -747,12 +772,15 @@ async def _connect_single_server(
             elif _is_connection_error(exc) and not required:
                 breaker.record_failure()
                 logger.warning(
-                    f"[{name}] not reachable ({config.get('url')}) — skipped"
+                    f"[{name}] not reachable "
+                    f"({redact_url_query(str(config.get('url', '')))}) — skipped"
                 )
             else:
                 breaker.record_failure()
                 logger.error(
-                    f"[{name}] connection failed ({config.get('url')})", exc_info=True
+                    f"[{name}] connection failed "
+                    f"({redact_url_query(str(config.get('url', '')))})",
+                    exc_info=True,
                 )
             return []
     return []
