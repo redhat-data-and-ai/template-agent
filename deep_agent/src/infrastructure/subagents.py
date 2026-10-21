@@ -238,6 +238,7 @@ def _create_primary_model(
     spec: ModelSpec,
     temperature: float | None = None,
     max_output_tokens: int | None = None,
+    location: str | None = None,
 ) -> object:
     """Create only the primary BaseChatModel from a ModelSpec, without fallback wrapper.
 
@@ -260,6 +261,8 @@ def _create_primary_model(
         kwargs["temperature"] = temperature
     if max_output_tokens is not None:
         kwargs["max_output_tokens"] = max_output_tokens
+    if location is not None:
+        kwargs["location"] = location
 
     return get_or_create_model_from_spec(primary_spec, **kwargs)
 
@@ -279,11 +282,13 @@ def _resolve_subagent_model(agent_cfg: dict[str, Any]) -> object:
     model_params = agent_config.get_model_params(spec.name)
     temp = model_params.get("temperature")
     max_tok = model_params.get("max_tokens")
+    loc = model_params.get("location")
 
     return _create_primary_model(
         spec,
         temperature=float(temp) if temp is not None else None,
         max_output_tokens=int(max_tok) if max_tok is not None else None,
+        location=loc,
     )
 
 

@@ -19,6 +19,7 @@ def create_model_from_spec(
     *,
     temperature: float = 0.0,
     max_output_tokens: int | None = None,
+    location: str | None = None,
 ) -> BaseChatModel:
     """Create a chat model from a :class:`ModelSpec`.
 
@@ -36,7 +37,11 @@ def create_model_from_spec(
     """
     tokens = max_output_tokens or settings.MAX_OUTPUT_TOKENS
     primary = _create_by_provider(
-        spec.provider, spec.name, temperature=temperature, max_output_tokens=tokens
+        spec.provider,
+        spec.name,
+        temperature=temperature,
+        max_output_tokens=tokens,
+        location=location,
     )
 
     if spec.fallback is None:
@@ -47,6 +52,7 @@ def create_model_from_spec(
         spec.fallback.name,
         temperature=temperature,
         max_output_tokens=tokens,
+        location=location,
     )
     return primary.with_fallbacks([secondary])
 
@@ -57,6 +63,7 @@ def _create_by_provider(
     *,
     temperature: float,
     max_output_tokens: int,
+    location: str | None = None,
 ) -> BaseChatModel:
     """Route model creation to the appropriate backend.
 
@@ -66,7 +73,9 @@ def _create_by_provider(
     - MAAS → VLLM (Model as a Service for custom models)
     """
     if provider == Provider.VERTEX:
-        return _create_vertex_model(model_name, temperature, max_output_tokens)
+        return _create_vertex_model(
+            model_name, temperature, max_output_tokens, location=location
+        )
     if provider == Provider.OPENAI:
         return _create_vllm_model(model_name, temperature, max_output_tokens)
     if provider == Provider.MAAS:

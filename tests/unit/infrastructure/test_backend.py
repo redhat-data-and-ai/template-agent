@@ -5,7 +5,12 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from deepagents.backends.protocol import EditResult, ReadResult, WriteResult
+from deepagents.backends.protocol import (
+    EditResult,
+    FileUploadResponse,
+    ReadResult,
+    WriteResult,
+)
 
 from deep_agent.src.infrastructure.backend import (
     _STORE_NAMESPACE_FACTORIES,
@@ -571,3 +576,42 @@ class TestResolveRouteRoot:
 
         assert resolved == Path("/app/data/current")
         assert not resolved.is_relative_to(agent_config.base_dir)
+
+
+class TestReadOnlyFilesystemBackend:
+    """Verify ReadOnlyFilesystemBackend reject-paths return correct deepagents result types.
+
+    deepagents has a track record of changing result class shapes across patch
+    versions (see _text_from_read comment in backend.py). These tests validate
+    that WriteResult, EditResult, and FileUploadResponse constructors still
+    accept the keyword arguments we pass.
+    """
+
+    def test_write_returns_write_result_with_error(self, tmp_path):
+        from deep_agent.src.infrastructure.backend import ReadOnlyFilesystemBackend
+
+        backend = ReadOnlyFilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+        result = backend.write("test.txt", "content")
+        assert isinstance(result, WriteResult)
+        assert result.error is not None
+        assert "not permitted" in result.error
+
+    def test_edit_returns_edit_result_with_error(self, tmp_path):
+        from deep_agent.src.infrastructure.backend import ReadOnlyFilesystemBackend
+
+        backend = ReadOnlyFilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+        result = backend.edit("test.txt", "old", "new")
+        assert isinstance(result, EditResult)
+        assert result.error is not None
+        assert "not permitted" in result.error
+
+    def test_upload_files_returns_responses_with_errors(self, tmp_path):
+        from deep_agent.src.infrastructure.backend import ReadOnlyFilesystemBackend
+
+        backend = ReadOnlyFilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+        results = backend.upload_files([("a.txt", b"data"), ("b.txt", b"more")])
+        assert len(results) == 2
+        for resp in results:
+            assert isinstance(resp, FileUploadResponse)
+            assert resp.error is not None
+            assert "not permitted" in resp.error
