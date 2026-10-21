@@ -328,8 +328,10 @@ class TestFrontmatterInheritsDeclaredProvider:
             "provider: openai-compatibility\n"
             "temperature: 0.25\n"
         )
+        # Deliberately not a name the known-model lists recognise, so VERTEX
+        # can only come from this declaration and not from name inference.
         (config_dir / "models" / "gem.yaml").write_text(
-            "model_id: gemini-2.5-pro\nprovider: vertex_ai\ntemperature: 0.5\n"
+            "model_id: custom-gem\nprovider: vertex_ai\ntemperature: 0.5\n"
         )
         return config_dir
 
@@ -347,13 +349,20 @@ class TestFrontmatterInheritsDeclaredProvider:
 
     def test_declared_alias_resolves_to_canonical_member(self, tmp_path, monkeypatch):
         from deep_agent.src.agent.config import loader as loader_mod
-        from deep_agent.src.agent.config.model import parse_model_config
+        from deep_agent.src.agent.config.model import infer_provider, parse_model_config
 
-        cfg = AgentConfig(self._config_dir(tmp_path, "gemini-2.5-pro"))
+        cfg = AgentConfig(self._config_dir(tmp_path, "custom-gem"))
         monkeypatch.setattr(loader_mod, "agent_config", cfg)
 
         spec = parse_model_config(cfg.get_orchestrator_config()["model"])
         assert spec.provider is Provider.VERTEX
+
+        # Guard: without the declaration this name would not infer VERTEX, so
+        # the assertion above can only be satisfied by the vertex_ai alias.
+        monkeypatch.setattr(
+            "deep_agent.src.agent.config.model._declared_provider", lambda _: None
+        )
+        assert infer_provider("custom-gem") is Provider.OPENAI_COMPATIBILITY
 
     def test_explicit_frontmatter_provider_overrides_declaration(
         self, tmp_path, monkeypatch
