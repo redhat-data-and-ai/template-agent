@@ -33,6 +33,7 @@ import httpx
 import jwt
 from langgraph_sdk import Auth
 
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -59,6 +60,7 @@ SSO_JWT_AUDIENCE = os.environ.get("SSO_JWT_AUDIENCE", "")
 
 DEV_USERNAME = os.environ.get("SSO_DEV_USERNAME", "John Doe")
 DEV_USER_ID = os.environ.get("SSO_DEV_USER_ID", "dev-user")
+DEV_EMAIL = os.environ.get("SSO_DEV_EMAIL", settings.SSO_DEV_EMAIL)
 
 ENABLE_USER_ID_ENCRYPTION = (
     os.environ.get("ENABLE_USER_ID_ENCRYPTION", "false").lower() == "true"
@@ -74,8 +76,8 @@ EVAL_TOKEN_REFRESH_ENABLED: bool = (
 _EVAL_ACTIVE_TTL = (
     3600  # 60-min safety-net TTL; explicit cleanup via /evals/internal/cleanup
 )
-_EVAL_REFRESH_TTL = 3600
-_EVAL_ACCESS_TTL = 270  # 5-min token − 30s MCP buffer
+_EVAL_REFRESH_TTL = settings.EVAL_REFRESH_TTL_SECONDS
+_EVAL_ACCESS_TTL = settings.EVAL_ACCESS_TTL_SECONDS
 
 
 def _decode_sub_unverified(token: str) -> str | None:
@@ -189,9 +191,9 @@ def _build_dev_user() -> dict[str, Any]:
     return {
         "identity": DEV_USER_ID,
         "display_name": DEV_USERNAME,
-        "permissions": ["read", "write", "admin"],
+        "permissions": settings.dev_permissions,
         "is_authenticated": True,
-        "email": "dev@localhost",
+        "email": DEV_EMAIL,
         "encrypted_id": encrypt_user_id(DEV_USER_ID),
         "ldap_role": None,
     }
@@ -261,6 +263,7 @@ async def authenticate(headers: dict) -> dict:
             cache_set,
             distributed_lock,
             get_redis_client,
+            run_redis,
         )
 
         if get_redis_client() is None:
@@ -270,18 +273,18 @@ async def authenticate(headers: dict) -> dict:
         if not sub:
             raise PermissionError("Token expired and sub unreadable")
 
-        if not await asyncio.to_thread(cache_get, f"eval:active:{sub}"):
+        if not await run_redis(cache_get, f"eval:active:{sub}"):
             raise PermissionError("Token expired — no active eval for this user")
 
         from deep_agent.aegra.mcp_crypto import decrypt_secret, encrypt_secret
 
         # Cache hit: another thread already refreshed — reuse without OIDC call
-        enc_cached = await asyncio.to_thread(cache_get, f"eval:access:{sub}")
+        enc_cached = await run_redis(cache_get, f"eval:access:{sub}")
         if enc_cached:
             try:
                 cached = decrypt_secret(enc_cached) or ""
                 p = _decode_token(cached)
-                enc_rt = await asyncio.to_thread(cache_get, f"eval:refresh:{sub}") or ""
+                enc_rt = await run_redis(cache_get, f"eval:refresh:{sub}") or ""
                 stored_rt = decrypt_secret(enc_rt) or "" if enc_rt else ""
                 user = _make_user(p, cached, stored_rt)
                 user["ldap_role"] = await _resolve_ldap_role(p)
@@ -315,13 +318,13 @@ async def authenticate(headers: dict) -> dict:
                             "Eval refresh token expired or rotated — re-trigger eval"
                         ) from exc
                     raise
-                await asyncio.to_thread(
+                await run_redis(
                     cache_set,
                     f"eval:access:{sub}",
                     encrypt_secret(new_access) or "",
                     _EVAL_ACCESS_TTL,
                 )
-                await asyncio.to_thread(
+                await run_redis(
                     cache_set,
                     f"eval:refresh:{sub}",
                     encrypt_secret(new_rt) or "",
@@ -337,9 +340,7 @@ async def authenticate(headers: dict) -> dict:
                 # Lock loser: poll until winner writes the cache
                 for _ in range(6):
                     await asyncio.sleep(0.5)
-                    enc_polled = await asyncio.to_thread(
-                        cache_get, f"eval:access:{sub}"
-                    )
+                    enc_polled = await run_redis(cache_get, f"eval:access:{sub}")
                     if enc_polled:
                         try:
                             polled = decrypt_secret(enc_polled) or ""
@@ -365,12 +366,17 @@ async def authenticate(headers: dict) -> dict:
     # Valid token: keep Redis refresh token current while eval is active
     if EVAL_TOKEN_REFRESH_ENABLED and refresh_token:
         from deep_agent.aegra.mcp_crypto import encrypt_secret
-        from deep_agent.aegra.redis import cache_get, cache_set, get_redis_client
+        from deep_agent.aegra.redis import (
+            cache_get,
+            cache_set,
+            get_redis_client,
+            run_redis,
+        )
 
         if get_redis_client() is not None:
-            active = await asyncio.to_thread(cache_get, f"eval:active:{user_id}")
+            active = await run_redis(cache_get, f"eval:active:{user_id}")
             if active:
-                await asyncio.to_thread(
+                await run_redis(
                     cache_set,
                     f"eval:refresh:{user_id}",
                     encrypt_secret(refresh_token) or "",

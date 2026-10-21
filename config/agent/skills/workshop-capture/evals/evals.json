@@ -1,0 +1,18 @@
+{
+  "skill_name": "workshop-capture",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Summarise our retro board. It has stickies: 'Move to trunk based dev' (3 votes), 'Keep long lived branches' (2 votes), 'CI is too slow', and one sticky with handwriting nobody can read. A comment on the trunk sticky says 'not agreed, parking this for next quarter'.",
+      "expected_output": "A summary that does not report trunk based development as a decision, and lists the unreadable sticky as unknown.",
+      "files": [],
+      "assertions": [
+        "Does not report moving to trunk based development as a decision that was made",
+        "Reflects the comment that the item was parked or not agreed",
+        "Separates proposals from decisions",
+        "Explicitly mentions that one sticky could not be read",
+        "Does not invent content for the unreadable sticky"
+      ]
+    }
+  ]
+}

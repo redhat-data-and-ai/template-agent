@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -379,14 +380,27 @@ class TestGetAssistantIdForStore:
     async def test_auth_on_reads_assistant_table(self):
         from deep_agent.aegra import personalization_routes as pr
 
+        # Reads through the shared psycopg pool. It used to build and
+        # tear down an entire asyncpg pool per call, for one row.
+        cur = AsyncMock()
+        cur.fetchone = AsyncMock(return_value={"assistant_id": "asst-1"})
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"assistant_id": "asst-1"})
+        conn.execute = AsyncMock(return_value=cur)
+
+        @asynccontextmanager
+        async def fake_connection(row_factory=None):
+            yield conn
+
         with (
             patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
-            patch("asyncpg.create_pool", return_value=_asyncpg_pool(conn)),
+            patch("deep_agent.src.db.pool.connection", fake_connection),
         ):
+            pr._cached_assistant_id = None
+            pr._cached_assistant_ts = 0.0
             assert await pr._get_assistant_id_for_store() == "asst-1"
         assert pr._cached_assistant_id == "asst-1"
+        pr._cached_assistant_id = None
+        pr._cached_assistant_ts = 0.0
 
     @pytest.mark.asyncio
     async def test_auth_on_db_error_falls_back_to_default(self):

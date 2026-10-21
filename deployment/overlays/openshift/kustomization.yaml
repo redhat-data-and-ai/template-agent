@@ -11,6 +11,7 @@ resources:
   - service.yaml
   - route.yaml
   - pdb.yaml
+  - servicemonitor.yaml
   - hpa.yaml
   - eval-runner-buildconfig.yaml
   - eval-runner-imagestream.yaml
@@ -19,7 +20,12 @@ resources:
 components:
   - ../../components/postgres
   - ../../components/redis
+  # opa: disabled in values.yaml
   - ../../components/eval-runner
+  # scaleToZero: disabled in values.yaml
+  # externalChannels: disabled in values.yaml
+  - ../../components/documents-pvc
+  - ../../components/config-pvc
 
 labels:
   - pairs:
@@ -31,26 +37,12 @@ images:
     newTag: latest
 
 patches:
+  # Values from config/agent/deployment/values.yaml. Generated — see
+  # scripts/render_deployment.py. Hand-written patches below it cover
+  # structure, which values.yaml deliberately does not describe.
+  - path: generated.yaml
   - path: configmap-patch.yaml
   - path: secret-patch.yaml
-
-  # Agent deployment patches
-  - target:
-      kind: Deployment
-      name: agent
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests/memory
-        value: "512Mi"
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests/cpu
-        value: "250m"
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/limits/memory
-        value: "1Gi"
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/limits/cpu
-        value: "1000m"
 
   # PostgreSQL deployment patches (from base)
   - target:
@@ -111,21 +103,3 @@ patches:
     target:
       kind: Deployment
       name: eval-runner
-
-  # BuildConfig patches
-  - target:
-      kind: BuildConfig
-      name: agent
-    patch: |-
-      - op: replace
-        path: /spec/resources/requests/memory
-        value: "2Gi"
-      - op: replace
-        path: /spec/resources/requests/cpu
-        value: "1000m"
-      - op: replace
-        path: /spec/resources/limits/memory
-        value: "4Gi"
-      - op: replace
-        path: /spec/resources/limits/cpu
-        value: "4"

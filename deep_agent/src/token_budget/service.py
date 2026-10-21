@@ -104,6 +104,78 @@ def _usage_from_generation(generation: Any) -> tuple[int, int]:
     return 0, 0
 
 
+def _cached_from_usage_dict(usage: dict[str, Any] | None) -> int:
+    """Read the cached-prefix token count out of a provider usage dict.
+
+    Cached input tokens are still input tokens — they are counted in
+    ``input_tokens`` and billed at a discount — so this is reported
+    alongside the input count, never subtracted from it. It is the
+    only way to tell whether prompt caching is working: without it a
+    cache hit and a cache miss record identically.
+
+    Providers disagree on the name. LangChain normalises to
+    ``input_token_details.cache_read``; Gemini reports
+    ``cached_content_token_count``; Anthropic uses
+    ``cache_read_input_tokens``.
+    """
+    if not usage:
+        return 0
+
+    details = usage.get("input_token_details")
+    if isinstance(details, dict):
+        cached = details.get("cache_read") or details.get("cached") or 0
+        if cached:
+            return int(cached)
+
+    for key in (
+        "cached_content_token_count",
+        "cache_read_input_tokens",
+        "cached_tokens",
+    ):
+        value = usage.get(key)
+        if value:
+            return int(value)
+
+    return 0
+
+
+def extract_cached_tokens(response: Any) -> int:
+    """Cached input tokens across every generation in a result.
+
+    Zero when the provider reports nothing, which is indistinguishable
+    from a genuine cache miss — so treat zero as "no evidence of a
+    hit", not as proof of one.
+    """
+    total = 0
+    found = False
+
+    for generation_list in getattr(response, "generations", None) or []:
+        for generation in generation_list:
+            message = getattr(generation, "message", None)
+            usage = getattr(message, "usage_metadata", None) if message else None
+            if isinstance(usage, dict) and usage:
+                total += _cached_from_usage_dict(usage)
+                found = True
+                continue
+            gen_info = getattr(generation, "generation_info", None) or {}
+            if isinstance(gen_info, dict):
+                nested = gen_info.get("usage_metadata") or gen_info.get("token_usage")
+                if isinstance(nested, dict):
+                    total += _cached_from_usage_dict(nested)
+                    found = True
+
+    if found:
+        return total
+
+    llm_output = getattr(response, "llm_output", None) or {}
+    if isinstance(llm_output, dict):
+        usage = llm_output.get("token_usage") or llm_output.get("usage")
+        if isinstance(usage, dict):
+            return _cached_from_usage_dict(usage)
+
+    return 0
+
+
 def extract_tokens_from_llm_result(response: Any) -> tuple[int, int]:
     """Extract billable token counts from a LangChain LLMResult."""
     input_tokens = 0
@@ -180,7 +252,7 @@ def _mongo_repo() -> TokenUsageMongoRepository:
     return _mongo_repo_instance
 
 
-_MAX_REASONABLE_TOKENS = 1_000_000
+_MAX_REASONABLE_TOKENS = settings.MAX_REASONABLE_TOKENS
 
 
 async def check_and_record(

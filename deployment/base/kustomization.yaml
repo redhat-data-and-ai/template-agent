@@ -5,6 +5,7 @@ kind: Kustomization
 # Postgres and Redis are now optional components
 resources:
   - configmap.yaml
+  - configmap-tuning.yaml
   - secret.yaml
 
 labels:

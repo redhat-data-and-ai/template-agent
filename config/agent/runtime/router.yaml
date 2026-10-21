@@ -1,0 +1,61 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Model routing
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Send each request to the cheapest model that can plausibly finish it.
+#
+# Routing lives here rather than in a gateway because the choice depends
+# on this agent's prompt, tools and task mix — context a generic proxy
+# does not have.
+#
+# Off by default: the tiers below are placeholders, and routing to a model
+# your deployment cannot reach is worse than not routing at all. Set the
+# models, tune `criteria` against your own traffic, then enable.
+#
+# `criteria` is the knob that matters. It is handed to the classifier
+# verbatim, so write it in plain language about *your* workload.
+
+enabled: false
+
+# first_message: route once, keep that model for the thread. Switching
+#   mid-thread invalidates the provider's prompt cache, so the next turn
+#   re-reads the whole conversation at full price.
+# every_turn: re-evaluate each turn. Better for threads that change shape,
+#   worse for cost on long ones.
+strategy: first_message
+
+# Cheapest first — order is load-bearing. The classifier is told to pick
+# the first tier that can plausibly do the job.
+#
+# NOTE: all three tiers currently name the same model, so enabling the
+# router would buy nothing and cost a classifier call per turn. Give
+# `fast` a cheaper model before setting `enabled: true`, or leave it
+# off — which is what it is.
+tiers:
+  - name: fast
+    model: gemini-3.8-flash
+    criteria: >
+      Short factual questions, lookups, formatting, summarising text that
+      is already supplied, and single-tool calls with an obvious argument.
+
+  - name: balanced
+    model: gemini-3.8-flash
+    criteria: >
+      Multi-step work with a few tool calls, writing or editing a document,
+      reasoning over retrieved material, routine code changes.
+
+  - name: deep
+    model: gemini-3.8-flash
+    criteria: >
+      Open-ended investigation, debugging from symptoms, architectural
+      trade-offs, anything needing subagents or a long tool chain.
+
+# Where to land when classification fails. Defaults to the last (most
+# capable) tier: under-serving a hard request costs more to discover than
+# over-serving an easy one.
+fallback_tier: deep
+
+# Must be cheap and fast — its cost is charged against the savings.
+# Leave empty to use rules only, with no classifier call at all.
+classifier_model: gemini-3.8-flash
+classifier_timeout: 10.0

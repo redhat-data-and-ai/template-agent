@@ -1,0 +1,23 @@
+# A Route can only send traffic to a Service in its own namespace.
+#
+# The KEDA http-add-on interceptor runs in the `keda` namespace, so a
+# Route naming it directly has no backend and answers 503 — which is
+# exactly the failure scale-to-zero is meant to prevent, arriving by a
+# different door. An ExternalName Service here gives the Route
+# something local to point at, which resolves to the interceptor.
+#
+# Change `externalName` if the add-on is installed somewhere other
+# than `keda`.
+apiVersion: v1
+kind: Service
+metadata:
+  name: keda-interceptor-proxy
+  labels:
+    app: template-agent
+spec:
+  type: ExternalName
+  externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

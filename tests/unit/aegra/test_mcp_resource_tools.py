@@ -604,3 +604,144 @@ class TestEvictionSkipList:
             assert count == 1
         finally:
             _fs.TOOLS_EXCLUDED_FROM_EVICTION = original
+
+
+class TestCatalogCache:
+    """The catalog is a property of the server, not of the question.
+
+    `resources/list` and `resources/list_templates` cost 8.2s each
+    against the warehouse server and ran on every turn — 16.4s of a 65s answer
+    spent re-learning what the server offers.
+    """
+
+    async def test_second_call_does_not_hit_the_server(self):
+        from unittest.mock import AsyncMock
+
+        from deep_agent.aegra import mcp_resource_tools as mrt
+
+        store: dict[str, str] = {}
+        fetch = AsyncMock(return_value={"resources": [{"uri": "x://1"}]})
+
+        async def fake_run_redis(fn, *args, **kwargs):
+            if fn is mrt.cache_get:
+                return store.get(args[0])
+            if fn is mrt.cache_set:
+                store[args[0]] = args[1]
+                return True
+            return None
+
+        with (
+            patch.object(mrt, "run_redis", fake_run_redis),
+            patch.object(mrt.settings, "MCP_RESOURCE_CATALOG_TTL_SECONDS", 300),
+        ):
+            first = await mrt._cached_catalog(
+                "resources", "warehouse", None, "u1", fetch
+            )
+            second = await mrt._cached_catalog(
+                "resources", "warehouse", None, "u1", fetch
+            )
+
+        assert first == second == {"resources": [{"uri": "x://1"}]}
+        assert fetch.await_count == 1
+
+    async def test_each_user_gets_their_own_catalog(self):
+        from unittest.mock import AsyncMock
+
+        from deep_agent.aegra import mcp_resource_tools as mrt
+
+        store: dict[str, str] = {}
+        fetch = AsyncMock(return_value={"resources": []})
+
+        async def fake_run_redis(fn, *args, **kwargs):
+            if fn is mrt.cache_get:
+                return store.get(args[0])
+            if fn is mrt.cache_set:
+                store[args[0]] = args[1]
+                return True
+            return None
+
+        with (
+            patch.object(mrt, "run_redis", fake_run_redis),
+            patch.object(mrt.settings, "MCP_RESOURCE_CATALOG_TTL_SECONDS", 300),
+        ):
+            await mrt._cached_catalog("resources", "warehouse", None, "alice", fetch)
+            await mrt._cached_catalog("resources", "warehouse", None, "bob", fetch)
+
+        # What a server lists can depend on who is asking.
+        assert fetch.await_count == 2
+
+    async def test_a_zero_ttl_disables_the_cache(self):
+        from unittest.mock import AsyncMock
+
+        from deep_agent.aegra import mcp_resource_tools as mrt
+
+        fetch = AsyncMock(return_value={"resources": []})
+        with patch.object(mrt.settings, "MCP_RESOURCE_CATALOG_TTL_SECONDS", 0):
+            await mrt._cached_catalog("resources", "warehouse", None, "u1", fetch)
+            await mrt._cached_catalog("resources", "warehouse", None, "u1", fetch)
+
+        assert fetch.await_count == 2
+
+    async def test_redis_being_down_makes_it_slow_not_broken(self):
+        from unittest.mock import AsyncMock
+
+        from deep_agent.aegra import mcp_resource_tools as mrt
+
+        fetch = AsyncMock(return_value={"resources": [{"uri": "x://1"}]})
+
+        async def boom(fn, *args, **kwargs):
+            raise RuntimeError("redis down")
+
+        with (
+            patch.object(mrt, "run_redis", boom),
+            patch.object(mrt.settings, "MCP_RESOURCE_CATALOG_TTL_SECONDS", 300),
+        ):
+            result = await mrt._cached_catalog(
+                "resources", "warehouse", None, "u1", fetch
+            )
+
+        assert result == {"resources": [{"uri": "x://1"}]}
+        assert fetch.await_count == 1
+
+
+class TestExposeResourcesOptOut:
+    """Generic resource tools are an invitation to go exploring.
+
+    Offered alongside the warehouse server's six typed tools, `list_resources`
+    and `list_resource_templates` cost 8s and 16s per turn and told
+    the agent nothing its own tools did not — before it used those
+    tools anyway.
+    """
+
+    @staticmethod
+    def _servers():
+        return {
+            "warehouse": {"enabled": True, "expose_resources": False},
+            "filestore": {"enabled": True},
+        }
+
+    def test_a_server_can_opt_out(self):
+        from deep_agent.aegra import mcp_resource_tools as mrt
+
+        with (
+            patch.object(mrt, "_get_server_configs", return_value=self._servers()),
+            patch.object(mrt, "build_mcp_resource_tools") as build,
+        ):
+            mrt.get_mcp_resource_tools()
+
+        assert build.call_args.kwargs["allowed_servers"] == ["filestore"]
+
+    def test_servers_are_offered_resources_by_default(self):
+        from deep_agent.aegra import mcp_resource_tools as mrt
+
+        with (
+            patch.object(
+                mrt,
+                "_get_server_configs",
+                return_value={"filestore": {"enabled": True}},
+            ),
+            patch.object(mrt, "build_mcp_resource_tools") as build,
+        ):
+            mrt.get_mcp_resource_tools()
+
+        assert build.call_args.kwargs["allowed_servers"] == ["filestore"]

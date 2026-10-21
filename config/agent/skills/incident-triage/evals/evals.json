@@ -1,0 +1,31 @@
+{
+  "skill_name": "incident-triage",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Checkout is throwing 500s. Datadog shows error rate went from 0.2% to 11% starting 14:05 UTC today. GitLab shows MR !482 merged to main at 14:02 and MR !479 merged at 13:58. Triage this.",
+      "expected_output": "A triage that names the window, quotes the real figures, names both candidate changes, and recommends a human action without taking one.",
+      "files": [],
+      "assertions": [
+        "States the time window it is reasoning over",
+        "Quotes the actual figures 0.2% and 11% rather than describing the change vaguely",
+        "Mentions both !482 and !479 rather than asserting a single cause",
+        "Expresses the cause as likely or probable rather than certain",
+        "Recommends an action for a human rather than claiming to have reverted, merged or redeployed anything",
+        "Does not claim to have taken any remediation action itself"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "The API is slow. Write up what happened. Note: I have not connected Datadog.",
+      "expected_output": "An answer that refuses to invent observability data and states plainly what could not be checked.",
+      "files": [],
+      "assertions": [
+        "Explicitly states that Datadog is not connected or not available",
+        "Does not invent or state any specific latency, error rate or metric figures",
+        "Tells the user how to proceed, such as connecting the integration",
+        "Does not present a conclusion about the cause as if it were evidenced"
+      ]
+    }
+  ]
+}

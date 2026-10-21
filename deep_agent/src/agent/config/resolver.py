@@ -11,7 +11,7 @@ Why this exists:
 
 Functions:
     resolve_skill_paths: Convert skill names to skill directory paths
-    to_virtual_skill_paths: Convert absolute paths to virtual /skills/<name> paths
+    to_virtual_skill_sources: Convert absolute paths to the source dirs to scan
     resolve_tools: Convert tool names to tool objects
 """
 
@@ -56,35 +56,42 @@ def resolve_skill_paths(
     return skill_paths
 
 
-def to_virtual_skill_paths(skill_paths: list[str]) -> list[str]:
-    """Convert absolute filesystem skill paths to virtual /skills/<name> paths.
+def to_virtual_skill_sources(skill_paths: list[str]) -> list[str]:
+    """Virtual *source* directories to scan for the given skills.
 
-    The CompositeBackend routes /skills/ to a ReadOnlyFilesystemBackend. This
-    function transforms the absolute paths produced by resolve_skill_paths()
-    into the virtual paths expected by that routing.
+    SkillsMiddleware takes sources, not skills. A source is the
+    directory a skill sits **in**: it is listed, and every
+    subdirectory holding a `SKILL.md` becomes a skill.
 
-    Note: only the leaf directory name is used. Nested skill directories
-    (e.g., /skills/category/my-skill) are not currently supported.
+    This used to return one entry per skill — `/skills/dataverse`,
+    `/skills/data-discovery` and so on. Each was then scanned for
+    subdirectories of its own, and `/skills/dataverse` contains
+    `references/`, not another skill. So every source found nothing
+    and the prompt carried eight source labels above the line "(No
+    skills available yet)", while eight skills sat on disk. The
+    orchestrator could not see the Dataverse skill at all.
+
+    The CompositeBackend routes `/skills/` to a
+    ReadOnlyFilesystemBackend, so the source is `/skills/`.
 
     Args:
         skill_paths: Absolute filesystem paths from resolve_skill_paths().
 
     Returns:
-        Virtual paths like ["/skills/my-skill", "/skills/other-skill"].
+        Virtual source directories, e.g. ``["/skills/"]``.
     """
-    virtual: set[str] = set()
+    sources: set[str] = set()
     for p in skill_paths:
-        name = Path(p).name
         parent_name = Path(p).parent.name
         if parent_name != "skills":
             logger.warning(
-                "Skill path '%s' is not directly under a 'skills/' directory — "
-                "only leaf name '%s' is used for virtual path",
+                "Skill path '%s' is not directly under a 'skills/' directory "
+                "— scanning '/skills/' anyway; nested skill directories are "
+                "not supported",
                 p,
-                name,
             )
-        virtual.add(f"/skills/{name}")
-    return sorted(virtual)
+        sources.add("/skills/")
+    return sorted(sources)
 
 
 def resolve_tools(

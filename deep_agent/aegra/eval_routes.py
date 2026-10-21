@@ -25,56 +25,27 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-_bearer = HTTPBearer(auto_error=False)
+from deep_agent.aegra.auth_helpers import check_ldap_role
+from deep_agent.src.settings import settings
 
 
-async def _require_developer(
-    creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> str:
-    """Validate JWT and enforce privileged LDAP role for eval endpoints.
+async def _require_developer(request: Request) -> str:
+    """Enforce a privileged LDAP role on the operator endpoints.
 
-    Requires owners/admins/builders role. Users with 'users' or 'denied' role get 403.
-    When ENABLE_AUTH=false (dev mode), passes through without LDAP check.
+    A thin alias for the shared helper. It used to be a second,
+    hand-rolled copy of the same decode-and-resolve logic, which is how
+    two endpoints with identical requirements came to answer a missing
+    bearer with two different sentences — "Bearer token required" here,
+    "Missing or invalid Authorization header" on /documents. A client
+    cannot branch on a message that depends on which route it hit.
+
+    Returns the user id rather than the token: every call site takes it
+    as `_token` and ignores it, and the one handler that needs the
+    credential reads the header itself to forward it.
     """
-    if creds is None or not creds.credentials:
-        raise HTTPException(status_code=401, detail="Bearer token required")
-
-    from deep_agent.aegra.auth import ENABLE_AUTH, _decode_token
-
-    if not ENABLE_AUTH:
-        return str(creds.credentials)
-
-    import asyncio as _asyncio
-
-    import jwt
-
-    try:
-        payload = await _asyncio.to_thread(_decode_token, creds.credentials)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired") from None
-    except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}") from None
-
-    user_id = str(payload.get("preferred_username") or payload.get("sub") or "").strip()
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Token missing user identity")
-
-    from deep_agent.src.ldap import PRIVILEGED_ROLES, resolve_user_role
-
-    role = await resolve_user_role(user_id)
-
-    if role == "denied":
-        raise HTTPException(
-            status_code=403,
-            detail="Access denied: not a member of any configured LDAP group",
-        )
-    if role is not None and role not in PRIVILEGED_ROLES:
-        raise HTTPException(status_code=403, detail="Developer access required")
-
-    return str(creds.credentials)
+    return await check_ldap_role(request, developer_only=True)
 
 
 async def _check_mcp_auth(request: Request) -> list[dict]:
@@ -169,7 +140,7 @@ _EVAL_TOKEN_REFRESH_ENABLED: bool = (
     os.environ.get("EVAL_TOKEN_REFRESH_ENABLED", "false").lower() == "true"
 )
 _EVAL_INTERNAL_TOKEN: str = os.environ.get("EVAL_INTERNAL_TOKEN", "")
-_EVAL_KEY_TTL = 3600  # 60-min safety-net; explicit cleanup via /evals/internal/cleanup
+_EVAL_KEY_TTL = settings.EVAL_KEY_TTL_SECONDS
 
 
 def _extract_sub(request: Request) -> str | None:
@@ -263,9 +234,9 @@ _INTERNAL_TOOLS = {
     "execute_command",  # shell
     "compact_conversation",  # memory management
 }
-MAX_HITL_APPROVALS = 50
-AGENT_BASE_URL = "http://localhost:5002"
-ASSISTANT_ID = "agent"
+MAX_HITL_APPROVALS = settings.EVAL_MAX_HITL_APPROVALS
+AGENT_BASE_URL = settings.EVAL_AGENT_BASE_URL
+ASSISTANT_ID = settings.EVAL_ASSISTANT_ID
 
 
 class EvalRunRequest(BaseModel):
@@ -537,7 +508,7 @@ async def _verify_thread_ownership(thread_id: str, request: Request) -> None:
         )
 
     try:
-        async with await _pg_conn() as conn:
+        async with _pg_conn() as conn:
             row = await conn.execute(
                 "SELECT 1 FROM thread WHERE thread_id = %s AND user_id = %s",
                 (thread_id, sub),
@@ -673,24 +644,52 @@ _EVALS_DDL_STATEMENTS = [
 ]
 
 
-async def _pg_conn() -> Any:
-    import psycopg
+def _pg_conn() -> Any:
+    """Borrow a connection from the shared pool.
 
-    from deep_agent.src.settings import settings
+    This used to open a raw ``AsyncConnection.connect`` per call, at
+    sixteen call sites — a TCP, TLS and authentication handshake for
+    every request, and a connection counted in nobody's budget. Under
+    concurrent ``/evals`` traffic that was an unbounded number of
+    backends on top of the pooled ones.
 
-    return await psycopg.AsyncConnection.connect(settings.database_uri)
+    Rows here are read positionally and converted by
+    ``_pg_row_to_dict``, so this asks for ``tuple_row`` rather than
+    the pool's ``dict_row`` default. The factory is restored before
+    the connection is returned.
+    """
+    from psycopg.rows import tuple_row
+
+    from deep_agent.src.db.pool import connection
+
+    return connection(row_factory=tuple_row)
+
+
+async def _execute_ddl(conn: Any, stmt: str) -> None:
+    """Run one DDL statement under a short statement timeout.
+
+    ``SET LOCAL`` rather than ``SET``: the connection is pooled now
+    and outlives this call, so a session-scoped timeout would follow
+    it to the next borrower. ``SET LOCAL`` reverts when the
+    transaction ends, and keeps the setting out of the session state
+    that makes a transaction pooler pin a backend.
+
+    The cap is deliberate. DDL takes locks, and a ``CREATE INDEX``
+    queued behind a long read would otherwise block startup for as
+    long as that read runs.
+    """
+    async with conn.transaction():
+        await conn.execute("SET LOCAL statement_timeout = '5s'")
+        await conn.execute(stmt)
 
 
 async def _ensure_evals_table() -> None:
     import psycopg.errors
 
-    conn = await _pg_conn()
-    try:
-        await conn.set_autocommit(True)
-        await conn.execute("SET statement_timeout = '5s'")
+    async with _pg_conn() as conn:
         for stmt in _EVALS_DDL_STATEMENTS:
             try:
-                await conn.execute(stmt)
+                await _execute_ddl(conn, stmt)
             except psycopg.errors.UniqueViolation:
                 # Concurrent workers racing to create the same index/object — the
                 # object now exists, which is the desired state. Safe to continue.
@@ -700,8 +699,6 @@ async def _ensure_evals_table() -> None:
                     "evals DDL statement failed: %s | stmt: %.120s", exc, stmt.strip()
                 )
                 raise
-    finally:
-        await conn.close()
 
 
 _table_ensured = False
@@ -724,7 +721,6 @@ async def _run_ddl_once(
     """Generic once-only DDL runner. Updates the module-level bool named flag_attr.
 
     The flag is only set on SUCCESS so that transient failures can be retried.
-    set_autocommit is inside the try/finally so the connection is always closed.
 
     Migration failures are only suppressed when the legacy source table does not
     exist (UndefinedTable) — all other errors propagate so the flag stays unset
@@ -737,28 +733,28 @@ async def _run_ddl_once(
     mod = _sys.modules[__name__]
     if getattr(mod, flag_attr):
         return
-    conn = await _pg_conn()
     try:
-        await conn.set_autocommit(True)
-        await conn.execute("SET statement_timeout = '5s'")
-        await conn.execute(ddl)
-        for stmt in migrations:
-            try:
-                await conn.execute(stmt)
-            except psycopg.errors.UndefinedTable:
-                log.info(
-                    "%s migration skipped (legacy table absent): %s", label, stmt[:80]
-                )
-            except psycopg.errors.UniqueViolation:
-                log.info(
-                    "%s migration skipped (data already migrated): %s", label, stmt[:80]
-                )
+        async with _pg_conn() as conn:
+            await _execute_ddl(conn, ddl)
+            for stmt in migrations:
+                try:
+                    await _execute_ddl(conn, stmt)
+                except psycopg.errors.UndefinedTable:
+                    log.info(
+                        "%s migration skipped (legacy table absent): %s",
+                        label,
+                        stmt[:80],
+                    )
+                except psycopg.errors.UniqueViolation:
+                    log.info(
+                        "%s migration skipped (data already migrated): %s",
+                        label,
+                        stmt[:80],
+                    )
         setattr(mod, flag_attr, True)  # only on success
     except Exception as exc:
         log.warning("%s DDL failed: %s", label, exc)
         raise  # propagate so callers know the table is not ready
-    finally:
-        await conn.close()
 
 
 def _pg_row_to_dict(row: Any, cursor: Any) -> dict[str, Any]:
@@ -778,7 +774,7 @@ async def _atomic_set_in_progress(
     await _ensure_evals_table_once()
     now = datetime.now(UTC)
 
-    async with await _pg_conn() as conn:
+    async with _pg_conn() as conn:
         # Check for an existing in_progress run first (cheap read before locking).
         row = await conn.execute(
             "SELECT * FROM evals WHERE config_hash=%s "
@@ -842,7 +838,7 @@ async def _mark_eval_error(config_hash: str, reason: str, created_at: datetime) 
     in_progress record is never accidentally marked as error.
     """
     try:
-        async with await _pg_conn() as conn:
+        async with _pg_conn() as conn:
             await conn.execute(
                 "UPDATE evals SET eval_status='error', completed_at=NOW(), updated_at=NOW(), "
                 "results_detail=%s::jsonb "
@@ -977,7 +973,7 @@ async def _has_postgres_dataset() -> bool:
     """Return True if eval_dataset_items has at least one row."""
     try:
         await _ensure_dataset_items_table_once()
-        async with await _pg_conn() as conn:
+        async with _pg_conn() as conn:
             row = await conn.execute(
                 "SELECT 1 FROM eval_dataset_items LIMIT 1",
             )
@@ -1041,7 +1037,7 @@ async def trigger_eval(
     config_hash = _get_config_hash()
 
     await _ensure_evals_table_once()
-    async with await _pg_conn() as conn:
+    async with _pg_conn() as conn:
         row = await conn.execute(
             "SELECT * FROM evals WHERE config_hash=%s "
             "AND eval_status='completed' AND completed_at > NOW() - INTERVAL '24 hours' "
@@ -1138,8 +1134,13 @@ async def _queue_eval_run(
     forced: bool = False,
 ) -> dict[str, Any]:
     auth_token = request.headers.get("authorization", "")
+    from deep_agent.aegra.redis import run_redis
+
     sub = _extract_sub(request)
-    _write_eval_redis(sub or "", request.headers.get("x-refresh-token", ""))
+    # Three blocking writes, one of them an encryption. Off the loop.
+    await run_redis(
+        _write_eval_redis, sub or "", request.headers.get("x-refresh-token", "")
+    )
     row_ts = record.get("created_at") if record else None
     eval_row_id: int | None = record.get("id") if record else None
 
@@ -1187,7 +1188,7 @@ async def eval_status(
 
     await _ensure_evals_table_once()
     try:
-        async with await _pg_conn() as conn:
+        async with _pg_conn() as conn:
             await conn.execute(
                 "UPDATE evals SET eval_status='error', completed_at=NOW(), updated_at=NOW() "
                 "WHERE eval_status='in_progress' "
@@ -1242,7 +1243,7 @@ async def eval_results(
     completed_at = request.query_params.get("completed_at")
     await _ensure_evals_table_once()
     try:
-        async with await _pg_conn() as conn:
+        async with _pg_conn() as conn:
             if completed_at:
                 row = await conn.execute(
                     "SELECT * FROM evals "
@@ -1313,7 +1314,7 @@ _EXPORT_COLUMNS = (
 )
 
 
-_EXPORT_ROW_LIMIT = 50_000
+_EXPORT_ROW_LIMIT = settings.EVAL_EXPORT_ROW_LIMIT
 
 
 @eval_mgmt_router.get("/results/export")
@@ -1337,7 +1338,7 @@ async def export_results(
 
     await _ensure_evals_table_once()
 
-    async with await _pg_conn() as conn:
+    async with _pg_conn() as conn:
         if completed_at:
             row = await conn.execute(
                 "SELECT ls_run_ids, eval_score, pass, fail, error, completed_at "
@@ -1410,7 +1411,7 @@ async def eval_history(
     await _ensure_evals_table_once()
 
     try:
-        async with await _pg_conn() as conn:
+        async with _pg_conn() as conn:
             cur = await conn.execute(
                 "SELECT eval_score, pass, fail, error, config_hash, "
                 "       created_at, completed_at, "
@@ -1463,7 +1464,7 @@ async def eval_trends(
     await _ensure_evals_table_once()
 
     try:
-        async with await _pg_conn() as conn:
+        async with _pg_conn() as conn:
             cur = await conn.execute(
                 "SELECT results_detail->'summary'->'summary_stats'->'by_metric' as by_metric, "
                 "       eval_score, completed_at "
@@ -1573,7 +1574,7 @@ class DatasetUpsertRequest(BaseModel):
     judge_model: str | None = None
 
 
-@eval_mgmt_router.post("/dataset")
+@eval_mgmt_router.post(settings.EVAL_DATASET_ROUTE_PREFIX)
 async def upsert_dataset(
     body: DatasetUpsertRequest,
     request: Request,
@@ -1603,23 +1604,28 @@ async def upsert_dataset(
         seen_ids[cid] = idx
         normalized.append((cid, case))
 
-    async with await _pg_conn() as conn:
-        await conn.execute("DELETE FROM eval_dataset_items")
-        for cid, case in normalized:
-            await conn.execute(
-                "INSERT INTO eval_dataset_items "
-                "(case_id, case_data, judge_model, created_by, updated_by, created_at, updated_at) "
-                "VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s)",
-                (
-                    str(cid),
-                    json.dumps(case),
-                    body.judge_model,
-                    username,
-                    username,
-                    now,
-                    now,
-                ),
-            )
+    async with _pg_conn() as conn:
+        # One transaction. The pooled connection is in autocommit, so
+        # the DELETE committed on its own: a failed insert, or a read
+        # arriving mid-loop, saw an empty or half-written dataset.
+        async with conn.transaction():
+            await conn.execute("DELETE FROM eval_dataset_items")
+            for cid, case in normalized:
+                await conn.execute(
+                    "INSERT INTO eval_dataset_items "
+                    "(case_id, case_data, judge_model, created_by, "
+                    "updated_by, created_at, updated_at) "
+                    "VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s)",
+                    (
+                        str(cid),
+                        json.dumps(case),
+                        body.judge_model,
+                        username,
+                        username,
+                        now,
+                        now,
+                    ),
+                )
 
     log.info(
         "Dataset upserted: cases=%d judge_model=%s user=%s",
@@ -1630,14 +1636,14 @@ async def upsert_dataset(
     return {"status": "ok", "case_count": len(body.cases)}
 
 
-@eval_mgmt_router.get("/dataset")
+@eval_mgmt_router.get(settings.EVAL_DATASET_ROUTE_PREFIX)
 async def get_dataset(
     _token: str = Depends(_require_developer),
 ) -> dict[str, Any]:
     """Return the stored eval dataset for this agent."""
     await _ensure_dataset_items_table_once()
 
-    async with await _pg_conn() as conn:
+    async with _pg_conn() as conn:
         cursor = await conn.execute(
             "SELECT case_data, judge_model, created_at "
             "FROM eval_dataset_items ORDER BY id",
@@ -1692,14 +1698,17 @@ async def cleanup_eval_redis(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="invalid internal token")
 
     try:
-        from deep_agent.aegra.redis import cache_delete, cache_get
+        from deep_agent.aegra.redis import cache_delete, cache_get, run_redis
 
-        sub = cache_get("eval:trigger_sub")
-        cache_delete("eval:trigger_sub")
+        # Five blocking round trips inside an async handler. On the
+        # dedicated Redis executor they cannot stall the event loop
+        # or the pool every other blocking call shares.
+        sub = await run_redis(cache_get, "eval:trigger_sub")
+        await run_redis(cache_delete, "eval:trigger_sub")
         if sub:
-            cache_delete(f"eval:active:{sub}")
-            cache_delete(f"eval:access:{sub}")
-            cache_delete(f"eval:refresh:{sub}")
+            await run_redis(cache_delete, f"eval:active:{sub}")
+            await run_redis(cache_delete, f"eval:access:{sub}")
+            await run_redis(cache_delete, f"eval:refresh:{sub}")
         log.info("eval_redis_cleanup keys_deleted=%d", 4 if sub else 1)
     except Exception as exc:
         log.warning("eval_redis_cleanup failed (TTL will handle): %s", exc)

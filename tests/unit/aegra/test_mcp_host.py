@@ -1492,3 +1492,174 @@ class TestListToolsAndFindTool:
 
         assert await _find_mcp_tool(session, "missing") is None
         assert session.list_tools.await_count == mcp_host._MAX_TOOLS_LIST_PAGES
+
+
+class TestInventoryLabels:
+    """What a capability is called in the UI.
+
+    Atlan returns six resources all named `_resource` — FastMCP uses
+    the decorated function's name and theirs is a private helper —
+    while every `uri` is distinct and meaningful. The list rendered as
+    six identical rows, which identifies nothing.
+    """
+
+    @staticmethod
+    def _session(resources):
+        import types
+        from contextlib import asynccontextmanager
+
+        class Sess:
+            async def list_tools(self):
+                return types.SimpleNamespace(tools=[])
+
+            async def list_resources(self):
+                return types.SimpleNamespace(resources=resources)
+
+            async def list_prompts(self):
+                return types.SimpleNamespace(prompts=[])
+
+        @asynccontextmanager
+        async def factory(*_a, **_k):
+            yield Sess()
+
+        return factory
+
+    @staticmethod
+    def _r(**kw):
+        import types
+
+        kw.setdefault("description", "")
+        kw.setdefault("title", "")
+        return types.SimpleNamespace(**kw)
+
+    async def _inventory(self, resources):
+        from unittest.mock import patch
+
+        from deep_agent.aegra import mcp_host
+
+        with patch.object(mcp_host, "mcp_session", self._session(resources)):
+            out = await mcp_host.inventory("atlan", user_id="u", sso_token=None)
+        return out["resources"]
+
+    @pytest.mark.asyncio
+    async def test_a_repeated_label_falls_back_to_the_uri(self):
+        items = await self._inventory(
+            [
+                self._r(name="_resource", uri="ui://atlan/asset-detail"),
+                self._r(name="_resource", uri="ui://atlan/query-results"),
+            ]
+        )
+        assert [i["name"] for i in items] == [
+            "ui://atlan/asset-detail",
+            "ui://atlan/query-results",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_unique_name_is_kept_even_if_ugly(self):
+        # Keyed on repetition, not on the string "_resource": a name
+        # that identifies one thing is worth keeping however it looks.
+        items = await self._inventory([self._r(name="_resource", uri="ui://x/one")])
+        assert items[0]["name"] == "_resource"
+        assert items[0]["uri"] == "ui://x/one"
+
+    @pytest.mark.asyncio
+    async def test_title_wins_over_name(self):
+        # `title` is the spec's display name.
+        items = await self._inventory(
+            [self._r(name="_resource", title="Asset Detail", uri="ui://x/a")]
+        )
+        assert items[0]["name"] == "Asset Detail"
+
+    @pytest.mark.asyncio
+    async def test_a_nameless_resource_uses_its_uri(self):
+        items = await self._inventory([self._r(name="", uri="ui://x/only")])
+        assert items[0]["name"] == "ui://x/only"
+        # No redundant second line showing the same string.
+        assert "uri" not in items[0]
+
+
+class TestToolAnnotations:
+    """The server's own read/write statement, carried to the caller.
+
+    Tool names give no signal — `merge_merge_request`, `create_issue`,
+    `canvas_update_from_svg` share no convention — so the annotation
+    is the only evidence available short of asking a human every time.
+    """
+
+    @staticmethod
+    def _session(tools):
+        import types
+        from contextlib import asynccontextmanager
+
+        class Sess:
+            async def list_tools(self):
+                return types.SimpleNamespace(tools=tools)
+
+            async def list_resources(self):
+                return types.SimpleNamespace(resources=[])
+
+            async def list_prompts(self):
+                return types.SimpleNamespace(prompts=[])
+
+        @asynccontextmanager
+        async def factory(*_a, **_k):
+            yield Sess()
+
+        return factory
+
+    @staticmethod
+    def _tool(name, annotations=None):
+        import types
+
+        return types.SimpleNamespace(
+            name=name, description="", uri=None, title="", annotations=annotations
+        )
+
+    async def _tools(self, tools):
+        from unittest.mock import patch
+
+        from deep_agent.aegra import mcp_host
+
+        with patch.object(mcp_host, "mcp_session", self._session(tools)):
+            out = await mcp_host.inventory("x", user_id="u", sso_token=None)
+        return out["tools"]
+
+    @pytest.mark.asyncio
+    async def test_read_only_is_reported(self):
+        import types
+
+        items = await self._tools(
+            [
+                self._tool(
+                    "search",
+                    types.SimpleNamespace(readOnlyHint=True, destructiveHint=False),
+                )
+            ]
+        )
+        assert items[0]["read_only"] is True
+        assert items[0]["destructive"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_writing_tool_is_reported_as_such(self):
+        import types
+
+        items = await self._tools(
+            [
+                self._tool(
+                    "merge_merge_request",
+                    types.SimpleNamespace(readOnlyHint=False, destructiveHint=True),
+                )
+            ]
+        )
+        assert items[0]["read_only"] is False
+        assert items[0]["destructive"] is True
+
+    @pytest.mark.asyncio
+    async def test_unknown_stays_absent_rather_than_defaulting(self):
+        # 62 of 323 live tools carry no hint. Defaulting them to
+        # read-only would silently widen what runs unattended;
+        # defaulting to write would be a guess presented as fact.
+        # Absent means absent, and the caller decides.
+        items = await self._tools([self._tool("mystery", None)])
+        assert "read_only" not in items[0]
+        assert "destructive" not in items[0]

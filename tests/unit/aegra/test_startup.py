@@ -1,5 +1,6 @@
 """Unit tests for startup orchestrator."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,23 +8,57 @@ import pytest
 from deep_agent.aegra import startup
 
 
+def _patched_startup(**overrides):
+    """Patch every startup step.
+
+    Including the ones a given test does not assert on: an unpatched
+    step reaches for Postgres or LDAP, which succeeds on a laptop
+    running the dev stack and hangs for the length of the job on a
+    runner with neither.
+    """
+    from contextlib import ExitStack
+
+    sync_steps = (
+        "_init_ldap",
+        "_check_mcp_encryption_key",
+        "_setup_mcp_apps_capability",
+        "_setup_otel",
+        "_setup_telemetry",
+        "_warmup_graph_imports",
+        "_start_inflight_metrics",
+        "_upgrade_signal_handlers",
+    )
+    async_steps = (
+        "_validate_config",
+        "_init_aegra_db",
+        "_ensure_database",
+        "_resume_interrupted_runs",
+        "_warm_caches",
+        "_warm_graph",
+    )
+
+    stack = ExitStack()
+    for name in sync_steps:
+        if name in overrides:
+            stack.enter_context(patch.object(startup, name, overrides[name]))
+        else:
+            stack.enter_context(patch.object(startup, name, return_value="ok"))
+    for name in async_steps:
+        if name in overrides:
+            stack.enter_context(patch.object(startup, name, overrides[name]))
+        else:
+            stack.enter_context(
+                patch.object(startup, name, new_callable=AsyncMock, return_value="ok")
+            )
+    return stack
+
+
 class TestRunStartup:
     def setup_method(self):
         startup._startup_complete = False
 
     async def test_runs_all_steps(self):
-        with (
-            patch.object(
-                startup, "_validate_config", new_callable=AsyncMock, return_value="ok"
-            ),
-            patch.object(
-                startup, "_ensure_database", new_callable=AsyncMock, return_value="ok"
-            ),
-            patch.object(
-                startup, "_warm_caches", new_callable=AsyncMock, return_value="ok"
-            ),
-            patch.object(startup, "_setup_telemetry", return_value="ok"),
-        ):
+        with _patched_startup():
             result = await startup.run_startup()
         assert result["config"] == "ok"
         assert result["database"] == "ok"
@@ -33,26 +68,13 @@ class TestRunStartup:
 
     async def test_idempotent(self):
         startup._startup_complete = True
-        result = await startup.run_startup()
+        with _patched_startup():
+            result = await startup.run_startup()
         assert result["status"] == "already_complete"
 
     async def test_not_ready_when_database_fails(self):
-        with (
-            patch.object(
-                startup, "_validate_config", new_callable=AsyncMock, return_value="ok"
-            ),
-            patch.object(
-                startup,
-                "_init_aegra_db",
-                new_callable=AsyncMock,
-                return_value="ok",
-            ),
-            patch.object(
-                startup,
-                "_ensure_database",
-                new_callable=AsyncMock,
-                side_effect=ConnectionError("db down"),
-            ),
+        with _patched_startup(
+            _ensure_database=AsyncMock(side_effect=ConnectionError("db down"))
         ):
             with pytest.raises(ConnectionError, match="db down"):
                 await startup.run_startup()
@@ -299,21 +321,8 @@ class TestWarmupGraphImports:
     async def test_called_during_run_startup(self):
         """Verify graph_warmup is included in run_startup results."""
         startup._startup_complete = False
-        with (
-            patch.object(
-                startup, "_validate_config", new_callable=AsyncMock, return_value="ok"
-            ),
-            patch.object(
-                startup, "_ensure_database", new_callable=AsyncMock, return_value="ok"
-            ),
-            patch.object(
-                startup, "_warm_caches", new_callable=AsyncMock, return_value="ok"
-            ),
-            patch.object(startup, "_setup_telemetry", return_value="ok"),
-            patch.object(
-                startup, "_warmup_graph_imports", return_value="warmup-sentinel"
-            ) as mock_warmup,
-        ):
+        mock_warmup = MagicMock(return_value="warmup-sentinel")
+        with _patched_startup(_warmup_graph_imports=mock_warmup):
             result = await startup.run_startup()
         assert result["graph_warmup"] == "warmup-sentinel"
         mock_warmup.assert_called_once_with()
@@ -324,3 +333,83 @@ class TestIsReady:
     def test_not_ready_initially(self):
         startup._startup_complete = False
         assert startup.is_ready() is False
+
+
+class TestWarmGraph:
+    """Pre-building the graph is never fatal.
+
+    A cold build is ~2s against ~45ms warm, paid on every deploy and —
+    with scale-to-zero — on the first request after an idle period,
+    which is exactly when someone is watching. A pod that cannot
+    pre-build must still serve.
+    """
+
+    async def test_warms_the_graph(self):
+        agent = AsyncMock()
+        with patch.dict(
+            "sys.modules",
+            {"deep_agent.aegra.graph": MagicMock(agent=agent)},
+        ):
+            assert (await startup._warm_graph()).startswith("graph warmed")
+        agent.assert_awaited_once()
+
+    async def test_builds_the_anonymous_key_first(self):
+        # Still warmed: an unauthenticated caller resolves to it, and
+        # the factory skips MCP when user is None.
+        agent = AsyncMock()
+        with patch.dict(
+            "sys.modules", {"deep_agent.aegra.graph": MagicMock(agent=agent)}
+        ):
+            await startup._warm_graph()
+        runtime = agent.await_args_list[0].args[0]
+        assert runtime.user is None
+
+    async def test_also_warms_the_keys_real_requests_use(self):
+        """The cache key carries the caller, so the anonymous one is not enough.
+
+        Warming only the no-user key left every person paying the
+        full build on their first turn. It also looked fine in the
+        logs: with no token there is nothing to connect to, so the
+        anonymous build finishes in milliseconds. The slow build is
+        the one for someone with a connected integration.
+        """
+        agent = AsyncMock()
+        with (
+            patch.dict(
+                "sys.modules", {"deep_agent.aegra.graph": MagicMock(agent=agent)}
+            ),
+            patch.object(
+                startup,
+                "_warm_connected_users",
+                AsyncMock(return_value=2),
+            ) as warm_users,
+        ):
+            result = await startup._warm_graph()
+        # Scheduled, not awaited: see the comment in `_warm_graph`.
+        await asyncio.sleep(0)
+        warm_users.assert_awaited_once()
+        assert "background" in result
+
+    async def test_a_user_warmup_failure_does_not_fail_startup(self):
+        agent = AsyncMock()
+        with (
+            patch.dict(
+                "sys.modules", {"deep_agent.aegra.graph": MagicMock(agent=agent)}
+            ),
+            patch.object(
+                startup,
+                "_warm_connected_users",
+                AsyncMock(side_effect=RuntimeError("redis down")),
+            ),
+        ):
+            result = await startup._warm_graph()
+        assert result.startswith("graph warmed")
+
+    async def test_a_failed_warmup_is_reported_not_raised(self):
+        agent = AsyncMock(side_effect=RuntimeError("no credentials"))
+        with patch.dict(
+            "sys.modules", {"deep_agent.aegra.graph": MagicMock(agent=agent)}
+        ):
+            result = await startup._warm_graph()
+        assert result.startswith("graph not warmed")
+        assert "no credentials" in result

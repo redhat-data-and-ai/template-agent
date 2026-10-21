@@ -1,18 +1,10 @@
 """Unit tests for middleware configuration resolution."""
 
-from pathlib import Path
-from unittest.mock import patch
-
-import pytest
-
 from deep_agent.src.agent.config.middleware import (
     MemoryConfig,
     MiddlewareDefaults,
     MiddlewareFileConfig,
-    PatchToolCallsConfig,
     ProfileConfig,
-    ResolvedMiddlewareConfig,
-    SkillsConfig,
     SummarizationToolConfig,
     load_middleware_config,
     resolve_middleware,

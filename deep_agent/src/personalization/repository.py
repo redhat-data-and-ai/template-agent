@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from deep_agent.src.db.pool import get_pool as get_shared_pool
 from deep_agent.src.personalization.models import (
     ConsentAction,
     ConsentRecord,
@@ -21,6 +22,7 @@ from deep_agent.src.personalization.models import (
     Rule,
     UserPreferences,
 )
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -87,15 +89,31 @@ _pool_lock = asyncio.Lock()
 
 
 async def _get_pool(uri: str) -> AsyncConnectionPool:
-    """Return a shared connection pool for the given URI."""
+    """Return a connection pool for the given URI.
+
+    The configured database goes through the process-wide pool in
+    ``deep_agent.src.db.pool`` — personalization used to keep its own
+    ten connections per pod on top of everyone else's, which is how
+    the fleet came to ask for more connections than the server would
+    give. Any other URI (tests pointing at a scratch database) still
+    gets a dedicated pool, built with the same liveness check and
+    timeouts rather than the library defaults.
+    """
+    if uri == settings.database_uri:
+        return await get_shared_pool()
+
     if uri in _pool_registry:
         return _pool_registry[uri]
     async with _pool_lock:
         if uri not in _pool_registry:
             pool = AsyncConnectionPool(
                 uri,
-                min_size=2,
-                max_size=10,
+                min_size=1,
+                max_size=settings.DB_POOL_MAX_SIZE,
+                timeout=settings.DB_POOL_TIMEOUT,
+                max_idle=settings.DB_POOL_MAX_IDLE,
+                max_lifetime=settings.DB_POOL_MAX_LIFETIME,
+                check=AsyncConnectionPool.check_connection,
                 kwargs={
                     "autocommit": True,
                     "prepare_threshold": None,

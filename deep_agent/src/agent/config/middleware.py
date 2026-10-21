@@ -29,17 +29,64 @@ class SummarizationToolConfig(BaseModel):
     enabled: bool = True
 
 
+class ApprovalPolicy(BaseModel):
+    """What to do when a matching tool is about to run.
+
+    ``tools`` holds shell-style patterns (``delete_*``, ``mcp-db:*``), so a
+    policy covers a family of tools without being rewritten each time one
+    is added.
+    """
+
+    tools: list[str] = Field(default_factory=list)
+    decision: Literal["allow", "ask", "deny"] = "ask"
+
+    # Surfaced to the client so a destructive call can be presented
+    # differently from a routine one.
+    risk: Literal["low", "medium", "high"] = "medium"
+
+    reason: str = ""
+
+
+class ExecutionConfig(BaseModel):
+    """What a run is allowed to actually do.
+
+    The other execution axes — trigger, lifetime, surface — are Aegra's
+    and are set per run (`durability`, `stream_mode`, cron, stateless
+    runs). Effects has no equivalent, so it lives here.
+
+    `dry_run` is enforced through the approval policy: tools that would
+    pause for a human are refused instead, while read-only tools still
+    run. The agent can therefore investigate and propose a plan, and
+    cannot change anything.
+    """
+
+    effects: Literal["live", "dry_run"] = "live"
+
+
 class HumanApprovalConfig(BaseModel):
     """Config for human-in-the-loop tool approval.
 
-    When enabled, the agent pauses before executing any tool call and
-    waits for the user to approve, reject, or always-allow it.
+    Graded rather than all-or-nothing: each tool resolves to allow (run
+    without prompting), ask (pause for a decision), or deny (refuse). A
+    single global gate forces a choice between interrupting every
+    directory listing and interrupting nothing, and teams pick nothing —
+    which stops the destructive calls being reviewed too.
+
     Backed by deepagents HumanInTheLoopMiddleware via interrupt_on.
     """
 
     enabled: bool = True
     mode: Literal["all", "none"] = "all"
+
+    # Legacy: tools that never prompt. Equivalent to a leading
+    # ``decision: allow`` policy, kept so existing agent.yaml files work.
     exclude: list[str] = Field(default_factory=list)
+
+    policies: list[ApprovalPolicy] = Field(default_factory=list)
+
+    # Applied when no policy matches. "ask" keeps the safe default that an
+    # unrecognised tool is surfaced rather than run silently.
+    default_decision: Literal["allow", "ask", "deny"] = "ask"
 
 
 class MemoryConfig(BaseModel):
@@ -68,11 +115,30 @@ class ModelCallLimitConfig(BaseModel):
     run_limit: int = 50
 
 
+class ToolExclusionConfig(BaseModel):
+    """Tools removed by product decision, not by model capability.
+
+    Distinct from a harness profile's ``excluded_tools``, which means
+    "this model cannot use it" and is shown on the Models page as a
+    limitation. A tool removed because its job moved into a skill is
+    not a limitation of the model, and listing it there tells the
+    reader something untrue.
+    """
+
+    enabled: bool = True
+    tools: list[str] = Field(default_factory=list)
+
+
 class ToolCallLimitConfig(BaseModel):
     """Config for ToolCallLimitMiddleware — cap tool calls per run."""
 
     enabled: bool = True
     run_limit: int = 200
+    # Per-tool ceilings, for the tool that loops rather than the run
+    # that sprawls. A global limit of 200 never fires; a single tool
+    # called six times in one answer is the thing that actually
+    # costs the user ninety seconds.
+    per_tool: dict[str, int] = Field(default_factory=dict)
 
 
 class ModelRetryConfig(BaseModel):
@@ -139,6 +205,7 @@ class MiddlewareDefaults(BaseModel):
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     model_call_limit: ModelCallLimitConfig = Field(default_factory=ModelCallLimitConfig)
     tool_call_limit: ToolCallLimitConfig = Field(default_factory=ToolCallLimitConfig)
+    tool_exclusion: ToolExclusionConfig = Field(default_factory=ToolExclusionConfig)
     model_retry: ModelRetryConfig = Field(default_factory=ModelRetryConfig)
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
@@ -172,6 +239,7 @@ class ResolvedMiddlewareConfig(BaseModel):
     skills_enabled: bool = True
     model_call_limit: ModelCallLimitConfig = Field(default_factory=ModelCallLimitConfig)
     tool_call_limit: ToolCallLimitConfig = Field(default_factory=ToolCallLimitConfig)
+    tool_exclusion: ToolExclusionConfig = Field(default_factory=ToolExclusionConfig)
     model_retry: ModelRetryConfig = Field(default_factory=ModelRetryConfig)
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
@@ -266,6 +334,7 @@ def resolve_middleware(
         skills_enabled=skills_enabled,
         model_call_limit=defaults.model_call_limit,
         tool_call_limit=defaults.tool_call_limit,
+        tool_exclusion=defaults.tool_exclusion,
         model_retry=defaults.model_retry,
         model_fallback=defaults.model_fallback,
         tool_retry=defaults.tool_retry,

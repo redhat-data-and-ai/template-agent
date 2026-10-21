@@ -1,0 +1,62 @@
+# Reading `aegra_runs_in_flight` from OpenShift monitoring needs a token.
+#
+# `thanos-querier` on port 9091 is the authenticating endpoint: it
+# checks a bearer token and the caller's RBAC before it answers. The
+# Prometheus trigger had no `authModes` and no `authenticationRef`, so
+# every query came back 401 or 403, the scaler never saw a value, and
+# the in-flight guard that is supposed to hold a replica while work is
+# running simply never held one.
+#
+# The pieces below are the documented pattern for the Custom Metrics
+# Autoscaler: a ServiceAccount allowed to read cluster monitoring, a
+# long-lived token for it, and a TriggerAuthentication that hands that
+# token and the serving CA to the trigger.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: thanos-metrics-reader
+  labels:
+    app: template-agent
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: thanos-metrics-reader-token
+  labels:
+    app: template-agent
+  annotations:
+    kubernetes.io/service-account.name: thanos-metrics-reader
+type: kubernetes.io/service-account-token
+---
+# `cluster-monitoring-view` is the cluster role that grants reads
+# against thanos-querier. Binding it is a cluster-scoped change, so a
+# platform team may have to apply this part.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: template-agent-thanos-metrics-reader
+  labels:
+    app: template-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-monitoring-view
+subjects:
+  - kind: ServiceAccount
+    name: thanos-metrics-reader
+    namespace: NAMESPACE_PLACEHOLDER
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-trigger-auth-prometheus
+  labels:
+    app: template-agent
+spec:
+  secretTargetRef:
+    - parameter: bearerToken
+      name: thanos-metrics-reader-token
+      key: token
+    - parameter: ca
+      name: thanos-metrics-reader-token
+      key: ca.crt

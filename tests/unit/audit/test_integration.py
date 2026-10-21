@@ -58,8 +58,34 @@ class TestBuildMiddlewareListAudit:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
         assert isinstance(result[0], AuditMiddleware)
-        assert len(result) == 5
+        assert len(result) == 7
         assert type(result[1]).__name__ == "GeminiSafetyLogMiddleware"
         assert type(result[2]).__name__ == "UserIdentityMiddleware"
         assert type(result[3]).__name__ == "CurrentDatetimeMiddleware"
-        assert type(result[4]).__name__ == "ImageSanitizeMiddleware"
+        assert type(result[4]).__name__ == "PromptSizeMiddleware"
+        assert type(result[5]).__name__ == "McpAuthNoticeMiddleware"
+        assert type(result[6]).__name__ == "ImageSanitizeMiddleware"
+
+
+class TestInterruptIsNotAnError:
+    """A human-approval pause is control flow, not a failure.
+
+    Recording GraphInterrupt as `status=error` put approval prompts
+    in the audit trail as tool failures and counted them against the
+    error rate the dashboard reports. It mattered: every MCP tool
+    fell through to `default_decision: ask` because no policy
+    covered them, so a delegation that touched one logged
+    `tool=task status=error`.
+    """
+
+    def test_graph_interrupt_is_classified_as_interrupted(self):
+        from langgraph.errors import GraphInterrupt
+
+        from deep_agent.src.audit.middleware import _audit_status_for
+
+        assert _audit_status_for(GraphInterrupt(())) == "interrupted"
+
+    def test_a_real_failure_is_still_an_error(self):
+        from deep_agent.src.audit.middleware import _audit_status_for
+
+        assert _audit_status_for(RuntimeError("boom")) == "error"

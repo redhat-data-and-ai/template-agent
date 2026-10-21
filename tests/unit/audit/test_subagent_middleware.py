@@ -8,6 +8,29 @@ from deep_agent.src.infrastructure.subagents import _subagent_middleware
 from deep_agent.src.audit.middleware import AuditMiddleware
 
 
+@pytest.fixture(autouse=True)
+def _no_per_tool_limits():
+    """These tests are about audit/OPA/fallback composition.
+
+    Subagents now also carry the per-tool call limits from config,
+    which would otherwise make every count here depend on whatever
+    agent.yaml caps today.
+    """
+    resolved = MagicMock()
+    resolved.tool_call_limit.per_tool = {}
+    with (
+        patch(
+            "deep_agent.src.infrastructure.subagents.agent_config.resolve_agent_middleware",
+            return_value=resolved,
+        ),
+        patch(
+            "deep_agent.src.infrastructure.subagents._profile_excluded_tools",
+            return_value=[],
+        ),
+    ):
+        yield
+
+
 class TestSubagentMiddleware:
     @pytest.fixture(autouse=True)
     def _no_user_identity_middleware(self):

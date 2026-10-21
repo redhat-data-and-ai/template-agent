@@ -28,9 +28,9 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
-_BLOCKED_TOOL_MESSAGE = "Tool call blocked by OPA policy."
-_BLOCKED_MODEL_MESSAGE = "I'm unable to respond to that request. Please try rephrasing."
-_BLOCKED_TRAJECTORY_MESSAGE = "This thread has been terminated due to policy violation. Please start a new chat thread."
+_BLOCKED_TOOL_MESSAGE = settings.OPA_BLOCKED_TOOL_MESSAGE
+_BLOCKED_MODEL_MESSAGE = settings.OPA_BLOCKED_MODEL_MESSAGE
+_BLOCKED_TRAJECTORY_MESSAGE = settings.OPA_BLOCKED_TRAJECTORY_MESSAGE
 
 
 class _NoStreamModel:

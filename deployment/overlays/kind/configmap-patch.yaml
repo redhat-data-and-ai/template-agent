@@ -1,0 +1,25 @@
+# Kind-only agent settings.
+#
+# Auth is off here. The cluster has no SSO issuer to point at, and every
+# request would 401 — including the nightly kill-and-restart tier. The
+# OpenShift overlay sets ENABLE_AUTH: "true" and is unaffected by this file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+data:
+  ENABLE_AUTH: "false"
+  SSO_DEV_USERNAME: "Kind Dev"
+  SSO_DEV_USER_ID: "kind-dev-user"
+
+  # No MODEL_OVERRIDE. The in-cluster stub is gone, so the agent calls
+  # whatever `runtime/agent.yaml` names — which means this cluster now
+  # needs real model credentials to answer anything. Everything that
+  # does not call a model (config, skills, documents, MCP discovery,
+  # analytics) works without them.
+  #
+  # To go back to a stub: restore mock-llm.yaml and set
+  #   MODEL_OVERRIDE: "mock-model"
+  #   VLLM_BASE_URL: "http://mock-llm:8000/v1"
+  # `mock-model` matches no provider prefix, so create_model() routes
+  # it to VLLM_BASE_URL.

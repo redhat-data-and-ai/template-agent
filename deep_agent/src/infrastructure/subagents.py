@@ -30,11 +30,14 @@ from deep_agent.src.agent.config.model import (
     infer_provider,
     parse_model_config,
 )
-from deep_agent.src.agent.config.resolver import to_virtual_skill_paths
+from deep_agent.src.agent.config.resolver import to_virtual_skill_sources
 from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
 from deep_agent.src.exceptions import LLMError, SubAgentError
 from deep_agent.src.infrastructure.middleware import (
+    _build_per_tool_limits,
+    _build_tool_exclusions,
     _mcp_tool_names_from_tools,
+    _profile_excluded_tools,
     build_audit_middleware,
     build_current_datetime_middleware,
     build_opa_middleware,
@@ -102,7 +105,8 @@ def load_subagents(
     return subagents_list
 
 
-_DEFAULT_FALLBACK_MODEL = "gemini-3.1-pro-preview"
+# Model names come from settings, never from this file.
+_DEFAULT_FALLBACK_MODEL = settings.FALLBACK_MODEL
 
 
 def _inherit_from_orchestrator(
@@ -336,6 +340,7 @@ def _subagent_middleware(
     name: str,
     resolved_tools: list[Any],
     fallback_mw: list[Any],
+    model_name: str = "",
 ) -> list[Any] | None:
     """Merge audit + OPA middleware with optional fallback middleware."""
     middleware: list[Any] = []
@@ -354,6 +359,38 @@ def _subagent_middleware(
     datetime_mw = build_current_datetime_middleware()
     if datetime_mw is not None:
         middleware.append(datetime_mw)
+
+    # Per-tool ceilings belong here, not only on the orchestrator.
+    #
+    # The orchestrator does not call the capped tool; the
+    # curator subagent does, and subagents build their own middleware
+    # list. A limit configured once and applied only to the parent
+    # looked correct and changed nothing: 26 executions across two
+    # answers, which is where 456 seconds went.
+    try:
+        # The module-level name, not a fresh import: a fresh one
+        # sidesteps anything that has patched this module's view of
+        # the config.
+        per_tool = agent_config.resolve_agent_middleware(
+            "", None
+        ).tool_call_limit.per_tool
+    except Exception:
+        per_tool = {}
+    middleware.extend(_build_per_tool_limits(per_tool))
+
+    # Excluded tools, applied where the tools actually are.
+    #
+    # `excluded_tools` on the harness profile only reached the
+    # orchestrator, which does not call these tools at all —
+    # the curator subagent does. Configured once and applied to the
+    # parent alone, the exclusion looked right and changed nothing:
+    # `identify_dataproducts`, `shortlist_tables` and `get_sql` all
+    # ran anyway.
+    # This subagent's own model. Harness profiles are per model, and
+    # merging all of them removed a tool from agents running on a
+    # model that can use it perfectly well.
+    middleware.extend(_build_tool_exclusions(_profile_excluded_tools(model_name)))
+
     middleware.extend(fallback_mw)
     return middleware or None
 
@@ -499,8 +536,8 @@ def _build_default_subagent(
     if resolved_tools:
         subagent_params["tools"] = resolved_tools
     if skill_paths:
-        subagent_params["skills"] = to_virtual_skill_paths(skill_paths)
-    middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
+        subagent_params["skills"] = to_virtual_skill_sources(skill_paths)
+    middleware = _subagent_middleware(name, resolved_tools, fallback_mw, spec.name)
     if middleware:
         subagent_params["middleware"] = middleware
 
@@ -555,11 +592,11 @@ def _build_compiled_subagent(
         "model": _resolve_subagent_model(agent_cfg),
         "system_prompt": agent_cfg.get("body", ""),
         "tools": resolved_tools or None,
-        "skills": to_virtual_skill_paths(skill_paths) if skill_paths else None,
+        "skills": to_virtual_skill_sources(skill_paths) if skill_paths else None,
         "backend": get_configured_backend(),
     }
 
-    middleware = _subagent_middleware(name, resolved_tools, fallback_mw)
+    middleware = _subagent_middleware(name, resolved_tools, fallback_mw, spec.name)
     if middleware:
         create_kwargs["middleware"] = middleware
 

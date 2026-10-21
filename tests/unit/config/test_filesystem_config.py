@@ -1,12 +1,8 @@
 """Unit tests for filesystem configuration and permissions builder."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from deep_agent.src.agent.config.filesystem import (
-    BackendConfig,
     FilesystemFileConfig,
     FilesystemSettings,
     LocalShellConfig,

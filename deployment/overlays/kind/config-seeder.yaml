@@ -1,0 +1,42 @@
+# A place to copy config into.
+#
+# `kubectl cp` needs a running container with the volume mounted, and
+# the agent is not that: it sits in an init container waiting for the
+# very files being copied. This pod exists for the length of a seed
+# and is deleted afterwards.
+#
+# Not part of the kustomization — it is applied by `make
+# kind-seed-config`, so a plain `apply -k` does not leave a sleeping
+# pod behind.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: config-seeder
+  labels:
+    app: template-agent
+    component: config-seeder
+spec:
+  restartPolicy: Never
+  containers:
+    - name: seeder
+      # busybox rather than the agent image: this only needs cp, and
+      # the agent image is the thing whose config is in question.
+      image: busybox:1.36
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c", "sleep 600"]
+      volumeMounts:
+        # The whole claim, not the subPaths: the seeder is what
+        # creates them.
+        - name: config-volume
+          mountPath: /seed
+      resources:
+        requests:
+          memory: "16Mi"
+          cpu: "10m"
+        limits:
+          memory: "64Mi"
+          cpu: "100m"
+  volumes:
+    - name: config-volume
+      persistentVolumeClaim:
+        claimName: config-pvc

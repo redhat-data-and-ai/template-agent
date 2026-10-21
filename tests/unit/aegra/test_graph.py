@@ -67,7 +67,11 @@ class TestAgentFactory:
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
-            skills_enabled=True
+            skills_enabled=True,
+            # Explicit: an auto-MagicMock here reads as HITL
+            # enabled with an unparseable policy, which the
+            # denied-tool filter then tries to evaluate.
+            human_approval=None,
         )
 
         mock_runtime = MagicMock()
@@ -143,7 +147,11 @@ class TestAgentFactory:
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
-            skills_enabled=True
+            skills_enabled=True,
+            # Explicit: an auto-MagicMock here reads as HITL
+            # enabled with an unparseable policy, which the
+            # denied-tool filter then tries to evaluate.
+            human_approval=None,
         )
 
         mock_user = MagicMock()
@@ -232,17 +240,28 @@ class TestAgentFactory:
             "skill_paths": [],
             # 'tools:' key absent (not an explicit empty list) triggers
             # the implicit-all-mcp grant.
-            "mcps": ["dataverse-mcp-prod1"],
+            "mcps": ["warehouse-mcp-prod1"],
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
-            skills_enabled=True
+            skills_enabled=True,
+            # Explicit: an auto-MagicMock here reads as HITL
+            # enabled with an unparseable policy, which the
+            # denied-tool filter then tries to evaluate.
+            human_approval=None,
         )
 
         mock_tool = MagicMock()
         mock_tool.name = "identify_dataproducts"
         mock_tool.description = "Identifies data products"
         mock_tool.args_schema = None
+        # Server attribution, as `prepare_tools_for_model` stamps it.
+        # The orchestrator now binds only the servers it declares —
+        # the connection pool is wider, because subagents filter down
+        # from it rather than connecting themselves — so a tool with
+        # no `mcp_server` is not attributable to a declared server and
+        # is correctly excluded.
+        mock_tool.metadata = {"mcp_server": "warehouse-mcp-prod1"}
 
         mock_runtime = MagicMock()
         mock_runtime.user = None
@@ -311,7 +330,7 @@ class TestAgentFactory:
         assert [t.name for t in built_tools] == [mock_tool.name]
         assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
         mock_get_mcp.assert_awaited_once_with(
-            sso_token=None, server_names=["dataverse-mcp-prod1"], user_id=None
+            sso_token=None, server_names=["warehouse-mcp-prod1"], user_id=None
         )
 
     @pytest.mark.asyncio
@@ -326,10 +345,14 @@ class TestAgentFactory:
             "body": "test prompt",
             "skill_paths": [],
             "tools": ["identify_dataproducts"],
-            "mcps": ["dataverse-mcp-prod1"],
+            "mcps": ["warehouse-mcp-prod1"],
         }
         mock_config.resolve_agent_middleware.return_value = MagicMock(
-            skills_enabled=True
+            skills_enabled=True,
+            # Explicit: an auto-MagicMock here reads as HITL
+            # enabled with an unparseable policy, which the
+            # denied-tool filter then tries to evaluate.
+            human_approval=None,
         )
 
         allowed_tool = MagicMock()
@@ -425,10 +448,14 @@ class TestAgentFactory:
             "body": "test prompt",
             "skill_paths": [],
             "tools": ["identify_dataproducts"],
-            "mcps": ["dataverse-mcp-prod1"],
+            "mcps": ["warehouse-mcp-prod1"],
         }
         mock_config.resolve_agent_middleware.return_value = MagicMock(
-            skills_enabled=True
+            skills_enabled=True,
+            # Explicit: an auto-MagicMock here reads as HITL
+            # enabled with an unparseable policy, which the
+            # denied-tool filter then tries to evaluate.
+            human_approval=None,
         )
 
         allowed_tool = MagicMock()
@@ -513,11 +540,15 @@ class TestAgentFactory:
             "model": "gemini-2.5-flash",
             "body": "test prompt",
             "skill_paths": [],
-            "mcps": ["dataverse-mcp-prod1"],
+            "mcps": ["warehouse-mcp-prod1"],
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
-            skills_enabled=True
+            skills_enabled=True,
+            # Explicit: an auto-MagicMock here reads as HITL
+            # enabled with an unparseable policy, which the
+            # denied-tool filter then tries to evaluate.
+            human_approval=None,
         )
 
         mock_tool = MagicMock()
@@ -681,8 +712,10 @@ class TestAgentFactory:
         assert len(call_kwargs["interrupt_on"]) > 0, (
             "interrupt_on dict must not be empty"
         )
+        # Every entry is a config dict carrying a description (risk and
+        # rationale); path-conditional ones also carry a `when`.
         assert all(
-            v is True or (isinstance(v, dict) and "when" in v)
+            isinstance(v, dict) and "description" in v
             for v in call_kwargs["interrupt_on"].values()
         )
 
@@ -892,7 +925,11 @@ class TestGraphCacheHit:
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
-            skills_enabled=True
+            skills_enabled=True,
+            # Explicit: an auto-MagicMock here reads as HITL
+            # enabled with an unparseable policy, which the
+            # denied-tool filter then tries to evaluate.
+            human_approval=None,
         )
         mock_config.get_cache_config.return_value.graph.ttl = 3600
 
@@ -966,7 +1003,11 @@ class TestGraphCacheHit:
         mock_config.get_orchestrator_config.return_value = orch
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
-            skills_enabled=True
+            skills_enabled=True,
+            # Explicit: an auto-MagicMock here reads as HITL
+            # enabled with an unparseable policy, which the
+            # denied-tool filter then tries to evaluate.
+            human_approval=None,
         )
         mock_config.get_guardrails_config.return_value = MagicMock(enabled=False)
         return mock_config
@@ -1179,7 +1220,11 @@ class TestGuardianActivationGate:
         }
         mock_config.resolve_tools.return_value = []
         mock_config.resolve_agent_middleware.return_value = MagicMock(
-            skills_enabled=True
+            skills_enabled=True,
+            # Explicit: an auto-MagicMock here reads as HITL
+            # enabled with an unparseable policy, which the
+            # denied-tool filter then tries to evaluate.
+            human_approval=None,
         )
         guardrail_cfg = MagicMock()
         guardrail_cfg.enabled = guardrails_enabled

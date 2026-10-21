@@ -14,13 +14,27 @@ resources:
 components:
   - ../../components/postgres
   - ../../components/redis
-  - ../../components/eval-runner
+  # opa: disabled in values.yaml
+  # evalRunner: disabled in values.yaml
+  # scaleToZero: disabled in values.yaml
+  # externalChannels: disabled in values.yaml
+  - ../../components/documents-pvc
+  - ../../components/config-pvc
+
+patches:
+  - path: generated.yaml
+  - path: datastore-uid-patch.yaml
+  - path: configmap-patch.yaml
+  - path: documents-pvc-patch.yaml
 
 labels:
   - pairs:
       app: template-agent
 
 images:
+  # The bare agent image. Config arrives on a volume now, so there is
+  # no derived image to keep in step and no rebuild to change a
+  # prompt — see components/config-pvc.
   - name: agent
     newName: localhost/template-agent
     newTag: local

@@ -13,12 +13,13 @@ import math
 import re
 from collections import Counter, defaultdict
 
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-DEFAULT_CLUSTER_THRESHOLD = 0.4
-NEAR_DUPLICATE_JACCARD = 0.5
+DEFAULT_CLUSTER_THRESHOLD = settings.MEMORY_CLUSTER_THRESHOLD
+NEAR_DUPLICATE_JACCARD = settings.MEMORY_NEAR_DUPLICATE_JACCARD
 
 _STOPWORDS = frozenset(
     {

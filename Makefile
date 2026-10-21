@@ -244,14 +244,28 @@ mpp:
 KIND_CLUSTER := template-agent
 KIND_CTX := kind-$(KIND_CLUSTER)
 KIND_IMAGE := template-agent:local
+# Only for clusters with no config volume. Kind mounts one now, so
+# `make kind` does not build this — Containerfile.config is kept for
+# anywhere that cannot provide a volume.
+KIND_AGENT_CONFIG_IMAGE := template-agent-config:local
 KIND_MCP_IMAGE := template-mcp-server:local
 KIND_UI_IMAGE := template-ui:local
 KIND_NS := template-agent
 KIND_DIR := .kind
+# Rootless podman cannot bind ports below 1024, so the ingress is published on
+# high ports. Everything the tests use goes through port-forward regardless.
+KIND_HTTP_PORT ?= 8081
+KIND_HTTPS_PORT ?= 8444
 KIND_MCP_REPO := https://github.com/redhat-data-and-ai/template-mcp-server.git
-KIND_MCP_BRANCH := feat/rh-flavour
+KIND_MCP_BRANCH ?= main
 KIND_UI_REPO := https://github.com/redhat-data-and-ai/template-ui.git
-KIND_UI_BRANCH := feat/rh-flavour
+KIND_UI_BRANCH ?= main
+
+# Build the UI from a sibling checkout when there is one, so `make
+# kind` deploys the tree you are editing rather than whatever is on
+# the remote's default branch. Falls back to the clone for anyone
+# working on the agent alone. Override with KIND_UI_DIR=...
+KIND_UI_DIR ?= $(if $(wildcard ../template-ui/Containerfile),../template-ui,$(KIND_DIR)/template-ui)
 KCTL := kubectl --context $(KIND_CTX)
 
 kind: ## Deploy full stack (agent + MCP + UI) to a local Kind cluster
@@ -269,7 +283,7 @@ kind: ## Deploy full stack (agent + MCP + UI) to a local Kind cluster
 	else \
 		echo "MCP server already cloned"; \
 	fi
-	@if [ ! -d "$(KIND_DIR)/template-ui" ]; then \
+	@if [ "$(KIND_UI_DIR)" != "../template-ui" ] && [ ! -d "$(KIND_DIR)/template-ui" ]; then \
 		echo "Cloning template-ui (branch: $(KIND_UI_BRANCH))..."; \
 		mkdir -p $(KIND_DIR); \
 		git clone --branch $(KIND_UI_BRANCH) --depth 1 $(KIND_UI_REPO) $(KIND_DIR)/template-ui; \
@@ -279,7 +293,7 @@ kind: ## Deploy full stack (agent + MCP + UI) to a local Kind cluster
 	@# --- Step 2: Create cluster if not exists ---
 	@if ! kind get clusters 2>/dev/null | grep -q "$(KIND_CLUSTER)"; then \
 		echo "Creating Kind cluster '$(KIND_CLUSTER)'..."; \
-		kind create cluster --name $(KIND_CLUSTER) --config=- <<< '{"kind":"Cluster","apiVersion":"kind.x-k8s.io/v1alpha4","nodes":[{"role":"control-plane","kubeadmConfigPatches":["kind: InitConfiguration\nnodeRegistration:\n  kubeletExtraArgs:\n    node-labels: ingress-ready=true\n"],"extraPortMappings":[{"containerPort":80,"hostPort":80,"protocol":"TCP"},{"containerPort":443,"hostPort":443,"protocol":"TCP"}]}]}'; \
+		kind create cluster --name $(KIND_CLUSTER) --config=- <<< '{"kind":"Cluster","apiVersion":"kind.x-k8s.io/v1alpha4","nodes":[{"role":"control-plane","kubeadmConfigPatches":["kind: InitConfiguration\nnodeRegistration:\n  kubeletExtraArgs:\n    node-labels: ingress-ready=true\n"],"extraPortMappings":[{"containerPort":80,"hostPort":$(KIND_HTTP_PORT),"protocol":"TCP"},{"containerPort":443,"hostPort":$(KIND_HTTPS_PORT),"protocol":"TCP"}]}]}'; \
 		echo "Installing NGINX Ingress..."; \
 		$(KCTL) apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml; \
 		echo "Waiting for ingress controller pod to be scheduled..."; \
@@ -293,22 +307,33 @@ kind: ## Deploy full stack (agent + MCP + UI) to a local Kind cluster
 	@podman build -t $(KIND_IMAGE) .
 	@echo "Building MCP server image..."
 	@podman build -t $(KIND_MCP_IMAGE) -f $(KIND_DIR)/template-mcp-server/Containerfile $(KIND_DIR)/template-mcp-server
-	@echo "Building UI image..."
-	@podman build -t $(KIND_UI_IMAGE) $(KIND_DIR)/template-ui
+	@echo "Building UI image from $(KIND_UI_DIR)..."
+	@podman build -t $(KIND_UI_IMAGE) $(KIND_UI_DIR)
 	@echo "Loading images into Kind (podman -> archive -> kind)..."
 	@podman save $(KIND_IMAGE) -o /tmp/kind-agent.tar && kind load image-archive /tmp/kind-agent.tar --name $(KIND_CLUSTER) && rm -f /tmp/kind-agent.tar
 	@podman save $(KIND_MCP_IMAGE) -o /tmp/kind-mcp.tar && kind load image-archive /tmp/kind-mcp.tar --name $(KIND_CLUSTER) && rm -f /tmp/kind-mcp.tar
 	@podman save $(KIND_UI_IMAGE) -o /tmp/kind-ui.tar && kind load image-archive /tmp/kind-ui.tar --name $(KIND_CLUSTER) && rm -f /tmp/kind-ui.tar
+	@$(MAKE) --no-print-directory kind-gc
 	@# --- Step 4: Deploy ---
 	@echo "Deploying to Kind..."
 	@$(KCTL) create namespace $(KIND_NS) 2>/dev/null || true
 	@$(KCTL) apply -k deployment/overlays/kind/
-	@$(KCTL) apply -k $(KIND_DIR)/template-mcp-server/deployment/kind/
+	@# Upstream template-mcp-server ships only an openshift overlay now,
+	@# so this is conditional rather than fatal: the agent reaches its
+	@# real MCP servers over the network, and the example one is a
+	@# convenience.
+	@if [ -d "$(KIND_DIR)/template-mcp-server/deployment/kind" ]; then \
+		$(KCTL) apply -k $(KIND_DIR)/template-mcp-server/deployment/kind/; \
+	else \
+		echo "  (skipping MCP server: no kind overlay in template-mcp-server)"; \
+	fi
+	@$(MAKE) --no-print-directory kind-seed-config
 	@echo ""
 	@echo "Waiting for pods..."
+
 	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=database --timeout=60s 2>/dev/null || true
 	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=cache --timeout=60s 2>/dev/null || true
-	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=mcp-server --timeout=90s 2>/dev/null || true
+	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=mcp-server --timeout=30s 2>/dev/null || true
 	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=agent --timeout=120s 2>/dev/null || true
 	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod -l component=ui --timeout=90s 2>/dev/null || true
 	@# --- Step 6: Port-forwards for localhost access ---
@@ -321,6 +346,7 @@ kind: ## Deploy full stack (agent + MCP + UI) to a local Kind cluster
 	@echo "╔════════════════════════════════════════════════════════════════╗"
 	@echo "║  Kind cluster ready!                                           ║"
 	@echo "║  UI:         http://localhost:8080                             ║"
+	@echo "║  Ingress:    http://localhost:$(KIND_HTTP_PORT)                           ║"
 	@echo "║  Agent:      http://localhost:5002                             ║"
 	@echo "║  MCP Server: http://localhost:5001                             ║"
 	@echo "╚════════════════════════════════════════════════════════════════╝"
@@ -381,3 +407,166 @@ test-integration: ## Integration tests (requires Redis + DB)
 
 %:
 	@:
+
+validate-config: ## Validate config/agent against its models; non-zero on error
+	.venv/bin/python -m deep_agent.src.agent.config.validate
+
+whats-there: ## Before scoping work: does it already exist? make whats-there Q=queue
+	@test -n "$(Q)" || (echo "usage: make whats-there Q=<keyword>" && exit 2)
+	@.venv/bin/python scripts/whats_there.py "$(Q)" 2>/dev/null
+
+record-cassettes: ## Re-record LLM cassettes against the real provider (costs money)
+	@echo "Recording against live providers — requires credentials in .env"
+	CASSETTE_MODE=record .venv/bin/python -m pytest $(ARGS) -q
+
+openapi-baseline: ## Regenerate the committed OpenAPI contract baseline
+	@.venv/bin/python -c "import json,io,contextlib; \
+		buf=io.StringIO(); \
+		ctx=contextlib.redirect_stderr(buf); ctx.__enter__(); \
+		from aegra_api.main import create_app; s=create_app().openapi(); ctx.__exit__(None,None,None); \
+		io.open('tests/contracts/openapi-baseline.json','w').write(json.dumps(s,indent=2,sort_keys=True))" 2>/dev/null
+	@echo "Wrote tests/contracts/openapi-baseline.json — review the diff before committing"
+
+test-contract: ## Cross-repo and cross-version interface tests (per PR)
+	.venv/bin/python -m pytest tests/unit/aegra/test_ui_contract.py tests/unit/aegra/test_openapi_contract.py -q
+
+test-nightly: ## Kill-and-restart tier; needs a running stack
+	.venv/bin/python -m pytest tests/nightly -m nightly -v
+
+ADC_FILE ?= $(HOME)/.config/gcloud/application_default_credentials.json
+# gcloud's configured project if there is one, else the ADC's quota
+# project — a user credential usually carries the latter and nothing else.
+GCP_PROJECT ?= $(shell gcloud config get-value project 2>/dev/null | grep -v '^(unset)$$' || true)
+GCP_PROJECT_RESOLVED = $(or $(strip $(GCP_PROJECT)),$(shell python3 -c "import json,os;print(json.load(open(os.path.expanduser('$(ADC_FILE)'))).get('quota_project_id',''))" 2>/dev/null))
+
+kind-vertex: ## Point the Kind agent at real Vertex AI instead of the mock model
+	@test -f "$(ADC_FILE)" || (echo "No ADC file at $(ADC_FILE). Run: gcloud auth application-default login" && exit 1)
+	@# --from-file, so the credential goes straight from disk into the
+	@# Secret. It is never interpolated into a command line, where it
+	@# would land in shell history and process listings.
+	@$(KCTL) -n $(KIND_NS) create secret generic google-adc --from-file=application_default_credentials.json="$(ADC_FILE)" --dry-run=client -o yaml | $(KCTL) -n $(KIND_NS) apply -f - >/dev/null
+	@# A strategic merge, not a JSON patch. `add` on `/volumes` replaces the
+	@# whole array, which dropped the `agent-documents` PVC mount for as long
+	@# as Vertex was active. Merging by the `name` key appends when absent and
+	@# updates when present, so this is also safe to run twice.
+	@$(KCTL) -n $(KIND_NS) patch deploy/agent -p '{"spec":{"template":{"spec":{"volumes":[{"name":"google-adc","secret":{"secretName":"google-adc"}}],"containers":[{"name":"agent","volumeMounts":[{"name":"google-adc","mountPath":"/var/run/gcp","readOnly":true}]}]}}}}' >/dev/null
+	@# Empty strings, not `VAR-`: these come from the ConfigMap through
+	@# envFrom, and `set env VAR-` only drops an explicit container entry.
+	@# An explicit empty value is what actually shadows an envFrom one —
+	@# which is why the first attempt at this silently kept using the stub.
+	@$(KCTL) -n $(KIND_NS) set env deploy/agent GOOGLE_APPLICATION_CREDENTIALS=/var/run/gcp/application_default_credentials.json GOOGLE_CLOUD_PROJECT=$(GCP_PROJECT_RESOLVED) MODEL_OVERRIDE="" VLLM_BASE_URL="" >/dev/null
+	@$(KCTL) -n $(KIND_NS) rollout status deploy/agent --timeout=300s
+	@echo "Agent now using Vertex AI (project: $(GCP_PROJECT_RESOLVED)). Revert with 'make kind-mock'."
+
+kind-mock: ## Point the Kind agent back at the in-cluster mock model
+	@# Delete the one entry by merge key. Removing the whole array took the
+	@# `agent-documents` mount with it until `apply -k` put it back.
+	@$(KCTL) -n $(KIND_NS) patch deploy/agent -p '{"spec":{"template":{"spec":{"volumes":[{"name":"google-adc","$$patch":"delete"}],"containers":[{"name":"agent","volumeMounts":[{"name":"google-adc","$$patch":"delete"}]}]}}}}' >/dev/null 2>&1 || true
+	@$(KCTL) -n $(KIND_NS) set env deploy/agent \
+		GOOGLE_APPLICATION_CREDENTIALS- GOOGLE_CLOUD_PROJECT- \
+		MODEL_OVERRIDE- VLLM_BASE_URL- >/dev/null
+	@$(KCTL) -n $(KIND_NS) apply -k deployment/overlays/kind/ >/dev/null
+	@$(KCTL) -n $(KIND_NS) rollout status deploy/agent --timeout=300s
+	@$(KCTL) -n $(KIND_NS) delete secret google-adc --ignore-not-found >/dev/null
+	@echo "Agent back on the mock model."
+
+test-nightly-kind: ## Kill-and-restart tier against the local Kind cluster (make kind first)
+	@kind get clusters 2>/dev/null | grep -q "$(KIND_CLUSTER)" || \
+		(echo "No Kind cluster '$(KIND_CLUSTER)'. Run 'make kind' first." && exit 1)
+	@# Through the ingress, not a port-forward: a forward binds to one pod and
+	@# dies with it, and every assertion after the kill then fails in a way
+	@# indistinguishable from a recovery failure.
+	@# The tier asks the stub for a slow response per request (see
+	@# tests/nightly), so running it does not slow the cluster down for
+	@# anyone else using the UI at the time.
+	@# `\$$(` in WORKER_KILL_COMMAND so the pod lookup runs each time the
+	@# command is executed. Left unescaped the shell resolved it once, and the
+	@# second kill in a run targeted a pod that was already gone.
+	@AGENT_URL=http://agent.localhost:$(KIND_HTTP_PORT) \
+	WORKER_KILL_COMMAND="$(KCTL) -n $(KIND_NS) delete \$$($(KCTL) -n $(KIND_NS) get pod -l component=agent -o name | head -1) --force --grace-period=0" \
+	.venv/bin/python -m pytest tests/nightly -m nightly -v
+
+test-deployment: ## Render every overlay and assert the OpenShift constraints
+	.venv/bin/python -m pytest tests/unit/deployment -q
+
+render-deployment: ## Regenerate deployment overlays from config/agent/deployment/values.yaml
+	.venv/bin/python scripts/render_deployment.py
+
+render-deployment-check: ## Fail if the overlays have drifted from values.yaml (CI)
+	.venv/bin/python scripts/render_deployment.py --check
+
+dataset-skill: ## Turn a dataset into a skill: make dataset-skill NAME="sales" SRC=./data
+	@test -n "$(NAME)" -a -n "$(SRC)" || (echo 'Usage: make dataset-skill NAME="sales" SRC=./data' && exit 1)
+	.venv/bin/python scripts/dataset_skill.py --name "$(NAME)" --src "$(SRC)" $(if $(FORCE),--force)
+
+config-reference: ## Regenerate docs/config-reference.md from the Pydantic models
+	@.venv/bin/python scripts/config_reference.py 2>/dev/null
+
+new-agent: ## Scaffold a clean config/ for a new agent: make new-agent NAME="My Agent"
+	@test -n "$(NAME)" || (echo 'usage: make new-agent NAME="My Agent" [OUT=path]' && exit 2)
+	@.venv/bin/python scripts/new_agent.py --name "$(NAME)" $(if $(OUT),--out "$(OUT)") 2>/dev/null
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Kind image housekeeping
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# `kind load image-archive` imports the whole image under a dated
+# `docker.io/library/import-<date>` ref and takes out a containerd
+# **lease** on its content. Neither is ever cleaned up, so every load
+# of a ~3 GB image is permanently retained.
+#
+# This filled the Kind node to 176 GB across 150 orphaned imports and
+# broke three separate deploys with "no space left on device" — once
+# silently, where `podman save` failed, `kubectl rollout status` still
+# reported success, and the cluster quietly kept running the previous
+# image.
+#
+# Deleting the image refs alone reclaims nothing: the leases still
+# pin the content. Both have to go, in that order.
+#
+# The ref is `import-<date>@sha256:...` — note there is no
+# `docker.io/library/` prefix, even though `crictl images` prints one.
+# Matching crictl's display form instead of ctr's real ref made this
+# target silently reclaim nothing for several days while reporting
+# success, and the node grew to 147 GB.
+.PHONY: kind-gc
+kind-gc:
+	@echo "Reclaiming Kind node image space..."
+	@podman exec $(KIND_CLUSTER)-control-plane sh -c '\
+	  for i in $$(ctr -n k8s.io images ls -q 2>/dev/null | grep "^import-"); do \
+	    ctr -n k8s.io images rm "$$i" >/dev/null 2>&1 || true; \
+	  done; \
+	  for l in $$(ctr -n k8s.io leases ls -q 2>/dev/null); do \
+	    ctr -n k8s.io leases rm "$$l" >/dev/null 2>&1 || true; \
+	  done' 2>/dev/null || true
+	@podman exec $(KIND_CLUSTER)-control-plane df -h /var 2>/dev/null | tail -1 || true
+
+.PHONY: kind-seed-config
+kind-seed-config: ## Copy agent and UI config onto the config volume
+	@echo "Seeding config volumes..."
+	@# A pod rather than `kubectl cp` straight to the agent: the agent
+	@# is still in its init container waiting for exactly this, so
+	@# there is nothing to copy into yet.
+	@$(KCTL) -n $(KIND_NS) delete pod config-seeder --ignore-not-found --wait=true >/dev/null 2>&1 || true
+	@$(KCTL) -n $(KIND_NS) apply -f deployment/overlays/kind/config-seeder.yaml >/dev/null
+	@$(KCTL) -n $(KIND_NS) wait --for=condition=ready pod/config-seeder --timeout=120s >/dev/null
+	@# One claim with two subtrees. Clear the *contents*, never the
+	@# directories: a subPath mount binds the directory's inode, so
+	@# `rm -rf /seed/agent` leaves every pod that already mounted it
+	@# bound to a deleted inode, reading an empty tree forever.
+	@$(KCTL) -n $(KIND_NS) exec config-seeder -- sh -c 'mkdir -p /seed/agent /seed/ui && rm -rf /seed/agent/* /seed/ui/*' >/dev/null
+	@$(KCTL) -n $(KIND_NS) cp config/agent/. config-seeder:/seed/agent/ >/dev/null
+	@# From the same checkout the UI image is built from — the agent
+	@# repo has no config/ui, and seeding the two from different
+	@# places is how they drift.
+	@$(KCTL) -n $(KIND_NS) cp $(KIND_UI_DIR)/config/ui/settings.yaml config-seeder:/seed/ui/ui.yaml >/dev/null
+	@$(KCTL) -n $(KIND_NS) exec config-seeder -- sh -c 'chmod -R a+rX /seed' >/dev/null
+	@echo "  agent: $$($(KCTL) -n $(KIND_NS) exec config-seeder -- sh -c 'ls /seed/agent | tr "\n" " "')"
+	@echo "  ui:    $$($(KCTL) -n $(KIND_NS) exec config-seeder -- sh -c 'ls /seed/ui | tr "\n" " "')"
+	@$(KCTL) -n $(KIND_NS) delete pod config-seeder --wait=false >/dev/null
+	@echo "Config volumes seeded."
+
+.PHONY: kind-reseed
+kind-reseed: kind-seed-config ## Re-seed config and restart the pods that read it
+	@$(KCTL) -n $(KIND_NS) rollout restart deployment/agent deployment/ui >/dev/null
+	@$(KCTL) -n $(KIND_NS) rollout status deployment/agent --timeout=180s
+	@$(KCTL) -n $(KIND_NS) rollout status deployment/ui --timeout=120s

@@ -1,6 +1,6 @@
 """Unit tests for Redis distributed locks."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import deep_agent.aegra.redis as redis_mod
 from deep_agent.aegra.redis import (
@@ -31,26 +31,45 @@ class TestDistributedLock:
 
 
 class TestDistributedLockAsync:
+    """The async lock talks to the asyncio client directly.
+
+    It used to hand the blocking helper to a thread, where it polled
+    with ``time.sleep`` for up to ``wait_seconds``. These tests patch
+    ``get_async_redis_client`` for that reason — the sync client is no
+    longer on this path.
+    """
+
     async def test_yields_no_redis_when_client_missing(self):
-        with patch("deep_agent.aegra.redis.get_redis_client", return_value=None):
+        with patch(
+            "deep_agent.aegra.redis.get_async_redis_client",
+            AsyncMock(return_value=None),
+        ):
             async with distributed_lock("refresh:user:mcp") as state:
                 assert state == "no_redis"
 
     async def test_yields_held_when_lock_acquired(self):
-        with (
-            patch(
-                "deep_agent.aegra.redis.acquire_distributed_lock",
-                return_value="lock-token",
-            ),
-            patch(
-                "deep_agent.aegra.redis.release_distributed_lock",
-                return_value=True,
-            ) as release,
-            patch(
-                "deep_agent.aegra.redis.get_redis_client",
-                return_value=MagicMock(),
-            ),
+        client = AsyncMock()
+        client.set = AsyncMock(return_value=True)
+        client.eval = AsyncMock(return_value=1)
+        with patch(
+            "deep_agent.aegra.redis.get_async_redis_client",
+            AsyncMock(return_value=client),
         ):
             async with distributed_lock("refresh:user:mcp") as state:
                 assert state == "held"
-            release.assert_called_once_with("refresh:user:mcp", "lock-token")
+        client.set.assert_awaited_once()
+        # Released through the compare-and-delete script, so a lock
+        # whose TTL already expired is not deleted out from under
+        # whoever holds it now.
+        client.eval.assert_awaited_once()
+
+    async def test_yields_timeout_when_never_acquired(self):
+        client = AsyncMock()
+        client.set = AsyncMock(return_value=None)
+        with patch(
+            "deep_agent.aegra.redis.get_async_redis_client",
+            AsyncMock(return_value=client),
+        ):
+            async with distributed_lock("refresh:user:mcp", wait_seconds=0) as state:
+                assert state == "timeout"
+        client.eval.assert_not_awaited()

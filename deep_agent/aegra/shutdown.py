@@ -208,7 +208,7 @@ async def run_shutdown() -> dict[str, str]:
         ("langfuse", _shutdown_langfuse),
         ("graph_cache", _clear_graph_cache),
         ("ldap", _close_ldap),
-        ("redis", _close_redis),
+        ("redis", _close_redis_async),
         ("postgres", _close_postgres),
     ]:
         try:
@@ -364,9 +364,26 @@ def _close_ldap_sync() -> str:
 
 
 def _close_redis() -> str:
+    """Close the sync client. Used by the atexit path, which has no loop."""
     try:
         from deep_agent.aegra.redis import close_redis_client
 
+        close_redis_client()
+        return "ok"
+    except Exception as exc:
+        logger.warning("Redis close failed: %s", exc)
+        return f"error: {exc}"
+
+
+async def _close_redis_async() -> str:
+    """Close both clients. The async client needs a running loop."""
+    try:
+        from deep_agent.aegra.redis import (
+            close_async_redis_client,
+            close_redis_client,
+        )
+
+        await close_async_redis_client()
         close_redis_client()
         return "ok"
     except Exception as exc:
@@ -401,6 +418,16 @@ async def _close_postgres() -> str:
                 closed.append("personalization")
     except Exception as exc:
         logger.warning("Personalization pool close failed: %s", exc)
+
+    # Last: everything above may still have been draining through it.
+    try:
+        from deep_agent.src.db import pool as shared_pool
+
+        if shared_pool._pool is not None:  # noqa: SLF001
+            await shared_pool.close_pool()
+            closed.append("shared")
+    except Exception as exc:
+        logger.warning("Shared pool close failed: %s", exc)
 
     return f"ok: {', '.join(closed)}" if closed else "skipped: no pools"
 

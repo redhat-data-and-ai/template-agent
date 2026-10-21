@@ -7,5 +7,39 @@ data:
   # Config path — mount config/agent at this path (see Containerfile)
   CONFIG_PATH: "/app/config/agent"
 
+  # Prometheus metrics on /metrics. On by default: the in-flight run
+  # gauge drives autoscaling, and an unscraped agent cannot scale on
+  # anything but CPU. Aegra itself defaults this to false.
+  ENABLE_PROMETHEUS_METRICS: "true"
+
+  # Dispatch runs through the Redis worker queue rather than local asyncio
+  # tasks. On by default, and not optional in practice: the queue is what
+  # gives a run a lease, and a run with no lease cannot be reclaimed by the
+  # LeaseReaper when the pod holding it dies — crash recovery is silently a
+  # no-op. Multi-instance SSE needs it too, and every overlay runs more than
+  # one replica. Aegra itself defaults this to false.
+  REDIS_BROKER_ENABLED: "true"
+
+  # OTLP export of metrics and spans. Off by default because the
+  # template cannot know what receives them, but declared here so the
+  # knob is visible: the agent is instrumented either way, and with
+  # this false everything deep_agent/aegra/otel.py records — time to
+  # first token, stream errors, conversation duration — stays in the
+  # in-memory reader and leaves the pod only via /api/metrics.
+  #
+  # Set the endpoint to the OTLP receiver in your cluster (a collector,
+  # or a vendor agent's OTLP ingest) and flip ENABLE_OTEL. The SLIs in
+  # docs/slo.md are unmeasurable until you do.
+  ENABLE_OTEL: "false"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  OTEL_METRIC_EXPORT_INTERVAL: "60000"
+
+  # Service identity for traces and metrics. Keep in step with
+  # app.serviceName in config/agent/deployment/values.yaml, which sets
+  # the matching pod labels — a backend that disagrees with itself
+  # about what this service is called cannot join the two.
+  SERVICE_NAME: "agent"
+
   # Note: PostgreSQL and Redis environment variables are added by
   # optional components when postgres or redis components are included

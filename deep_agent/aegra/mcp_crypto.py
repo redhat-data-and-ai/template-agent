@@ -22,10 +22,20 @@ def _fernet_key_help() -> str:
     )
 
 
+class McpKeyMissingError(RuntimeError):
+    """The token-encryption key is absent.
+
+    Its own type so the API can answer with what is wrong instead of
+    "an unexpected error occurred". A missing operator key is not an
+    internal fault — it is a deployment that is not finished, and the
+    person hitting Connect is the one who can see the message.
+    """
+
+
 def _parse_fernet_key(env_var: str) -> str:
     key = os.environ.get(env_var, "").strip()
     if not key:
-        raise RuntimeError(
+        raise McpKeyMissingError(
             f"{env_var} is required for MCP OAuth token storage. {_fernet_key_help()}"
         )
     return key

@@ -1,0 +1,27 @@
+# Let the ingress controller reach the agent.
+#
+# Without this the external Route resolves and then times out: the
+# namespace's default-deny policy does not know about a new ingress
+# source, and the failure looks like an application hang rather than a
+# policy drop.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-allow-external-ingress
+  labels:
+    app: agent
+    component: agent
+spec:
+  podSelector:
+    matchLabels:
+      component: agent
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - protocol: TCP
+          port: 5002

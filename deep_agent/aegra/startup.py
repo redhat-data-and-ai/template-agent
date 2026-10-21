@@ -34,6 +34,10 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger()
 
 _startup_complete = False
+# Strong references to background tasks; asyncio keeps only weak ones.
+# `Any` rather than `Task[None]`: the sweeper returns None and the
+# warm-up returns a count, and both belong here.
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
 
 
 async def run_startup() -> dict[str, str]:
@@ -53,6 +57,7 @@ async def run_startup() -> dict[str, str]:
     results["config"] = await _validate_config()
     results["ldap"] = _init_ldap()
     results["aegra_db"] = await _init_aegra_db()
+    results["run_wait"] = _install_fast_run_wait()
     results["database"] = await _ensure_database()
     _check_mcp_encryption_key()
     results["resume"] = await _resume_interrupted_runs()
@@ -62,10 +67,27 @@ async def run_startup() -> dict[str, str]:
     results["telemetry"] = _setup_telemetry()
     results["graph_warmup"] = _warmup_graph_imports()
 
+    # Marked done *before* the graph is built, not after.
+    #
+    # `_warm_graph` calls `agent()`, which calls `_ensure_startup()`,
+    # which called `run_startup()` again because this flag was still
+    # False — and each nesting repeated the database init, the
+    # interrupted-run resume, the cache warm and another graph build.
+    # Measured on a live pod: 224 startups per boot, each one slower
+    # than the last. Everything above this line is the part that must
+    # not run twice; everything below is safe to re-enter.
+    _startup_complete = True
+
+    # Separate from the cache step on purpose: that one returns early
+    # when CACHE_ENABLED is false, and building the graph is worth doing
+    # whether or not the model cache is on.
+    results["graph_build"] = await _warm_graph()
+    results["inflight_metrics"] = _start_inflight_metrics()
+    results["run_sweeper"] = _start_interrupted_run_sweeper()
+
     _upgrade_signal_handlers()
 
     elapsed = round((time.monotonic() - t0) * 1000, 1)
-    _startup_complete = True
 
     logger.info(
         "Startup complete in %.1fms: %s",
@@ -120,6 +142,13 @@ def _init_ldap() -> str:
         return f"warning: {exc}"
 
 
+def _install_fast_run_wait() -> str:
+    """Stop `/runs/wait` adding up to two seconds to every turn."""
+    from deep_agent.aegra.run_wait import install_fast_run_wait
+
+    return install_fast_run_wait()
+
+
 async def _init_aegra_db() -> str:
     """Initialize Aegra's DatabaseManager for Postgres checkpointing.
 
@@ -133,14 +162,48 @@ async def _init_aegra_db() -> str:
         from aegra_api.core.database import db_manager
 
         if db_manager.engine is not None:
+            # Aegra's own lifespan got there first. The pool still
+            # needs its liveness check — skipping it here is how the
+            # fix silently did nothing in the one configuration where
+            # aegra initializes itself.
+            _enable_pool_liveness_check(db_manager)
             return "ok: already initialized"
 
         await db_manager.initialize()
+        _enable_pool_liveness_check(db_manager)
         logger.info("Aegra DatabaseManager initialized (Postgres checkpointer ready)")
         return "ok"
     except Exception as exc:
         logger.warning("Aegra DB init failed (falling back to in-memory): %s", exc)
         return f"warning: {exc}"
+
+
+def _enable_pool_liveness_check(db_manager: "Any") -> None:
+    """Make the LangGraph pool verify a connection before handing it out.
+
+    Aegra builds ``lg_pool`` with psycopg's default ``check=None``, so
+    a connection the server has already closed — proxy idle timeout,
+    failover, network partition — is handed to the next borrower and
+    fails that caller's query. After a failover this arrives as one
+    error per pooled connection, all at once, looking like an
+    application fault. The SQLAlchemy engine beside it already guards
+    this with ``pool_pre_ping=True``; the LangGraph pool does not.
+
+    ``_check`` is private, and setting it here is a patch over an
+    upstream gap rather than a design. The real fix is a ``check``
+    argument on aegra's pool construction; until that exists this is
+    the only seam, so it is deliberately best-effort and never fatal.
+    """
+    pool = getattr(db_manager, "lg_pool", None)
+    if pool is None:
+        return
+    try:
+        from psycopg_pool import AsyncConnectionPool
+
+        pool._check = AsyncConnectionPool.check_connection  # noqa: SLF001
+        logger.info("LangGraph pool: liveness check enabled on checkout")
+    except Exception as exc:
+        logger.warning("Could not enable LangGraph pool liveness check: %s", exc)
 
 
 def _clear_stale_done_keys(run_ids: list[str]) -> None:
@@ -217,8 +280,15 @@ async def _clear_input_for_checkpoint_resume(
     return updated
 
 
-async def _resume_interrupted_runs() -> str:
+async def _resume_interrupted_runs(
+    min_age_seconds: int = 0, *, startup: bool = True
+) -> str:
     """Reset interrupted runs so Aegra's LeaseReaper can recover them.
+
+    ``min_age_seconds`` leaves very recent ones alone, so the periodic
+    sweep does not grab a run a pod is still in the middle of shutting
+    down. Startup passes zero: anything interrupted then is by
+    definition from a process that is already gone.
 
     Aegra's own shutdown may mark active runs as ``interrupted``
     (via executor.stop), but the LeaseReaper only scans for
@@ -231,7 +301,11 @@ async def _resume_interrupted_runs() -> str:
 
         if not app_settings.LIFECYCLE_PERSISTENCE_ENABLED:
             return "skipped: lifecycle persistence disabled"
-        if not app_settings.LIFECYCLE_RESUME_ON_STARTUP:
+        # Only the startup call. The periodic sweep answers a
+        # different question — "did anything get stranded since?" —
+        # and turning off resume-at-boot used to silence that too,
+        # leaving an enabled sweep recovering nothing.
+        if startup and not app_settings.LIFECYCLE_RESUME_ON_STARTUP:
             return "skipped: resume on startup disabled"
 
         import psycopg
@@ -244,8 +318,9 @@ async def _resume_interrupted_runs() -> str:
             async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT run_id FROM runs WHERE status = 'interrupted' "
+                    "AND updated_at < NOW() - make_interval(secs => %s) "
                     "ORDER BY updated_at ASC LIMIT %s",
-                    (app_settings.LIFECYCLE_MAX_RESUME_BATCH,),
+                    (min_age_seconds, app_settings.LIFECYCLE_MAX_RESUME_BATCH),
                 )
                 recovered_run_ids = [row[0] for row in await cur.fetchall()]
 
@@ -298,6 +373,50 @@ async def _resume_interrupted_runs() -> str:
     except Exception as exc:
         logger.warning("Resume check failed: %s", exc)
         return f"warning: {exc}"
+
+
+def _start_interrupted_run_sweeper() -> str:
+    """Re-check for interrupted runs periodically, not only at boot.
+
+    `_resume_interrupted_runs` runs once, during startup. A pod
+    shutting down marks its in-flight runs `interrupted`, and when
+    that write lands *after* the replacement pod has already scanned,
+    nothing looks again until the next restart. Observed on a rolling
+    update: the new pods scanned at 09:53:55 and 09:54:15, the old
+    ones marked five runs interrupted at 09:54:31, and two threads sat
+    "busy" in the sidebar with no one coming for them.
+    """
+    from deep_agent.src.settings import settings as app_settings
+
+    interval = app_settings.LIFECYCLE_SWEEP_INTERVAL_SECONDS
+    if not app_settings.LIFECYCLE_PERSISTENCE_ENABLED:
+        return "skipped: lifecycle persistence disabled"
+    if interval <= 0:
+        return "skipped: sweep disabled"
+
+    async def _sweep() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                result = await _resume_interrupted_runs(
+                    min_age_seconds=app_settings.LIFECYCLE_SWEEP_MIN_AGE_SECONDS,
+                    startup=False,
+                )
+                if not result.startswith("ok: no recoverable"):
+                    logger.info("Interrupted-run sweep: %s", result)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("Interrupted-run sweep failed", exc_info=True)
+
+    try:
+        task = asyncio.create_task(_sweep())
+        # Held so the task is not garbage collected mid-flight.
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
+    except RuntimeError:
+        return "skipped: no running loop"
+    return f"ok: every {interval}s"
 
 
 async def _validate_config() -> str:
@@ -396,6 +515,30 @@ async def _ensure_database() -> str:
         raise
 
 
+def _start_inflight_metrics() -> str:
+    """Publish `aegra_runs_in_flight` for autoscaling to measure.
+
+    Optional: an agent without Prometheus or KEDA does not need it, and
+    a failure here must never block startup.
+    """
+    import os
+
+    # On by default: the gauge drives autoscaling, so an operator who
+    # forgets the flag gets working scale-down rather than a silent
+    # fallback to CPU-only scaling.
+    if os.getenv("ENABLE_PROMETHEUS_METRICS", "true").lower() not in ("true", "1"):
+        return "skipped: metrics disabled"
+
+    try:
+        from deep_agent.aegra.inflight_metrics import start_inflight_metrics
+
+        start_inflight_metrics()
+    except Exception as exc:
+        logger.warning("In-flight metrics unavailable: %s", exc)
+        return f"error: {exc}"
+    return "ok"
+
+
 async def _warm_caches() -> str:
     """Pre-populate caches if caching is enabled."""
     try:
@@ -411,6 +554,129 @@ async def _warm_caches() -> str:
     except Exception as exc:
         logger.warning("Cache warming failed: %s", exc)
         return f"warning: {exc}"
+
+
+async def _warm_graph() -> str:
+    """Build the graph once before any request arrives.
+
+    The first request to a fresh pod otherwise pays for the full build —
+    config load, tool resolution, MCP discovery — and measured ~500ms
+    against ~45ms warm. That is paid on every deploy, every scale-up,
+    and with the scale-to-zero component on *every* first request after
+    an idle period, which is exactly when someone is watching.
+
+    The cache key includes the caller's identity, because the compiled
+    graph holds middleware built for one person. So warming with no
+    user populates an entry no real request looks for, and the first
+    request of every person still paid the full build. Worse, the
+    anonymous build is the *cheap* one: with no token there is nothing
+    to connect to, so it finished in milliseconds and looked like it
+    had done the job. A user with a connected integration pays ~10s
+    of MCP discovery, which is the cost worth moving off the critical
+    path.
+
+    So: the anonymous key first, then the key of every user who has a
+    stored MCP token. Those are exactly the people whose build is
+    slow, and they are already known at boot.
+    """
+    warmed = 0
+    try:
+        from deep_agent.aegra.graph import agent
+
+        class _NoUser:
+            """Minimal runtime: the factory skips MCP when user is None."""
+
+            user = None
+
+        await agent(_NoUser())
+        warmed += 1
+    except Exception as exc:
+        # Never fatal. A pod that cannot pre-build will still serve,
+        # just with the old first-request cost.
+        logger.warning("Graph warm-up skipped: %s", exc)
+        return f"graph not warmed: {exc}"
+
+    # In the background, deliberately.
+    #
+    # Each connected user costs the ~10s of MCP discovery it saves
+    # them later, and awaiting that here put it on the readiness
+    # path: startup went from 7s to 67s, the pod failed its probe
+    # window and the rolling update timed out. The whole point is to
+    # move the cost off a path someone is waiting on, and readiness
+    # is one of those.
+    try:
+        task = asyncio.create_task(_warm_connected_users())
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
+    except RuntimeError:
+        logger.debug("No running loop for per-user graph warm-up")
+
+    return f"graph warmed ({warmed} key(s), users warming in background)"
+
+
+async def _warm_connected_users() -> int:
+    """Pre-build for each user who has an MCP token stored.
+
+    Bounded: a deployment with many users must not spend minutes of
+    boot warming all of them, and the ones left out are no worse off
+    than before this existed.
+    """
+    from deep_agent.aegra.graph import agent
+    from deep_agent.aegra.redis import get_redis_client, run_redis
+    from deep_agent.src.settings import settings as app_settings
+
+    limit = app_settings.GRAPH_WARM_MAX_USERS
+    if limit <= 0:
+        return 0
+
+    pattern = f"{app_settings.MCP_TOKEN_KEY_PREFIX}{app_settings.agent_deployment_id}:*"
+
+    def _scan() -> list[str]:
+        client = get_redis_client()
+        if client is None:
+            return []
+        return [
+            key.decode() if isinstance(key, bytes) else str(key)
+            for key in client.scan_iter(match=f"*{pattern}", count=200)
+        ]
+
+    keys = await run_redis(_scan)
+    users: list[str] = []
+    for key in keys:
+        # ...<prefix><agent>:<user>:<mcp>, and a user id can itself
+        # contain a colon, so take the middle by position from the
+        # right rather than splitting from the left.
+        parts = key.split(":")
+        if len(parts) < 3:
+            continue
+        user_id = parts[-2]
+        if user_id and user_id not in users:
+            users.append(user_id)
+        if len(users) >= limit:
+            break
+
+    if not users:
+        return 0
+
+    class _User:
+        def __init__(self, identity: str) -> None:
+            self.identity = identity
+            self.access_token = None
+            self.refresh_token = None
+
+    class _Runtime:
+        def __init__(self, identity: str) -> None:
+            self.user = _User(identity)
+
+    warmed = 0
+    for user_id in users:
+        try:
+            await agent(_Runtime(user_id))
+            warmed += 1
+        except Exception:
+            logger.debug("Could not warm graph for a user", exc_info=True)
+    logger.info("Pre-built the graph for %d connected user(s)", warmed)
+    return warmed
 
 
 def _setup_otel() -> str:
@@ -433,11 +699,13 @@ def _setup_telemetry() -> str:
             setup_langfuse_tracing,
             setup_pii_middleware,
             setup_token_budget_tracking,
+            setup_usage_recording,
         )
 
         setup_pii_middleware()  # must be first — Langfuse handler depends on the scrubber
         setup_langfuse_tracing()
         setup_token_budget_tracking()
+        setup_usage_recording()
         setup_guardian_guardrails()
         return "ok"
     except Exception as exc:

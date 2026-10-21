@@ -1,0 +1,81 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Scale to zero, measured rather than timed
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# `scaledownPeriod` is a guess: it must exceed the longest run anyone
+# might start, so every burst leaves pods idling for that long. Too
+# short and a scale-in severs an agent mid-answer.
+#
+# This scales on what is actually happening instead:
+#
+#   external    the http-add-on's scaler — wakes the pod on a request
+#               the interceptor is holding, and keeps it up while HTTP
+#               traffic continues
+#   prometheus  aegra_runs_in_flight — keeps at least one replica while
+#               any run is pending or running, including queued and
+#               cron work with no client attached
+#
+# BOTH triggers live in ONE ScaledObject deliberately. The add-on's
+# HTTPScaledObject creates its own ScaledObject; running that alongside
+# this one puts two controllers on one Deployment and the replica count
+# oscillates. Using the add-on's *external scaler* directly composes.
+#
+# KEDA scales to zero only when every trigger is inactive, so an idle
+# HTTP surface with a long run still executing stays up.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: agent
+  labels:
+    app: agent
+    component: agent
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent
+
+  minReplicaCount: 0
+  maxReplicaCount: 10
+
+  pollingInterval: 15
+
+  # Short, because the in-flight gauge now protects running work. This
+  # only covers the gap between a run finishing and the next arriving.
+  cooldownPeriod: 60
+
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 120
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+
+  triggers:
+    # Wakes from zero. The interceptor holds the request meanwhile.
+    - type: external
+      metadata:
+        scalerAddress: keda-add-ons-http-external-scaler.keda:9090
+        host: AGENT_HOST_PLACEHOLDER
+        targetPendingRequests: "20"
+
+    # Holds a replica while work is in flight, regardless of HTTP.
+    # `max` not `sum`: the gauge is cluster-wide and reported
+    # identically by every replica, so summing would multiply it.
+    - type: prometheus
+      # Port 9091 authenticates. Without these the query came back
+      # 401 or 403, the scaler saw nothing, and the guard never held
+      # a replica. See thanos-auth.yaml.
+      authenticationRef:
+        name: keda-trigger-auth-prometheus
+      metadata:
+        serverAddress: https://thanos-querier.openshift-monitoring.svc:9091
+        authModes: "bearer"
+        metricName: aegra_runs_in_flight
+        query: max(aegra_runs_in_flight{namespace="NAMESPACE_PLACEHOLDER"})
+        threshold: "5"
+        # Any in-flight run keeps the Deployment above zero.
+        activationThreshold: "0"

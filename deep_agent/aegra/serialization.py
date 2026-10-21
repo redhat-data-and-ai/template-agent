@@ -51,6 +51,16 @@ def serialize_message(msg: BaseMessage) -> dict[str, Any]:
     if msg.response_metadata:
         data["response_metadata"] = _safe_serialize(msg.response_metadata)
 
+    # One derived block rather than leaving the client to work it out
+    # from provider-specific keys. `response_metadata` stays on the
+    # wire unchanged; this is the part a reader is meant to see.
+    if getattr(msg, "type", None) == "ai":
+        from deep_agent.aegra.provenance import describe_message
+
+        provenance = describe_message(msg)
+        if provenance:
+            data["provenance"] = provenance
+
     additional_kwargs = getattr(msg, "additional_kwargs", None)
     if additional_kwargs:
         data["additional_kwargs"] = _safe_serialize(additional_kwargs)

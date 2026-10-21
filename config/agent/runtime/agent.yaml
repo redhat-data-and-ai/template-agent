@@ -15,7 +15,7 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Identity                                                        [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-name: "Health Assistant"
+name: "Workpilot"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Model                                                              [env-var]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -67,6 +67,18 @@ providers:
 #
 # Key format: "provider:model" or just "model" for provider-agnostic matching.
 harness_profiles:
+  gemini-3.5-flash-lite:
+    system_prompt_suffix: ""
+    excluded_tools: []
+    excluded_middleware: []
+    general_purpose_subagent:
+      enabled: true
+  gemini-3.8-flash:
+    system_prompt_suffix: ""
+    excluded_tools: []
+    excluded_middleware: []
+    general_purpose_subagent:
+      enabled: true
   gemini-2.5-pro:
     system_prompt_suffix: ""
     excluded_tools: []
@@ -86,12 +98,6 @@ harness_profiles:
     general_purpose_subagent:
       enabled: true
   gemini-3-flash-preview:
-    system_prompt_suffix: ""
-    excluded_tools: []
-    excluded_middleware: []
-    general_purpose_subagent:
-      enabled: true
-  gemini-3.8-flash:
     system_prompt_suffix: ""
     excluded_tools: []
     excluded_middleware: []
@@ -123,6 +129,55 @@ middleware:
     exclude:
       - write_todos         # internal task tracking — no user approval needed
       - compact_conversation  # internal memory management — no user approval needed
+    # Applied when no policy below matches. 'ask' means an unrecognised
+    # tool is surfaced rather than run silently.
+    default_decision: ask
+    # First match wins, in order. Shell-style patterns, so a policy covers
+    # a family of tools without being rewritten per tool.
+    policies:
+      - tools: ["ls", "read_file", "glob", "grep"]
+        decision: allow
+        risk: low
+        reason: "Read-only inspection of the workspace"
+
+      # Delegation to a subagent defined in this agent's own config.
+      # It has no external effect of its own, and whatever the subagent
+      # then does is governed by these same policies — so gating it
+      # only buys a second prompt for the same decision.
+      #
+      # Left as `ask` it stops every multi-step answer mid-stream, and
+      # hangs unattended runs from channels and crons where nobody is
+      # there to approve.
+      - tools: ["task", "write_todos", "compact_conversation"]
+        decision: allow
+        risk: low
+        reason: "Internal planning and delegation; no external effect"
+
+      # Both shapes. An MCP tool arrives as `<prefix>_delete_branch`,
+      # so the leading-anchor patterns alone skipped every prefixed
+      # server — which is all of them.
+      - tools:
+          - "delete_*"
+          - "drop_*"
+          - "remove_*"
+          - "truncate_*"
+          - "*_delete_*"
+          - "*_drop_*"
+          - "*_remove_*"
+          - "*_truncate_*"
+        decision: ask
+        risk: high
+        reason: "Destructive and usually irreversible"
+
+      - tools: ["execute"]
+        decision: ask
+        risk: high
+        reason: "Runs arbitrary commands in the agent sandbox"
+
+      - tools: ["write_file", "edit_file"]
+        decision: ask
+        risk: medium
+        reason: "Modifies files in the workspace"
   summarization_tool:
     enabled: true
   memory:
@@ -147,13 +202,30 @@ middleware:
     initial_delay: 1.0
   model_fallback:
     enabled: false
-    fallback_model: "google_genai:gemini-2.5-flash"
+    fallback_model: "google_genai:gemini-3.8-flash"
     # Requires GOOGLE_API_KEY for Developer API, or matching Vertex AI config.
     # Enable when fallback model uses same auth as primary.
   tool_retry:
     enabled: true
     max_retries: 2
-    tools: ["template_calculate_bmi", "template_search_web", "template_send_email"]
+    # Exact names only — no globbing — so every entry has to be a tool
+    # that actually exists, verified against a live `/mcp/<server>/
+    # inventory`. A name that is merely plausible retries nothing and
+    # looks configured.
+    #
+    # Scoped to read calls that cross the network to a provider and
+    # fail transiently. Nothing that writes is listed: retrying a write
+    # after an ambiguous failure is how one comment becomes three.
+    # Prefixed, because `tool_prefix` in mcp.json sets
+    # `tool_name_prefix=True` and the runtime name the model and this
+    # list both see is `<prefix>_<tool>`. The bare names matched
+    # nothing.
+    tools:
+      - atlan_semantic_search_tool
+      - atlan_traverse_lineage_tool
+      - gitlab_get_merge_request_diffs
+      - gitlab_list_commits
+      - miro_canvas_read_as_svg
   extra: []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
@@ -174,6 +246,77 @@ async_tasks:
 #   - Runs as non-root with arbitrary UID (no guaranteed $HOME).
 #   - local_shell writes to /app/.cache (always writable).
 #   - For readOnlyRootFilesystem SCC, use state or composite with emptyDir volume.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Attachments                                                    [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Files a user can upload to a thread. They land in the agent's virtual
+# filesystem under mount_path, so read_file/grep/glob reach them without a
+# new tool — which means `filesystem.permissions` below also governs them.
+#
+# Every value is a refusal threshold. An allowlist, not a denylist: the set
+# of dangerous file types is open-ended and the set of useful ones is not.
+attachments:
+  enabled: true
+  max_file_bytes: 52428800      # 50 MB — a short video clip, not a feature film
+  max_thread_bytes: 209715200   # 200 MB cumulative, or a thread stops loading
+  max_files_per_request: 10
+  max_inline_chars: 20000       # beyond this the model reads the file, not the message
+  mount_path: "/uploads/"
+  # Audio and video above ~14 MB cannot be sent inline — Vertex reads
+  # them from Cloud Storage instead. Set MEDIA_BUCKET (env) to a bucket
+  # the agent's service account can write to, and add a lifecycle rule
+  # expiring the `agent-media/` prefix. Without it, large media is
+  # refused with an error that says so.
+  #   MEDIA_BUCKET: my-project-agent-media
+  # Empty means every format is accepted. Nothing uploaded is ever
+  # executed — text is extracted, binary is passed through as base64,
+  # and anything unrecognised is stored inert. List extensions here to
+  # restrict; everything else then gets a 415.
+  allowed_extensions: []
+
+# Which parser reads uploaded documents and indexed sources.
+#
+# `builtin` needs nothing: pypdf, python-docx, openpyxl and
+# python-pptx are already in the image. The alternatives are HTTP
+# clients for a service *you* run — this template never hosts one,
+# because a 2 GB image with a model cache to keep warm costs more than
+# the parse quality returns for most deployments.
+#
+# Point `url` at an existing Docling or Tika and it is used for the
+# formats below; everything else stays local. If it fails, the upload
+# still succeeds with the built-in parse, and the response says so.
+#   podman run -p 5001:5001 quay.io/docling-project/docling-serve
+extraction:
+  engine: builtin               # builtin | docling | tika
+  url: ""                       # e.g. http://docling:5001
+  api_key: ""
+  params: {}                    # passed to the engine verbatim
+  timeout_seconds: 120
+  max_bytes: 20971520           # 20 MB — above this, parse locally
+  fallback: true                # false makes the engine a hard dependency
+  # Only these are sent out. csv/json/md/txt/xlsx are omitted on
+  # purpose: they are parsed exactly right locally, and a round trip
+  # cannot improve on exactly right.
+  suffixes:
+    [pdf, docx, doc, pptx, ppt, odt, odp, rtf, epub, html, htm,
+     png, jpg, jpeg, tiff, tif, bmp, webp]
+
+# Usage analytics, at /analytics/*, for the same privileged LDAP roles
+# as /admin and /evals. Derived entirely from the `runs`, `thread` and
+# `message_feedback` tables — there is no event pipeline and no second
+# write path, so nothing here can disagree with what actually ran.
+#
+# No endpoint returns message text. Error strings are classified into
+# types rather than echoed, because an exception routinely carries the
+# input that caused it.
+analytics:
+  # Attribute usage to named people at /analytics/users. Cost
+  # attribution is a real need, which is why this exists; "who talked
+  # to the assistant most this month" is also a management report
+  # nobody consented to, which is why it is off until someone decides
+  # otherwise. Aggregate figures are unaffected.
+  expose_users: false
+
 filesystem:
   backend:
     type: composite
@@ -195,19 +338,37 @@ filesystem:
       "/data/": "${DATA_PATH}/current"
     routes:
       "/skills/": filesystem_readonly
+      # Documents on a mounted volume, read-only. An explicit root
+      # because this is a PVC, not image content — resolving it under
+      # CONFIG_PATH would put a data tree inside the directory
+      # `_disk_signature` walks on every reload check.
+      #
+      # The agent reaches these with the filesystem tools it already
+      # has: `ls /documents/`, `glob`, `grep`, `read_file`. No new
+      # tool, so `permissions` below governs them like everything
+      # else.
+      "/documents/": filesystem_readonly:/app/data/documents
       "/data/": filesystem_readonly
       "/memories/": store
       "/reports/": store
+      "/uploads/": state
       "/": state
   permissions:
     - operations: [read, glob, grep, ls]
-      paths: ["config/**", "docs/**", "reports/**", "skills/**", "data/**"]
+      paths:
+        - "config/**"
+        - "docs/**"
+        - "reports/**"
+        - "skills/**"
+        - "uploads/**"
+        - "documents/**"
+        - "data/**"
       mode: allow
     - operations: [write, edit]
       paths: ["reports/**", "memories/**"]
       mode: allow
     - operations: [write, edit]
-      paths: ["config/**", "*.py", "*.sh"]
+      paths: ["config/**", "documents/**", "*.py", "*.sh"]
       mode: deny
   permission_inheritance: false
   settings:
@@ -315,3 +476,20 @@ logging:
 server:
   host: "0.0.0.0"
   port: 5002
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Execution                                                      [YAML-loaded]
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# What a run is allowed to actually do.
+#
+#   live     normal operation
+#   dry_run  the agent may read and plan, but every tool that would pause
+#            for approval is refused instead. Use to preview what an agent
+#            would do before letting it loose.
+#
+# The other execution axes are Aegra's and are set per run, not here:
+#   trigger   HTTP run, cron job, or queue worker
+#   lifetime  `durability` (sync | async | exit), stateless runs
+#   surface   `stream_mode` (7 SSE modes), `on_disconnect`, `on_completion`
+execution:
+  effects: live

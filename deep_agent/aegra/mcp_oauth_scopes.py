@@ -50,11 +50,35 @@ def validate_granted_scopes(
     requested: list[str],
     mcp_name: str,
 ) -> list[str] | None:
-    """Return granted scopes when they include all requested scopes, else None.
+    """Return the scopes this token actually carries, or None if it carries none.
 
-    Per RFC 6749 section 5.1, if the authorization server omits ``scope`` from
-    the token response, the client may assume the granted scope equals the
-    requested scope. Skip comparison when granted is empty/missing.
+    **A narrower grant than requested is not a failure.** RFC 6749 §3.3
+    lets the authorization server issue a token whose scope differs
+    from the request, and real providers do it constantly for reasons
+    that have nothing to do with us:
+
+    - Atlassian advertises `read:bitbucket:…` and `read:jira-align:…`
+      in `scopes_supported`, then grants neither to a site that has
+      no Bitbucket and no Jira Align. It granted 32 other scopes —
+      Jira, Confluence, projects, teams, search — which is every scope
+      the agent needs.
+    - `delete:` and `manage:` variants require admin consent an
+      ordinary user cannot give.
+
+    `scopes_supported` is an advertisement of everything the server can
+    *ever* issue, across every product and every user. It was never a
+    list any one person can obtain, so requiring it rejects tokens that
+    work perfectly.
+
+    Rejecting also does not fail safe, which is the part worth being
+    clear about. It converts a partly-capable integration into a dead
+    one, and the retry produces the same narrower grant — so the user
+    loops through consent forever. A missing scope surfaces anyway, as
+    a 403 on the one tool that needs it, which is both accurate and
+    survivable.
+
+    The one real failure is a token with *no* scopes when scopes were
+    requested: nothing was authorised and nothing will work.
     """
     if not requested:
         return granted
@@ -69,14 +93,23 @@ def validate_granted_scopes(
         )
         return list(requested)
 
-    missing = [scope for scope in requested if scope not in set(granted)]
-    if missing:
+    if not granted:
         logger.error(
-            "OAuth token for '%s' missing requested scopes %s (granted: %s)",
+            "OAuth token for '%s' granted no scopes (requested: %s)",
             mcp_name,
-            missing,
-            granted,
+            requested,
         )
         return None
+
+    withheld = [scope for scope in requested if scope not in set(granted)]
+    if withheld:
+        logger.warning(
+            "OAuth token for '%s' was granted %d of %d requested scopes; "
+            "withheld: %s. Tools needing these will fail individually.",
+            mcp_name,
+            len(granted),
+            len(requested),
+            withheld,
+        )
 
     return granted

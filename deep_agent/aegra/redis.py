@@ -12,16 +12,21 @@ Environment variables:
 """
 
 import asyncio
+import functools
 import os
 import secrets
+import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
+
+_T = TypeVar("_T")
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 REDIS_MAX_CONNECTIONS = int(os.environ.get("REDIS_MAX_CONNECTIONS", "10"))
@@ -31,7 +36,113 @@ REDIS_RETRY_ON_TIMEOUT = (
 )
 REDIS_KEY_PREFIX = os.environ.get("REDIS_KEY_PREFIX", "aegra:")
 
+# Redis work gets its own threads rather than the interpreter's default
+# executor. `asyncio.to_thread` hands work to a pool shared with every
+# other blocking call in the process, and `acquire_distributed_lock`
+# occupies a thread for up to `wait_seconds` while it polls. Enough
+# concurrent lock waiters would drain the default pool and stall
+# unrelated work that merely happened to need a thread. Bounding Redis
+# to its own executor means contention here queues here.
+#
+# Sized to the connection pool: more threads than connections would
+# only queue inside the client.
+_executor: Any = None
+_executor_lock = threading.Lock()
+
 _client: Any = None
+_async_client: Any = None
+_async_client_loop: Any = None
+_async_lock = asyncio.Lock()
+
+
+def _get_executor() -> Any:
+    """The dedicated Redis thread pool, created on first use."""
+    global _executor  # noqa: PLW0603
+    if _executor is not None:
+        return _executor
+    with _executor_lock:
+        if _executor is None:
+            _executor = ThreadPoolExecutor(
+                max_workers=max(2, REDIS_MAX_CONNECTIONS),
+                thread_name_prefix="redis",
+            )
+    return _executor
+
+
+async def run_redis(fn: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
+    """Await a blocking Redis helper on the dedicated executor.
+
+    Use this instead of ``asyncio.to_thread`` for anything in this
+    module, so Redis latency cannot starve the shared pool. Generic
+    in the helper's return type, so callers keep theirs.
+    """
+    loop = asyncio.get_running_loop()
+    call = functools.partial(fn, *args, **kwargs)
+    return await loop.run_in_executor(_get_executor(), call)
+
+
+async def get_async_redis_client() -> Any:
+    """Get or create the asyncio Redis client, or None if unavailable.
+
+    Native async, no thread involved. New code should prefer this; the
+    synchronous helpers below remain because roughly seventy call
+    sites across thirteen modules use them, many from synchronous
+    callers, and converting them is a larger change than this one.
+    """
+    global _async_client, _async_client_loop  # noqa: PLW0603
+
+    # An asyncio Redis client owns connections bound to the loop that
+    # created them. Reusing it from a different loop fails on every
+    # call, and the failure surfaces as the operation timing out
+    # rather than as anything that names the cause. Production runs
+    # one loop, so this only bites where a second one appears — tests,
+    # a `asyncio.run` in a worker — but a cache that is silently wrong
+    # off the main loop is worse than no cache.
+    loop = asyncio.get_running_loop()
+    if _async_client is not None and _async_client_loop is loop:
+        return _async_client
+
+    async with _async_lock:
+        if _async_client is not None and _async_client_loop is not loop:
+            # Drop it without closing: its connections belong to a
+            # loop that may already be gone.
+            _async_client = None
+        if _async_client is None:
+            try:
+                import redis.asyncio as aioredis
+
+                client = aioredis.from_url(
+                    REDIS_URL,
+                    max_connections=REDIS_MAX_CONNECTIONS,
+                    socket_timeout=REDIS_SOCKET_TIMEOUT,
+                    retry_on_timeout=REDIS_RETRY_ON_TIMEOUT,
+                    decode_responses=True,
+                )
+                await client.ping()
+                _async_client = client
+                _async_client_loop = loop
+                logger.info("Redis (async) connected: %s", REDIS_URL)
+            except Exception:
+                logger.warning(
+                    "Async Redis unavailable at %s", REDIS_URL, exc_info=True
+                )
+                return None
+    return _async_client
+
+
+async def close_async_redis_client() -> None:
+    """Close the asyncio Redis client. Idempotent."""
+    global _async_client, _async_client_loop  # noqa: PLW0603
+    if _async_client is None:
+        return
+    try:
+        await _async_client.aclose()
+        logger.info("Async Redis client closed")
+    except Exception:
+        logger.debug("Async Redis close error", exc_info=True)
+    finally:
+        _async_client = None
+        _async_client_loop = None
 
 
 def get_redis_config() -> dict[str, Any]:
@@ -254,6 +365,32 @@ def release_distributed_lock(name: str, token: str) -> bool:
 LockState = Literal["held", "no_redis", "timeout"]
 
 
+async def _acquire_lock_async(
+    client: Any,
+    name: str,
+    *,
+    ttl_seconds: int,
+    wait_seconds: float,
+    poll_interval: float = 0.05,
+) -> str | None:
+    """Poll for the lock without occupying a thread."""
+    token = secrets.token_urlsafe(16)
+    key = _lock_key(name)
+    deadline = time.monotonic() + wait_seconds
+
+    while True:
+        try:
+            if await client.set(key, token, nx=True, ex=ttl_seconds):
+                return token
+        except Exception:
+            logger.debug("Lock acquire failed for '%s'", name, exc_info=True)
+            return None
+
+        if time.monotonic() >= deadline:
+            return None
+        await asyncio.sleep(poll_interval)
+
+
 @asynccontextmanager
 async def distributed_lock(
     name: str,
@@ -261,16 +398,24 @@ async def distributed_lock(
     ttl_seconds: int = 30,
     wait_seconds: float = 10.0,
 ) -> AsyncIterator[LockState]:
-    """Yield lock state for a Redis-backed distributed lock."""
-    if get_redis_client() is None:
+    """Yield lock state for a Redis-backed distributed lock.
+
+    Natively async. The previous implementation handed the blocking
+    ``acquire_distributed_lock`` to a thread, where it polled with
+    ``time.sleep`` for up to ``wait_seconds``. A thread parked for ten
+    seconds per waiter is the expensive way to wait: enough concurrent
+    contenders drained the shared executor, and the resulting stall
+    reached every other blocking call in the process — a lock whose
+    critical section lengthens under contention, which is the shape
+    that turns slow into stuck. ``asyncio.sleep`` costs a timer.
+    """
+    client = await get_async_redis_client()
+    if client is None:
         yield "no_redis"
         return
 
-    token = await asyncio.to_thread(
-        acquire_distributed_lock,
-        name,
-        ttl_seconds=ttl_seconds,
-        wait_seconds=wait_seconds,
+    token = await _acquire_lock_async(
+        client, name, ttl_seconds=ttl_seconds, wait_seconds=wait_seconds
     )
     if token is None:
         yield "timeout"
@@ -279,4 +424,9 @@ async def distributed_lock(
     try:
         yield "held"
     finally:
-        await asyncio.to_thread(release_distributed_lock, name, token)
+        try:
+            await client.eval(_RELEASE_LOCK_LUA, 1, _lock_key(name), token)
+        except Exception:
+            # The TTL releases it regardless; failing here would mask
+            # whatever the caller was doing inside the lock.
+            logger.debug("Lock release failed for '%s'", name, exc_info=True)

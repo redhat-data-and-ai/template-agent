@@ -1,0 +1,34 @@
+# One volume for both services' config.
+#
+# Config reached the agent as a derived image (Containerfile.config)
+# and the UI as a ConfigMap. The first made a rebuild the only way to
+# change a prompt; the second is read-only in the pod and rewritten by
+# the next `apply -k`, so an edit against a running cluster does not
+# survive a deploy. A volume is writable and survives both.
+#
+# One claim rather than two, with `agent/` and `ui/` reached by
+# subPath. They are the same artefact — the config of one deployment —
+# and two claims meant two things to seed, two to resize and two to
+# back up.
+#
+# The cost is that an RWO claim mounted by both the agent and the UI
+# pins their pods to one node. That is free on Kind, which has one.
+# A multi-node cluster needs RWX here, and on OpenShift that is
+# usually not the default storage class — a conscious change rather
+# than a number bump.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: config-pvc
+  labels:
+    app: template-agent
+    component: config
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Prompts, skills, subagents and a handful of YAML, plus the
+      # UI's settings. Comfortably under a megabyte; 128Mi is the
+      # smallest request that does not look like a typo.
+      storage: 128Mi

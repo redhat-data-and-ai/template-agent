@@ -11,6 +11,32 @@ from deep_agent.src.infrastructure.subagents import VALID_AGENT_TYPES, load_suba
 
 
 @pytest.fixture(autouse=True)
+def _no_per_tool_limits():
+    """Keep constructor assertions about *fallback* middleware honest.
+
+    Subagents now always carry the per-tool call limits from config,
+    so a test checking "no middleware when there is no fallback"
+    would otherwise be asserting against whatever agent.yaml happens
+    to cap today. Tests about the limits themselves opt back in.
+    """
+    resolved = MagicMock()
+    resolved.tool_call_limit.per_tool = {}
+    with (
+        patch(
+            "deep_agent.src.infrastructure.subagents.agent_config.resolve_agent_middleware",
+            return_value=resolved,
+        ) as mock,
+        # Subagents also carry the profile's excluded tools now; these
+        # tests are about audit/OPA/fallback composition.
+        patch(
+            "deep_agent.src.infrastructure.subagents._profile_excluded_tools",
+            return_value=[],
+        ),
+    ):
+        yield mock
+
+
+@pytest.fixture(autouse=True)
 def _no_mcp_resource_tools():
     """Keep existing tool-list assertions hermetic; override in resource tests."""
     with patch(
@@ -206,7 +232,13 @@ class TestLoadSubagents:
             assert mock_sa.call_args.kwargs["system_prompt"] == "Prompt"
 
     def test_load_subagent_with_skills(self):
-        """Test loading subagent with pre-resolved skill paths."""
+        """A subagent is handed the directory to scan, not each skill.
+
+        `skills=` is SkillsMiddleware's `sources=`, and a source is
+        listed for subdirectories that hold a `SKILL.md`. Passing
+        `/skills/bmi-report` made it look inside that skill for
+        skills and find none.
+        """
         mock_model = MagicMock()
         mock_subagent = MagicMock()
 
@@ -251,7 +283,7 @@ class TestLoadSubagents:
                 model=mock_model,
                 description="Analyst",
                 system_prompt="Prompt",
-                skills=["/skills/bmi-report"],
+                skills=["/skills/"],
             )
 
     def test_load_multiple_subagents(self):
@@ -1617,6 +1649,69 @@ class TestMcpResourceToolsOnSubagents:
             load_subagents(tools=[])
 
         _no_mcp_resource_tools.assert_not_called()
+
+
+class TestSubagentPerToolLimits:
+    """A tool that loops is capped where it is actually called.
+
+    `warehouse_execute_sql` is called by the curator subagent, not by
+    the orchestrator, and subagents build their own middleware list.
+    Configured once and applied only to the parent, the cap looked
+    right and changed nothing: 26 executions across two answers.
+    """
+
+    def test_subagents_carry_the_configured_per_tool_limits(self, _no_per_tool_limits):
+        from deep_agent.src.infrastructure.subagents import _subagent_middleware
+
+        resolved = MagicMock()
+        resolved.tool_call_limit.per_tool = {"warehouse_execute_sql": 2}
+        _no_per_tool_limits.return_value = resolved
+
+        middleware = _subagent_middleware("curator", [], []) or []
+        names = [type(m).__name__ for m in middleware]
+
+        assert "ToolCallLimitMiddleware" in names
+
+    def test_no_configured_limits_adds_nothing(self):
+        from deep_agent.src.infrastructure.subagents import _subagent_middleware
+
+        middleware = _subagent_middleware("curator", [], []) or []
+        names = [type(m).__name__ for m in middleware]
+
+        assert "ToolCallLimitMiddleware" not in names
+
+
+class TestSubagentToolExclusions:
+    """Excluded tools must apply where the tools actually are.
+
+    `excluded_tools` on the harness profile only reached the
+    orchestrator, which does not call the warehouse server — the curator
+    subagent does. Configured once and applied to the parent alone,
+    the exclusion looked right and `identify_dataproducts`,
+    `shortlist_tables` and `get_sql` all ran anyway.
+    """
+
+    def test_subagents_carry_the_profile_exclusions(self, _no_per_tool_limits):
+        from deep_agent.src.infrastructure.subagents import _subagent_middleware
+
+        with patch(
+            "deep_agent.src.infrastructure.subagents._profile_excluded_tools",
+            return_value=["warehouse_get_sql"],
+        ):
+            middleware = _subagent_middleware("curator", [], []) or []
+
+        assert "_ToolExclusionMiddleware" in [type(m).__name__ for m in middleware]
+
+    def test_nothing_excluded_adds_nothing(self, _no_per_tool_limits):
+        from deep_agent.src.infrastructure.subagents import _subagent_middleware
+
+        with patch(
+            "deep_agent.src.infrastructure.subagents._profile_excluded_tools",
+            return_value=[],
+        ):
+            middleware = _subagent_middleware("curator", [], []) or []
+
+        assert "_ToolExclusionMiddleware" not in [type(m).__name__ for m in middleware]
 
 
 class TestLocationThreading:

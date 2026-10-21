@@ -24,15 +24,17 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.messages import ToolMessage
+from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 from deep_agent.src.audit.config import is_audit_enabled
 from deep_agent.src.audit.emitter import emit_audit_event
 from deep_agent.src.audit.events import AuditEventType
+from deep_agent.src.settings import settings
 
 _MEMORY_TOOLS = frozenset({"edit_file", "write_file"})
-_SUBAGENT_TOOL = "task"
-_ORCHESTRATOR_AGENT = "orchestrator"
+_SUBAGENT_TOOL = settings.SUBAGENT_TOOL_NAME
+_ORCHESTRATOR_AGENT = settings.ORCHESTRATOR_AGENT_NAME
 
 
 def _tool_path(args: dict[str, Any]) -> str:
@@ -73,6 +75,24 @@ def classify_tool_call(
     if _is_memory_write(tool_name, args):
         return AuditEventType.MEMORY_WRITE
     return ""
+
+
+def _audit_status_for(exc: BaseException) -> str:
+    """Classify an exception escaping a handler, for the audit trail.
+
+    A ``GraphInterrupt`` is not a failure. It is how the graph pauses
+    to ask a human to approve a tool call, and the run resumes from
+    that point once they answer. Recording it as an error puts a
+    human-approval prompt in the audit log as a tool failure, and
+    counts it against the error rate the dashboard reports.
+
+    It mattered: every MCP tool fell through to ``default_decision:
+    ask`` because no policy covered them, so a delegation that
+    touched one logged `tool=task status=error` and the run ended
+    `interrupted` — which reads as the agent hanging, and was
+    diagnosed as that twice before anyone read the audit payload.
+    """
+    return "interrupted" if isinstance(exc, GraphInterrupt) else "error"
 
 
 class AuditMiddleware(AgentMiddleware):
@@ -140,7 +160,7 @@ class AuditMiddleware(AgentMiddleware):
                 phase="complete",
                 model=model,
                 message_count=len(request.messages),
-                status="error",
+                status=_audit_status_for(exc),
                 latency_ms=elapsed_ms,
                 error=str(exc) or type(exc).__name__,
             )
@@ -188,7 +208,7 @@ class AuditMiddleware(AgentMiddleware):
                 phase="complete",
                 model=model,
                 message_count=len(request.messages),
-                status="error",
+                status=_audit_status_for(exc),
                 latency_ms=elapsed_ms,
                 error=str(exc) or type(exc).__name__,
             )
@@ -266,7 +286,7 @@ class AuditMiddleware(AgentMiddleware):
                 audit_type,
                 tool_name=tool_name,
                 tool_args=tool_args,
-                status="error",
+                status=_audit_status_for(exc),
                 latency_ms=elapsed_ms,
                 error=str(exc) or type(exc).__name__,
             )
@@ -318,7 +338,7 @@ class AuditMiddleware(AgentMiddleware):
                 audit_type,
                 tool_name=tool_name,
                 tool_args=tool_args,
-                status="error",
+                status=_audit_status_for(exc),
                 latency_ms=elapsed_ms,
                 error=str(exc) or type(exc).__name__,
             )

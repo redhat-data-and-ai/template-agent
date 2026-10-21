@@ -36,17 +36,18 @@ from opentelemetry.sdk.metrics.view import View
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
 # Default fallback values - only used when config loading fails
-_DEFAULT_SERVICE_NAME = "template-agent"
-_DEFAULT_SERVICE_VERSION = "dev"
+_DEFAULT_SERVICE_NAME = settings.OTEL_DEFAULT_SERVICE_NAME
+_DEFAULT_SERVICE_VERSION = settings.OTEL_DEFAULT_SERVICE_VERSION
 
 # Config validation constants
-MIN_EXPORT_INTERVAL_MS = 1000
-MAX_EXPORT_INTERVAL_MS = 60000
+MIN_EXPORT_INTERVAL_MS = settings.OTEL_MIN_EXPORT_INTERVAL_MS
+MAX_EXPORT_INTERVAL_MS = settings.OTEL_MAX_EXPORT_INTERVAL_MS
 
 # Cached service version (populated on first resolution)
 _resolved_version: Optional[str] = None

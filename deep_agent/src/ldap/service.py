@@ -20,6 +20,7 @@ from deep_agent.src.ldap.prompt_config import (
     GroupRoleMapping,
     get_prompt_access_config,
 )
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -28,7 +29,7 @@ _ldap_conn: Any = None
 _bind_failed: bool = False
 _ldap_lock = threading.Lock()
 _memory_cache: dict[str, tuple[bool, float]] = {}
-_MEMORY_CACHE_MAX_SIZE: int = 1024
+_MEMORY_CACHE_MAX_SIZE = settings.LDAP_MEMORY_CACHE_MAX_SIZE
 
 _startup_warning_logged: bool = False
 

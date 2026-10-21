@@ -5,7 +5,15 @@ same request-scoped MCP session as the Apps HTTP proxy. List/templates return
 the catalog JSON unchanged. Read extracts ``contents[].text``, applies
 line-based ``offset``/``limit`` pagination (defaults match ``read_file``:
 offset 0, limit 100), then char-truncates to the eviction token budget.
-Binary blobs are omitted. No catalog cache — safe for multi-pod.
+Binary blobs are omitted.
+
+The catalog is cached in Redis, not in the process, so it stays safe
+for multi-pod. It is cached at all because `resources/list` and
+`resources/list_templates` cost 8.2s each against one server and were
+re-fetched on every turn: 16.4s of a 65s answer spent re-learning
+what the server offers, which is a property of the server and not of
+the question. Keyed per user, because what a server lists can depend
+on who is asking.
 """
 
 from __future__ import annotations
@@ -31,18 +39,20 @@ from deep_agent.aegra.mcp_host import (
     list_resources,
     read_resource,
 )
+from deep_agent.aegra.redis import cache_get, cache_set, run_redis
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-LIST_TOOL = "mcp_list_resources"
-TEMPLATES_TOOL = "mcp_list_resource_templates"
-READ_TOOL = "mcp_read_resource"
+LIST_TOOL = settings.MCP_LIST_RESOURCES_TOOL
+TEMPLATES_TOOL = settings.MCP_LIST_TEMPLATES_TOOL
+READ_TOOL = settings.MCP_READ_RESOURCE_TOOL
 
-DEFAULT_READ_OFFSET = 0
-DEFAULT_READ_LIMIT = 100
-_CHARS_PER_TOKEN = 4
-_DEFAULT_TOKEN_LIMIT = 100_000
+DEFAULT_READ_OFFSET = settings.MCP_RESOURCE_READ_OFFSET
+DEFAULT_READ_LIMIT = settings.MCP_RESOURCE_READ_LIMIT
+_CHARS_PER_TOKEN = settings.CHARS_PER_TOKEN_ESTIMATE
+_DEFAULT_TOKEN_LIMIT = settings.MCP_RESOURCE_TOKEN_LIMIT
 
 
 def _get_max_chars() -> int:
@@ -167,6 +177,16 @@ def get_mcp_resource_tools(
         for k, v in servers.items()
         if isinstance(v, dict) and v.get("enabled", False)
     }
+    # A server whose typed tools already cover it opts out.
+    #
+    # These three tools are a generic way in for a server that only
+    # publishes resources. Offered alongside a server that publishes
+    # a complete typed surface, they are an invitation to go
+    # exploring: `list_resources` and `list_resource_templates`
+    # against one such server cost 8s and 16s and told the agent nothing
+    # its own six tools did not, on every turn, before it then used
+    # those six tools anyway.
+    enabled = {k: v for k, v in enabled.items() if v.get("expose_resources", True)}
     enabled = _filter_by_names(enabled, server_names)
     return build_mcp_resource_tools(
         allowed_servers=list(enabled.keys()),
@@ -272,6 +292,42 @@ def _reject_server(mcp_name: str, allowed_servers: tuple[str, ...]) -> str:
     return f"Unknown or disallowed MCP server {mcp_name!r}. Allowed: {allowed}"
 
 
+async def _cached_catalog(
+    kind: str,
+    mcp_name: str,
+    cursor: str | None,
+    user_id: str | None,
+    fetch: Any,
+) -> Any:
+    """Return a server's resource catalog, reusing a recent copy."""
+    ttl = settings.MCP_RESOURCE_CATALOG_TTL_SECONDS
+    if ttl <= 0:
+        return await fetch()
+
+    key = (
+        f"mcp_catalog:{settings.agent_deployment_id}:{kind}:"
+        f"{mcp_name}:{user_id or ''}:{cursor or ''}"
+    )
+    try:
+        raw = await run_redis(cache_get, key)
+    except Exception:
+        # Redis being down makes the catalog slow, not unavailable.
+        raw = None
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+
+    payload = await fetch()
+    try:
+        await run_redis(cache_set, key, json.dumps(payload), ttl_seconds=ttl)
+    except Exception:
+        # Caching is an optimisation; failing to cache is not a failure.
+        pass
+    return payload
+
+
 def build_mcp_resource_tools(
     *,
     allowed_servers: list[str],
@@ -322,8 +378,14 @@ def build_mcp_resource_tools(
             return _reject_server(mcp_name, servers)
         user_id, sso = _auth_context()
         try:
-            payload = await list_resources(
-                mcp_name, cursor=cursor, user_id=user_id, sso_token=sso
+            payload = await _cached_catalog(
+                "resources",
+                mcp_name,
+                cursor,
+                user_id,
+                lambda: list_resources(
+                    mcp_name, cursor=cursor, user_id=user_id, sso_token=sso
+                ),
             )
         except NeedsAuthorization:
             raise
@@ -338,8 +400,14 @@ def build_mcp_resource_tools(
             return _reject_server(mcp_name, servers)
         user_id, sso = _auth_context()
         try:
-            payload = await list_resource_templates(
-                mcp_name, cursor=cursor, user_id=user_id, sso_token=sso
+            payload = await _cached_catalog(
+                "templates",
+                mcp_name,
+                cursor,
+                user_id,
+                lambda: list_resource_templates(
+                    mcp_name, cursor=cursor, user_id=user_id, sso_token=sso
+                ),
             )
         except NeedsAuthorization:
             raise

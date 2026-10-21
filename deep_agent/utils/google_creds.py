@@ -22,14 +22,16 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
-# Google Cloud authentication scope for Vertex AI
-GOOGLE_AUTH_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+# Google Cloud authentication scope for Vertex AI. From settings, not
+# written here — a scope is a deployment decision, and a narrower one
+# should not need a code change.
+GOOGLE_AUTH_SCOPES = [settings.GOOGLE_CLOUD_SCOPE]
 
 # Cache for credentials to avoid repeated credential fetches
 _credentials_cache: tuple[Credentials, str] | None = None
 
-_ERR_INVALID_JSON = "Invalid JSON in credentials"
-_ERR_MISSING_PROJECT_ID = "Service account JSON does not contain 'project_id' field"
+_ERR_INVALID_JSON = settings.ERR_INVALID_CREDENTIALS_JSON
+_ERR_MISSING_PROJECT_ID = settings.ERR_MISSING_PROJECT_ID
 _ERR_NO_CREDENTIALS = (
     "No Google credentials found. Either run "
     "'gcloud auth application-default login' "

@@ -163,7 +163,9 @@ class TestConnectSingleServer:
                 mcp_server="test_server",
             )
 
-            assert len(tools) == 1
+            # Plus a resume placeholder, so a paused run can be
+            # resumed after the graph is rebuilt.
+            assert len([t for t in tools if not t.name.startswith("mcp__")]) == 1
             assert tools[0].name == "test_tool"
             assert tools[0].metadata["mcp_server"] == "test_server"
 
@@ -205,7 +207,9 @@ class TestConnectSingleServer:
                 mcp_server="chart-mcp-server",
             )
 
-        assert [t.name for t in tools] == ["show_chart"]
+        assert [t.name for t in tools if not t.name.startswith("mcp__")] == [
+            "show_chart"
+        ]
         assert tools[0].metadata["mcp_server"] == "chart-mcp-server"
         assert app_only.metadata["mcp_server"] == "chart-mcp-server"
 
@@ -353,7 +357,9 @@ class TestGetMCPTools:
 
             tools = await get_mcp_tools()
 
-            assert len(tools) == 1
+            # Plus a resume placeholder, so a paused run can be
+            # resumed after the graph is rebuilt.
+            assert len([t for t in tools if not t.name.startswith("mcp__")]) == 1
             assert tools[0].name == "tool1"
             mock_connect.assert_called_once()
 
@@ -395,9 +401,9 @@ class TestGetMCPTools:
 
             tools = await get_mcp_tools()
 
-            # Should have 3 tools: shared_tool (from server-a), unique_a, unique_b
-            assert len(tools) == 3
-            tool_names = {t.name for t in tools}
+            # 3 real tools: shared_tool (from server-a), unique_a,
+            # unique_b — plus a resume placeholder per server.
+            tool_names = {t.name for t in tools if not t.name.startswith("mcp__")}
             assert tool_names == {"shared_tool", "unique_a", "unique_b"}
             # First occurrence of shared_tool wins
             assert tools[0] is tool_a1
@@ -519,7 +525,10 @@ class TestGetMCPTools:
 
             # All three servers should be connected
             assert mock_connect.call_count == 3
-            assert len(tools) == 3
+            # Plus one resume placeholder per connected server, so a
+            # run paused on one can resume after the graph rebuild.
+            real = [t for t in tools if not t.name.startswith("mcp__")]
+            assert len(real) == 3
 
     @pytest.mark.asyncio
     async def test_server_names_filters_enabled_servers(self):
@@ -543,7 +552,9 @@ class TestGetMCPTools:
             tools = await get_mcp_tools(server_names=["wanted"])
 
             mock_connect.assert_called_once()
-            assert len(tools) == 1
+            # Plus a resume placeholder, so a paused run can be
+            # resumed after the graph is rebuilt.
+            assert len([t for t in tools if not t.name.startswith("mcp__")]) == 1
             assert tools[0].name == "wanted_tool"
 
     @pytest.mark.asyncio
@@ -580,7 +591,9 @@ class TestGetMCPTools:
 
             tools = await get_mcp_tools()
 
-            assert len(tools) == 1
+            # Plus a resume placeholder, so a paused run can be
+            # resumed after the graph is rebuilt.
+            assert len([t for t in tools if not t.name.startswith("mcp__")]) == 1
             assert tools[0].name == "jira_search_issues"
             call_kwargs = mock_connect.call_args
             assert call_kwargs[1]["name"] == "jira"
@@ -668,14 +681,20 @@ class TestGetMCPTools:
 
             mock_conn.return_value = [tool_a]
             result_a = await get_mcp_tools(user_id="user-a")
-            assert [t.name for t in result_a] == ["tool_a"]
+            assert [t.name for t in result_a if not t.name.startswith("mcp__")] == [
+                "tool_a"
+            ]
 
             mock_conn.return_value = [tool_b]
             result_b = await get_mcp_tools(user_id="user-b")
-            assert [t.name for t in result_b] == ["tool_b"]
+            assert [t.name for t in result_b if not t.name.startswith("mcp__")] == [
+                "tool_b"
+            ]
 
             result_a_cached = await get_mcp_tools(user_id="user-a")
-            assert [t.name for t in result_a_cached] == ["tool_a"]
+            assert [
+                t.name for t in result_a_cached if not t.name.startswith("mcp__")
+            ] == ["tool_a"]
 
     @pytest.mark.asyncio
     async def test_invalidate_cache_per_user(self):
@@ -765,8 +784,18 @@ class TestCreateAuthPlaceholderTool:
             assert exc_info.value.mcp_name == "jira-mcp"
 
     @pytest.mark.asyncio
-    async def test_require_auth_returns_success_when_resolve_succeeds(self):
-        """Calling the placeholder after a usable token is resolved returns success."""
+    async def test_a_token_that_arrives_late_reloads_without_pausing(self):
+        """Authorized mid-turn: carry on, do not stop to ask again.
+
+        Ending the turn with "ask me again" threw away everything the
+        agent had worked out and made the reader redo it. The cache is
+        invalidated here, so the next graph build holds the real
+        tools; the marker tells the model to use them.
+
+        The placeholder does not pause. Pausing is the wrapper's job
+        and only the wrapper knows whether this call has already
+        paused once — doing it in both places asked twice.
+        """
         tool = _create_auth_placeholder_tool(
             "jira-mcp", {"description": "JIRA services"}
         )
@@ -782,10 +811,17 @@ class TestCreateAuthPlaceholderTool:
                 "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
                 return_value=mock_resolver,
             ),
+            patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache") as mock_inv,
         ):
             mock_ctx.get.return_value = "user-1"
-            result = await tool.coroutine(query="list my tickets")
-        assert "Successfully connected to jira-mcp" in result
+            with patch("langgraph.types.interrupt") as mock_interrupt:
+                result = await tool.coroutine(query="list my tickets")
+
+        mock_interrupt.assert_not_called()
+        mock_inv.assert_called_once_with("user-1")
+        assert "[TOOLS_RELOADED mcp=jira-mcp]" in result
+        assert "available in this run" in result
+        assert "Do not ask the user" in result
         mock_resolver.resolve.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -891,3 +927,65 @@ class TestCreateAuthPlaceholderTool:
             and "placeholder tool auth resolve failed" in r.message
         ]
         assert len(warning_records) == 1
+
+
+class TestInterruptIsNotSwallowed:
+    """`interrupt()` pauses by raising, so it must not be caught.
+
+    The placeholder catches a failed resolve and reports "not
+    connected" instead. A pause raised from underneath must travel
+    straight through that handler, or it becomes a Connect prompt for
+    a server that is already connected.
+    """
+
+    @pytest.mark.asyncio
+    async def test_graph_bubble_up_propagates(self):
+        from langgraph.errors import GraphBubbleUp
+
+        tool = _create_auth_placeholder_tool("jira-mcp", {"description": "JIRA"})
+        mock_resolver = MagicMock()
+        mock_resolver.resolve = AsyncMock(side_effect=GraphBubbleUp())
+
+        with (
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_ctx,
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={"jira-mcp": {"auth_mode": "dcr"}},
+            ),
+            patch(
+                "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
+                return_value=mock_resolver,
+            ),
+            patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache"),
+        ):
+            mock_ctx.get.return_value = "user-1"
+            with pytest.raises(GraphBubbleUp):
+                await tool.coroutine(query="anything")
+
+    @pytest.mark.asyncio
+    async def test_a_connected_server_does_not_pause(self):
+        """Its tools are already in this run; there is nothing to wait for."""
+        tool = _create_auth_placeholder_tool(
+            "jira-mcp", {"description": "JIRA"}, tools_present=True
+        )
+        mock_resolver = MagicMock()
+        mock_resolver.resolve = AsyncMock(return_value="fresh-token")
+
+        with (
+            patch("deep_agent.aegra.mcp._current_user_id") as mock_ctx,
+            patch(
+                "deep_agent.aegra.mcp._get_server_configs",
+                return_value={"jira-mcp": {"auth_mode": "dcr"}},
+            ),
+            patch(
+                "deep_agent.aegra.mcp_auth.get_mcp_credential_resolver",
+                return_value=mock_resolver,
+            ),
+            patch("deep_agent.aegra.mcp.invalidate_mcp_tool_cache"),
+            patch("langgraph.types.interrupt") as mock_interrupt,
+        ):
+            mock_ctx.get.return_value = "user-1"
+            result = await tool.coroutine(query="anything")
+
+        mock_interrupt.assert_not_called()
+        assert "available in this turn" in result

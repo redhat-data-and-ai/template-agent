@@ -110,6 +110,38 @@ _request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 _org_id_var: ContextVar[str | None] = ContextVar("org_id", default=None)
 _agent_id_var: ContextVar[str | None] = ContextVar("agent_id", default=None)
 
+# Resolved once: current_otel_ids() runs on every log line, and OTEL is
+# either installed for the life of the process or it is not.
+try:
+    from opentelemetry import trace as _otel_trace
+except ImportError:  # pragma: no cover - OTEL is a hard dependency here
+    _otel_trace = None
+
+
+def current_otel_ids() -> tuple[str | None, str | None]:
+    """The active span's ``(trace_id, span_id)`` as lowercase hex, or ``(None, None)``.
+
+    Logs, metrics and traces usually leave this process for three
+    different backends, and a backend can only join on a field it was
+    given. ``trace_id`` below is the application's own identifier — it
+    is the one the UI sends and the one the gateway echoes, and it is
+    deliberately not the W3C one. These two are the W3C ones, so a log
+    line can be reached from a trace and vice versa without anybody
+    maintaining a mapping.
+
+    Read from the active span rather than bound at request entry so
+    that background tasks and nested spans report the span they are
+    actually in, not the one the request started with.
+    """
+    if _otel_trace is None:
+        return None, None
+
+    span = _otel_trace.get_current_span()
+    ctx = span.get_span_context() if span is not None else None
+    if ctx is None or not ctx.is_valid:
+        return None, None
+    return f"{ctx.trace_id:032x}", f"{ctx.span_id:016x}"
+
 
 def bind_request_context(
     trace_id: str | None = None,
@@ -170,6 +202,10 @@ def _inject_request_context(
         event_dict["org_id"] = oid
     if aid:
         event_dict["agent_id"] = aid
+    otel_trace_id, otel_span_id = current_otel_ids()
+    if otel_trace_id:
+        event_dict["otel_trace_id"] = otel_trace_id
+        event_dict["otel_span_id"] = otel_span_id
     event_dict["service"] = SERVICE_NAME
     return event_dict
 

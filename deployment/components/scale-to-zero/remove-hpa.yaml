@@ -1,0 +1,8 @@
+# KEDA creates and owns its own HorizontalPodAutoscaler. Leaving the
+# hand-written one in place puts two controllers on one Deployment,
+# which oscillates the replica count.
+$patch: delete
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent

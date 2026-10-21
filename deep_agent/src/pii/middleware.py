@@ -75,6 +75,20 @@ def _synced_additional_kwargs(
     }
 
 
+def _note_scrubbed(messages: list[Any], count: int) -> None:
+    """Record on the reply that PII was substituted on the way in.
+
+    Best effort: a missing note costs a line of provenance, and
+    failing the turn over it would trade the answer for the
+    footnote.
+    """
+    for message in messages:
+        existing = getattr(message, "additional_kwargs", None)
+        if isinstance(existing, dict):
+            existing["pii_scrubbed"] = count
+            return
+
+
 class PIIMiddleware(AgentMiddleware):
     """AgentMiddleware that scrubs PII from model inputs and restores it in outputs.
 
@@ -367,6 +381,13 @@ class PIIMiddleware(AgentMiddleware):
         restored_result = [
             self._restore_message_with_map(m, token_map) for m in response.result
         ]
+        # Say that a substitution happened. The restored text reads
+        # exactly like the original, so without this the fact that
+        # the model saw something else is unrecoverable — and that is
+        # the one thing someone weighing the answer would want to
+        # know. A count, never the values.
+        if token_map:
+            _note_scrubbed(restored_result, len(token_map))
         return ModelResponse(
             result=restored_result, structured_response=response.structured_response
         )
@@ -400,6 +421,13 @@ class PIIMiddleware(AgentMiddleware):
         restored_result = [
             self._restore_message_with_map(m, token_map) for m in response.result
         ]
+        # Say that a substitution happened. The restored text reads
+        # exactly like the original, so without this the fact that
+        # the model saw something else is unrecoverable — and that is
+        # the one thing someone weighing the answer would want to
+        # know. A count, never the values.
+        if token_map:
+            _note_scrubbed(restored_result, len(token_map))
         return ModelResponse(
             result=restored_result, structured_response=response.structured_response
         )

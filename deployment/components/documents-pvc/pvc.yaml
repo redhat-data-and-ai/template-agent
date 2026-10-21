@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-documents-pvc
+  labels:
+    app: template-agent
+    component: documents
+spec:
+  # 500Mi, and the API refuses an upload that would exceed it rather
+  # than letting the filesystem return ENOSPC. A full PVC fails every
+  # subsequent write, including ones unrelated to the upload that
+  # filled it, so the limit is enforced before the bytes land.
+  accessModes:
+    # RWX because the agent runs 2-10 replicas and every one of them
+    # mounts this claim. Under RWO only the pods that land on the node
+    # holding the volume can attach; the rest stay Pending with a
+    # Multi-Attach error, which on a multi-node cluster is most of
+    # them. The previous note said RWX was "a conscious change, not a
+    # number bump" — correct, and the HPA had already made it
+    # necessary.
+    #
+    # This needs a storage class that supports RWX (on OpenShift,
+    # typically a file-based one such as ocs-storagecluster-cephfs or
+    # an NFS class, not the default block class). Set
+    # `storageClassName` below if the cluster default is RWO-only, or
+    # the claim will stay Pending.
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 500Mi

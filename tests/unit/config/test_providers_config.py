@@ -1,9 +1,6 @@
 """Unit tests for providers configuration and profile registration."""
 
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from deep_agent.src.agent.config.providers import (
     AsyncTaskConfig,
@@ -14,7 +11,6 @@ from deep_agent.src.agent.config.providers import (
     load_providers_config,
 )
 from deep_agent.src.infrastructure.async_tasks import (
-    _extract_async_subagents,
     build_async_middleware,
 )
 from deep_agent.src.infrastructure.providers import (

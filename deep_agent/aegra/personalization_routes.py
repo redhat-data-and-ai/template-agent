@@ -70,7 +70,8 @@ def _get_default_graph_name() -> str:
 
 _cached_assistant_id: str | None = None
 _cached_assistant_ts: float = 0.0
-_ASSISTANT_TTL = 60.0
+_ASSISTANT_TTL = settings.ASSISTANT_ID_CACHE_TTL_SECONDS
+_assistant_lock = asyncio.Lock()
 
 
 async def _get_assistant_id_for_store() -> str:
@@ -94,29 +95,45 @@ async def _get_assistant_id_for_store() -> str:
     ):
         return _cached_assistant_id
 
-    assistant_id = "default"
-    try:
-        import asyncpg
+    # Serialise the refill. The check above is unsynchronised, so on
+    # expiry every concurrent request reaches here at once; without
+    # this lock each of them ran its own query. The second and later
+    # waiters re-read the cache and do no work.
+    async with _assistant_lock:
+        now = time.monotonic()
+        if (
+            _cached_assistant_id is not None
+            and (now - _cached_assistant_ts) < _ASSISTANT_TTL
+        ):
+            return _cached_assistant_id
 
-        graph_name = _get_default_graph_name()
-        async with asyncpg.create_pool(
-            settings.database_uri, min_size=1, max_size=2
-        ) as pool:
-            async with pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    "SELECT assistant_id::text FROM assistant WHERE graph_id = $1 LIMIT 1",
-                    graph_name,
+        assistant_id = "default"
+        try:
+            # The shared psycopg pool, not a per-call asyncpg pool.
+            # This used to build and tear down an entire connection
+            # pool to read one row, which bought a TCP, TLS and auth
+            # handshake per cache miss and made asyncpg a second
+            # driver in an otherwise psycopg codebase.
+            from deep_agent.src.db.pool import connection
+
+            graph_name = _get_default_graph_name()
+            async with connection() as conn:
+                cur = await conn.execute(
+                    "SELECT assistant_id::text AS assistant_id "
+                    "FROM assistant WHERE graph_id = %s LIMIT 1",
+                    (graph_name,),
                 )
+                row = await cur.fetchone()
                 if row and row["assistant_id"]:
                     assistant_id = str(row["assistant_id"])
-    except Exception:
-        logger.debug(
-            "Could not resolve assistant_id for store namespace", exc_info=True
-        )
+        except Exception:
+            logger.debug(
+                "Could not resolve assistant_id for store namespace", exc_info=True
+            )
 
-    _cached_assistant_id = assistant_id
-    _cached_assistant_ts = now
-    return assistant_id
+        _cached_assistant_id = assistant_id
+        _cached_assistant_ts = now
+        return assistant_id
 
 
 async def _get_store_namespace(user_id: str) -> tuple[str, ...]:

@@ -1,0 +1,58 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Opt-in: scale the agent to zero replicas when idle
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Not enabled by default — scale-to-zero trades a ~60s cold start on the
+# first request and loses in-process cron for idle cost. That is the
+# right trade for a demo, a preview environment or a rarely-used
+# internal agent, and the wrong one for an interactive service with
+# users waiting.
+#
+# Enable by adding to an overlay's kustomization.yaml:
+#
+#   components:
+#     - ../../components/scale-to-zero
+#
+# Then replace AGENT_HOST_PLACEHOLDER with the Route host in
+# httpscaledobject.yaml, in-flight-scaledobject.yaml and
+# wakeup-cronjob.yaml, and confirm the interceptor Service name
+# matches your KEDA http-add-on installation.
+#
+# Cluster prerequisites (platform requests, not self-serve):
+#   - Custom Metrics Autoscaler operator (KEDA)
+#   - KEDA http-add-on
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Metric-based scale-down (recommended). Swap for httpscaledobject.yaml
+# if Prometheus is unavailable — that variant falls back to a timer.
+resources:
+  - in-flight-scaledobject.yaml
+  - wakeup-cronjob.yaml
+  # Traffic goes through the interceptor, so the add-on needs its
+  # routing table entry for this host. Without the HTTPScaledObject
+  # the interceptor has nowhere to forward to and the Route answers
+  # 503 at zero replicas. It carries
+  # `httpscaledobject.keda.sh/skip-scaledobject-creation: "true"`, so
+  # the metric-based ScaledObject above stays the only scaler.
+  - httpscaledobject.yaml
+  # Reading the metric needs a token, and the Route needs a local
+  # Service to target.
+  - thanos-auth.yaml
+  - interceptor-service.yaml
+
+patches:
+  - path: route-patch.yaml
+    target:
+      kind: Route
+      name: agent
+  - path: remove-hpa.yaml
+    target:
+      kind: HorizontalPodAutoscaler
+      name: agent
+
+# Start at zero so the first rollout does not spin a pod that is
+# immediately scaled away.
+replicas:
+  - name: agent
+    count: 0

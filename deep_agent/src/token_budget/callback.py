@@ -8,6 +8,7 @@ from typing import Any
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.outputs import ChatGeneration, LLMResult
 
+from deep_agent.src.settings import settings
 from deep_agent.src.token_budget.identity import resolve_thread_id, resolve_user_id
 from deep_agent.src.token_budget.service import (
     check_and_record,
@@ -18,13 +19,13 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-THREAD_ID_METADATA_KEY = "token_budget_thread_id"
-USER_ID_METADATA_KEY = "token_budget_user_id"
-TRACE_ID_METADATA_KEY = "token_budget_trace_id"
+THREAD_ID_METADATA_KEY = settings.TOKEN_BUDGET_THREAD_ID_KEY
+USER_ID_METADATA_KEY = settings.TOKEN_BUDGET_USER_ID_KEY
+TRACE_ID_METADATA_KEY = settings.TOKEN_BUDGET_TRACE_ID_KEY
 
 # Emit an ERROR-level alert after this many consecutive failures so ops
 # teams can detect a persistently degraded token-tracking feature.
-_CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
+_CONSECUTIVE_FAILURE_ALERT_THRESHOLD = settings.TOKEN_BUDGET_FAILURE_ALERT_THRESHOLD
 
 _counter_lock = threading.Lock()
 _consecutive_failures = 0

@@ -14,6 +14,7 @@ import os
 import time
 from typing import Any
 
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -22,7 +23,7 @@ AUTH_TYPE = os.environ.get("LANGGRAPH_AUTH_TYPE", "noop")
 API_KEY = os.environ.get("LANGGRAPH_API_KEY", "")
 JWT_SECRET = os.environ.get("LANGGRAPH_JWT_SECRET", "")
 JWT_ALGORITHM = os.environ.get("LANGGRAPH_JWT_ALGORITHM", "HS256")
-_MIN_JWT_SECRET_BYTES = 32
+_MIN_JWT_SECRET_BYTES = settings.MIN_JWT_SECRET_BYTES
 
 
 class AuthError(Exception):

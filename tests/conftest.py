@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -155,3 +156,133 @@ def mock_agent_config():
 def mock_mcp_tools() -> list[Any]:
     """Return an empty list of MCP tools for unit tests."""
     return []
+
+
+# ── Deterministic LLM transport (P1) ────────────────────────────
+
+
+@pytest.fixture()
+def llm_cassette(request):
+    """Record/replay HTTP traffic for one test.
+
+    Yields a factory that builds an `httpx.AsyncClient` bound to this
+    test's cassette. In replay mode an unrecorded request raises rather
+    than reaching the network.
+
+        async def test_x(llm_cassette):
+            async with llm_cassette() as client:
+                ...
+    """
+    from tests.support.cassette import (
+        CASSETTE_DIR,
+        Cassette,
+        CassetteTransport,
+        cassette_mode,
+    )
+
+    mode = cassette_mode()
+    cassette = Cassette(CASSETTE_DIR / f"{request.node.name}.json", mode)
+
+    def _client(**kwargs):
+        return httpx.AsyncClient(transport=CassetteTransport(cassette), **kwargs)
+
+    yield _client
+
+    if mode == "record":
+        cassette.save()
+
+
+# ── Controllable time (P2) ──────────────────────────────────────
+
+
+@pytest.fixture()
+def fake_clock(monkeypatch):
+    """A clock the test advances by hand.
+
+    Patches `time.time`, `time.monotonic`, `time.sleep` and
+    `asyncio.sleep`, so time-dependent paths run instantly and
+    deterministically.
+    """
+    from tests.support.clock import FakeClock, install
+
+    clock = FakeClock()
+    install(monkeypatch, clock)
+    return clock
+
+
+# ── Shared connection pool isolation ────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_db_pool():
+    """Stop a live pool leaking from one test into the next.
+
+    ``deep_agent.src.db.pool`` memoises one pool per process, which is
+    right in the agent and wrong under pytest: a test that opens it
+    against a local Postgres leaves it there, and the next test to
+    touch it gets a pool whose connections belong to an event loop
+    that has already closed. The symptom is a hang or a loop-affinity
+    error somewhere unrelated to the test that caused it.
+
+    The reference is dropped rather than closed, for the same reason —
+    closing needs the loop that opened it.
+    """
+    import deep_agent.src.db.pool as shared_pool
+
+    shared_pool._pool = None
+    yield
+    shared_pool._pool = None
+
+
+# ── Datastore isolation ─────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _no_real_datastores(request, monkeypatch):
+    """Point unit tests at addresses nothing is listening on.
+
+    Unit tests were reaching whatever Postgres and Redis happened to
+    be running on the developer's machine. That is not a theoretical
+    complaint: a test suite that passes locally because a datastore
+    is up, and hangs for 29 minutes in CI because it is not, has
+    already happened here once. The tests that hit a live Redis also
+    contended with each other over real lock keys.
+
+    Anything that genuinely needs a datastore should be an
+    integration test, or should ask for the `real_datastores` marker
+    and bring its own.
+    """
+    if request.node.get_closest_marker("real_datastores"):
+        yield
+        return
+
+    # Port 1 is reserved and never bound, so a connection attempt
+    # fails immediately rather than hanging on a timeout.
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:1/0")
+    monkeypatch.setenv("POSTGRES_HOST", "127.0.0.1")
+    monkeypatch.setenv("POSTGRES_PORT", "1")
+
+    # The settings singleton is built at import time, so setting the
+    # environment above does nothing for a module that already read
+    # it — the shared pool kept the real database URI and this
+    # fixture only looked like it was isolating the test.
+    from deep_agent.src.settings import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "POSTGRES_HOST", "127.0.0.1")
+    monkeypatch.setattr(app_settings, "POSTGRES_PORT", 1)
+    monkeypatch.setattr(app_settings, "REDIS_URL", "redis://127.0.0.1:1/0")
+
+    import deep_agent.aegra.redis as redis_mod
+
+    monkeypatch.setattr(redis_mod, "REDIS_URL", "redis://127.0.0.1:1/0")
+    # The clients are module-level singletons; a live one from an
+    # earlier test would survive the env change.
+    monkeypatch.setattr(redis_mod, "_client", None)
+    monkeypatch.setattr(redis_mod, "_async_client", None)
+    monkeypatch.setattr(redis_mod, "_async_client_loop", None)
+
+    yield
+
+    redis_mod._client = None
+    redis_mod._async_client = None
+    redis_mod._async_client_loop = None

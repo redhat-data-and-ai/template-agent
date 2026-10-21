@@ -112,6 +112,24 @@ async def authenticated_user_id(
     return str(payload["sub"])
 
 
+async def role_identity(request: Request) -> str:
+    """The identity LDAP knows this caller by.
+
+    `authenticated_user_id` answers with the JWT `sub`, which is a
+    UUID. Every role lookup — `check_ldap_role`, the `developer_only`
+    gate — resolves `preferred_username` instead, so asking LDAP about
+    a `sub` finds nobody and reports real developers as ordinary
+    users. One helper, so the two cannot drift again.
+    """
+    from deep_agent.aegra.auth import _decode_token
+
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return ""
+    payload = await asyncio.to_thread(_decode_token, auth_header[7:])
+    return str(payload.get("preferred_username") or payload.get("sub") or "").strip()
+
+
 async def memory_user_id(request: Request) -> str:
     """User id for LangGraph Store memories (preferred_username / X-User-ID).
 

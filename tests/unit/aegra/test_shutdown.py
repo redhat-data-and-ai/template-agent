@@ -14,7 +14,6 @@ from deep_agent.aegra.shutdown import (
     _close_redis,
     _drain,
     _shutdown_langfuse,
-    _shutdown_langfuse_sync,
     is_shutting_down,
     register_atexit,
     register_signal_handlers,
@@ -59,7 +58,7 @@ class TestRunShutdown:
                 return_value="ok",
             ),
             patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
-            patch.object(shutdown_mod, "_close_redis", return_value="ok"),
+            patch.object(shutdown_mod, "_close_redis_async", return_value="ok"),
         ):
             result = await run_shutdown()
 
@@ -93,7 +92,7 @@ class TestRunShutdown:
                 return_value="ok",
             ),
             patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
-            patch.object(shutdown_mod, "_close_redis", return_value="ok"),
+            patch.object(shutdown_mod, "_close_redis_async", return_value="ok"),
         ):
             await run_shutdown()
 
@@ -111,9 +110,11 @@ class TestRunShutdown:
                 side_effect=Exception("langfuse boom"),
             ),
             patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
-            patch.object(shutdown_mod, "_close_redis", return_value="ok") as mock_redis,
+            patch.object(
+                shutdown_mod, "_close_redis_async", return_value="ok"
+            ) as mock_redis,
         ):
-            result = await run_shutdown()
+            await run_shutdown()
 
         mock_redis.assert_called_once()
         assert shutdown_mod._shutdown_complete is True
@@ -246,7 +247,7 @@ class TestRunShutdownSync:
         with (
             patch.object(shutdown_mod, "_shutdown_langfuse_sync", return_value="ok"),
             patch.object(shutdown_mod, "_clear_graph_cache", return_value="ok"),
-            patch.object(shutdown_mod, "_close_redis", return_value="ok"),
+            patch.object(shutdown_mod, "_close_redis_async", return_value="ok"),
         ):
             run_shutdown_sync()
         assert shutdown_mod._shutting_down is True

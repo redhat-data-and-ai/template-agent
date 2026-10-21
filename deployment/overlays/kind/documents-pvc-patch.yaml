@@ -1,0 +1,15 @@
+# Kind's default StorageClass is `standard`, backed by
+# rancher.io/local-path, which provisions RWO only. The shared
+# component asks for RWX because OpenShift runs the agent across
+# nodes; ask for that here and the claim stays Pending for ever, and
+# both agent replicas with it.
+#
+# Safe locally: a Kind cluster is one node, so every replica mounts
+# the same volume from the same place and RWO is sufficient.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-documents-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce

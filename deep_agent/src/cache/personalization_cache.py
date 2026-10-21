@@ -13,11 +13,12 @@ from typing import Any
 from deep_agent.src.cache import metrics
 from deep_agent.src.cache.backend import RedisCache
 from deep_agent.src.cache.config import cache_settings
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-_KEY_PREFIX = "personalization:"
+_KEY_PREFIX = settings.PERSONALIZATION_KEY_PREFIX
 
 _redis: RedisCache | None = None
 
@@ -83,7 +84,7 @@ async def set_rules(
     )
 
 
-_FALLBACK_EXPIRE_SECONDS = 5
+_FALLBACK_EXPIRE_SECONDS = settings.PERSONALIZATION_FALLBACK_EXPIRE_SECONDS
 
 
 async def invalidate(user_id: str | None = None) -> None:

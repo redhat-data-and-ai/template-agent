@@ -50,7 +50,10 @@ def resolve_model_from_config(
     """Resolve a model string to a BaseChatModel using the configured strategy.
 
     Args:
-        model_name: Model name (e.g., "gemini-2.5-pro" or "openai:gpt-5.4").
+        model_name: Model name, optionally provider-qualified
+            (``<provider>:<model>``). Defaults come from settings;
+            no model name is written into this codebase outside
+            ``deep_agent/src/settings.py``.
         config: Validated providers config.
         temperature: Model temperature.
         max_output_tokens: Maximum output tokens.

@@ -22,6 +22,20 @@ from deep_agent.src.infrastructure.middleware import (
 
 
 class TestBuildMiddlewareList:
+    @pytest.fixture(autouse=True)
+    def _no_configured_tool_exclusions(self):
+        """This class counts middleware composition, not product config.
+
+        Tools removed by product decision add a ToolExclusionMiddleware,
+        so without this every count here depends on whatever agent.yaml
+        happens to exclude today.
+        """
+        with patch(
+            "deep_agent.src.infrastructure.middleware._profile_excluded_tools",
+            return_value=[],
+        ):
+            yield
+
     """Test middleware instance construction from resolved config."""
 
     @pytest.fixture(autouse=True)
@@ -45,12 +59,16 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
-        # GeminiSafetyLogMiddleware + UserIdentityMiddleware + CurrentDatetimeMiddleware + ImageSanitizeMiddleware always included
-        assert len(result) == 4
+        # GeminiSafetyLogMiddleware + UserIdentityMiddleware +
+        # CurrentDatetimeMiddleware + PromptSizeMiddleware +
+        # ImageSanitizeMiddleware always included
+        assert len(result) == 6
         assert type(result[0]).__name__ == "GeminiSafetyLogMiddleware"
         assert type(result[1]).__name__ == "UserIdentityMiddleware"
         assert type(result[2]).__name__ == "CurrentDatetimeMiddleware"
-        assert type(result[3]).__name__ == "ImageSanitizeMiddleware"
+        assert type(result[3]).__name__ == "PromptSizeMiddleware"
+        assert type(result[4]).__name__ == "McpAuthNoticeMiddleware"
+        assert type(result[5]).__name__ == "ImageSanitizeMiddleware"
 
     def test_includes_summarization_tool_when_enabled(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
@@ -80,7 +98,7 @@ class TestBuildMiddlewareList:
             result = build_middleware_list(resolved)
             build_sum.assert_not_called()
         # Default guardrails (model/tool limits + model retry) + safety + identity + datetime + image sanitize.
-        assert len(result) == 7
+        assert len(result) == 9
 
     def test_includes_extra_middleware(self):
         resolved = ResolvedMiddlewareConfig(
@@ -94,7 +112,7 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert len(result) == 8
+        assert len(result) == 10
         assert any(isinstance(m, _DummyMiddleware) for m in result)
 
 
@@ -483,6 +501,40 @@ class TestGetCurrentDatetime:
         expected_date = utc_now.strftime("%B %d, %Y")
         assert expected_date in result
 
+    def test_is_rounded_so_the_prompt_prefix_can_be_cached(self):
+        """This block heads the prefix a provider caches.
+
+        The tool schemas sit behind it and make up most of the input
+        tokens, so a value that changed every second meant every
+        call missed the cache on the whole prefix.
+        """
+        from unittest.mock import patch
+
+        from deep_agent.src.settings import settings
+
+        with patch.object(settings, "DATETIME_PROMPT_GRANULARITY_SECONDS", 3600):
+            assert get_current_datetime().endswith(":00:00 UTC")
+
+    def test_granularity_of_one_restores_per_second_precision(self):
+        from unittest.mock import patch
+
+        from deep_agent.src.settings import settings
+
+        with patch.object(settings, "DATETIME_PROMPT_GRANULARITY_SECONDS", 1):
+            from datetime import datetime, timezone
+
+            now = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            assert now in get_current_datetime()
+
+    def test_is_stable_across_calls_within_one_window(self):
+        """Two calls a second apart must produce the same string."""
+        from unittest.mock import patch
+
+        from deep_agent.src.settings import settings
+
+        with patch.object(settings, "DATETIME_PROMPT_GRANULARITY_SECONDS", 3600):
+            assert get_current_datetime() == get_current_datetime()
+
 
 class TestCurrentDatetimeMiddleware:
     """Test build_current_datetime_middleware and its injection logic."""
@@ -858,3 +910,94 @@ class TestBuildSummarizationToolMiddlewareEdgeCases:
                 model=MagicMock(), backend=MagicMock()
             )
         assert result is None
+
+
+class TestExclusionSources:
+    """Two reasons to remove a tool; only one is about the model.
+
+    A harness profile's `excluded_tools` means the model cannot use
+    it, and the Models page shows those as limitations. Tools whose
+    job moved into a skill are not a limitation of the model, and
+    listing them there told the reader something untrue.
+    """
+
+    def test_enforcement_takes_both_sources(self):
+        from deep_agent.src.infrastructure import middleware as mw
+
+        profile = MagicMock()
+        profile.excluded_tools = ["model_cannot_use_this"]
+        providers = MagicMock()
+        providers.harness_profiles = {"some-model": profile}
+
+        resolved = MagicMock()
+        resolved.tool_exclusion.enabled = True
+        resolved.tool_exclusion.tools = ["removed_by_design"]
+
+        with (
+            patch.object(mw, "logger", MagicMock()),
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_providers_config",
+                return_value=providers,
+            ),
+            patch(
+                "deep_agent.src.agent.config.agent_config.resolve_agent_middleware",
+                return_value=resolved,
+            ),
+        ):
+            names = mw._profile_excluded_tools("some-model")
+
+        assert names == ["model_cannot_use_this", "removed_by_design"]
+
+    def test_another_model_keeps_the_tool(self):
+        """A profile is per model, so its exclusions are too.
+
+        Every profile used to be merged and the union applied to
+        every agent, which removed a tool from agents running on a
+        model that can use it.
+        """
+        from deep_agent.src.infrastructure import middleware as mw
+
+        profile = MagicMock()
+        profile.excluded_tools = ["model_cannot_use_this"]
+        providers = MagicMock()
+        providers.harness_profiles = {"some-model": profile}
+
+        resolved = MagicMock()
+        resolved.tool_exclusion.enabled = True
+        resolved.tool_exclusion.tools = ["removed_by_design"]
+
+        with (
+            patch.object(mw, "logger", MagicMock()),
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_providers_config",
+                return_value=providers,
+            ),
+            patch(
+                "deep_agent.src.agent.config.agent_config.resolve_agent_middleware",
+                return_value=resolved,
+            ),
+        ):
+            names = mw._profile_excluded_tools("a-different-model")
+
+        assert names == ["removed_by_design"]
+
+    def test_a_disabled_exclusion_block_removes_nothing(self):
+        from deep_agent.src.infrastructure import middleware as mw
+
+        providers = MagicMock()
+        providers.harness_profiles = {}
+        resolved = MagicMock()
+        resolved.tool_exclusion.enabled = False
+        resolved.tool_exclusion.tools = ["removed_by_design"]
+
+        with (
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_providers_config",
+                return_value=providers,
+            ),
+            patch(
+                "deep_agent.src.agent.config.agent_config.resolve_agent_middleware",
+                return_value=resolved,
+            ),
+        ):
+            assert mw._profile_excluded_tools() == []

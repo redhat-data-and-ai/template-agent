@@ -37,6 +37,7 @@ from deep_agent.src.exceptions import (
     RateLimitError,
     TransientError,
 )
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -123,7 +124,7 @@ mongo_retry = retry(
 # Circuit Breaker
 # ---------------------------------------------------------------------------
 
-_REDIS_KEY_PREFIX = "aegra:circuit:"
+_REDIS_KEY_PREFIX = settings.CIRCUIT_BREAKER_KEY_PREFIX
 
 
 class CircuitBreaker:

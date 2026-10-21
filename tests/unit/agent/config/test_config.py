@@ -125,14 +125,14 @@ name: orch
 model: gemini-2.5-flash
 mcps:
   - web-search
-  - dataverse-mcp
+  - warehouse-mcp
 ---
 Orchestrator.
 """)
 
         cfg = AgentConfig(config_dir)
         orch = cfg.get_orchestrator_config()
-        assert orch["mcps"] == ["web-search", "dataverse-mcp"]
+        assert orch["mcps"] == ["web-search", "warehouse-mcp"]
 
     def test_orchestrator_invalid_mcps_raises(self, tmp_path):
         """Non-list mcps raises AppException."""

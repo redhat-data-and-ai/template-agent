@@ -1,0 +1,72 @@
+# Wake the agent periodically so overdue cron jobs fire.
+#
+# Aegra's scheduler claims crons whose `next_run_date` is in the *past*
+# (CronService.get_due_crons), so it catches up rather than firing on a
+# wall-clock tick. A sleeping agent therefore does not *lose* scheduled
+# work — it defers it until something wakes the pod.
+#
+# This job provides that wake-up. The request goes through the KEDA
+# interceptor, which scales the Deployment from zero; the scheduler then
+# picks up anything overdue on its next poll.
+#
+# Pick an interval matching the tightest cron schedule you need, and the
+# latency you can accept: a 5-minute poke means a cron may fire up to
+# 5 minutes late, plus the cold start.
+#
+# Hitting /health keeps this unauthenticated — no credential in a
+# CronJob — while still being a real HTTP request the interceptor acts on.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: agent-wakeup
+  labels:
+    app: agent
+    component: agent-wakeup
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # The interceptor holds the request through a cold start; give it
+      # room, but do not let a wedged request pile jobs up.
+      activeDeadlineSeconds: 180
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: wakeup
+              image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+              command:
+                - /bin/sh
+                - -c
+                # --max-time must exceed the cold start, or the poke
+                # gives up before the pod it just woke is Ready.
+                # Through the interceptor, with the Route's host.
+                #
+                # `http://agent:5002` is the Deployment's own Service,
+                # which has no endpoints at zero replicas: the request
+                # fails and nothing scales up, so the one job this
+                # CronJob has never happened. The interceptor is what
+                # holds a request and wakes the Deployment, and it
+                # routes on Host.
+                - >-
+                  curl -sS --fail --max-time 150
+                  -H "Host: AGENT_HOST_PLACEHOLDER"
+                  http://keda-interceptor-proxy:8080/health > /dev/null
+                  && echo "agent awake"
+              securityContext:
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  memory: "32Mi"
+                  cpu: "10m"
+                limits:
+                  memory: "64Mi"
+                  cpu: "100m"

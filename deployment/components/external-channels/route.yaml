@@ -1,0 +1,45 @@
+# A second Route, on the external shard, carrying /channels and nothing else.
+#
+# The agent's main Route is `shard: internal` — deliberately, because the
+# Agent Protocol is an unauthenticated-looking API surface that happens to
+# be protected by SSO, and nothing about it should face the internet.
+# Slack cannot reach an internal Route, which is exactly why inbound
+# channels did not exist before this.
+#
+# The answer is not to flip the main Route. It is a narrow public surface:
+# `path: /channels` means HAProxy will not route anything else here, so
+# /threads, /runs, /admin and /evals stay unreachable from outside even if
+# the hostname leaks.
+#
+# Every handler behind this path verifies an HMAC signature before it
+# parses the body. See deep_agent/aegra/channel_routes.py.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: agent-channels
+  labels:
+    app: agent
+    component: agent
+    # External, unlike the main Route. This is the only workload Route in
+    # the repo that is.
+    shard: external
+  annotations:
+    # Channels ack in milliseconds and do the work in the background, so
+    # they need none of the 5-hour streaming timeout the main Route has.
+    haproxy.router.openshift.io/timeout: 30s
+    haproxy.router.openshift.io/rate-limit-connections: "true"
+    # Tighter than the internal Route: this one is reachable by anyone who
+    # learns the hostname, and signature verification costs CPU.
+    haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: "20"
+    haproxy.router.openshift.io/rate-limit-connections.rate-http: "100"
+    haproxy.router.openshift.io/rate-limit-connections.rate-tcp: "100"
+spec:
+  path: /channels
+  to:
+    kind: Service
+    name: agent
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

@@ -1,6 +1,5 @@
 """Unit tests for resolver module."""
 
-import inspect
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -9,81 +8,51 @@ import pytest
 from deep_agent.src.agent.config.resolver import (
     resolve_skill_paths,
     resolve_tools,
-    to_virtual_skill_paths,
+    to_virtual_skill_sources,
 )
 
 
-class TestToVirtualSkillPaths:
-    """Tests for to_virtual_skill_paths function."""
+class TestToVirtualSkillSources:
+    """SkillsMiddleware is given directories to scan, not skills.
 
-    def test_converts_absolute_paths_to_virtual_paths(self):
-        skill_paths = [
-            "/home/user/skills/my-skill",
-            "/home/user/skills/other-skill",
-        ]
-        result = to_virtual_skill_paths(skill_paths)
-        assert result == ["/skills/my-skill", "/skills/other-skill"]
+    Handing it a skill's own directory makes it look *inside* that
+    skill for skills. `/skills/dataverse` holds `references/`, not
+    another skill, so eight sources found nothing between them and
+    the prompt read "(No skills available yet)" with eight skills on
+    disk.
+    """
+
+    def test_a_skill_becomes_the_directory_holding_it(self):
+        assert to_virtual_skill_sources(
+            ["/home/user/skills/my-skill", "/home/user/skills/other-skill"]
+        ) == ["/skills/"]
 
     def test_handles_empty_list(self):
-        result = to_virtual_skill_paths([])
-        assert result == []
+        assert to_virtual_skill_sources([]) == []
 
-    def test_deduplicates_skill_paths(self):
-        """Validate that duplicate paths are deduplicated (requires set behavior)."""
-        skill_paths = [
-            "/home/user/skills/my-skill",
-            "/home/user/skills/my-skill",
-            "/home/user/skills/other-skill",
-        ]
-        result = to_virtual_skill_paths(skill_paths)
-        assert result == ["/skills/my-skill", "/skills/other-skill"]
-        assert len(result) == 2
-
-    def test_returns_sorted_list(self):
-        skill_paths = [
-            "/home/user/skills/zebra-skill",
-            "/home/user/skills/alpha-skill",
-            "/home/user/skills/middle-skill",
-        ]
-        result = to_virtual_skill_paths(skill_paths)
-        assert result == [
-            "/skills/alpha-skill",
-            "/skills/middle-skill",
-            "/skills/zebra-skill",
-        ]
-
-    def test_uses_leaf_directory_name_only(self):
-        skill_paths = [
-            "/deep/nested/path/skills/my-skill",
-        ]
-        result = to_virtual_skill_paths(skill_paths)
-        assert result == ["/skills/my-skill"]
-
-    def test_virtual_variable_is_set_type(self):
-        """Validate that the 'virtual' variable in to_virtual_skill_paths is a set[str].
-
-        This test ensures line 75 remains unchanged:
-            virtual: set[str] = set()
-
-        We validate this by inspecting the function's source code to ensure
-        the implementation uses a set, which is critical for deduplication behavior.
-        """
-        source = inspect.getsource(to_virtual_skill_paths)
-
-        # Verify the exact line exists in the source
-        assert "virtual: set[str] = set()" in source, (
-            "Expected 'virtual: set[str] = set()' initialization on line 75. "
-            "This ensures proper deduplication of skill paths."
+    def test_many_skills_are_one_source(self):
+        """Listing the directory once finds all of them."""
+        result = to_virtual_skill_sources(
+            [
+                "/home/user/skills/zebra-skill",
+                "/home/user/skills/alpha-skill",
+                "/home/user/skills/alpha-skill",
+            ]
         )
+        assert result == ["/skills/"]
 
-        # Additionally verify the behavior that depends on set usage
-        skill_paths = [
-            "/path/to/skills/duplicate",
-            "/path/to/skills/duplicate",
+    def test_the_absolute_prefix_does_not_leak(self):
+        """`/skills/` is a virtual path the backend routes, not a real one."""
+        assert to_virtual_skill_sources(["/deep/nested/path/skills/my-skill"]) == [
+            "/skills/"
         ]
-        result = to_virtual_skill_paths(skill_paths)
-        assert len(result) == 1, "Set behavior ensures duplicates are removed"
-        assert result == ["/skills/duplicate"]
+
+    def test_an_unexpected_layout_still_scans_the_root(self, caplog):
+        """Nested skill directories are unsupported — say so, do not crash."""
+        with caplog.at_level("WARNING"):
+            result = to_virtual_skill_sources(["/somewhere/else/category/my-skill"])
+        assert result == ["/skills/"]
+        assert "nested skill directories" in caplog.text.lower()
 
 
 class TestResolveSkillPaths:

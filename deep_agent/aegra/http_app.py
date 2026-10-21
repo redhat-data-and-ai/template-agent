@@ -7,6 +7,7 @@ application and merges core LangGraph Platform routes onto.
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -16,18 +17,30 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from deep_agent.aegra.admin_routes import router as admin_router
+from deep_agent.aegra.admission import AdmissionControlMiddleware
+from deep_agent.aegra.analytics_routes import router as analytics_router
+from deep_agent.aegra.attachment_routes import router as attachment_router
 from deep_agent.aegra.auth_helpers import authenticated_user_id
+from deep_agent.aegra.channel_routes import router as channel_router
+from deep_agent.aegra.document_routes import router as document_router
 from deep_agent.aegra.eval_routes import eval_mgmt_router
 from deep_agent.aegra.eval_routes import router as eval_router
 from deep_agent.aegra.feedback import feedback_router
+from deep_agent.aegra.fork_routes import router as fork_router
+from deep_agent.aegra.mcp_crypto import McpKeyMissingError
 from deep_agent.aegra.mcp_routes import router as mcp_router
 from deep_agent.aegra.personalization_routes import router as personalization_router
 from deep_agent.aegra.projects_routes import projects_router
+from deep_agent.aegra.search_routes import router as search_router
 from deep_agent.aegra.security_middleware import (
     RequestSizeLimitMiddleware,
     SecurityHeadersMiddleware,
     StreamingBodyLimitMiddleware,
 )
+from deep_agent.aegra.share_routes import router as share_router
+from deep_agent.aegra.skill_routes import router as skill_router
+from deep_agent.aegra.tag_routes import router as tag_router
 from deep_agent.aegra.thread_cleanup import thread_cleanup_router
 from deep_agent.aegra.upload_routes import upload_router
 from deep_agent.src.agent.config import agent_config
@@ -125,6 +138,34 @@ def _verify_custom_thread_delete(application: FastAPI) -> None:
 app = FastAPI(title="template-agent-custom", lifespan=_lifespan)
 
 
+@app.exception_handler(McpKeyMissingError)
+async def mcp_key_missing_handler(
+    request: Request, exc: McpKeyMissingError
+) -> JSONResponse:
+    """Answer a missing token-encryption key with what is missing.
+
+    Without this it reached the catch-all below and came back as
+    "An unexpected error occurred. Please try again later." — advice
+    to wait for a condition that will never change on its own, for a
+    fault the server had already identified precisely. Connecting an
+    MCP server then looks like a broken integration rather than an
+    unfinished deployment.
+
+    503 rather than 500: the dependency the request needs is not
+    configured, and retrying is pointless until it is. The message
+    names an environment variable and how to generate a value — no
+    secret, and nothing an operator does not already have.
+    """
+    logger.error("MCP token encryption key missing: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "detail": str(exc),
+            "error_type": "configuration_error",
+        },
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Global exception handler with PII scrubbing for production."""
@@ -148,11 +189,43 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     )
 
 
+_TRACEPARENT = re.compile(r"^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$")
+
+
+def _inbound_trace_id(request: Request) -> str | None:
+    """The W3C trace id for this request, if there is one.
+
+    Minting a fresh uuid4 when no ``X-Trace-ID`` arrives gives the log
+    line an identifier that exists in no other system — the trace of
+    the same request, wherever it was exported, is filed under the W3C
+    id instead, and nothing joins the two. Preferring the W3C id costs
+    nothing when both are present (``X-Trace-ID`` still wins, so the
+    gateway's contract is unchanged) and makes logs and traces land on
+    one key when only ``traceparent`` is.
+
+    The active span is the better source because the instrumentation
+    has already validated and, where sampling demanded it, replaced
+    the inbound context. The header is parsed only as a fallback for
+    deployments running with OTEL disabled, which is the default.
+    """
+    from deep_agent.utils.pylogger import current_otel_ids
+
+    otel_trace_id, _ = current_otel_ids()
+    if otel_trace_id:
+        return otel_trace_id
+
+    match = _TRACEPARENT.match(request.headers.get("traceparent", "").strip().lower())
+    if match and match.group(1) != "0" * 32:
+        return match.group(1)
+    return None
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Extract correlation headers and bind them to the structured log context.
 
     Headers consumed:
     - ``X-Trace-ID``: UI-originated trace identifier
+    - ``traceparent``: W3C trace context, used when X-Trace-ID is absent
     - ``X-Request-ID``: gateway-originated request correlation ID
     - ``X-Org-ID``: organisation owning the agent
     - ``X-Agent-ID``: ``org/name`` agent identifier
@@ -161,7 +234,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:
         """Extract correlation headers and bind to structured log context."""
-        trace_id = request.headers.get("x-trace-id") or uuid4().hex
+        trace_id = (
+            request.headers.get("x-trace-id")
+            or _inbound_trace_id(request)
+            or uuid4().hex
+        )
         request_id = request.headers.get("x-request-id") or uuid4().hex
         org_id = request.headers.get("x-org-id")
         agent_id = request.headers.get("x-agent-id")
@@ -195,6 +272,8 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Multipart framing (boundary, part headers) sits on top of the archive
 # bytes; 64KB is ample for a handful of parts and keeps the body cap from
 # rejecting an archive that is itself within UPLOAD_MAX_ARCHIVE_BYTES.
+from deep_agent.src.attachments.config import AttachmentsConfig  # noqa: E402
+
 _MULTIPART_OVERHEAD_ALLOWANCE = 64 * 1024
 
 # /upload legitimately carries more than the global cap, but it is never
@@ -208,10 +287,22 @@ _BODY_LIMITS = {"/upload": _UPLOAD_BODY_LIMIT}
 
 # Counts bytes as they stream in, so an oversized body is cut off before
 # the multipart parser ever sees it. Added first so it wraps outermost.
+# One number for both, sized from the attachment caps rather than a
+# multiple of the JSON limit: `/threads/{id}/state` is how an
+# attachment is written, and it is also a route any authenticated
+# client can post plain JSON to.
+_ATTACHMENT_BODY_LIMIT = (
+    int(
+        AttachmentsConfig().max_file_bytes * 4 / 3  # base64
+    )
+    + _MULTIPART_OVERHEAD_ALLOWANCE
+)
+
 app.add_middleware(
     StreamingBodyLimitMiddleware,
     max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
     path_limits=_BODY_LIMITS,
+    upload_max_bytes=_ATTACHMENT_BODY_LIMIT,
 )
 # Cheap pre-check on the declared Content-Length, so a well-behaved client
 # is rejected before sending anything at all.
@@ -219,14 +310,29 @@ app.add_middleware(
     RequestSizeLimitMiddleware,
     max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
     path_limits=_BODY_LIMITS,
+    upload_max_bytes=_ATTACHMENT_BODY_LIMIT,
+)
+app.add_middleware(
+    AdmissionControlMiddleware, max_concurrent=settings.MAX_CONCURRENT_RUNS
 )
 app.include_router(thread_cleanup_router)
+app.include_router(skill_router)
+app.include_router(document_router)
 app.include_router(personalization_router)
 app.include_router(projects_router)
 app.include_router(mcp_router)
 app.include_router(feedback_router)
+app.include_router(admin_router)
 app.include_router(eval_router)
 app.include_router(eval_mgmt_router)
+# Externally reachable — see deep_agent/aegra/channel_routes.py.
+app.include_router(channel_router)
+app.include_router(search_router)
+app.include_router(fork_router)
+app.include_router(attachment_router)
+app.include_router(analytics_router)
+app.include_router(tag_router)
+app.include_router(share_router)
 app.include_router(upload_router)
 
 
@@ -261,7 +367,10 @@ async def agent_structure(request: Request) -> dict:
         mcp_servers[key].pop("oauth", None)
         mcp_servers[key].pop("auth_env_var", None)
 
-    available_skills: list[str] = copy.deepcopy(agent_config.get_available_skills())
+    # Names only here; the accessor returns name -> directory and
+    # the structure endpoint reports what exists, not where it is.
+    # Insertion order, not sorted — the order is the config's.
+    available_skills: list[str] = list(agent_config.get_available_skills())
 
     return {
         "name": name,

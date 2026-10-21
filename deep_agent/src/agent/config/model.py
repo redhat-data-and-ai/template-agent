@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, model_validator
 
-from deep_agent.src.agent.llm import CLAUDE_MODELS, GEMINI_MODELS
+from deep_agent.src.agent.llm import is_openai_model, is_vertex_model
 
 
 class Provider(str, Enum):
@@ -51,11 +51,26 @@ def infer_provider(model_name: str) -> Provider:
     - GPT models (gpt-*, case-insensitive) → OPENAI
     - All other models → MAAS (VLLM for custom models)
     """
-    if model_name in GEMINI_MODELS or model_name in CLAUDE_MODELS:
+    if is_vertex_model(model_name):
         return Provider.VERTEX
-    if model_name.lower().startswith("gpt-"):
+    if is_openai_model(model_name):
         return Provider.OPENAI
     return Provider.MAAS
+
+
+def _model_override() -> str | None:
+    """Read MODEL_OVERRIDE at call time, not import time.
+
+    Tests and the config validator mutate the environment after import.
+    """
+    from deep_agent.src.settings import settings
+
+    value = getattr(settings, "MODEL_OVERRIDE", None)
+    # Must be a real string: suites that mock `settings` wholesale hand back
+    # a MagicMock here, which is truthy and would override every model.
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
 
 
 def parse_model_config(raw: str | dict[str, Any]) -> ModelSpec:
@@ -64,6 +79,11 @@ def parse_model_config(raw: str | dict[str, Any]) -> ModelSpec:
     Accepts:
       - Legacy string: ``gemini-2.5-pro`` (provider inferred)
       - Object: ``{provider: vertex, name: gemini-2.5-pro, fallback: {...}}``
+
+    ``MODEL_OVERRIDE`` short-circuits all of it. This is the one seam every
+    model name passes through — orchestrator, subagents and fallbacks alike —
+    so overriding here is what makes "point the whole agent at one stub"
+    a single setting rather than an edit per config file.
 
     Args:
         raw: Model value from parsed frontmatter.
@@ -75,6 +95,12 @@ def parse_model_config(raw: str | dict[str, Any]) -> ModelSpec:
         ValueError: If the config is invalid or missing required fields.
         TypeError: If raw is neither str nor dict.
     """
+    override = _model_override()
+    if override is not None:
+        # Still validated: an override that names a Gemini model and so needs
+        # credentials should fail the same way a config file would.
+        return ModelSpec(provider=infer_provider(override), name=override)
+
     if isinstance(raw, str):
         name = raw.strip()
         if not name:

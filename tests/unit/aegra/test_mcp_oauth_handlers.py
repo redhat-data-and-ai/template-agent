@@ -616,6 +616,9 @@ class TestHandleMcpConnections:
                     "description": "Alpha tools",
                     "display_name": "Alpha",
                     "connected": True,
+                    # Which account the integration acts as; None when
+                    # the provider returned no id_token at connect.
+                    "account": None,
                 },
                 {
                     "mcp_name": "bravo-dcr",
@@ -623,6 +626,7 @@ class TestHandleMcpConnections:
                     "description": "Bravo DCR",
                     "display_name": "",
                     "connected": False,
+                    "account": None,
                 },
             ]
         }
@@ -1061,3 +1065,58 @@ class TestCallbackHtml:
         result = _callback_html(error='<script>alert("xss")</script>')
         assert "<script>" not in result
         assert "&lt;script&gt;" in result
+
+
+class TestAccountFromTokenResponse:
+    """Which account an integration is acting as.
+
+    The agent's login says who signed in here. It says nothing about
+    the account behind Jira or the warehouse server, and "who is my manager"
+    resolved against the wrong one returns a confident answer about
+    somebody else.
+    """
+
+    @staticmethod
+    def _id_token(claims: dict) -> str:
+        import base64
+        import json as _json
+
+        body = (
+            base64.urlsafe_b64encode(_json.dumps(claims).encode()).decode().rstrip("=")
+        )
+        return f"header.{body}.signature"
+
+    def test_prefers_email(self):
+        from deep_agent.aegra.mcp_oauth_handlers import account_from_token_response
+
+        token = self._id_token({"sub": "abc", "email": "alice@corp.example"})
+        assert account_from_token_response({"id_token": token}) == "alice@corp.example"
+
+    def test_falls_back_through_the_claim_order(self):
+        from deep_agent.aegra.mcp_oauth_handlers import account_from_token_response
+
+        token = self._id_token({"sub": "abc", "preferred_username": "asmith"})
+        assert account_from_token_response({"id_token": token}) == "asmith"
+
+        assert (
+            account_from_token_response({"id_token": self._id_token({"sub": "abc"})})
+            == "abc"
+        )
+
+    def test_no_id_token_is_not_an_error(self):
+        from deep_agent.aegra.mcp_oauth_handlers import account_from_token_response
+
+        assert account_from_token_response({"access_token": "x"}) is None
+
+    def test_a_malformed_id_token_is_not_an_error(self):
+        from deep_agent.aegra.mcp_oauth_handlers import account_from_token_response
+
+        assert account_from_token_response({"id_token": "not-a-jwt"}) is None
+        assert account_from_token_response({"id_token": "a.!!!.c"}) is None
+
+    def test_the_account_string_is_bounded(self):
+        from deep_agent.aegra.mcp_oauth_handlers import account_from_token_response
+
+        token = self._id_token({"email": "x" * 500})
+        account = account_from_token_response({"id_token": token})
+        assert account is not None and len(account) <= 160

@@ -12,6 +12,9 @@ from __future__ import annotations
 import contextvars
 import importlib
 import re
+import time
+from collections.abc import Iterable
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
@@ -57,12 +60,38 @@ def set_user_info(
 
 
 def get_current_datetime() -> str:
-    """Get the current date and time (UTC) in a formatted string.
+    """Get the current date and time (UTC), rounded for cache stability.
+
+    Rounded down to ``DATETIME_PROMPT_GRANULARITY_SECONDS``, which is
+    the difference between a prompt prefix that can be cached and one
+    that cannot.
+
+    This block is appended to the system message on *every model
+    call*. The system message is the start of the prefix a provider
+    caches, and the tool definitions sit behind it — so a value that
+    changed every second meant the prefix was unique on every call,
+    every turn, for every user. Nothing downstream of it could ever
+    be cached: not the system prompt, not the hundred-odd tool
+    schemas that make up most of the input tokens. Seconds of
+    precision no one asked for were paying for the whole prefix,
+    every time.
+
+    Rounding to the hour makes the prefix identical across all users
+    and all turns within that hour. An agent that needs the time to
+    the second can call a tool for it; the cost of putting it here is
+    the entire cache.
 
     Returns:
-        The current date and time (UTC) formatted as "Month Day, Year, Hour:Minute:Second" (e.g., "September 25, 2026, 12:00:00").
+        A formatted UTC timestamp, e.g. "September 25, 2026, 12:00:00 UTC".
     """
-    return datetime.now(timezone.utc).strftime("%B %d, %Y, %H:%M:%S UTC")
+    from deep_agent.src.settings import settings
+
+    now = datetime.now(timezone.utc)
+    step = max(1, settings.DATETIME_PROMPT_GRANULARITY_SECONDS)
+    if step > 1:
+        epoch = int(now.timestamp()) // step * step
+        now = datetime.fromtimestamp(epoch, tz=timezone.utc)
+    return now.strftime("%B %d, %Y, %H:%M:%S UTC")
 
 
 def build_audit_middleware(
@@ -190,6 +219,106 @@ def build_current_datetime_middleware() -> Any | None:
             return await handler(self._inject_current_datetime(request))
 
     return CurrentDatetimeMiddleware()
+
+
+def build_prompt_size_middleware() -> Any | None:
+    """Log what each model call actually sends, split by component.
+
+    Added because the input cost could not be explained. A turn that
+    answered "ok" in one word recorded 119,769 input tokens, and the
+    obvious culprit — tool schemas — turned out not to be it: the
+    same figure appeared with 11 tools bound and with 322. The agent
+    config on disk is about 9k tokens in total, so the remainder was
+    coming from somewhere nobody was looking.
+
+    Guessing at that from the outside wasted a round of analysis.
+    This measures it instead, at the only place that sees the
+    assembled request.
+    """
+    if not settings.LOG_PROMPT_SIZE:
+        return None
+
+    try:
+        from langchain.agents.middleware.types import (
+            AgentMiddleware,
+            ModelRequest,
+            ModelResponse,
+        )
+    except ImportError:
+        return None
+
+    class PromptSizeMiddleware(AgentMiddleware):
+        @staticmethod
+        def _report(request: ModelRequest[Any]) -> None:
+            try:
+                system = request.system_message or ""
+                system_chars = len(str(system))
+
+                messages = getattr(request, "messages", None) or []
+                message_chars = sum(
+                    len(str(getattr(m, "content", m))) for m in messages
+                )
+
+                tools = getattr(request, "tools", None) or []
+                tool_chars = 0
+                for tool in tools:
+                    tool_chars += len(str(getattr(tool, "description", "") or ""))
+                    schema = getattr(tool, "args_schema", None)
+                    if schema is not None:
+                        tool_chars += len(str(schema))
+
+                total = system_chars + message_chars + tool_chars
+                logger.info(
+                    "prompt_size",
+                    # Roughly four characters to a token. Good enough
+                    # to apportion blame between three components;
+                    # not a billing figure.
+                    approx_tokens=total // 4,
+                    system_chars=system_chars,
+                    message_chars=message_chars,
+                    tool_chars=tool_chars,
+                    tools=len(tools),
+                    messages=len(messages),
+                )
+            except Exception:
+                # Diagnostics must never be the reason a turn fails.
+                logger.debug("Could not measure prompt size", exc_info=True)
+
+        def wrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            self._report(request)
+            started = time.monotonic()
+            try:
+                return handler(request)
+            finally:
+                _log_model_call(time.monotonic() - started)
+
+        async def awrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            self._report(request)
+            started = time.monotonic()
+            try:
+                return await handler(request)
+            finally:
+                _log_model_call(time.monotonic() - started)
+
+    return PromptSizeMiddleware()
+
+
+def _log_model_call(seconds: float) -> None:
+    """Time spent inside the model call itself.
+
+    This middleware sits outermost, so the span covers the provider
+    round trip plus every middleware nested below it. Compared
+    against the run's own duration it answers the question that
+    kept coming back: when a turn takes three seconds, is that the
+    model or is it us? Guessing at that cost two rounds of analysis
+    — first blaming prefill, then blaming a poll loop that turned
+    out to be only part of it.
+    """
+    logger.info("model_call", seconds=round(seconds, 3))
 
 
 def _build_gemini_safety_log_middleware() -> Any | None:
@@ -407,10 +536,24 @@ def _build_image_sanitize_middleware() -> Any | None:
     return ImageSanitizeMiddleware()
 
 
+def _build_model_router_middleware() -> Any | None:
+    """Per-request model tier selection, when router.yaml enables it."""
+    try:
+        from deep_agent.src.routing import build_model_router_middleware
+
+        return build_model_router_middleware()
+    except Exception as exc:
+        # Routing is an optimisation; it must never stop the agent
+        # starting.
+        logger.error("Model router unavailable: %s", exc, exc_info=True)
+        return None
+
+
 def build_middleware_list(
     resolved: ResolvedMiddlewareConfig,
     *,
     model: Any | None = None,
+    model_name: str = "",
     backend: Any | None = None,
     mcp_tool_names: frozenset[str] | None = None,
 ) -> list[Any]:
@@ -441,6 +584,12 @@ def build_middleware_list(
     if opa_mw is not None:
         middlewares.append(opa_mw)
 
+    # Registered after policy, before anything that inspects the response:
+    # routing only swaps which model serves the call.
+    router_mw = _build_model_router_middleware()
+    if router_mw is not None:
+        middlewares.append(router_mw)
+
     safety_mw = _build_gemini_safety_log_middleware()
     if safety_mw is not None:
         middlewares.append(safety_mw)
@@ -452,6 +601,16 @@ def build_middleware_list(
     datetime_mw = build_current_datetime_middleware()
     if datetime_mw is not None:
         middlewares.append(datetime_mw)
+
+    prompt_size_mw = build_prompt_size_middleware()
+    if prompt_size_mw is not None:
+        middlewares.append(prompt_size_mw)
+
+    from deep_agent.aegra.mcp_tool_auth import build_mcp_auth_notice_middleware
+
+    auth_notice_mw = build_mcp_auth_notice_middleware()
+    if auth_notice_mw is not None:
+        middlewares.append(auth_notice_mw)
 
     image_sanitize_mw = _build_image_sanitize_middleware()
     if image_sanitize_mw is not None:
@@ -474,7 +633,7 @@ def build_middleware_list(
             _build_summarization_tool_middleware(model=model, backend=backend),
         )
 
-    _append_guardrails(middlewares, resolved)
+    _append_guardrails(middlewares, resolved, model_name)
 
     for dotted_path in resolved.extra_middleware:
         _append_if_built(middlewares, _import_middleware(dotted_path))
@@ -490,7 +649,11 @@ def _append_if_built(target: list[Any], mw: Any | None) -> None:
         target.append(mw)
 
 
-def _append_guardrails(target: list[Any], resolved: ResolvedMiddlewareConfig) -> None:
+def _append_guardrails(
+    target: list[Any],
+    resolved: ResolvedMiddlewareConfig,
+    model_name: str = "",
+) -> None:
     """Build and append all production guardrail middleware."""
     if resolved.model_call_limit.enabled:
         _append_if_built(
@@ -501,6 +664,13 @@ def _append_guardrails(target: list[Any], resolved: ResolvedMiddlewareConfig) ->
         _append_if_built(
             target, _build_tool_call_limit(resolved.tool_call_limit.run_limit)
         )
+        for limiter in _build_per_tool_limits(resolved.tool_call_limit.per_tool):
+            _append_if_built(target, limiter)
+
+    # The orchestrator's copy; subagents build their own list and
+    # apply the same exclusions there, against their own model.
+    for exclusion in _build_tool_exclusions(_profile_excluded_tools(model_name)):
+        _append_if_built(target, exclusion)
 
     if resolved.model_retry.enabled:
         _append_if_built(target, _build_model_retry(resolved.model_retry))
@@ -587,6 +757,128 @@ def _build_tool_call_limit(run_limit: int) -> Any | None:
         return None
 
 
+def _build_per_tool_limits(per_tool: dict[str, int]) -> list[Any]:
+    """Cap individual tools that loop.
+
+    The run limit is 200 and never fires. What costs a user real
+    time is one tool called over and over inside a single answer:
+    one query tool ran six times in one turn at ~15s each,
+    the agent trying variation after variation of a query that was
+    not going to answer the question.
+
+    `exit_behavior='continue'` blocks the exhausted tool and leaves
+    the agent running, so it has to answer with what it already has
+    instead of being killed mid-turn. Telling the model in prose to
+    "run it once" did not survive contact with a query returning no
+    rows.
+    """
+    built: list[Any] = []
+    # A dict, or nothing. Config can arrive as a stand-in object and
+    # a limiter built from one caps a tool nobody named.
+    if not isinstance(per_tool, dict) or not per_tool:
+        return built
+    try:
+        from langchain.agents.middleware import ToolCallLimitMiddleware
+    except ImportError:
+        logger.debug("ToolCallLimitMiddleware not available")
+        return built
+
+    for tool_name, limit in per_tool.items():
+        if not isinstance(limit, int) or limit <= 0:
+            continue
+        built.append(
+            ToolCallLimitMiddleware(
+                tool_name=tool_name,
+                run_limit=limit,
+                exit_behavior="continue",
+            )
+        )
+        logger.info("Tool call limit: %s capped at %d per run", tool_name, limit)
+    return built
+
+
+# Tools the approval policy refuses for this build.
+#
+# A ContextVar rather than an argument because the exclusion list is
+# assembled in two places — the orchestrator's middleware and each
+# subagent's — and both have to agree. Removing a denied tool from
+# only the orchestrator's `tools` left it reachable from every
+# subagent, which are built from the unfiltered MCP list.
+_policy_denied_tools: ContextVar[tuple[str, ...]] = ContextVar(
+    "policy_denied_tools", default=()
+)
+
+
+def set_policy_denied_tools(names: Iterable[str]) -> None:
+    """Record the tools the approval policy denies for this graph build."""
+    _policy_denied_tools.set(tuple(sorted(set(names))))
+
+
+def _profile_excluded_tools(model_name: str = "") -> list[str]:
+    """Every tool to remove, whatever the reason.
+
+    Three sources, deliberately separate. A harness profile's
+    ``excluded_tools`` means the model cannot use it, and the Models
+    page shows those as limitations of that model.
+    ``middleware.tool_exclusion`` means we removed it on purpose —
+    its job moved into a skill — which is not a fact about the model
+    and must not be shown as one. Enforcement does not care which;
+    only the reader does.
+
+    ``model_name`` picks the harness profile, which is keyed by
+    model. Merging every profile applied one model's limitation to
+    agents running on models that do not share it, which is the
+    opposite of what a per-model profile is for.
+    """
+    names: set[str] = set()
+    try:
+        from deep_agent.src.agent.config import agent_config
+
+        profiles = agent_config.get_providers_config().harness_profiles or {}
+        profile = profiles.get(model_name) if model_name else None
+        if profile is not None:
+            for tool in getattr(profile, "excluded_tools", None) or []:
+                names.add(str(tool))
+    except Exception:
+        logger.debug("Could not read harness excluded tools", exc_info=True)
+
+    try:
+        from deep_agent.src.agent.config import agent_config
+
+        exclusion = agent_config.resolve_agent_middleware("", None).tool_exclusion
+        if getattr(exclusion, "enabled", True):
+            for tool in getattr(exclusion, "tools", None) or []:
+                names.add(str(tool))
+    except Exception:
+        logger.debug("Could not read configured tool exclusions", exc_info=True)
+
+    # And whatever the approval policy denies. `deny` means the tool
+    # may not run at all, so leaving it out of `interrupt_on` is not
+    # enough: without this it simply ran, unprompted, and under
+    # `effects: dry_run` that is every acting tool.
+    names.update(_policy_denied_tools.get())
+
+    return sorted(names)
+
+
+def _build_tool_exclusions(excluded: list[str]) -> list[Any]:
+    """Remove named tools from an agent's reach."""
+    if not excluded:
+        return []
+    try:
+        from deepagents.middleware.tool_exclusion import ToolExclusionMiddleware
+    except ImportError:
+        try:
+            from deepagents.graph import (
+                _ToolExclusionMiddleware as ToolExclusionMiddleware,
+            )
+        except Exception:
+            logger.warning("Tool exclusion middleware unavailable")
+            return []
+    logger.info("Excluding tools: %s", ", ".join(excluded))
+    return [ToolExclusionMiddleware(excluded=excluded)]
+
+
 def _build_model_retry(config: Any) -> Any | None:
     """Build ModelRetryMiddleware for transient failure recovery."""
     try:
@@ -605,8 +897,14 @@ def _build_model_retry(config: Any) -> Any | None:
                 return "I wasn't able to complete this task due to a content safety policy issue."
             if isinstance(exc, (InputContentSafetyError, ContentSafetyError)):
                 return "I can't help with that request due to content safety policy."
-            # All other errors: preserve the standard format.
+            # All other errors: preserve the standard format for the
+            # user, but log the traceback. Returning only the string
+            # meant failures like "ValueError: string argument should
+            # contain only ASCII characters" reached the transcript
+            # with nothing in the logs to locate them by — no frame, no
+            # field, no value.
             exc_type = type(exc).__name__
+            logger.exception("Model call failed: %s: %s", exc_type, exc)
             return f"Model call failed with {exc_type}: {exc}"
 
         return ModelRetryMiddleware(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -13,13 +12,19 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from deep_agent.aegra.mcp_crypto import decrypt_secret, encrypt_secret
-from deep_agent.aegra.redis import cache_delete, cache_get, cache_set_persistent
+from deep_agent.aegra.redis import (
+    cache_delete,
+    cache_get,
+    cache_set_persistent,
+    run_redis,
+)
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
 _TABLES_ENSURED = False
-_TOKEN_KEY_PREFIX = "mcp_oauth_token:"
+_TOKEN_KEY_PREFIX = settings.MCP_TOKEN_KEY_PREFIX
 
 CREATE_OAUTH_CLIENTS_TABLE = """
 CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
@@ -110,6 +115,11 @@ class McpOAuthToken:
     expires_at: datetime | None = None
     scopes: list[str] | None = None
     updated_at: datetime | None = None
+    # Who the user is *on the provider*, not who they are here.
+    # A person can be alice@corp in the agent and a.smith@partner in
+    # the integration; answers drawn from that integration are about
+    # the latter.
+    account: str | None = None
 
 
 class McpTokenStore:
@@ -146,6 +156,7 @@ class McpTokenStore:
         refresh_token: str | None,
         expires_at: datetime | None,
         scopes: list[str] | None,
+        account: str | None = None,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
         return {
@@ -154,6 +165,7 @@ class McpTokenStore:
             "expires_at": self._serialize_datetime(expires_at),
             "scopes": scopes,
             "updated_at": self._serialize_datetime(now),
+            "account": account,
         }
 
     def _payload_to_token(
@@ -169,6 +181,7 @@ class McpTokenStore:
                 expires_at=self._deserialize_datetime(payload.get("expires_at")),
                 scopes=list(payload["scopes"]) if payload.get("scopes") else None,
                 updated_at=self._deserialize_datetime(payload.get("updated_at")),
+                account=payload.get("account") or None,
             )
         except (RuntimeError, ValueError):
             logger.warning(
@@ -272,7 +285,7 @@ class McpTokenStore:
     ) -> McpOAuthToken | None:
         """Return stored OAuth tokens for *(agent_name, user_id, mcp_name)* from Redis."""
         key = self._token_key(agent_name, user_id, mcp_name)
-        raw = await asyncio.to_thread(cache_get, key)
+        raw = await run_redis(cache_get, key)
         if raw is None:
             logger.info(
                 "No MCP OAuth token in Redis for agent='%s' mcp='%s'",
@@ -309,13 +322,14 @@ class McpTokenStore:
         refresh_token: str | None = None,
         expires_at: datetime | None = None,
         scopes: list[str] | None = None,
+        account: str | None = None,
     ) -> McpOAuthToken:
         """Insert or update OAuth tokens for *(agent_name, user_id, mcp_name)* in Redis."""
         payload = self._token_to_payload(
-            access_token, refresh_token, expires_at, scopes
+            access_token, refresh_token, expires_at, scopes, account
         )
         key = self._token_key(agent_name, user_id, mcp_name)
-        stored = await asyncio.to_thread(cache_set_persistent, key, json.dumps(payload))
+        stored = await run_redis(cache_set_persistent, key, json.dumps(payload))
         if not stored:
             logger.error(
                 "Redis SET failed for MCP OAuth token: agent='%s' mcp='%s'",
@@ -343,6 +357,7 @@ class McpTokenStore:
             expires_at=expires_at,
             scopes=scopes,
             updated_at=self._deserialize_datetime(payload["updated_at"]),
+            account=account,
         )
 
     async def delete_client(self, agent_name: str, mcp_name: str) -> bool:
@@ -359,7 +374,7 @@ class McpTokenStore:
     async def delete_token(self, agent_name: str, user_id: str, mcp_name: str) -> bool:
         """Delete stored OAuth tokens for *(agent_name, user_id, mcp_name)* from Redis."""
         key = self._token_key(agent_name, user_id, mcp_name)
-        result = await asyncio.to_thread(cache_delete, key)
+        result = await run_redis(cache_delete, key)
         logger.info(
             "MCP OAuth token deleted: agent='%s' mcp='%s' success=%s",
             agent_name,

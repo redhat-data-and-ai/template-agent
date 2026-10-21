@@ -20,9 +20,11 @@ from typing import Any
 from mcp import types
 from mcp.client.session import ClientSession
 
+from deep_agent.src.settings import settings
+
 # SEP-1865 / ext-apps extension identifier and MVP MIME type.
-MCP_APPS_EXTENSION_ID = "io.modelcontextprotocol/ui"
-MCP_APPS_MIME_TYPE = "text/html;profile=mcp-app"
+MCP_APPS_EXTENSION_ID = settings.MCP_APPS_EXTENSION_ID
+MCP_APPS_MIME_TYPE = settings.MCP_APPS_MIME_TYPE
 
 _DEFAULT_VISIBILITY: tuple[str, ...] = ("model", "app")
 

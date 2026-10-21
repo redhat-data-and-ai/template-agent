@@ -8,6 +8,10 @@ data:
   AGENT_PORT: "5002"
   PYTHON_LOG_LEVEL: "INFO"
 
+  # Migrations run in the db-migrate init container, once per rollout.
+  # Leaving this true makes every replica race Alembic's advisory lock.
+  RUN_MIGRATIONS_ON_STARTUP: "false"
+
   # Environment & Security
   ENVIRONMENT: "production"
   ENABLE_AUTH: "true"
@@ -21,6 +25,19 @@ data:
 
   # Observability
   LANGFUSE_TRACING_ENVIRONMENT: "production"
+
+  # Metrics and spans over OTLP. Fill the endpoint in for your cluster
+  # and set ENABLE_OTEL to "true" — see deployment/base/configmap.yaml
+  # for what stays unexported while this is false, and docs/slo.md for
+  # what depends on it.
+  ENABLE_OTEL: "false"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  # 60s in production: the export interval sets the resolution of every
+  # metric-based alert, and the 5s default is 12x the cardinality for
+  # resolution no alerting rule here acts on.
+  OTEL_METRIC_EXPORT_INTERVAL: "60000"
+  SERVICE_NAME: "agent"
 
   # UI origin — used as postMessage target for MCP OAuth callbacks
   UI_ORIGIN: ""

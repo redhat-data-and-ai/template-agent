@@ -18,11 +18,12 @@ from deep_agent.src.guardrails import (
     InputContentSafetyError,
     ToolContentSafetyError,
 )
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-_INPUT_SAFETY_REFUSAL = "I can't help with that request due to content safety policy."
+_INPUT_SAFETY_REFUSAL = settings.INPUT_SAFETY_REFUSAL
 
 
 def safety_refusal(exc: BaseException) -> str | None:

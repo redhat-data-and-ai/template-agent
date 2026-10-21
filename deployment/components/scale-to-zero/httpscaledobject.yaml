@@ -1,0 +1,78 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Scale the agent to zero when idle
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Requires TWO cluster-level prerequisites, both platform requests:
+#   1. Custom Metrics Autoscaler operator (KEDA)
+#   2. KEDA http-add-on  — without it this cannot work (see below)
+#
+# ── Why the HTTP add-on is mandatory, not optional ──────────────────────
+#
+# A Redis queue-depth trigger looks like the obvious choice and
+# deadlocks: at zero replicas there is no pod to receive the HTTP
+# request, so nothing ever enqueues a run, so the queue stays empty and
+# the workload never wakes. The queue only fills once a pod is already
+# running.
+#
+# The http-add-on solves this by putting an interceptor in front: it
+# accepts the connection, holds it, signals KEDA to scale up, then
+# forwards once a pod is Ready. The user waits instead of seeing a 503.
+#
+# ── Consequences you are accepting ──────────────────────────────────────
+#
+# * COLD START on the first request. Budget ~60s: the startupProbe
+#   allows 12 x 5s, and the db-migrate init container runs on every
+#   scale-from-zero.
+# * CRON IS DEFERRED, not lost. Aegra's scheduler claims crons whose
+#   next_run_date is in the *past* (CronService.get_due_crons), so it
+#   catches up on wake rather than firing on a wall-clock tick. The
+#   bundled `agent-wakeup` CronJob pokes /health every 5 minutes to
+#   provide that wake-up; a cron therefore fires up to one poke interval
+#   late, plus the cold start. Tighten the schedule if that is too slow,
+#   or drop the CronJob if nothing is scheduled.
+# * IN-FLIGHT RUNS die on scale-in. The lease reaper re-executes them,
+#   but the user's SSE stream is severed. cooldownPeriod must exceed the
+#   longest expected run.
+#
+# ── Conflicts to remove ─────────────────────────────────────────────────
+#
+# Delete the hand-written `agent` HorizontalPodAutoscaler. KEDA creates
+# and owns its own HPA; two controllers on one Deployment oscillate.
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: agent
+  annotations:
+    # Routing table entry only. Without this the add-on creates its
+    # own ScaledObject alongside the metric-based one in
+    # in-flight-scaledobject.yaml, and two scalers argue over the
+    # same Deployment.
+    httpscaledobject.keda.sh/skip-scaledobject-creation: "true"
+  labels:
+    app: agent
+    component: agent
+spec:
+  hosts:
+    - AGENT_HOST_PLACEHOLDER        # must match the Route's spec.host
+
+  scaleTargetRef:
+    name: agent
+    kind: Deployment
+    apiVersion: apps/v1
+    service: agent
+    port: 5002
+
+  replicas:
+    min: 0
+    max: 10
+
+  # No traffic for this long before scaling back to zero. Must exceed
+  # the longest expected run — scale-in mid-run severs the SSE stream.
+  scaledownPeriod: 600
+
+  scalingMetric:
+    # Concurrent in-flight requests. For a streaming agent this reflects
+    # real occupancy, where request *rate* would not: one SSE connection
+    # can hold a pod busy for minutes at a rate of one request.
+    concurrency:
+      targetValue: 20

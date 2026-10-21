@@ -1,0 +1,33 @@
+# Pin the datastore UIDs for a plain Kubernetes cluster.
+#
+# The postgres and redis components set `runAsNonRoot: true` with no
+# `runAsUser`, which is correct on OpenShift: the restricted-v2 SCC injects a
+# UID from the namespace range, and hardcoding one outside that range would be
+# rejected. Kind has no SCC, so the image's own USER applies — both images
+# default to root — and the kubelet refuses to start them.
+#
+# 999 is `redis` in redis:7-alpine and `postgres` in pgvector/pgvector:pg16.
+# fsGroup is what lets either write to its PVC.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 1000
+        fsGroup: 1000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgvector
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999

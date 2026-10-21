@@ -11,8 +11,11 @@ A template for building [Deep Agents](https://github.com/langchain-ai/deepagents
 ## Features
 
 **Agent capabilities:**
-- Orchestrator with analyst and publisher subagents
-- Skills: `client-intake`, `bmi-report`, `email-formatter`
+- Orchestrator with summariser, investigator and curator subagents
+- Skills: `incident-triage`, `merge-request-review`, `data-discovery`,
+  `document-pipeline`, `workshop-capture`, `workspace-briefing` — each
+  encodes a cross-system workflow and its guardrails, and every one is
+  read-only by default
 - MCP auth modes: SSO pass-through, OAuth, and DCR
 - MCP Apps host APIs (`resources/read` + app `tools/call`) for interactive `ui://` UIs in Template UI
 
@@ -237,7 +240,7 @@ When `ENABLE_AUTH=false` (dev mode), LDAP is skipped entirely and all endpoints 
 
 ## MCP Server Configuration
 
-MCP servers are defined in [`config/agent/mcp.json`](./config/agent/mcp.json) and attached to agents via the `mcps` frontmatter field in [`config/agent/PROMPT.md`](./config/agent/PROMPT.md) (orchestrator) or [`config/agent/subagents/*.md`](./config/agent/subagents/).
+MCP servers are defined in [`config/agent/integrations/mcp.json`](./config/agent/integrations/mcp.json) and attached to agents via the `mcps` frontmatter field in [`config/agent/PROMPT.md`](./config/agent/PROMPT.md) (orchestrator) or [`config/agent/subagents/*.md`](./config/agent/subagents/).
 
 ### Auth modes
 
@@ -301,7 +304,7 @@ resources:
   - template://echo/{text}
 ```
 
-See `config/agent/mcp.json` for working SSO and DCR examples.
+See `config/agent/integrations/mcp.json` for working SSO and DCR examples.
 
 ### Tool name prefix
 
@@ -368,6 +371,25 @@ pre-commit run --all-files
 
 If your environment uses a corporate or internal certificate authority, the container can trust it at startup without rebuilding the image.
 
+**Red Hat internal** — the Kind overlay already sets this, and it is what
+lets the agent reach internal MCP servers and any other internal HTTPS
+dependency:
+
+```yaml
+- name: CUSTOM_CA_URL
+  value: "https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem"
+```
+
+Without it, internal hosts fail the TLS handshake with
+`CERTIFICATE_VERIFY_FAILED: self-signed certificate` — which looks like
+the server being down rather than a trust problem. On OpenShift set
+`CUSTOM_CA_URL` in the `agent-config` ConfigMap.
+
+The bundle is fetched over HTTPS **verified against the system trust
+store**; a CA pulled over an unverified connection would be
+trust-on-first-use, which is not trust. A failed fetch logs a warning
+and start-up continues.
+
 **Compose** — set `CUSTOM_CA_FILE` in `.env` to the host path of your PEM bundle:
 
 ```bash
@@ -411,6 +433,14 @@ OpenShift manifests are in `deployment/overlays/openshift/`. Local full-stack Ku
 
 ## Links
 
+- [Skills](docs/skills.md) — building skills from prose corpora and datasets
+- [Observability](docs/observability.md) — where each signal goes, and the keys that join them
+- [SLOs](docs/slo.md) — the four SLIs; targets are yours to set
+- [Runbook](docs/runbook.md) — symptoms, releases, rollbacks
+- [Postmortem template](docs/postmortem.md) — copy per incident
+- [Document extraction](docs/extraction.md) — optional Docling/Tika engines
+- [Usage analytics](docs/analytics.md) — `/analytics/*`, derived, no message content
+- [Tags and sharing](docs/tags-and-sharing.md) — organising and publishing conversations
 - [Issues](https://github.com/redhat-data-and-ai/template-agent/issues)
 - [template-mcp-server](https://github.com/redhat-data-and-ai/template-mcp-server)
 - [template-ui](https://github.com/redhat-data-and-ai/template-ui)

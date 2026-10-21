@@ -6,7 +6,10 @@ metadata:
     app: agent
     component: agent
 spec:
-  replicas: 1
+  # Two, like preprod/prod. One replica makes the agent unreachable for the
+  # whole of a rollout or a pod delete, which the nightly crash-recovery tier
+  # cannot distinguish from a recovery failure.
+  replicas: 2
   selector:
     matchLabels:
       app: agent
@@ -17,6 +20,28 @@ spec:
         app: agent
         component: agent
     spec:
+      initContainers:
+        # The agent exits if PROMPT.md is missing, and an empty volume
+        # is exactly what a fresh cluster has. Without this the pod
+        # CrashLoopBackOffs until someone seeds it, which reads as a
+        # broken image rather than as "no config yet".
+        - name: wait-for-config
+          image: agent:local
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until [ -f /app/config/agent/PROMPT.md ]; do
+                echo "waiting for config on the volume — seed it with: make kind-seed-config"
+                sleep 3
+              done
+              echo "config present"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/config/agent
+              subPath: agent
+              readOnly: true
       containers:
         - name: agent
           image: agent:local
@@ -25,13 +50,89 @@ spec:
             - containerPort: 5002
               name: http
               protocol: TCP
+          # Kind reads the whole ConfigMap; the per-key `env:` entries below
+          # still win where they overlap.
+          envFrom:
+            - configMapRef:
+                name: agent-config
+            - configMapRef:
+                name: agent-tuning
           env:
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/var/run/secrets/google/application_default_credentials.json"
             - name: AGENT_HOST
               value: "0.0.0.0"
             - name: AGENT_PORT
               value: "5002"
             - name: PYTHON_LOG_LEVEL
               value: "INFO"
+            # Per-user MCP OAuth tokens are encrypted with this before
+            # they reach Postgres. Optional so a cluster without it
+            # still starts; Connect then fails loudly rather than
+            # writing tokens in the clear.
+            # Corporate root CAs, fetched at container start and
+            # appended to the system bundle by entrypoint.sh. Four of
+            # the MCP servers in mcp.json are internal Red Hat hosts
+            # whose certificates chain to this CA; without it the pod
+            # fails their TLS handshake with
+            # CERTIFICATE_VERIFY_FAILED and Connect cannot discover
+            # anything.
+            #
+            # A URL rather than a mounted Secret so a fork needs no
+            # out-of-band file. The cost is one fetch per pod start,
+            # and the fetch itself is verified against the *system*
+            # trust store — a CA bundle pulled over an unverified
+            # connection would be trust-on-first-use, which is not
+            # trust. Startup continues if it fails; the log says so.
+            # Lets an operator re-register a stale DCR client from
+            # the UI. Off by default because each call mints a new
+            # client at the provider and orphans the previous one;
+            # on in Kind because a dev cluster is exactly where a
+            # client goes stale after a config change.
+            - name: ENABLE_DCR_REREGISTER_API
+              value: "true"
+            # Where the *browser* reaches this agent, which is not
+            # where the agent reaches itself. Unset, this falls back
+            # to http://localhost:${AGENT_PORT}, and that address is
+            # what gets registered as the OAuth redirect URI — so the
+            # provider sends the user back to a port nothing is
+            # listening on and the connection dies at the last step
+            # with no error on this side. Kind publishes the ingress
+            # on host port 8081, and it must be bare `localhost`
+            # rather than `agent.localhost`: that is the only origin
+            # the MCP providers whitelist as a redirect target.
+            - name: AGENT_PUBLIC_BASE_URL
+              value: "http://localhost:8081"
+            # postMessage target for the callback page, which has to
+            # be the UI's origin rather than the agent's or the
+            # browser drops the message and the popup never closes.
+            - name: UI_ORIGIN
+              value: "http://localhost:8081"
+            # Where the documents volume is mounted, and the cap the
+            # upload API enforces. Configured rather than read from
+            # statvfs: that reports the *node* disk in Kind, so a
+            # 500Mi claim would accept gigabytes and fail later at an
+            # unrelated write.
+            - name: DOCUMENTS_PATH
+              value: "/app/data/documents"
+            - name: DOCUMENTS_MAX_BYTES
+              value: "524288000"
+            - name: CUSTOM_CA_URL
+              value: "https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem"
+            # A Fernet key — 32 url-safe base64 bytes, not hex:
+            #   python -c "from cryptography.fernet import Fernet; \
+            #              print(Fernet.generate_key().decode())"
+            # In its own Secret so `kubectl apply -k` cannot reset it:
+            #   kubectl -n template-agent create secret generic agent-mcp-key \
+            #     --from-file=MCP_TOKEN_ENCRYPTION_KEY=./key.txt
+            # Optional, so a cluster without it still starts; Connect
+            # then fails at the point tokens would be written.
+            - name: MCP_TOKEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-mcp-key
+                  key: MCP_TOKEN_ENCRYPTION_KEY
+                  optional: true
             - name: POSTGRES_HOST
               valueFrom:
                 configMapKeyRef:
@@ -100,8 +201,10 @@ spec:
             periodSeconds: 5
             failureThreshold: 30
           livenessProbe:
+            # /livez: liveness must not depend on Postgres. See the
+            # `probes:` block in config/agent/deployment/values.yaml.
             httpGet:
-              path: /health
+              path: /livez
               port: 5002
             initialDelaySeconds: 30
             periodSeconds: 10
@@ -117,9 +220,56 @@ spec:
             failureThreshold: 3
           resources:
             requests:
-              memory: "256Mi"
+              memory: "512Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              memory: "2Gi"
               cpu: "500m"
+          volumeMounts:
+            # Config, read from the shared volume's `agent/` subtree
+            # rather than from the image.
+            # CONFIG_PATH in the base ConfigMap already points here;
+            # what changes is who supplies it.
+            - name: config-volume
+              mountPath: /app/config/agent
+              subPath: agent
+              readOnly: true
+            # Google credentials for a local cluster, when there are
+            # any. `optional: true` on the Secret below, so a cluster
+            # without them deploys unchanged and fails at model
+            # construction exactly as it does today.
+            #
+            # The file, not GOOGLE_APPLICATION_CREDENTIALS_CONTENT:
+            # that env var is parsed as a *service account* key and
+            # fails hard without a project_id, which user ADC does
+            # not carry. The ADC path resolves the project from the
+            # file's quota_project_id instead.
+            - name: google-adc
+              mountPath: /var/run/secrets/google
+              readOnly: true
+            # Documents, exposed to the agent at /documents/. readOnly
+            # at the mount as well as in the backend and the
+            # permission rules: three independent places, because a
+            # data volume the agent can write to is one prompt
+            # injection away from being modified.
+            # Writable at the mount: uploads arrive over HTTP from a
+            # person. The *model* still cannot write — the filesystem
+            # route is `filesystem_readonly` and the permission rules
+            # deny write on `documents/**`. Human writes, model reads.
+            - name: agent-documents
+              mountPath: /app/data/documents
+      volumes:
+        - name: config-volume
+          persistentVolumeClaim:
+            claimName: config-pvc
+        - name: google-adc
+          secret:
+            # Created out of band, never committed:
+            #   kubectl -n template-agent create secret generic google-adc \
+            #     --from-file=application_default_credentials.json=$HOME/.config/gcloud/application_default_credentials.json
+            secretName: google-adc
+            optional: true
+        - name: agent-documents
+          persistentVolumeClaim:
+            claimName: agent-documents-pvc
       restartPolicy: Always

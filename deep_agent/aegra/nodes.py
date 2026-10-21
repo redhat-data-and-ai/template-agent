@@ -23,12 +23,13 @@ from tenacity import (
     wait_exponential,
 )
 
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-MAX_NODE_RETRIES: int = 2
-RETRY_DELAY_SECONDS: float = 1.0
+MAX_NODE_RETRIES = settings.MAX_NODE_RETRIES
+RETRY_DELAY_SECONDS = settings.NODE_RETRY_DELAY_SECONDS
 
 
 def _log_node_retry(retry_state: RetryCallState) -> None:

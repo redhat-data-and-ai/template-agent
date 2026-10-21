@@ -26,16 +26,22 @@ from deep_agent.aegra.mcp_oauth_scopes import (
     validate_granted_scopes,
 )
 from deep_agent.aegra.mcp_token_store import McpTokenStore
-from deep_agent.aegra.redis import cache_get, cache_sadd, cache_set, cache_srem
+from deep_agent.aegra.redis import (
+    cache_get,
+    cache_sadd,
+    cache_set,
+    cache_srem,
+    run_redis,
+)
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
-_MCP_AUTH_SET_TTL: int = 604800  # 7 days
+_MCP_AUTH_SET_TTL = settings.MCP_AUTH_SET_TTL_SECONDS
 
 logger = get_python_logger()
 
-_OAUTH_STATE_TTL_SECONDS = 300
+_OAUTH_STATE_TTL_SECONDS = settings.MCP_OAUTH_STATE_TTL_SECONDS
 
 
 def _callback_redirect_uri(request: Request) -> str:
@@ -68,6 +74,195 @@ def _get_mcp_server_config(mcp_name: str) -> dict[str, Any]:
     return cfg
 
 
+# Discovered metadata is stable for the life of the process and a
+# connect click should not pay for three round trips every time.
+_METADATA_CACHE: dict[str, dict[str, Any]] = {}
+
+
+async def discover_oauth_metadata(
+    mcp_name: str, server_cfg: dict[str, Any]
+) -> dict[str, Any]:
+    """Find a server's OAuth endpoints from its published metadata.
+
+    This is what lets a server be configured with nothing but a URL.
+    Without it, `auth_mode: dcr` needs `authorization_endpoint`,
+    `token_endpoint` and `registration_endpoint` written out by hand —
+    three values that are not in anybody's documentation and change
+    without notice. It is also why the same server works in VS Code
+    from a one-line entry: the client discovers them.
+
+    Two documents, in the order the MCP authorization spec says to try
+    them. `oauth-protected-resource` lives on the MCP server and names
+    its authorization server; `oauth-authorization-server` lives on
+    that authorization server and lists the endpoints. A server that
+    publishes neither simply returns nothing and the configured values
+    stand.
+    """
+    url = str(server_cfg.get("url") or "")
+    if not url:
+        return {}
+    if mcp_name in _METADATA_CACHE:
+        return _METADATA_CACHE[mcp_name]
+
+    from urllib.parse import urljoin, urlparse
+
+    parsed = urlparse(url)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+
+    async def _fetch(target: str) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(
+                verify=mcp_httpx_verify(server_cfg), timeout=10
+            ) as client:
+                # Metadata endpoints redirect freely between a resource
+                # and its issuer, so redirects are followed here.
+                resp = await client.get(target, follow_redirects=True)
+            if resp.is_success:
+                body = resp.json()
+                return body if isinstance(body, dict) else {}
+        except Exception as exc:
+            logger.debug("No OAuth metadata at %s: %s", target, exc)
+        return {}
+
+    # The resource document takes the same path insertion as the
+    # authorization-server one. ServiceNow serves the MCP endpoint at
+    # /sncapps/mcp-server/mcp/red_hat_hub_mcp and publishes its
+    # metadata at
+    #   /.well-known/oauth-protected-resource/sncapps/mcp-server/...
+    # Probing only the host root returns 404, so the server looked
+    # like it published nothing.
+    server_path = parsed.path.strip("/")
+    resource_urls = []
+    if server_path:
+        resource_urls.append(
+            f"{root}/.well-known/oauth-protected-resource/{server_path}"
+        )
+    resource_urls.append(urljoin(root, "/.well-known/oauth-protected-resource"))
+
+    issuer = root
+    resource: dict[str, Any] = {}
+    for resource_url in resource_urls:
+        resource = await _fetch(resource_url)
+        if resource.get("authorization_servers"):
+            break
+
+    servers = resource.get("authorization_servers") or []
+    if isinstance(servers, list) and servers:
+        candidate = str(servers[0])
+        if urlparse(candidate).scheme in ("http", "https"):
+            issuer = candidate.rstrip("/")
+
+    # RFC 8414 §3.1: when the issuer has path components they are
+    # *inserted after* `.well-known`, not appended to it. OpenID
+    # Connect discovery appends instead. Both are in the wild, so both
+    # are tried.
+    #
+    # Getting this wrong is not a subtle failure: Workato advertises
+    # `https://id.workato.com/auth/servers/8SHs…`, and probing that
+    # host's bare root — which is what dropping the path amounts to —
+    # returns 401. The server looked like it published nothing when it
+    # publishes all three endpoints, registration included.
+    issuer_parsed = urlparse(issuer)
+    issuer_origin = f"{issuer_parsed.scheme}://{issuer_parsed.netloc}"
+    issuer_path = issuer_parsed.path.strip("/")
+
+    candidates = []
+    if issuer_path:
+        candidates.append(
+            f"{issuer_origin}/.well-known/oauth-authorization-server/{issuer_path}"
+        )
+        candidates.append(
+            f"{issuer_origin}/.well-known/openid-configuration/{issuer_path}"
+        )
+    candidates.append(f"{issuer}/.well-known/oauth-authorization-server")
+    candidates.append(f"{issuer}/.well-known/openid-configuration")
+
+    meta: dict[str, Any] = {}
+    for candidate_url in candidates:
+        meta = await _fetch(candidate_url)
+        if meta.get("token_endpoint"):
+            break
+
+    discovered = {
+        key: meta[key]
+        for key in (
+            "authorization_endpoint",
+            "token_endpoint",
+            "registration_endpoint",
+        )
+        if meta.get(key)
+    }
+
+    # The scopes the *resource* says it understands, falling back to
+    # the authorization server's list.
+    #
+    # Sending no scope at all is not a neutral default: an
+    # authorization server may reject the request outright, or issue
+    # a token with no scope that is then refused by the resource —
+    # which surfaces as "auth failed" with nothing to go on. Harbor
+    # advertises `snowflake-mcp-server` and we were asking for
+    # nothing.
+    scopes = resource.get("scopes_supported") or meta.get("scopes_supported") or []
+    if isinstance(scopes, list) and scopes:
+        discovered["scopes"] = [str(x) for x in scopes if x]
+
+    # RFC 8707 resource indicator. The MCP authorization spec requires
+    # it on both the authorize and token requests so the server knows
+    # which resource the token is for; several implementations reject
+    # the exchange outright without it, with a bare 400.
+    canonical = resource.get("resource")
+    if isinstance(canonical, str) and canonical:
+        discovered["resource"] = canonical
+
+    # Client ID Metadata Documents: the authorization server will
+    # accept a URL as the client_id and fetch it. A provider that
+    # supports this needs no registration endpoint, which is exactly
+    # the group that was otherwise unreachable.
+    if meta.get("client_id_metadata_document_supported"):
+        discovered["client_id_metadata_document_supported"] = True
+    if discovered:
+        logger.info(
+            "Discovered OAuth endpoints for '%s': %s",
+            mcp_name,
+            ", ".join(sorted(discovered)),
+        )
+    if discovered:
+        # Only a real answer is cached. An empty dict after a
+        # transient network failure stuck for the life of the pod, and
+        # every later Connect for that server answered 400 "does not
+        # publish OAuth metadata" until it restarted.
+        _METADATA_CACHE[mcp_name] = discovered
+    return discovered
+
+
+async def resolve_oauth_config(
+    mcp_name: str, server_cfg: dict[str, Any]
+) -> dict[str, Any]:
+    """The server's `oauth` block, filled in from discovery where empty.
+
+    Configured values win. An operator who wrote an endpoint down meant
+    it, and silently replacing it with a discovered one would make the
+    config file a lie.
+    """
+    configured = dict(server_cfg.get("oauth") or {})
+    # `scopes` is in the list so a server whose endpoints are written
+    # out by hand, but whose scopes are not, still gets them from
+    # discovery. The metadata fetch is cached per process, so the
+    # extra completeness costs one round trip per server per pod.
+    needed = (
+        "authorization_endpoint",
+        "token_endpoint",
+        "registration_endpoint",
+        "scopes",
+    )
+    if all(configured.get(key) for key in needed):
+        return configured
+
+    for key, value in (await discover_oauth_metadata(mcp_name, server_cfg)).items():
+        configured.setdefault(key, value)
+    return configured
+
+
 async def _register_dcr_client(
     agent_name: str,
     mcp_name: str,
@@ -77,9 +272,30 @@ async def _register_dcr_client(
     """Perform Dynamic Client Registration and persist the client credentials."""
     registration_endpoint = oauth_cfg.get("registration_endpoint")
     if not registration_endpoint:
+        # Dynamic registration is optional in the spec and plenty of
+        # providers skip it. The endpoints were still discovered, so
+        # the error carries them: the operator needs to register a
+        # client by hand, and making them go and find the two URLs
+        # again — which this process has already fetched — is a
+        # pointless errand.
+        discovered = " ".join(
+            f'"{key}": "{oauth_cfg[key]}",'
+            for key in ("authorization_endpoint", "token_endpoint")
+            if oauth_cfg.get(key)
+        )
+        hint = (
+            f" It does publish endpoints — register a client with the provider "
+            f"(redirect URI {settings.oauth_callback_url}), then set "
+            f'auth_mode "oauth" and oauth: {{ {discovered} '
+            f'"client_id": "…", "client_secret": "…" }}.'
+            if discovered
+            else ""
+        )
         raise HTTPException(
             status_code=400,
-            detail=f"MCP '{mcp_name}' is missing oauth.registration_endpoint",
+            detail=(
+                f"'{mcp_name}' does not support dynamic client registration." + hint
+            ),
         )
 
     scopes = requested_scopes(oauth_cfg)
@@ -126,6 +342,26 @@ async def _register_dcr_client(
     return client_id, client_secret
 
 
+def _redirect_uri_is_stale(client: Any) -> bool:
+    """True when *client* was registered against a different callback URL.
+
+    The registration response records the `redirect_uris` the provider
+    accepted. If the current callback is not among them the client is
+    unusable, and the failure surfaces at the provider rather than
+    here — which is the worst place for it, because the user sees
+    someone else's error page and no way back.
+
+    A registration that did not report its redirect URIs is treated as
+    current: re-registering on every connect because the provider was
+    terse would be worse than trusting it.
+    """
+    data = getattr(client, "registration_data", None) or {}
+    registered = data.get("redirect_uris")
+    if not isinstance(registered, list) or not registered:
+        return False
+    return settings.oauth_callback_url not in registered
+
+
 async def handle_mcp_connect(
     user_id: str, mcp_name: str, *, caller_origin: str | None = None
 ) -> dict[str, str]:
@@ -133,21 +369,59 @@ async def handle_mcp_connect(
     server_cfg = _get_mcp_server_config(mcp_name)
     _require_interactive_oauth(mcp_name, server_cfg)
     auth_mode = server_cfg.get("auth_mode", "sso")
-    oauth_cfg = server_cfg.get("oauth") or {}
+    # Filled in from the server's published metadata when the config
+    # does not spell the endpoints out. Done here rather than at load
+    # time: discovery is three HTTP calls against a third party, and
+    # paying for them on every process start — for servers nobody is
+    # connecting to — would make the agent's boot depend on their
+    # uptime.
+    oauth_cfg = await resolve_oauth_config(mcp_name, server_cfg)
 
     for field in ("authorization_endpoint", "token_endpoint"):
         if not oauth_cfg.get(field):
             raise HTTPException(
                 status_code=400,
-                detail=f"MCP '{mcp_name}' missing oauth.{field}",
+                detail=(
+                    f"'{mcp_name}' does not publish OAuth metadata and no "
+                    f"oauth.{field} is configured. Add it to mcp.json."
+                ),
             )
 
     redirect_uri = settings.oauth_callback_url
     current_agent_name = settings.agent_deployment_id
 
     store = McpTokenStore(settings.database_uri)
-    if auth_mode == "dcr":
+    # A CIMD client needs no registration and no stored record: the
+    # client_id is this agent's own metadata URL. Only used when the
+    # server cannot register us anyway — a provider that offers both
+    # keeps the registered client, which is the more specific grant.
+    use_cimd = bool(
+        oauth_cfg.get("client_id_metadata_document_supported")
+        and not oauth_cfg.get("registration_endpoint")
+    )
+    client_id: str | None
+    if use_cimd and auth_mode == "dcr":
+        client = None
+        client_id = f"{settings.agent_public_base_url}/.well-known/oauth-client"
+        logger.info(
+            "Using client ID metadata document for '%s': %s", mcp_name, client_id
+        )
+    elif auth_mode == "dcr":
         client = await store.get_client(current_agent_name, mcp_name)
+        if client is not None and _redirect_uri_is_stale(client):
+            # The registration pins the redirect URI at the provider.
+            # Move the agent behind a different host — a port-forward
+            # to an ingress, local dev to a cluster — and every stored
+            # client still names the old callback, so the provider
+            # rejects the authorize request. Reusing it sends the user
+            # out to the provider to be told no, with nothing on this
+            # side explaining why. Re-register instead.
+            logger.info(
+                "Re-registering '%s': stored client's redirect URI is stale (now %s)",
+                mcp_name,
+                settings.oauth_callback_url,
+            )
+            client = None
         if client is None:
             await _register_dcr_client(
                 current_agent_name, mcp_name, oauth_cfg, server_cfg
@@ -164,6 +438,29 @@ async def handle_mcp_connect(
 
     scopes = requested_scopes(oauth_cfg)
 
+    # What the client was actually *granted* beats what the server
+    # advertises. RFC 7591 §3.2.1: the registration response's `scope`
+    # is the set the authorization server issued to this client, and
+    # it is allowed to differ from `scopes_supported`.
+    #
+    # Harbor is the case in point — it advertises
+    # `snowflake-mcp-server` in its protected-resource document and
+    # then registers the client with `read write`. Asking for the
+    # advertised scope gets a bare 400 at the token exchange, with no
+    # error body to explain it.
+    if auth_mode == "dcr":
+        registered = (getattr(client, "registration_data", None) or {}).get("scope")
+        if isinstance(registered, str) and registered.strip():
+            granted = registered.split()
+            if granted != scopes:
+                logger.info(
+                    "Using registered scopes for '%s': %s (advertised: %s)",
+                    mcp_name,
+                    " ".join(granted),
+                    " ".join(scopes) or "none",
+                )
+            scopes = granted
+
     code_verifier, code_challenge = _pkce_pair()
     state = secrets.token_urlsafe(32)
 
@@ -175,8 +472,8 @@ async def handle_mcp_connect(
     if caller_origin and caller_origin == settings.ui_origin:
         state_data_dict["caller_origin"] = caller_origin
     state_payload = json.dumps(state_data_dict)
-    if not cache_set(
-        f"mcp_oauth_state:{state}", state_payload, _OAUTH_STATE_TTL_SECONDS
+    if not await run_redis(
+        cache_set, f"mcp_oauth_state:{state}", state_payload, _OAUTH_STATE_TTL_SECONDS
     ):
         raise HTTPException(status_code=503, detail="OAuth state storage unavailable")
 
@@ -190,6 +487,12 @@ async def handle_mcp_connect(
     }
     if scopes:
         params["scope"] = " ".join(scopes)
+    # RFC 8707: name the resource the token is for. Required by the
+    # MCP authorization spec and sent on both legs — an authorization
+    # server that binds the code to a resource will reject an exchange
+    # that does not repeat it.
+    if oauth_cfg.get("resource"):
+        params["resource"] = str(oauth_cfg["resource"])
     authorize_url = f"{oauth_cfg['authorization_endpoint']}?{urlencode(params)}"
     return {"authorize_url": authorize_url}
 
@@ -204,7 +507,7 @@ async def handle_mcp_oauth_callback(
             status_code=400,
         )
 
-    raw = cache_get(f"mcp_oauth_state:{state}")
+    raw = await run_redis(cache_get, f"mcp_oauth_state:{state}")
     if not raw:
         return HTMLResponse(
             _callback_html(error="OAuth state expired or invalid"),
@@ -224,7 +527,12 @@ async def handle_mcp_oauth_callback(
         )
 
     server_cfg = _get_mcp_server_config(mcp_name)
-    oauth_cfg = server_cfg.get("oauth") or {}
+    # Discovery again, not the raw block. The authorize step found
+    # these endpoints; the exchange needs the same ones, and reading
+    # the unresolved config here meant Connect opened the provider's
+    # consent screen and then failed on the way back with "MCP OAuth
+    # is not configured" — the worst place in the flow to fail.
+    oauth_cfg = await resolve_oauth_config(mcp_name, server_cfg)
     token_endpoint = oauth_cfg.get("token_endpoint")
     redirect_uri = settings.oauth_callback_url
     if not token_endpoint:
@@ -252,6 +560,14 @@ async def handle_mcp_oauth_callback(
     if auth_mode == "oauth":
         client_id = oauth_cfg.get("client_id")
         client_secret = resolve_oauth_client_secret(oauth_cfg, mcp_name)
+    elif oauth_cfg.get("client_id_metadata_document_supported") and not oauth_cfg.get(
+        "registration_endpoint"
+    ):
+        # Mirrors the choice made at authorize time; the token
+        # exchange has to present the same client_id the code was
+        # issued to.
+        client_id = f"{settings.agent_public_base_url}/.well-known/oauth-client"
+        client_secret = None
     else:
         client = await store.get_client(current_agent_name, mcp_name)
         client_id = client.client_id if client else None
@@ -272,6 +588,9 @@ async def handle_mcp_oauth_callback(
     }
     if client_secret:
         data["client_secret"] = client_secret
+    # The same resource indicator the authorize request carried.
+    if oauth_cfg.get("resource"):
+        data["resource"] = str(oauth_cfg["resource"])
 
     try:
         async with httpx.AsyncClient(verify=mcp_httpx_verify(server_cfg)) as client:
@@ -289,6 +608,47 @@ async def handle_mcp_oauth_callback(
                     _callback_html(error=f"Authentication failed: {error_msg}"),
                     status_code=502,
                 )
+    except httpx.HTTPStatusError as exc:
+        # The provider says *why* in the response body — an OAuth
+        # error response is `{"error": "...", "error_description":
+        # "..."}` per RFC 6749 §5.2. Discarding it and printing
+        # "Authentication failed. Please try again." leaves nothing to
+        # act on, and trying again fails identically.
+        detail = ""
+        try:
+            problem = exc.response.json()
+            # Some servers nest the OAuth error object — FastAPI wraps
+            # it in `detail`. Unwrap one level before giving up, and
+            # if the keys still are not there fall back to the raw
+            # text. The first version of this reported "(no body)" for
+            # a response that said `invalid_grant` plainly, one level
+            # down, which is worse than not parsing at all.
+            if isinstance(problem, dict) and isinstance(problem.get("detail"), dict):
+                problem = problem["detail"]
+            if isinstance(problem, dict):
+                detail = " ".join(
+                    str(problem[key])
+                    for key in ("error", "error_description")
+                    if problem.get(key)
+                )
+        except Exception:
+            detail = ""
+        if not detail:
+            detail = (exc.response.text or "")[:200]
+        logger.error(
+            "OAuth token exchange failed for '%s': %s %s",
+            mcp_name,
+            exc.response.status_code,
+            detail or "(no body)",
+        )
+        return HTMLResponse(
+            _callback_html(
+                error=f"Authentication failed: {detail}"
+                if detail
+                else "Authentication failed. Please try again."
+            ),
+            status_code=502,
+        )
     except Exception:
         logger.error("OAuth token exchange failed for '%s'", mcp_name, exc_info=True)
         return HTMLResponse(
@@ -320,9 +680,16 @@ async def handle_mcp_oauth_callback(
         mcp_name,
     )
     if scopes is None and requested_scope_list:
+        # Only when the provider granted *nothing*. A partial grant is
+        # kept — see validate_granted_scopes for why requiring the full
+        # advertised set rejected working tokens and looped the user
+        # through consent.
         return HTMLResponse(
             _callback_html(
-                error="Authentication failed. Required permissions were not granted."
+                error=(
+                    "Authentication failed. The provider granted no "
+                    "permissions for this account."
+                )
             ),
             status_code=502,
         )
@@ -335,8 +702,9 @@ async def handle_mcp_oauth_callback(
         refresh_token=body.get("refresh_token"),
         expires_at=expires_at,
         scopes=scopes,
+        account=account_from_token_response(body),
     )
-    await asyncio.to_thread(
+    await run_redis(
         cache_sadd,
         f"mcp_auth_set:{current_agent_name}:{user_id}",
         mcp_name,
@@ -344,8 +712,10 @@ async def handle_mcp_oauth_callback(
     )
     get_mcp_credential_resolver().invalidate_cache(user_id, mcp_name)
     from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
+    from deep_agent.aegra.mcp_tool_auth import forget_auth_prompt
 
     invalidate_mcp_tool_cache(user_id=user_id)
+    await forget_auth_prompt(user_id, mcp_name)
     try:
         from deep_agent.aegra.graph import invalidate_graph_cache
 
@@ -412,7 +782,7 @@ async def handle_mcp_reregister(mcp_name: str) -> dict[str, Any]:
             detail=f"MCP '{mcp_name}' is not using DCR authentication",
         )
 
-    oauth_cfg = server_cfg.get("oauth") or {}
+    oauth_cfg = await resolve_oauth_config(mcp_name, server_cfg)
     current_agent_name = settings.agent_deployment_id
 
     client_id, _ = await _register_dcr_client(
@@ -428,22 +798,258 @@ async def handle_mcp_reregister(mcp_name: str) -> dict[str, Any]:
     return {"mcp_name": mcp_name, "re_registered": True, "client_id": client_id}
 
 
+_MAX_ACCOUNT_CHARS = settings.MCP_ACCOUNT_MAX_CHARS
+
+
+def account_from_token_response(body: dict[str, Any]) -> str | None:
+    """Who the user is on the provider, from the token response.
+
+    The agent's own login says nothing about the account behind an
+    integration: the same person can be one identity here and another
+    behind an integration. Answering "who is my manager" from the
+    agent's login silently answers for the wrong person when they
+    differ.
+
+    Read from the `id_token` claims, display-only. The claims are not
+    verified because they are not trusted for authorization — the
+    access token is what grants anything, and this string is only
+    ever shown to the model and the reader.
+    """
+    id_token = body.get("id_token")
+    if not isinstance(id_token, str):
+        return None
+    parts = id_token.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(padded))
+    except Exception:
+        return None
+    if not isinstance(claims, dict):
+        return None
+    for field in ("email", "preferred_username", "upn", "name", "sub"):
+        value = claims.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:_MAX_ACCOUNT_CHARS]
+    return None
+
+
+async def _account_from_userinfo(
+    mcp_name: str, server_cfg: dict[str, Any], access_token: str
+) -> str | None:
+    """Ask the provider who this token belongs to.
+
+    The connect-time `id_token` is the cheap path, but a provider
+    doing plain OAuth2 never sends one, and every connection made
+    before the account was recorded has nothing stored either.
+    Without this the agent falls back to the identity the user
+    signed in to *this* service with — `kind-dev-user` — and asks a
+    directory about the wrong person.
+
+    One request per connection, then it is stored.
+    """
+    try:
+        url = await _oauth_endpoint(mcp_name, server_cfg, "userinfo_endpoint")
+        if not url:
+            return None
+        async with httpx.AsyncClient(verify=mcp_httpx_verify(server_cfg)) as client:
+            resp = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=settings.MCP_USERINFO_TIMEOUT_SECONDS,
+            )
+            resp.raise_for_status()
+            claims = resp.json()
+    except Exception:
+        logger.warning("[%s] userinfo lookup failed", mcp_name, exc_info=True)
+        return None
+
+    return _account_from_claims(claims)
+
+
+async def _oauth_endpoint(
+    mcp_name: str, server_cfg: dict[str, Any], name: str
+) -> str | None:
+    """Find an OAuth endpoint, falling back to the metadata document.
+
+    `resolve_oauth_config` returns early once the four endpoints the
+    login flow needs are configured, so anything else the provider
+    publishes — `userinfo_endpoint`, `introspection_endpoint` — is
+    never fetched. Both lookups here depend on exactly those.
+    """
+    configured = await resolve_oauth_config(mcp_name, server_cfg)
+    url = configured.get(name)
+    if isinstance(url, str) and url:
+        return url
+    try:
+        metadata = await discover_oauth_metadata(mcp_name, server_cfg)
+    except Exception:
+        return None
+    url = metadata.get(name) if isinstance(metadata, dict) else None
+    return url if isinstance(url, str) and url else None
+
+
+def _account_from_claims(claims: Any) -> str | None:
+    """First usable identity field in a claims-shaped mapping."""
+    if not isinstance(claims, dict):
+        return None
+    for field in ("email", "preferred_username", "username", "upn", "name", "sub"):
+        value = claims.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:_MAX_ACCOUNT_CHARS]
+    return None
+
+
+async def _account_from_introspection(
+    mcp_name: str, server_cfg: dict[str, Any], access_token: str
+) -> str | None:
+    """Ask the provider about the token when there is no userinfo.
+
+    Some servers publish no `userinfo_endpoint` — plain OAuth2,
+    not OIDC — so the OIDC path finds nothing and the agent falls
+    back to the identity the user signed in to *this* service with.
+    RFC 7662 introspection answers the same question for a provider
+    that offers it, returning `username` and `sub` for a live token.
+    """
+    try:
+        url = await _oauth_endpoint(mcp_name, server_cfg, "introspection_endpoint")
+        if not url:
+            return None
+
+        from deep_agent.aegra.mcp_auth import get_mcp_credential_resolver
+
+        (
+            client_id,
+            client_secret,
+        ) = await get_mcp_credential_resolver()._resolve_client_credentials(
+            mcp_name, server_cfg
+        )
+        if not client_id:
+            return None
+        data = {"token": access_token, "client_id": client_id}
+        if client_secret:
+            data["client_secret"] = client_secret
+
+        async with httpx.AsyncClient(verify=mcp_httpx_verify(server_cfg)) as client:
+            resp = await client.post(
+                url, data=data, timeout=settings.MCP_USERINFO_TIMEOUT_SECONDS
+            )
+            resp.raise_for_status()
+            body = resp.json()
+    except Exception:
+        logger.warning("[%s] introspection lookup failed", mcp_name, exc_info=True)
+        return None
+
+    # An inactive token tells us nothing about who holds it.
+    if isinstance(body, dict) and body.get("active") is False:
+        return None
+    return _account_from_claims(body)
+
+
 async def handle_mcp_status(user_id: str, mcp_name: str) -> dict[str, Any]:
     """Return whether the user has a usable token for *mcp_name*."""
     server_cfg = _get_mcp_server_config(mcp_name)
     resolver = get_mcp_credential_resolver()
-    connected = await resolver.has_valid_token(user_id, mcp_name, server_cfg)
+    connected = await resolver.has_valid_token(
+        user_id, mcp_name, server_cfg, verify=True
+    )
     return {"mcp_name": mcp_name, "connected": connected}
 
 
 async def handle_mcp_connections(user_id: str) -> dict[str, Any]:
     """Return OAuth/DCR MCP connection status for the current user."""
     resolver = get_mcp_credential_resolver()
+    servers = list(_interactive_oauth_servers())
+
+    # Concurrently, because verifying is no longer free.
+    #
+    # Checking a credential now refreshes it when the access token
+    # has expired — that is the whole point, it is what makes the
+    # answer true — but it is a round trip to the provider, and one
+    # measured at 9s. Sequentially that is the page's load time
+    # multiplied by however many integrations have gone stale.
+    connected_flags = await asyncio.gather(
+        *(
+            resolver.has_valid_token(user_id, mcp_name, server_cfg, verify=True)
+            for mcp_name, server_cfg in servers
+        )
+    )
+
+    # Which account each connection is actually acting as.
+    store = McpTokenStore(settings.database_uri)
+
+    async def _account(mcp_name: str, connected: bool) -> str | None:
+        if not connected:
+            return None
+        try:
+            stored = await store.get_token(
+                settings.agent_deployment_id, user_id, mcp_name
+            )
+        except Exception:
+            return None
+        if stored is None:
+            return None
+        if stored.account:
+            return stored.account
+
+        # Nothing recorded: either the provider sent no id_token, or
+        # this connection predates the account being captured. Ask
+        # once and keep the answer.
+        server_cfg = _get_mcp_server_config(mcp_name)
+        account = await _account_from_userinfo(
+            mcp_name, server_cfg, stored.access_token
+        ) or await _account_from_introspection(
+            mcp_name, server_cfg, stored.access_token
+        )
+        logger.info(
+            "[%s] account backfill: %s", mcp_name, account or "no identity available"
+        )
+        if not account:
+            return None
+        # Re-read before writing. The userinfo or introspection call
+        # above takes a round trip, and a concurrent turn can refresh
+        # the token inside that window. Writing back the pair read
+        # beforehand restored a refresh token the provider had just
+        # rotated away, which revokes it and disconnects the user —
+        # for the sake of filling in a display name.
+        try:
+            current = await store.get_token(
+                stored.agent_name, stored.user_id, stored.mcp_name
+            )
+        except Exception:
+            current = None
+        latest = current or stored
+        try:
+            await store.upsert_token(
+                agent_name=latest.agent_name,
+                user_id=latest.user_id,
+                mcp_name=latest.mcp_name,
+                access_token=latest.access_token,
+                refresh_token=latest.refresh_token,
+                expires_at=latest.expires_at,
+                scopes=latest.scopes,
+                account=account,
+            )
+        except Exception:
+            logger.debug("[%s] could not persist account", mcp_name, exc_info=True)
+        return account
+
+    accounts = await asyncio.gather(
+        *(
+            _account(mcp_name, connected)
+            for (mcp_name, _cfg), connected in zip(
+                servers, connected_flags, strict=True
+            )
+        )
+    )
+
     connections: list[dict[str, Any]] = []
-    for mcp_name, server_cfg in _interactive_oauth_servers():
+    for (mcp_name, server_cfg), connected, account in zip(
+        servers, connected_flags, accounts, strict=True
+    ):
         description = server_cfg.get("description")
         display_name = server_cfg.get("display_name")
-        connected = await resolver.has_valid_token(user_id, mcp_name, server_cfg)
         connections.append(
             {
                 "mcp_name": mcp_name,
@@ -451,6 +1057,7 @@ async def handle_mcp_connections(user_id: str) -> dict[str, Any]:
                 "description": description if isinstance(description, str) else "",
                 "display_name": display_name if isinstance(display_name, str) else "",
                 "connected": connected,
+                "account": account,
             }
         )
     return {"connections": connections}
@@ -465,15 +1072,17 @@ async def handle_mcp_disconnect(user_id: str, mcp_name: str) -> dict[str, Any]:
 
     store = McpTokenStore(settings.database_uri)
     await store.delete_token(settings.agent_deployment_id, user_id, mcp_name)
-    await asyncio.to_thread(
+    await run_redis(
         cache_srem,
         f"mcp_auth_set:{settings.agent_deployment_id}:{user_id}",
         mcp_name,
     )
     get_mcp_credential_resolver().invalidate_cache(user_id, mcp_name)
     from deep_agent.aegra.mcp import invalidate_mcp_tool_cache
+    from deep_agent.aegra.mcp_tool_auth import forget_auth_prompt
 
     invalidate_mcp_tool_cache(user_id=user_id)
+    await forget_auth_prompt(user_id, mcp_name)
     try:
         from deep_agent.aegra.graph import invalidate_graph_cache
 

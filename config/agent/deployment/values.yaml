@@ -1,14 +1,66 @@
 # Deployment configuration for the agent.
-# Reference values for ArgoCD/Helm-style deployments.
-# Kustomize overlays in deployment/overlays/ use their own patches.
+#
+# This file is the source of truth. `make render-deployment` turns it into
+# the kustomize patches under deployment/overlays/*/generated.yaml — so
+# changing a replica count or a memory limit is a config edit, not a code
+# edit. Run `make render-deployment-check` to see if they have drifted.
+#
+# Structural choices (which manifests exist, init containers, volumes) stay
+# hand-written in the overlays. Only values come from here.
 #
 # ArgoCD Vault Plugin (AVP) injects secrets at deploy time.
+
+# --- Optional components ---
+# Each maps to a directory under deployment/components/. Toggling one here
+# adds or removes it from every overlay's `components:` list.
+components:
+  postgres: true
+  redis: true
+  opa: false
+  evalRunner: true
+  # Scales the agent to zero pods. Mutually exclusive with autoscaling
+  # below — the HPA and the ScaledObject would fight over the same
+  # Deployment. See deployment/components/scale-to-zero/README.yaml.
+  scaleToZero: false
+  # Publishes /channels on an external Route so Slack and webhooks can
+  # reach the agent. The main Route stays internal. Enable this and
+  # config/agent/integrations/channels.yaml together — neither works
+  # alone.
+  externalChannels: false
+  # A volume holding documents, mounted read-only at /documents/ in the
+  # agent's filesystem. Data does not belong in the config image: it
+  # is large, it changes without a release, and CONFIG_PATH is walked
+  # on every reload check.
+  documentsPvc: true
+  # A volume holding config/agent and the UI's settings, mounted at
+  # CONFIG_PATH. The alternative for a cluster with no mount was a
+  # derived image (Containerfile.config) for the agent and a ConfigMap
+  # for the UI — the first makes a rebuild the only way to change a
+  # prompt, the second is read-only in the pod and rewritten by the
+  # next apply.
+  configPvc: true
 
 app:
   name: agent
   component: agent
   replicas: 2
   namespace: ai-agents
+  # Identity as the cluster and the observability backends see it.
+  #
+  # `app: agent` below is a selector and cannot change on a live
+  # Deployment — selectors are immutable — so these are the recommended
+  # Kubernetes labels instead, rendered onto the pod template where
+  # every collector looks for them. Two things depend on getting them
+  # right. An agent scaffolded from this template and left at the
+  # default arrives in the metrics backend as "agent", indistinguishable
+  # from every other agent anyone scaffolded; and without a version
+  # label no backend can split a metric by release, which is what makes
+  # the canary comparison in docs/runbook.md possible at all.
+  #
+  # serviceName should match OTEL's service.name (SERVICE_NAME env).
+  # Set it when you scaffold, not when you first need a dashboard.
+  serviceName: agent
+  partOf: ai-factory
 
 image:
   name: agent
@@ -20,31 +72,117 @@ container:
 
 resources:
   requests:
-    memory: "512Mi"
+    # 1536Mi, measured, not guessed: an idle pod sits at ~1223 MiB
+    # because the LangChain/deepagents import graph is resident
+    # before a single request arrives. The old 512Mi request
+    # under-stated real usage by 2.4x, which overcommits every node
+    # it schedules onto — the kubelet packs pods against requests,
+    # and the gap is what gets reclaimed from somebody under
+    # pressure.
+    #
+    # It also broke the HPA. Memory utilisation is a percentage of
+    # the *request*, so 1223 of 512 is 239% — permanently past any
+    # sane target, which pinned the deployment at maxReplicas
+    # forever and never scaled down. See the autoscaling block.
+    memory: "1536Mi"
     cpu: "250m"
   limits:
-    memory: "1Gi"
+    # 2Gi, not 1Gi: the LangChain/deepagents import graph alone exceeds
+    # 512Mi and the pod was OOMKilled on boot at the old limit.
+    memory: "2Gi"
     cpu: "1000m"
 
 # --- Horizontal Pod Autoscaler ---
 autoscaling:
   enabled: true
   minReplicas: 2
-  maxReplicas: 8
+  maxReplicas: 10
+  # In-flight runs is the signal that tracks saturation. An agent
+  # turn is almost entirely time spent waiting on a model, so a pod
+  # can hold a hundred concurrent runs at fifteen percent CPU — the
+  # event loop and the connection pools are exhausted long before
+  # either resource metric moves. Published by
+  # deep_agent/aegra/inflight_metrics.py; needs the custom-metrics
+  # adapter.
+  targetRunsInFlightPerPod: 25
+  # Kept as a secondary signal for a pod genuinely burning CPU.
   targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  # No memory target. Memory here is a static footprint, not a load
+  # signal: ~1223 MiB is resident before the first request and
+  # barely moves under traffic. The HPA takes the highest
+  # recommendation across its metrics, so a memory target would win
+  # every evaluation on a number that says nothing about load — it
+  # held the fleet at maxReplicas regardless of demand, which is
+  # both the most expensive outcome and, at 35 connections a pod,
+  # the one that exhausts Postgres.
   scaleDown:
-    stabilizationWindowSeconds: 300
+    # Long runs make scale-down expensive: each retired pod has to
+    # drain or hand off whatever it is still working on. Wait a long
+    # time before believing a lull, then retire slowly.
+    stabilizationWindowSeconds: 900
+    percentPerMinute: 10
+
+# --- Draining (long-running agents) ---
+# A turn can run for minutes. Killing its pod loses the work in
+# progress, so eviction, rollout and scale-down all have to wait for
+# runs to finish rather than for a process to exit.
+drain:
+  # The ceiling on how long a pod may take to drain. Shutdown
+  # persists in-flight runs so another pod resumes them, but
+  # finishing in place is always better than resuming elsewhere.
+  # Was 60s, which is shorter than a single long turn.
+  terminationGracePeriodSeconds: 600
+  # Held open while the endpoint removal reaches the router, so
+  # requests in flight at termination are not dropped.
+  preStopSleepSeconds: 15
 
 # --- Health probes ---
+# --- Rollout ---
+# How a new version replaces the old one. A plain Deployment cannot do
+# a real canary — that needs two workloads and a traffic split, which
+# is a platform decision, not a template one — but the three knobs here
+# are what turn a rollout from "replace everything and hope" into
+# something that stalls on a bad release instead of completing.
+rollout:
+  # Never go below the current replica count mid-rollout: an agent turn
+  # is minutes long, so a pod removed before its replacement is ready
+  # drops work that cannot be retried transparently.
+  maxSurge: 1
+  maxUnavailable: 0
+  # The bake. A new pod must stay ready this long before the rollout
+  # moves to the next one, so a release that passes its probes and then
+  # falls over a minute later stops after one pod rather than all of
+  # them. Longer than the slowest thing that happens after startup —
+  # here, the first model call and the first MCP handshake.
+  minReadySeconds: 30
+  # And a bound on the stall, so a wedged rollout is a failed rollout
+  # that something can alert on, rather than a Deployment that sits at
+  # "progressing" until someone notices.
+  progressDeadlineSeconds: 600
+
 probes:
   liveness:
-    path: /health
+    # /livez, not /health. /health probes Postgres and returns 503 when
+    # it cannot be reached, so pointing liveness at it turns a database
+    # blip into a kill of every pod at once — the restarts then arrive
+    # as a thundering herd of reconnections against the database that
+    # was already struggling. Readiness is where a dependency check
+    # belongs: it sheds traffic and recovers by itself. /livez answers
+    # only "is this process still running its event loop".
+    path: /livez
     initialDelaySeconds: 30
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 3
+    # Deliberately slack. Liveness answers "is this process wedged",
+    # and the cost of a false positive is every run on the pod. A
+    # loop busy with long turns can be slow to answer without being
+    # unhealthy, so a single slow probe must not restart it:
+    # 6 failures x 20s is two minutes of genuine silence before a
+    # kill, where the previous 3 x 10s could fire on a GC pause.
+    periodSeconds: 20
+    timeoutSeconds: 10
+    failureThreshold: 6
   readiness:
+    # Readiness is the opposite trade — shedding traffic from a
+    # struggling pod is cheap and reversible, so it stays quick.
     path: /health
     initialDelaySeconds: 10
     periodSeconds: 5
@@ -92,11 +230,91 @@ config:
   AGENT_PORT: "5002"
   PYTHON_LOG_LEVEL: "INFO"
   LANGFUSE_TRACING_ENVIRONMENT: "production"
+
+  # --- Metrics and spans egress ---
+  # The template has no opinion on which backend these land in, and
+  # deliberately so: OTLP is the seam, and the collector on the other
+  # end is the deploying team's. What the template does owe you is the
+  # knob, because the alternative is finding out from a code comment
+  # that the agent has been instrumented all along and exporting
+  # nowhere. Everything in deep_agent/aegra/otel.py — time to first
+  # token, stream errors, conversation duration, the SLIs in
+  # docs/slo.md — stays inside the pod until ENABLE_OTEL is true.
+  #
+  # Point the endpoint at whatever receives OTLP in your cluster: an
+  # OpenTelemetry Collector, or a vendor agent's OTLP ingest.
+  ENABLE_OTEL: "false"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  # TLS by default. A remote collector reached over plaintext exports
+  # prompts, tool arguments and user ids in the clear; set this to
+  # "true" only for an in-cluster collector you trust the path to.
+  OTEL_EXPORTER_OTLP_INSECURE: "false"
+  OTEL_METRIC_EXPORT_INTERVAL: "60000"
+
   REQUEST_LOGGING_ENABLED: "true"
   REQUEST_LOG_HEADERS: "true"
   REQUEST_LOG_BODY: "false"
   REQUEST_LOG_BODY_MAX_SIZE: "10240"
   REDIS_URL: "redis://redis:6379/0"
+
+# --- Capacity tuning (renders deployment/base/configmap-tuning.yaml) ---
+# Consumed with envFrom, unlike the `env:` block above, which the agent
+# container lists key by key. These are all pool bounds and timeouts:
+# each multiplies by the pod count and shares the server's
+# max_connections with everything else on that database, so they are
+# set together. The arithmetic is in docs/scalability.md.
+#
+# Per-pod Postgres budget at these values:
+#   SQLALCHEMY_POOL_SIZE + SQLALCHEMY_MAX_OVERFLOW   5 + 10 = 15
+#   LANGGRAPH_MAX_POOL_SIZE                                   12
+#   DB_POOL_MAX_SIZE (everything else in deep_agent)            8
+#                                                      total  35
+# Against autoscaling.maxReplicas of 10 that is 350. Raise
+# max_connections, lower maxReplicas, or put a transaction pooler in
+# front before raising any of these.
+tuning:
+  SQLALCHEMY_POOL_SIZE: "5"
+  SQLALCHEMY_MAX_OVERFLOW: "10"
+  LANGGRAPH_MIN_POOL_SIZE: "2"
+  LANGGRAPH_MAX_POOL_SIZE: "12"
+
+  DB_POOL_MIN_SIZE: "1"
+  DB_POOL_MAX_SIZE: "8"
+  DB_POOL_TIMEOUT: "10"
+  # Bounds a stuck statement, not a run. A long agent turn is many
+  # short statements, so this never truncates one.
+  DB_STATEMENT_TIMEOUT_MS: "30000"
+  # Both well inside any proxy or firewall idle timeout, so the pool
+  # retires a connection before the network does it silently.
+  DB_POOL_MAX_IDLE: "300"
+  DB_POOL_MAX_LIFETIME: "1800"
+
+  # Runs one pod starts at once before shedding with 503. Sized
+  # against the connection budget, not CPU: a run is mostly idle but
+  # holds a checkpointer connection for its whole life.
+  MAX_CONCURRENT_RUNS: "40"
+
+  # Rounds the current-time block in the system prompt. That block
+  # heads the prefix a provider caches, ahead of the tool schemas, so
+  # per-second precision made every call a miss on the whole prefix.
+  DATETIME_PROMPT_GRANULARITY_SECONDS: "3600"
+
+  # One Redis connection per concurrent user is the wrong model —
+  # calls are short. Also sizes the dedicated Redis executor.
+  REDIS_MAX_CONNECTIONS: "32"
+  REDIS_SOCKET_TIMEOUT: "5"
+
+  # The master switch for the model, personalization and warming
+  # caches. It defaults to false in code
+  # (deep_agent/src/cache/config.py) and was set nowhere, while
+  # config/agent/runtime/agent.yaml declares `cache.enabled: true` —
+  # so anyone reading the agent config saw caching on, startup
+  # reported "skipped: caching disabled", and nothing reconciled the
+  # two. Set explicitly here so the two agree.
+  #
+  # Note this is not the MCP tool cache or the compiled-graph cache;
+  # those are governed by agent.yaml alone and were working.
+  CACHE_ENABLED: "true"
 
 # --- Sensitive configuration (maps to Secret) ---
 # Values are injected by the ArgoCD Vault Plugin (AVP) at deploy time.
@@ -117,3 +335,19 @@ secrets:
   VLLM_BASE_URL: "<path:secret/data/<team>/<env>/agent#VLLM_BASE_URL>"
   VLLM_API_KEY: "<path:secret/data/<team>/<env>/agent#VLLM_API_KEY>"
   REDIS_URL: "<path:secret/data/<team>/<env>/agent#REDIS_URL>"
+
+# --- Per-target overrides ---
+# Deep-merged over everything above, keyed by overlay directory name.
+# Only genuine environment differences belong here; anything listed in two
+# targets with the same value should move up into the shared block.
+targets:
+  kind:
+    components:
+      # The eval-runner mounts an `agent-source-data` PVC that nothing in
+      # deployment/ creates, so it can never schedule on a local cluster.
+      evalRunner: false
+    app:
+      # Two, as in preprod and prod: one replica makes the agent
+      # unreachable for the whole of a rollout or a pod delete, which the
+      # nightly crash-recovery tier cannot tell apart from a failure.
+      replicas: 2

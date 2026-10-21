@@ -38,7 +38,7 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 
-_SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
+_SYSTEM_PATH = settings.SYSTEM_PATH
 _PASSTHROUGH_VARS = ("HOME", "USER", "LANG", "LC_ALL", "TZ", "TERM")
 
 
@@ -270,14 +270,14 @@ def _ensure_venv(root_dir: Path, pyproject: Path) -> Path:
     # Prefer /app/.cache inside containers (always writable on OpenShift);
     # fall back to /tmp then ~/.cache for local / non-container runs.
     # OpenShift runs with arbitrary UID so Path.home() may not resolve.
-    app_cache = Path("/app/.cache")
+    app_cache = Path(settings.APP_CACHE_PATH)
     if app_cache.parent.is_dir():
         base_cache = app_cache
     else:
         try:
             base_cache = Path.home() / ".cache"
         except (RuntimeError, KeyError):
-            base_cache = Path("/tmp/.cache")  # noqa: S108 — OpenShift arbitrary UID fallback
+            base_cache = Path(settings.TMP_CACHE_PATH)  # noqa: S108 — OpenShift arbitrary UID fallback
     cache_dir = base_cache / "template-agent" / "venvs"
     cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)  # User-only permissions
 
@@ -675,10 +675,9 @@ def _build_composite_backend(fs_config: Any) -> Any:
 
     roots = getattr(fs_config.backend, "roots", None) or {}
     for path_prefix, backend_name in fs_config.backend.routes.items():
-        if backend_name == "filesystem_readonly":
-            dir_name = roots.get(path_prefix, path_prefix.strip("/"))
+        if backend_name.split(":", 1)[0] == "filesystem_readonly":
             routes[path_prefix] = _build_filesystem_readonly_backend(
-                _resolve_route_root(dir_name, path_prefix.strip("/"))
+                _readonly_root(path_prefix, backend_name, roots)
             )
 
     if any(v == "local_shell" for v in fs_config.backend.routes.values()):
@@ -719,8 +718,10 @@ def _build_composite_backend(fs_config: Any) -> Any:
                 routes[prefix] = state_backend
 
     known_types = {"filesystem_readonly", "local_shell", "store", "state"}
+    # `filesystem_readonly:/abs/path` is the same backend with an
+    # explicit root, so validate on the part before the colon.
     for path_prefix, backend_name in fs_config.backend.routes.items():
-        if backend_name not in known_types:
+        if backend_name.split(":", 1)[0] not in known_types:
             logger.warning(
                 "Unknown backend '%s' in route for '%s'", backend_name, path_prefix
             )
@@ -732,6 +733,30 @@ def _build_composite_backend(fs_config: Any) -> Any:
 
     default_backend = routes.pop("/", state_backend)
     return CompositeBackend(default=default_backend, routes=routes)
+
+
+def _readonly_root(
+    path_prefix: str, backend_name: str, roots: dict[str, str] | None = None
+) -> Path:
+    """Where a `filesystem_readonly` route reads from.
+
+    `filesystem_readonly` resolves under the config directory, so
+    `/skills/` is `$CONFIG_PATH/skills`. That is right for content
+    shipped with the agent and wrong for anything on a volume:
+    documents are mounted from a PVC and do not belong inside the
+    config tree, which `_disk_signature` rglobs on every reload check
+    — a gigabyte of Parquet there would make every config read slow.
+
+    `filesystem_readonly:/app/data/documents` gives an explicit root
+    instead. A `backend.roots` entry says the same thing out of
+    line; both arrived separately and both are in use, so the
+    inline form wins where it is given. Either way the path goes
+    through `_resolve_route_root`, which expands environment
+    variables and keeps relative paths under the config directory.
+    """
+    _, _, explicit = backend_name.partition(":")
+    dir_name = explicit or (roots or {}).get(path_prefix) or path_prefix.strip("/")
+    return _resolve_route_root(dir_name, path_prefix.strip("/"))
 
 
 def _build_filesystem_readonly_backend(root_dir: Path) -> ReadOnlyFilesystemBackend:

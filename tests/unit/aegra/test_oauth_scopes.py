@@ -70,13 +70,18 @@ class TestValidateGrantedScopes:
     def test_skips_validation_when_none_requested(self):
         assert validate_granted_scopes(["read"], [], "oauth-mcp") == ["read"]
 
-    def test_rejects_missing_scopes(self, caplog):
-        with caplog.at_level("ERROR"):
-            assert (
-                validate_granted_scopes(["read"], ["read", "write"], "oauth-mcp")
-                is None
-            )
-        assert any("missing requested scopes" in r.message for r in caplog.records)
+    def test_keeps_a_partial_grant_and_warns(self, caplog):
+        # RFC 6749 §3.3 lets the server narrow the scope, and real ones
+        # do: Atlassian advertises bitbucket and jira-align scopes in
+        # `scopes_supported` and grants neither to a site that has
+        # neither product. The 32 scopes it *did* grant were every one
+        # the agent needs, and rejecting them looped the user through
+        # consent forever.
+        with caplog.at_level("WARNING"):
+            assert validate_granted_scopes(
+                ["read"], ["read", "write"], "oauth-mcp"
+            ) == ["read"]
+        assert any("withheld" in r.message for r in caplog.records)
 
     def test_assumes_requested_when_granted_absent(self):
         # RFC 6749 §5.1: omitted scope => assume requested were granted
@@ -85,7 +90,19 @@ class TestValidateGrantedScopes:
             "write",
         ]
 
-    def test_rejects_empty_granted_list(self, caplog):
+    def test_rejects_a_grant_of_nothing(self, caplog):
+        # The one genuine failure: scopes were requested and none were
+        # authorised, so no tool can work.
         with caplog.at_level("ERROR"):
             assert validate_granted_scopes([], ["read"], "oauth-mcp") is None
-        assert any("missing requested scopes" in r.message for r in caplog.records)
+        assert any("granted no scopes" in r.message for r in caplog.records)
+
+    def test_an_entirely_different_grant_is_still_kept(self, caplog):
+        # the warehouse server: asked for `session:role-any` (from discovery),
+        # granted `read write`. Nothing requested was granted, yet the
+        # token is the usable one.
+        with caplog.at_level("WARNING"):
+            assert validate_granted_scopes(
+                ["read", "write"], ["session:role-any"], "warehouse"
+            ) == ["read", "write"]
+        assert any("withheld" in r.message for r in caplog.records)

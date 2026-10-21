@@ -8,6 +8,7 @@ Feature flag: ``CACHE_WARMING_ENABLED`` (+ ``CACHE_ENABLED``).
 """
 
 from deep_agent.src.cache.config import cache_settings
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -43,7 +44,7 @@ def _warm_models() -> bool:
         from deep_agent.src.cache.model_cache import get_or_create_model_from_spec
 
         orch = agent_config.get_orchestrator_config()
-        orch_model = orch.get("model", "gemini-3.1-pro-preview")
+        orch_model = orch.get("model", settings.DEFAULT_MODEL)
 
         # Parse orchestrator model to ModelSpec (supports provider)
         orch_spec = parse_model_config(orch_model)

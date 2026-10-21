@@ -20,8 +20,8 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-_HEALTH_CACHE_TTL: float = 30.0
-_HEALTH_CHECK_TIMEOUT: float = 5.0
+_HEALTH_CACHE_TTL = settings.MCP_HEALTH_CACHE_TTL_SECONDS
+_HEALTH_CHECK_TIMEOUT = settings.MCP_HEALTH_CHECK_TIMEOUT_SECONDS
 
 _cached_mcp_health: dict[str, Any] | None = None
 _cached_mcp_health_ts: float = 0.0
@@ -144,22 +144,34 @@ async def check_mcp_servers() -> dict[str, Any]:
         _cached_mcp_health_ts = now
         return result
 
-    breaker_open = False
+    # Breakers are per-server, so one open circuit must not report every
+    # other server as down.
+    open_breakers: set[str] = set()
     try:
         from deep_agent.aegra.mcp import _get_mcp_breaker
 
-        breaker_open = _get_mcp_breaker().is_open
+        for name, cfg in enabled.items():
+            # The same key `_connect_single_server` uses. It calls
+            # `_get_mcp_breaker(mcp_server or name)` where `name` is
+            # the `tool_prefix`, so looking the breaker up by the
+            # mcp.json key read a different breaker and a prefixed
+            # server's open circuit was never reported.
+            breaker_key = cfg.get("tool_prefix") or name
+            if _get_mcp_breaker(breaker_key).is_open:
+                open_breakers.add(name)
     except Exception:
-        pass
+        logger.debug("Could not read MCP breaker state", exc_info=True)
 
     per_server: dict[str, Any] = {}
 
-    if breaker_open:
-        for name in enabled:
-            per_server[name] = {"status": "breaker-open"}
-            _emit_mcp_gauge(name, False)
-    else:
-        names = list(enabled.keys())
+    for name in open_breakers:
+        per_server[name] = {"status": "breaker-open"}
+        _emit_mcp_gauge(name, False)
+
+    probeable = {k: v for k, v in enabled.items() if k not in open_breakers}
+
+    if probeable:
+        names = list(probeable.keys())
         pings = [
             _ping_mcp_server(
                 name=name,
@@ -167,10 +179,10 @@ async def check_mcp_servers() -> dict[str, Any]:
                 timeout=min(cfg.get("timeout", 30), _HEALTH_CHECK_TIMEOUT),
                 ssl_verify=cfg.get("ssl_verify", True),
             )
-            for name, cfg in enabled.items()
+            for name, cfg in probeable.items()
         ]
         results = await asyncio.gather(*pings)
-        for name, res in zip(names, results):
+        for name, res in zip(names, results, strict=True):
             per_server[name] = res
 
     statuses = [v.get("status") for v in per_server.values()]

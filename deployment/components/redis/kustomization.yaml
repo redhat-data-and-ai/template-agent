@@ -14,3 +14,11 @@ patches:
       - op: add
         path: /data/REDIS_URL
         value: "redis://redis:6379/0"
+      # The UI reads host and port separately; without these its pod fails
+      # with CreateContainerConfigError, not a startup error.
+      - op: add
+        path: /data/REDIS_HOST
+        value: "redis"
+      - op: add
+        path: /data/REDIS_PORT
+        value: "6379"

@@ -585,7 +585,7 @@ class TestLangfuseObservabilityProviderMetadata:
         assert metadata["thread_id"] == "thread-abc"
         assert "langfuse_trace_name" in metadata
 
-    def test_includes_encrypted_user_id_and_trace_tag(self):
+    def test_includes_encrypted_user_id_and_trace_id_metadata(self):
         provider = LangfuseObservabilityProvider()
         with (
             patch.object(
@@ -608,7 +608,12 @@ class TestLangfuseObservabilityProviderMetadata:
 
         assert metadata["langfuse_user_id"] == "hashed-user"
         assert metadata["thread_id"] == "thread-abc"
-        assert metadata["langfuse_tags"] == ["trace_id:app-trace-1"]
+        # Metadata, not a tag. As a tag this was a new value on every
+        # run — tags are for business dimensions known upfront and are
+        # immutable once set, so one value per trace makes the whole
+        # dimension unusable for grouping.
+        assert metadata["trace_id"] == "app-trace-1"
+        assert "langfuse_tags" not in metadata
 
 
 class TestSetupLangfuseSharedHandler:
@@ -661,3 +666,29 @@ class TestSetupLangfuseSharedHandler:
             telemetry_mod._langfuse_tracing_initialized = prev_initialized
             telemetry_mod._shared_langfuse_handler = prev_shared
             telemetry_mod.HitlAwareCallbackHandler = prev_cls
+
+
+class TestTraceName:
+    """A trace name is a filter contract, not an identity.
+
+    Every trace in the project was called `template-agent` — the
+    agent's own name, which is already its own attribute. A name
+    shared by everything cannot be filtered on, and one that tracks
+    the agent or model breaks every saved filter and evaluator the
+    moment either changes.
+    """
+
+    def test_is_verb_first_and_not_the_agent_name(self, monkeypatch):
+        from deep_agent.aegra import telemetry
+
+        monkeypatch.delenv("LANGFUSE_TRACE_NAME", raising=False)
+        name = telemetry._get_trace_name()
+
+        assert name == "handle-chat-turn"
+        assert "template-agent" not in name
+
+    def test_a_deployment_can_name_its_own_operation(self, monkeypatch):
+        from deep_agent.aegra import telemetry
+
+        monkeypatch.setenv("LANGFUSE_TRACE_NAME", "summarise-document")
+        assert telemetry._get_trace_name() == "summarise-document"
