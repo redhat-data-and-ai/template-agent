@@ -6,6 +6,7 @@ application and merges core LangGraph Platform routes onto.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -245,14 +246,12 @@ async def agent_structure(request: Request) -> dict:
     name: str = agent_config.get_name()
 
     orchestrator: dict[str, Any] = copy.deepcopy(agent_config.get_orchestrator_config())
-    orchestrator.pop("body", None)
     orchestrator.pop("skill_paths", None)
 
     subagents: dict[str, dict[str, Any]] = copy.deepcopy(
         agent_config.get_all_subagent_configs()
     )
     for key in subagents:
-        subagents[key].pop("body", None)
         subagents[key].pop("skill_paths", None)
 
     mcp_servers: dict[str, Any] = copy.deepcopy(agent_config.get_mcp_servers())
@@ -261,12 +260,12 @@ async def agent_structure(request: Request) -> dict:
         mcp_servers[key].pop("oauth", None)
         mcp_servers[key].pop("auth_env_var", None)
 
-    available_skills: list[str] = copy.deepcopy(agent_config.get_available_skills())
+    skills = await asyncio.to_thread(agent_config.get_available_skills)
 
     return {
         "name": name,
         "orchestrator": orchestrator,
         "subagents": subagents,
         "mcp_servers": mcp_servers,
-        "available_skills": available_skills,
+        "skills": skills,
     }

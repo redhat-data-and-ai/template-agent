@@ -777,14 +777,22 @@ class AgentConfig:
         self._ensure_loaded()
         return self._mcp_servers
 
-    def get_available_skills(self) -> list[str]:
-        """Get the available skills in the agent configuration.
+    def get_available_skills(self) -> dict[str, str]:
+        """Return every available skill name and its complete instructions.
 
         Returns:
-            Dict of available skills.
+            Dict mapping each available skill name to its complete ``SKILL.md``
+            content, or an empty string when the instruction file is unreadable.
         """
         self._ensure_loaded()
-        return list(self._available_skills.keys())
+        contents: dict[str, str] = {}
+        for name, skill_path in self._available_skills.items():
+            try:
+                contents[name] = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+            except OSError:
+                logger.warning("Unable to read instructions for skill '%s'", name)
+                contents[name] = ""
+        return contents
 
     def get_providers_config(self) -> ProvidersFileConfig:
         """Get the pre-loaded providers configuration.
