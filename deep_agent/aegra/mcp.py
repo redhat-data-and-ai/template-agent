@@ -425,7 +425,7 @@ def _apply_api_key_scheme(value: str, scheme: str | None) -> str:
     such as ``X-API-Key`` expects. Mirrors the registry helper of the same
     name; both are pinned by the cross-repo contract tests.
     """
-    normalized = (scheme or "none").strip().lower()
+    normalized = str(scheme if scheme is not None else "none").strip().lower()
     if normalized in ("", "none"):
         return value
     if normalized not in _API_KEY_SCHEMES:
@@ -438,13 +438,20 @@ def _apply_api_key_scheme(value: str, scheme: str | None) -> str:
 
 
 def _with_query_param(url: str, name: str, value: str) -> str:
-    """Return *url* with ``name=value`` appended to its query string."""
-    from urllib.parse import urlencode, urlparse, urlunparse
+    """Return *url* with ``name=value`` set on its query string.
+
+    Any existing occurrence of *name* is replaced rather than appended to, so
+    a stale key already present in the configured URL cannot win on servers
+    that read the first value. Other parameters keep their original order.
+    """
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
     parsed = urlparse(url)
-    appended = urlencode({name: value})
-    query = f"{parsed.query}&{appended}" if parsed.query else appended
-    return urlunparse(parsed._replace(query=query))
+    params = [
+        (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k != name
+    ]
+    params.append((name, value))
+    return urlunparse(parsed._replace(query=urlencode(params)))
 
 
 def _api_key_placement(entry: dict[str, Any]) -> tuple[str | None, str]:

@@ -201,3 +201,62 @@ def test_explicit_name_still_wins_over_the_default():
     )
     assert cfg["headers"]["X-API-Key"] == "k"
     assert "Authorization" not in cfg["headers"]
+
+
+# --- non-string scheme and duplicate query keys (CodeRabbit, PR #399) ---
+
+
+def test_non_string_scheme_falls_back_to_raw_key():
+    """A numeric scheme in mcp.json must not raise during connection setup."""
+    from deep_agent.aegra.mcp import _apply_api_key_scheme
+
+    assert _apply_api_key_scheme("k", 123) == "k"
+    assert _apply_api_key_scheme("k", True) == "k"
+    assert _apply_api_key_scheme("k", None) == "k"
+
+
+def test_non_string_scheme_in_server_config_does_not_raise():
+    cfg = _build_server_config(
+        _entry(
+            auth_mode="api_key",
+            auth_env_var="MCP_X_API_KEY",
+            api_key_name="X-API-Key",
+            api_key_scheme=123,
+        ),
+        "k",
+    )
+    assert cfg["headers"]["X-API-Key"] == "k"
+
+
+def test_query_placement_replaces_an_existing_key():
+    """A stale key already in the URL must not win on first-value servers."""
+    from deep_agent.aegra.mcp import _with_query_param
+
+    assert (
+        _with_query_param("https://x.example.com/mcp?apikey=old", "apikey", "new")
+        == "https://x.example.com/mcp?apikey=new"
+    )
+
+
+def test_query_placement_preserves_other_params():
+    from deep_agent.aegra.mcp import _with_query_param
+
+    assert (
+        _with_query_param("https://x.example.com/mcp?v=2&apikey=old", "apikey", "new")
+        == "https://x.example.com/mcp?v=2&apikey=new"
+    )
+
+
+def test_query_placement_on_configured_url_with_stale_key():
+    cfg = _build_server_config(
+        _entry(
+            url="https://x.example.com/mcp?apikey=stale",
+            auth_mode="api_key",
+            auth_env_var="MCP_X_API_KEY",
+            api_key_name="apikey",
+            api_key_location="query",
+        ),
+        "fresh",
+    )
+    assert cfg["url"] == "https://x.example.com/mcp?apikey=fresh"
+    assert "stale" not in cfg["url"]
