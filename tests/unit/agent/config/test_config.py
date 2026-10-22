@@ -426,13 +426,22 @@ class TestValidateMcpServerApiKey:
             AgentConfig._validate_mcp_server("m", self._cfg())
         assert caplog.text == ""
 
-    def test_defaults_are_valid_when_optional_keys_absent(self, caplog):
-        """Only auth_env_var is mandatory; location/scheme/name default cleanly."""
+    def test_api_key_without_a_name_is_an_error(self, caplog):
+        """api_key needs a name; without one the runtime would send Bearer."""
         import logging
 
         with caplog.at_level(logging.ERROR):
             AgentConfig._validate_mcp_server(
                 "m", {"auth_mode": "api_key", "auth_env_var": "MCP_X_API_KEY"}
+            )
+        assert "requires 'api_key_name'" in caplog.text
+
+    def test_bearer_needs_only_an_env_var(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server(
+                "m", {"auth_mode": "bearer", "auth_env_var": "MCP_X_BEARER_TOKEN"}
             )
         assert caplog.text == ""
 
@@ -455,7 +464,7 @@ class TestValidateMcpServerApiKey:
 
         with caplog.at_level(logging.ERROR):
             AgentConfig._validate_mcp_server("m", self._cfg(api_key_name=""))
-        assert "'api_key_name' is missing" in caplog.text
+        assert "requires 'api_key_name'" in caplog.text
 
     def test_invalid_auth_mode_returns_before_api_key_checks(self, caplog):
         import logging

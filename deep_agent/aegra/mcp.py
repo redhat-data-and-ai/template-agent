@@ -16,6 +16,7 @@ Functions:
 
 import asyncio
 import base64
+import binascii
 import contextvars
 import json
 import os
@@ -378,6 +379,15 @@ def _get_server_configs() -> dict[str, dict[str, Any]]:
     return agent_config.get_mcp_servers()
 
 
+def _is_base64(value: str) -> bool:
+    """True when *value* decodes cleanly as base64."""
+    try:
+        base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        return False
+    return True
+
+
 async def _resolve_connection_token(
     name: str,
     entry: dict[str, Any],
@@ -394,6 +404,17 @@ async def _resolve_connection_token(
         api_key = os.environ.get(env_var, "").strip().strip('"')
         if not api_key:
             logger.warning("MCP auth_mode=%s but %s is not set", auth_mode, env_var)
+        elif auth_mode == "basic" and not _is_base64(api_key):
+            # Basic credentials are base64(user:password) per RFC 7617 and are
+            # sent verbatim. A plaintext value produces a malformed header and
+            # an opaque 401, so say so plainly here.
+            logger.error(
+                "MCP server '%s': auth_mode 'basic' expects a base64-encoded "
+                "credential in %s, got what looks like plaintext — the server "
+                "will reject it",
+                name,
+                env_var,
+            )
         return api_key or None
 
     if not user_id:
@@ -446,18 +467,21 @@ def redact_url_query(url: str) -> str:
 def _with_query_param(url: str, name: str, value: str) -> str:
     """Return *url* with ``name=value`` set on its query string.
 
-    Any existing occurrence of *name* is replaced rather than appended to, so
-    a stale key already present in the configured URL cannot win on servers
-    that read the first value. Other parameters keep their original order.
+    Any existing occurrence of *name* is dropped so a stale key cannot win on
+    servers that read the first value. Other parameters are preserved
+    byte-for-byte rather than re-encoded, since round-tripping through
+    ``urlencode`` would rewrite ``?flag`` as ``flag=`` and ``%20`` as ``+``.
     """
-    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+    from urllib.parse import quote, urlparse, urlunparse
 
     parsed = urlparse(url)
-    params = [
-        (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k != name
+    kept = [
+        part
+        for part in parsed.query.split("&")
+        if part and part.split("=", 1)[0] != name
     ]
-    params.append((name, value))
-    return urlunparse(parsed._replace(query=urlencode(params)))
+    kept.append(f"{quote(name, safe='')}={quote(value, safe='')}")
+    return urlunparse(parsed._replace(query="&".join(kept)))
 
 
 def _api_key_placement(entry: dict[str, Any]) -> tuple[str | None, str]:
@@ -479,11 +503,7 @@ def _api_key_placement(entry: dict[str, Any]) -> tuple[str | None, str]:
 
     location = str(entry.get("api_key_location") or "header").strip().lower()
     if location not in _API_KEY_LOCATIONS:
-        logger.warning(
-            "MCP server '%s': unknown api_key_location '%s' — falling back to header",
-            entry.get("name", entry.get("url", "unknown")),
-            location,
-        )
+        # Reported once by the config loader; fall back silently here.
         location = "header"
     return key_name, location
 
@@ -498,14 +518,6 @@ def _authorization_scheme(entry: dict[str, Any]) -> str:
     auth_mode = entry.get("auth_mode", "sso")
     if auth_mode == "basic":
         return "Basic"
-    if auth_mode == "api_key" and not str(entry.get("api_key_name") or "").strip():
-        # Pre-split configs used api_key with no name to mean bearer. Agents
-        # deployed before the split still carry this shape until redeployed.
-        logger.warning(
-            "MCP server '%s': auth_mode 'api_key' without api_key_name is "
-            "deprecated — use auth_mode 'bearer'",
-            entry.get("name", entry.get("url", "unknown")),
-        )
     return "Bearer"
 
 

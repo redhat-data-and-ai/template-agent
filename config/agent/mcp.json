@@ -88,6 +88,10 @@
         // or load balancer in between, and Referer headers will still record
         // it. RFC 6750 section 2.3 deprecates query-param credentials for
         // this reason — prefer "header" unless the server requires otherwise.
+        //
+        // The log filter only masks LogRecords. If an HTTP error surfaces as
+        // tool output rather than a log line, the URL — and the key in it —
+        // can reach the model and the end user.
         "template-mcp-server-api-key-query": {
             "url": "http://localhost:5001/mcp",
             "transport": "streamable_http",

@@ -437,8 +437,12 @@ def test_log_filter_masks_preformatted_exc_text():
     assert "apikey=REDACTED" in record.exc_text
 
 
-def test_legacy_api_key_without_name_logs_a_deprecation_warning(caplog):
-    """The pre-split shape still works, but says so."""
+def test_legacy_api_key_without_name_does_not_warn_per_request(caplog):
+    """Still works for pre-split agents, but silently.
+
+    The config-shape warning belongs in the loader, which runs once —
+    _build_server_config runs on every connection and host-proxy request.
+    """
     import logging
 
     from deep_agent.aegra.mcp import _build_server_config
@@ -446,7 +450,20 @@ def test_legacy_api_key_without_name_logs_a_deprecation_warning(caplog):
     with caplog.at_level(logging.WARNING):
         cfg = _build_server_config(_entry(auth_mode="api_key", auth_env_var="V"), "tok")
     assert cfg["headers"]["Authorization"] == "Bearer tok"
-    assert "deprecated" in caplog.text
+    assert caplog.text == ""
+
+
+def test_loader_reports_nameless_api_key_once(caplog):
+    """The same condition is reported at load time instead."""
+    import logging
+
+    from deep_agent.src.agent.config import AgentConfig
+
+    with caplog.at_level(logging.ERROR):
+        AgentConfig._validate_mcp_server(
+            "m", {"auth_mode": "api_key", "auth_env_var": "V"}
+        )
+    assert "requires 'api_key_name'" in caplog.text
 
 
 def test_redaction_keeps_structlog_json_valid():
@@ -476,3 +493,110 @@ def test_redaction_preserves_trailing_punctuation():
         == "see (https://x/mcp?k=REDACTED) now"
     )
     assert _mask_url_queries('"https://x/mcp?k=v"') == '"https://x/mcp?k=REDACTED"'
+
+
+# --- review follow-ups ---
+
+
+def test_placement_fields_are_rejected_for_bearer_and_basic(caplog):
+    """Validator and builder must agree: placement is api_key-only."""
+    import logging
+
+    from deep_agent.src.agent.config import AgentConfig
+
+    for mode in ("bearer", "basic"):
+        caplog.clear()
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server(
+                "m",
+                {
+                    "auth_mode": mode,
+                    "auth_env_var": "V",
+                    "api_key_name": "k",
+                    "api_key_location": "query",
+                },
+            )
+        assert "only valid with auth_mode 'api_key'" in caplog.text, mode
+
+
+def test_unnormalised_auth_mode_is_normalised_not_silently_ignored(caplog):
+    import logging
+
+    from deep_agent.src.agent.config import AgentConfig
+
+    cfg = {"auth_mode": " Bearer ", "auth_env_var": "V"}
+    with caplog.at_level(logging.ERROR):
+        AgentConfig._validate_mcp_server("m", cfg)
+    assert cfg["auth_mode"] == "bearer"
+    assert caplog.text == ""
+
+
+def test_unknown_auth_mode_disables_the_server(caplog):
+    import logging
+
+    from deep_agent.src.agent.config import AgentConfig
+
+    cfg = {"auth_mode": "magic", "enabled": True}
+    with caplog.at_level(logging.ERROR):
+        AgentConfig._validate_mcp_server("m", cfg)
+    assert cfg["enabled"] is False
+
+
+def test_api_key_name_charset_is_validated(caplog):
+    import logging
+
+    from deep_agent.src.agent.config import AgentConfig
+
+    with caplog.at_level(logging.ERROR):
+        AgentConfig._validate_mcp_server(
+            "m",
+            {"auth_mode": "api_key", "auth_env_var": "V", "api_key_name": "bad name"},
+        )
+    assert "not a valid HTTP header" in caplog.text
+
+
+def test_query_param_preserves_existing_encoding():
+    """Round-tripping would rewrite ?flag as flag= and %20 as +."""
+    from deep_agent.aegra.mcp import _with_query_param
+
+    assert _with_query_param("https://x/mcp?flag", "k", "v") == "https://x/mcp?flag&k=v"
+    assert (
+        _with_query_param("https://x/mcp?a=x%20y", "k", "v")
+        == "https://x/mcp?a=x%20y&k=v"
+    )
+
+
+def test_redaction_masks_values_containing_stop_characters():
+    from deep_agent.utils.pylogger import _mask_url_queries
+
+    assert _mask_url_queries("?apikey=SEC,RET") == "?apikey=REDACTED"
+    assert "SECRET" not in _mask_url_queries("?q=1&amp;apikey=SECRET")
+
+
+def test_redactor_is_idempotent_across_reconfigures():
+    import logging
+
+    from deep_agent.utils.pylogger import _attach_url_redactor_to_root_handlers
+
+    handler = logging.StreamHandler()
+    logging.getLogger().addHandler(handler)
+    try:
+        for _ in range(3):
+            _attach_url_redactor_to_root_handlers()
+        assert len(handler.filters) == 1
+    finally:
+        logging.getLogger().removeHandler(handler)
+
+
+def test_basic_rejects_a_plaintext_credential(caplog):
+    import asyncio
+    import logging
+    import os
+    from unittest.mock import patch
+
+    from deep_agent.aegra.mcp import _resolve_connection_token
+
+    entry = {"auth_mode": "basic", "auth_env_var": "V"}
+    with caplog.at_level(logging.ERROR), patch.dict(os.environ, {"V": "user:pass"}):
+        asyncio.run(_resolve_connection_token("m", entry, None, None))
+    assert "base64-encoded" in caplog.text

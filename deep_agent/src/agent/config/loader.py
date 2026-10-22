@@ -17,6 +17,7 @@ Classes:
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -44,6 +45,9 @@ from .providers import ProvidersFileConfig
 from .resolver import resolve_skill_paths, resolve_tools
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
+
+# RFC 7230 token characters — a valid HTTP header or query parameter name.
+_HTTP_TOKEN_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 
 
 # Model configs are keyed by a canonical (provider, model_id) pair rather than
@@ -578,42 +582,84 @@ class AgentConfig:
         return subagents
 
     @staticmethod
+    def _validate_static_credential_server(
+        name: str, cfg: dict[str, Any], auth_mode: str
+    ) -> None:
+        """Validate api_key / bearer / basic config, once at load time.
+
+        Config-shape problems are reported here rather than from
+        ``_build_server_config``, which runs on every connection attempt and
+        every host-proxy request.
+        """
+        if not str(cfg.get("auth_env_var") or "").strip():
+            logger.error(
+                "MCP server '%s': auth_mode '%s' requires 'auth_env_var'",
+                name,
+                auth_mode,
+            )
+
+        has_placement = bool(cfg.get("api_key_location") or cfg.get("api_key_name"))
+        if auth_mode != "api_key":
+            # Placement only applies to api_key. Honouring it for bearer or
+            # basic would change the scheme, so it is rejected rather than
+            # silently ignored.
+            if has_placement:
+                logger.error(
+                    "MCP server '%s': api_key_name / api_key_location are only "
+                    "valid with auth_mode 'api_key' (got '%s') — they will be "
+                    "ignored and the credential sent in the Authorization header",
+                    name,
+                    auth_mode,
+                )
+            return
+
+        key_name = str(cfg.get("api_key_name") or "").strip()
+        location = str(cfg.get("api_key_location") or "header").strip().lower()
+
+        if location not in ("header", "query"):
+            logger.error(
+                "MCP server '%s': invalid api_key_location '%s' "
+                "(expected header or query)",
+                name,
+                location,
+            )
+        if not key_name:
+            logger.error(
+                "MCP server '%s': auth_mode 'api_key' requires 'api_key_name' "
+                "— the credential will be sent as Authorization: Bearer, which "
+                "is almost certainly not what the server expects. Use "
+                "auth_mode 'bearer' for a bearer token.",
+                name,
+            )
+        elif not _HTTP_TOKEN_RE.match(key_name):
+            logger.error(
+                "MCP server '%s': api_key_name '%s' is not a valid HTTP header "
+                "or parameter name",
+                name,
+                key_name,
+            )
+
+    @staticmethod
     def _validate_mcp_server(name: str, cfg: dict[str, Any]) -> None:
         """Log clear errors for invalid per-MCP OAuth/DCR configuration."""
-        auth_mode = cfg.get("auth_mode", "sso")
+        # Normalise before comparing: an unnormalised value would fall past
+        # every branch below and the server would connect unauthenticated.
+        auth_mode = str(cfg.get("auth_mode") or "sso").strip().lower()
         cfg["auth_mode"] = auth_mode
 
         if auth_mode not in ("sso", "oauth", "dcr", "api_key", "bearer", "basic"):
             logger.error(
                 "MCP server '%s': invalid auth_mode '%s' "
-                "(expected sso, oauth, dcr, api_key, bearer, or basic)",
+                "(expected sso, oauth, dcr, api_key, bearer, or basic) "
+                "— disabling this server",
                 name,
                 auth_mode,
             )
+            cfg["enabled"] = False
             return
 
         if auth_mode in ("api_key", "bearer", "basic"):
-            if not str(cfg.get("auth_env_var") or "").strip():
-                logger.error(
-                    "MCP server '%s': auth_mode '%s' requires 'auth_env_var'",
-                    name,
-                    auth_mode,
-                )
-            location = str(cfg.get("api_key_location") or "header").strip().lower()
-            if location not in ("header", "query"):
-                logger.error(
-                    "MCP server '%s': invalid api_key_location '%s' "
-                    "(expected header or query)",
-                    name,
-                    location,
-                )
-            has_name = bool(str(cfg.get("api_key_name") or "").strip())
-            if cfg.get("api_key_location") and not has_name:
-                logger.error(
-                    "MCP server '%s': api_key_location is set but 'api_key_name' "
-                    "is missing",
-                    name,
-                )
+            AgentConfig._validate_static_credential_server(name, cfg, auth_mode)
             return
 
         if auth_mode not in ("oauth", "dcr"):

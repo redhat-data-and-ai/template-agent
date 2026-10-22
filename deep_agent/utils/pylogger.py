@@ -186,13 +186,14 @@ def _clear_handlers(logger: logging.Logger) -> None:
     logger.filters.clear()
 
 
-# The value class must stop at characters that can legitimately follow a URL
-# in a log line. This filter runs on the already-rendered structlog JSON, so
-# swallowing a closing quote, bracket or comma would emit invalid JSON and
-# break log ingestion.
-_URL_QUERY_VALUE_STOP = r"&\s\"'`\\()\[\]{}<>,;#"
+# Stop the value only at characters that genuinely close a URL in a log
+# line: whitespace, quotes, a backslash, or a closing bracket. Commas,
+# semicolons and '#' are consumed so a value containing one is masked in
+# full rather than leaving a tail behind. This filter runs on rendered
+# structlog JSON, so swallowing a closing quote would emit invalid JSON.
+_URL_QUERY_STOP = r"\s\"'`\\)\]}>"
 _URL_QUERY_RE = re.compile(
-    rf"(\?|&)([^=&\s{_URL_QUERY_VALUE_STOP}]+)=([^{_URL_QUERY_VALUE_STOP}]*)"
+    rf"(\?|&amp;|&)([^=&\s{_URL_QUERY_STOP}]+)=([^&{_URL_QUERY_STOP}]*)"
 )
 
 
@@ -252,15 +253,31 @@ def _setup_logger(logger_name: str, level: str) -> None:
         lgr.setLevel(logging.ERROR)
     else:
         lgr.setLevel(level)
-    if logger_name in HTTP_CLIENT_LOGGERS:
-        lgr.addFilter(RedactUrlQueryFilter())
     lgr.propagate = True
+
+
+# One shared instance: Handler.addFilter dedupes by identity, so re-applying
+# the same object is idempotent where a new instance each time would stack up.
+_URL_REDACTOR = RedactUrlQueryFilter()
+
+
+def _attach_url_redactor_to_root_handlers() -> None:
+    """Attach the redaction filter to every current root handler.
+
+    Handler-level rather than logger-level, so it also sees records
+    propagated from application loggers — that is what redacts exc_info
+    tracebacks. Re-run on each configure call so handlers added later (OTel,
+    Langfuse, uvicorn, a test harness) are covered too.
+    """
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(_URL_REDACTOR)
 
 
 def _configure_third_party_loggers(log_level: str) -> None:
     """Apply structured logging to selected third-party loggers."""
     for name in THIRD_PARTY_LOGGERS:
         _setup_logger(name, log_level)
+    _attach_url_redactor_to_root_handlers()
 
 
 def _get_renderer() -> Any:
@@ -316,13 +333,6 @@ def get_python_logger(log_level: str = "INFO") -> structlog.BoundLogger:
             wrapper_class=structlog.stdlib.BoundLogger,
             cache_logger_on_first_use=True,
         )
-
-        # Handler-level filter so it also sees records propagated from app
-        # loggers (logger-level filters do not apply to propagated records).
-        # This is what redacts exc_info tracebacks from deep_agent.aegra.mcp.
-        _redactor = RedactUrlQueryFilter()
-        for _handler in logging.getLogger().handlers:
-            _handler.addFilter(_redactor)
 
         _LOGGING_CONFIGURED = True
 
