@@ -101,6 +101,16 @@ class Settings(BaseSettings):
             "files are skipped, not fatal."
         ),
     )
+    UPLOAD_CHECKSUM_REQUIRED: bool = Field(
+        default=False,
+        description=(
+            "Reject an upload that declares no sha256: 'checksum' over the "
+            "archive as sent, or a digest per individually uploaded file. "
+            "Digests the caller does supply are always verified regardless "
+            "of this setting; it only decides whether omitting them is an "
+            "error."
+        ),
+    )
 
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)

@@ -198,13 +198,24 @@ app.add_middleware(SecurityHeadersMiddleware)
 # rejecting an archive that is itself within UPLOAD_MAX_ARCHIVE_BYTES.
 _MULTIPART_OVERHEAD_ALLOWANCE = 64 * 1024
 
+# The optional `checksums` manifest is one text part holding a digest per
+# published file -- roughly 100 bytes each, so ~50KB at UPLOAD_MAX_FILE_COUNT.
+# Budgeted separately from the framing allowance above, which would otherwise
+# be swallowed whole and start rejecting archives that are within their cap.
+_CHECKSUM_FIELD_ALLOWANCE = 128 * 1024
+
 # /upload legitimately carries more than the global cap, but it is never
 # exempt: FastAPI parses and spools a multipart body before the route can
 # check the feature flag or authorization, so an unlimited route would let
 # an unauthenticated caller fill the disk. It gets a higher limit instead,
-# with headroom over UPLOAD_MAX_ARCHIVE_BYTES for multipart framing --
-# the archive itself is still capped exactly while it is buffered.
-_UPLOAD_BODY_LIMIT = settings.UPLOAD_MAX_ARCHIVE_BYTES + _MULTIPART_OVERHEAD_ALLOWANCE
+# with headroom over UPLOAD_MAX_ARCHIVE_BYTES for multipart framing and the
+# checksum manifest -- the archive itself is still capped exactly while it is
+# buffered.
+_UPLOAD_BODY_LIMIT = (
+    settings.UPLOAD_MAX_ARCHIVE_BYTES
+    + _MULTIPART_OVERHEAD_ALLOWANCE
+    + _CHECKSUM_FIELD_ALLOWANCE
+)
 _BODY_LIMITS = {"/upload": _UPLOAD_BODY_LIMIT}
 
 # Counts bytes as they stream in, so an oversized body is cut off before

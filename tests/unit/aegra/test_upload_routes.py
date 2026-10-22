@@ -1,6 +1,8 @@
 """Unit tests for the PVC data ingestion endpoint."""
 
+import hashlib
 import io
+import json
 import os
 import stat
 import tarfile
@@ -1111,6 +1113,432 @@ class TestAtomicity:
         for rel in _live(data_root):
             assert "current" not in rel
             assert ".staging-" not in rel and ".old-" not in rel
+
+
+class TestChecksum:
+    """What gets verified follows the payload type.
+
+    An archive is checked as transmitted -- one digest over the .zip/.tar
+    itself, before it is unpacked. Individually uploaded files are checked
+    one by one. Members inside an archive are never digested.
+    """
+
+    @pytest.fixture
+    def strict_client(self, client):
+        """Client with UPLOAD_CHECKSUM_REQUIRED on."""
+        with patch.object(upload_routes.settings, "UPLOAD_CHECKSUM_REQUIRED", True):
+            yield client
+
+    @staticmethod
+    def _sha(payload):
+        if isinstance(payload, str):
+            payload = payload.encode()
+        return hashlib.sha256(payload).hexdigest()
+
+    @classmethod
+    def _manifest(cls, entries, prefix=True):
+        return json.dumps(
+            {
+                name: ("sha256:" if prefix else "") + cls._sha(content)
+                for name, content in entries.items()
+            }
+        )
+
+    # ── Archives: the zipped artifact as sent ─────────────────────────
+
+    def test_archive_matching_its_digest_publishes(self, client, data_root):
+        payload = _zip({"docs/a.md": "A", "docs/b.txt": "B"})
+        res = client.post(
+            "/upload",
+            files={"files": ("x.zip", payload)},
+            data={"checksum": f"sha256:{self._sha(payload)}"},
+        )
+
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["checksum_verified"] is True
+        assert body["files_written"] == 2
+        # Members are deliberately not digested: only the archive was.
+        assert body["files_verified"] == 0
+        assert _live(data_root) == {"docs/a.md": "A", "docs/b.txt": "B"}
+
+    def test_bare_digest_without_prefix_is_accepted(self, client, data_root):
+        payload = _zip({"a.md": "A"})
+        res = client.post(
+            "/upload",
+            files={"files": ("x.zip", payload)},
+            data={"checksum": self._sha(payload)},
+        )
+
+        assert res.status_code == 200, res.text
+
+    def test_corrupted_archive_is_rejected(self, client, data_root):
+        """One trailing byte: the content is intact, the artifact is not."""
+        payload = _zip({"a.md": "A"})
+        res = client.post(
+            "/upload",
+            files={"files": ("x.zip", payload + b"\x00")},
+            data={"checksum": self._sha(payload)},
+        )
+
+        assert res.status_code == 400
+        assert "checksum mismatch" in res.json()["detail"]
+        assert _live(data_root) == {}
+        assert _scratch(data_root) == []
+
+    def test_digest_of_contents_instead_of_archive_is_rejected(self, client, data_root):
+        """A zip's digest is not the digest of what it holds."""
+        res = client.post(
+            "/upload",
+            files={"files": ("x.zip", _zip({"a.md": "A"}))},
+            data={"checksum": self._sha("A")},
+        )
+
+        assert res.status_code == 400
+        assert "checksum mismatch" in res.json()["detail"]
+
+    def test_tar_archive_is_verified(self, client, data_root):
+        payload = _tar({"a.md": "A"})
+        res = client.post(
+            "/upload",
+            files={"files": ("x.tar", payload)},
+            data={"checksum": self._sha(payload)},
+        )
+
+        assert res.status_code == 200, res.text
+        assert _live(data_root) == {"a.md": "A"}
+
+    def test_per_file_manifest_is_refused_for_an_archive(self, client, data_root):
+        """Members are not digested, so accepting this would be a lie."""
+        res = client.post(
+            "/upload",
+            files={"files": ("x.zip", _zip({"a.md": "A"}))},
+            data={"checksums": self._manifest({"a.md": "A"})},
+        )
+
+        assert res.status_code == 400
+        assert "individually uploaded files" in res.json()["detail"]
+        assert _live(data_root) == {}
+
+    def test_archive_is_rejected_before_it_is_unpacked(self, client, data_root):
+        """A bad digest must not cost an extraction."""
+        payload = _zip({"a.md": "A"})
+        with patch.object(upload_routes, "_populate") as populate:
+            res = client.post(
+                "/upload",
+                files={"files": ("x.zip", payload)},
+                data={"checksum": self._sha("wrong")},
+            )
+
+        assert res.status_code == 400
+        assert "checksum mismatch" in res.json()["detail"]
+        populate.assert_not_called()
+
+    # ── Individually uploaded files ───────────────────────────────────
+
+    def test_single_file_verified_by_checksum(self, client, data_root):
+        res = client.post(
+            "/upload",
+            files={"files": ("notes.md", b"hello")},
+            data={"checksum": f"sha256:{self._sha('hello')}"},
+        )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["checksum_verified"] is True
+        assert _live(data_root) == {"notes.md": "hello"}
+
+    def test_single_file_with_a_wrong_digest_is_rejected(self, client, data_root):
+        res = client.post(
+            "/upload",
+            files={"files": ("notes.md", b"hello")},
+            data={"checksum": self._sha("goodbye")},
+        )
+
+        assert res.status_code == 400
+        assert "checksum mismatch" in res.json()["detail"]
+        assert _live(data_root) == {}
+
+    def test_several_files_each_verified(self, client, data_root):
+        res = client.post(
+            "/upload",
+            files=[("files", ("a.md", b"A")), ("files", ("b.md", b"B"))],
+            data={"checksums": self._manifest({"a.md": "A", "b.md": "B"})},
+        )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["files_verified"] == 2
+        assert _live(data_root) == {"a.md": "A", "b.md": "B"}
+
+    def test_one_bad_digest_rejects_the_whole_request(self, client, data_root):
+        """Rejects inside _ingest, after staging was built and seeded.
+
+        Unlike the payload-digest mismatches, this path has already created
+        a .staging-* directory and hardlink-copied the live tree into it,
+        so it is the one that can leak scratch or a half-published tree.
+        """
+        client.post("/upload", files={"files": ("x.zip", _zip({"keep.md": "K"}))})
+        before = _live(data_root)
+
+        res = client.post(
+            "/upload",
+            files=[("files", ("a.md", b"A")), ("files", ("b.md", b"B"))],
+            data={"checksums": self._manifest({"a.md": "A", "b.md": "WRONG"})},
+        )
+
+        assert res.status_code == 400
+        assert "b.md" in res.json()["detail"]
+        assert _live(data_root) == before
+        assert _scratch(data_root) == []
+
+    def test_undeclared_file_is_rejected(self, client, data_root):
+        res = client.post(
+            "/upload",
+            files=[("files", ("a.md", b"A")), ("files", ("b.md", b"B"))],
+            data={"checksums": self._manifest({"a.md": "A"})},
+        )
+
+        assert res.status_code == 400
+        assert "b.md" in res.json()["detail"]
+        assert _live(data_root) == {}
+
+    def test_allowlist_filtered_file_says_so(self, client, data_root):
+        """Not "was not published" -- that sends the caller hunting for a
+        truncated upload when it was the server that filtered the file."""
+        res = client.post(
+            "/upload",
+            files=[("files", ("a.md", b"A")), ("files", ("b.exe", b"B"))],
+            data={"checksums": self._manifest({"a.md": "A", "b.exe": "B"})},
+        )
+
+        assert res.status_code == 400
+        detail = res.json()["detail"]
+        assert "b.exe" in detail
+        assert "UPLOAD_ALLOWED_EXTENSIONS" in detail
+        assert _live(data_root) == {}
+
+    def test_declared_file_that_was_not_sent_is_rejected(self, client, data_root):
+        res = client.post(
+            "/upload",
+            files={"files": ("a.md", b"A")},
+            data={"checksums": self._manifest({"a.md": "A", "missing.md": "M"})},
+        )
+
+        assert res.status_code == 400
+        assert "missing.md" in res.json()["detail"]
+        assert _live(data_root) == {}
+
+    def test_names_differing_only_by_whitespace_do_not_share_a_digest(
+        self, strict_client, data_root
+    ):
+        """Regression: " a.md" and "a.md" are two files, not one.
+
+        Folding them to one key let the second entry's digest vouch for the
+        first, so a file nobody declared was published with a 200 — and
+        UPLOAD_CHECKSUM_REQUIRED did not stop it, because a manifest *was*
+        present. Digests are now keyed by where bytes actually landed.
+        """
+        res = strict_client.post(
+            "/upload",
+            files=[("files", ("a.md", b"A")), ("files", (" a.md", b"EVIL"))],
+            data={"checksums": self._manifest({"a.md": "EVIL"})},
+        )
+
+        assert res.status_code == 400
+        assert "not listed in checksums" in res.json()["detail"]
+        assert _live(data_root) == {}
+        assert _scratch(data_root) == []
+
+    def test_a_whitespace_name_can_still_be_declared(self, client, data_root):
+        """The fix must not make a legal filename undeclarable."""
+        res = client.post(
+            "/upload",
+            files={"files": (" a.md", b"A")},
+            data={"checksums": self._manifest({" a.md": "A"})},
+        )
+
+        assert res.status_code == 200, res.text
+        assert _live(data_root) == {" a.md": "A"}
+
+    def test_checksum_is_refused_for_several_files(self, client, data_root):
+        """No single stream to digest, so this would verify nothing."""
+        res = client.post(
+            "/upload",
+            files=[("files", ("a.md", b"A")), ("files", ("b.md", b"B"))],
+            data={"checksum": self._sha("A")},
+        )
+
+        assert res.status_code == 400
+        assert "single uploaded file" in res.json()["detail"]
+        assert _live(data_root) == {}
+
+    def test_merge_leaves_the_existing_tree_alone(self, client, data_root):
+        client.post("/upload", files={"files": ("x.zip", _zip({"keep.md": "K"}))})
+
+        res = client.post(
+            "/upload",
+            files={"files": ("add.md", b"A")},
+            data={"checksum": self._sha("A")},
+        )
+
+        assert res.status_code == 200, res.text
+        assert _live(data_root) == {"keep.md": "K", "add.md": "A"}
+
+    def test_mismatch_leaves_the_previous_tree_intact(self, client, data_root):
+        client.post("/upload", files={"files": ("x.zip", _zip({"keep.md": "K"}))})
+        before = _live(data_root)
+
+        res = client.post(
+            "/upload",
+            files={"files": ("y.zip", _zip({"new.md": "N"}))},
+            data={"checksum": self._sha("nope")},
+        )
+
+        assert res.status_code == 400
+        assert _live(data_root) == before
+        assert _scratch(data_root) == []
+
+    # ── Malformed input ───────────────────────────────────────────────
+
+    def test_unsupported_algorithm_is_rejected(self, client, data_root):
+        res = client.post(
+            "/upload",
+            files={"files": ("x.zip", _zip({"a.md": "A"}))},
+            data={"checksum": f"md5:{'a' * 32}"},
+        )
+
+        assert res.status_code == 400
+        assert "unsupported checksum algorithm" in res.json()["detail"]
+
+    def test_malformed_manifest_is_rejected(self, client, data_root):
+        res = client.post(
+            "/upload",
+            files={"files": ("a.md", b"A")},
+            data={"checksums": "{not json"},
+        )
+
+        assert res.status_code == 400
+        assert "not valid JSON" in res.json()["detail"]
+
+    def test_checksum_sent_as_a_file_part_is_rejected(self, client, data_root):
+        res = client.post(
+            "/upload",
+            files=[
+                ("files", ("a.md", b"A")),
+                ("checksum", ("c.txt", b"deadbeef")),
+            ],
+        )
+
+        assert res.status_code == 400
+        assert "text field" in res.json()["detail"]
+
+    # ── Audit ─────────────────────────────────────────────────────────
+
+    def test_mismatch_is_audited(self, client, data_root):
+        with patch.object(upload_routes, "emit_audit_event") as audit:
+            client.post(
+                "/upload",
+                files={"files": ("a.md", b"A")},
+                data={"checksum": self._sha("B")},
+            )
+
+        audit.assert_called_once()
+        event_type, kwargs = audit.call_args[0][0], audit.call_args[1]
+        assert event_type == "data_upload_rejected"
+        assert kwargs["user"] == "dev-user"
+        assert "checksum mismatch" in kwargs["reason"]
+
+    def test_verification_is_recorded_on_success(self, client, data_root):
+        payload = _zip({"a.md": "A"})
+        with patch.object(upload_routes, "emit_audit_event") as audit:
+            client.post(
+                "/upload",
+                files={"files": ("x.zip", payload)},
+                data={"checksum": self._sha(payload)},
+            )
+
+        assert audit.call_args[1]["checksum_verified"] is True
+
+    # ── The flag ──────────────────────────────────────────────────────
+
+    def test_nothing_sent_is_fine_while_the_flag_is_off(self, client, data_root):
+        res = client.post("/upload", files={"files": ("x.zip", _zip({"a.md": "A"}))})
+
+        assert res.status_code == 200, res.text
+        assert res.json()["checksum_verified"] is False
+        assert res.json()["files_verified"] == 0
+
+    def test_archive_without_a_digest_is_rejected_when_required(
+        self, strict_client, data_root
+    ):
+        res = strict_client.post(
+            "/upload", files={"files": ("x.zip", _zip({"a.md": "A"}))}
+        )
+
+        assert res.status_code == 400
+        assert "checksum" in res.json()["detail"]
+        assert _live(data_root) == {}
+
+    def test_files_without_digests_are_rejected_when_required(
+        self, strict_client, data_root
+    ):
+        res = strict_client.post(
+            "/upload",
+            files=[("files", ("a.md", b"A")), ("files", ("b.md", b"B"))],
+        )
+
+        assert res.status_code == 400
+        assert "checksums" in res.json()["detail"]
+        assert _live(data_root) == {}
+
+    def test_single_loose_file_without_a_digest_is_rejected_when_required(
+        self, strict_client, data_root
+    ):
+        """The one-file branch of the requirement, distinct from the archive."""
+        res = strict_client.post("/upload", files={"files": ("a.md", b"A")})
+
+        assert res.status_code == 400
+        assert "checksum" in res.json()["detail"]
+        assert _live(data_root) == {}
+
+    def test_policy_refusals_are_audited(self, strict_client, data_root):
+        """An operator turning the flag on needs to see it firing."""
+        with patch.object(upload_routes, "emit_audit_event") as audit:
+            strict_client.post(
+                "/upload", files={"files": ("x.zip", _zip({"a.md": "A"}))}
+            )
+
+        audit.assert_called_once()
+        assert audit.call_args[0][0] == "data_upload_rejected"
+        assert "checksum" in audit.call_args[1]["reason"]
+
+    def test_single_file_may_satisfy_the_requirement_either_way(
+        self, strict_client, data_root
+    ):
+        """A lone file is its own payload, so both spellings cover it."""
+        by_checksum = strict_client.post(
+            "/upload",
+            files={"files": ("a.md", b"A")},
+            data={"checksum": self._sha("A")},
+        )
+        assert by_checksum.status_code == 200, by_checksum.text
+
+        by_manifest = strict_client.post(
+            "/upload",
+            files={"files": ("b.md", b"B")},
+            data={"checksums": self._manifest({"b.md": "B"})},
+        )
+        assert by_manifest.status_code == 200, by_manifest.text
+
+    def test_good_archive_still_passes_when_required(self, strict_client, data_root):
+        payload = _zip({"a.md": "A"})
+        res = strict_client.post(
+            "/upload",
+            files={"files": ("x.zip", payload)},
+            data={"checksum": self._sha(payload)},
+        )
+
+        assert res.status_code == 200, res.text
+        assert _live(data_root) == {"a.md": "A"}
 
 
 class TestAuthBeforeBodyParsing:

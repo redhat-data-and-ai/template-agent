@@ -12,11 +12,21 @@ Semantics follow the payload type: an archive is a snapshot and **replaces**
 the whole tree; loose files are **merged** into it. Both publish atomically —
 the live tree is never modified unless the entire payload passes every guard.
 See ``adrs/upload-data-pvc.md``.
+
+Integrity is the caller's to assert, and what gets verified follows the
+payload type (see ``upload_checksum``). An archive is checked as transmitted:
+``checksum`` is the sha256 of the ``.zip``/``.tar`` itself, compared before
+the payload is unpacked. Individually uploaded files are checked one by one:
+``checksum`` for a single file, or ``checksums``, a JSON object of filename
+to digest, for several. Members *inside* an archive are not digested.
+``UPLOAD_CHECKSUM_REQUIRED`` makes sending the applicable one mandatory;
+whatever is sent is always verified.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import shutil
 import stat
@@ -31,7 +41,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import IO, Literal, TypeAlias
+from typing import IO, Literal, NoReturn, TypeAlias
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -39,6 +49,12 @@ from pydantic import BaseModel
 from starlette.datastructures import UploadFile
 
 from deep_agent.aegra.auth_helpers import check_ldap_role
+from deep_agent.aegra.upload_checksum import (
+    ChecksumInvalid,
+    compare_manifest,
+    parse_digest,
+    parse_manifest,
+)
 from deep_agent.src.audit.context import bind_audit_context
 from deep_agent.src.audit.emitter import emit_audit_event
 from deep_agent.src.audit.events import AuditEventType
@@ -111,6 +127,11 @@ class UploadResponse(BaseModel):
     files_written: int
     files_skipped: int
     bytes_written: int
+    # So a caller can confirm verification actually ran, rather than
+    # inferring it from the absence of an error. For an archive this is the
+    # archive's own digest; for loose files it is the count checked.
+    checksum_verified: bool = False
+    files_verified: int = 0
 
 
 class DeleteResponse(BaseModel):
@@ -322,20 +343,32 @@ def _safe_destination(name: str, root: Path) -> Path:
     return destination
 
 
-def _write_entry(source: IO[bytes], destination: Path) -> int:
+def _write_entry(
+    source: IO[bytes], destination: Path, *, digest: bool = False
+) -> tuple[int, str | None]:
     """Stream one entry to disk, enforcing the per-file cap as it goes.
 
     The cap is checked against bytes actually written rather than any size
     declared in the archive header, which a crafted archive can understate.
 
+    Args:
+        source: Binary stream of the entry's contents.
+        destination: Path to write, inside staging.
+        digest: Whether to hash the bytes on the way past. Computed in the
+            same pass as the write -- re-reading the file afterwards would
+            double the I/O and, worse, hash whatever is on disk then rather
+            than what this request actually wrote.
+
     Returns:
-        Number of bytes written.
+        Tuple of (bytes written, lowercase hex sha256 or None when not
+        requested).
 
     Raises:
         UploadRejected: If the file exceeds UPLOAD_MAX_FILE_BYTES.
     """
     _mkdir_shared(destination.parent)
     written = 0
+    hasher = hashlib.sha256() if digest else None
     # Overwrite by replacing, never by mutating in place: staging may contain
     # hardlinks to the live tree, and writing through one would corrupt it.
     destination.unlink(missing_ok=True)
@@ -347,14 +380,41 @@ def _write_entry(source: IO[bytes], destination: Path) -> int:
                     f"file exceeds per-file cap of "
                     f"{settings.UPLOAD_MAX_FILE_BYTES} bytes: {destination.name}"
                 )
+            if hasher is not None:
+                hasher.update(chunk)
             out.write(chunk)
     _chmod_shared(destination, _FILE_MODE)
-    return written
+    return written, hasher.hexdigest() if hasher is not None else None
 
 
 def _tree_size(root: Path) -> int:
     """Return the total size in bytes of all files under root."""
     return sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+
+
+@dataclass
+class _PopulateResult:
+    """What staging ended up containing.
+
+    Attributes:
+        files_written: Regular files written into staging.
+        files_skipped: Entries the caller may have expected to land but that
+            were filtered out -- symlinks, devices, disallowed extensions.
+        bytes_written: Total bytes written.
+        digests: Staging-relative path -> hex sha256, for written files only,
+            and only when the caller sent a manifest to check them against.
+            Keyed by where the bytes actually landed rather than by the name
+            the caller used, so the map is one-to-one with the filesystem.
+        filtered: Staging-relative paths dropped by the extension allowlist.
+            Tracked so a manifest entry naming one can be reported as
+            filtered rather than as missing, which would misdiagnose it.
+    """
+
+    files_written: int
+    files_skipped: int
+    bytes_written: int
+    digests: dict[str, str]
+    filtered: set[str]
 
 
 def _populate(
@@ -363,7 +423,8 @@ def _populate(
     baseline: int,
     *,
     apply_allowlist: bool,
-) -> tuple[int, int, int]:
+    digest: bool = False,
+) -> _PopulateResult:
     """Write permitted entries into staging, enforcing every per-entry guard.
 
     Args:
@@ -378,9 +439,12 @@ def _populate(
             parts of it is worse than accepting what they chose to send. The
             safety guards (traversal, symlinks, per-file and total size,
             entry count) apply to both.
+        digest: Whether to hash each written file. Only true when the caller
+            sent a manifest, so an upload without one costs exactly what it
+            did before.
 
     Returns:
-        Tuple of (files_written, files_skipped, bytes_written).
+        A _PopulateResult describing what landed.
 
     Raises:
         UploadRejected: If any guard trips.
@@ -389,6 +453,11 @@ def _populate(
     written_files = skipped = 0
     written_bytes = 0
     seen = 0
+    digests: dict[str, str] = {}
+    filtered: set[str] = set()
+    # _safe_destination returns resolved paths, so the staging root has to be
+    # resolved too for the relative_to() below to line up.
+    staging_root = staging.resolve()
     # Running size of the resulting tree. Replacing an existing file costs only
     # the difference, so a merge that overwrites in place doesn't count the old
     # copy and the new one against the cap.
@@ -419,14 +488,28 @@ def _populate(
         # allowlist: a hostile path is rejected outright, not quietly skipped.
         destination = _safe_destination(entry.name, staging)
 
+        landed = destination.relative_to(staging_root).as_posix()
+
         if apply_allowlist and PurePosixPath(entry.name).suffix.lower() not in allowed:
             skipped += 1
+            filtered.add(landed)
             continue
 
         replaced = destination.stat().st_size if destination.is_file() else 0
 
         with entry.open() as source:
-            size = _write_entry(source, destination)
+            size, hexdigest = _write_entry(source, destination, digest=digest)
+
+        if hexdigest is not None:
+            # Keyed by where the bytes actually landed, NOT by the caller's
+            # spelling of the name. Deriving the key from the destination
+            # makes the map one-to-one with the filesystem by construction:
+            # two names that resolve to one file share a key, and two that
+            # resolve to different files can never collide. Keying on a
+            # normalized entry.name instead let " a.md" and "a.md" fold
+            # together, so one entry's digest vouched for the other and a
+            # file nobody declared was published.
+            digests[landed] = hexdigest
 
         written_files += 1
         written_bytes += size
@@ -439,7 +522,7 @@ def _populate(
     if written_files == 0:
         raise UploadRejected("payload contained no permitted files")
 
-    return written_files, skipped, written_bytes
+    return _PopulateResult(written_files, skipped, written_bytes, digests, filtered)
 
 
 # ── Staging and publish ───────────────────────────────────────────────
@@ -593,7 +676,10 @@ def _upload_lock(data_root: Path) -> Iterator[None]:
 
 
 def _ingest(
-    payload: Path | list[UploadFile], mode: Mode, data_root: Path
+    payload: Path | list[UploadFile],
+    mode: Mode,
+    data_root: Path,
+    manifest: dict[str, str] | None = None,
 ) -> UploadResponse:
     """Stage, validate and publish a payload. Runs in a worker thread.
 
@@ -601,12 +687,16 @@ def _ingest(
         payload: Path to a buffered archive, or the list of loose uploads.
         mode: Either ``replace`` (archive) or ``merge`` (loose files).
         data_root: The writable mount containing the live tree.
+        manifest: Normalized path -> sha256 the caller declared, or None.
+            When given, every staged file is hashed and the result compared
+            before anything is published.
 
     Returns:
         Counts describing what was published.
 
     Raises:
-        UploadRejected: If the payload fails any guard.
+        UploadRejected: If the payload fails any guard, including a checksum
+            that does not match the manifest.
         UploadBusy: If another upload is already in progress.
     """
     live = data_root / LIVE_DIR
@@ -639,34 +729,47 @@ def _ingest(
             # is plausible, so the failure surfaces here, part-way through
             # the read. Translate it so the caller gets a 400 and the
             # rejection is audited, rather than an unhandled 500.
+            want_digests = manifest is not None
             try:
                 if isinstance(payload, list):
-                    written, skipped, written_bytes = _populate(
+                    result = _populate(
                         _loose_entries(payload),
                         staging,
                         baseline,
                         apply_allowlist=True,
+                        digest=want_digests,
                     )
                 elif zipfile.is_zipfile(payload):
                     with zipfile.ZipFile(payload) as archive:
-                        written, skipped, written_bytes = _populate(
+                        result = _populate(
                             _zip_entries(archive),
                             staging,
                             baseline,
                             apply_allowlist=False,
+                            digest=want_digests,
                         )
                 else:
                     with tarfile.open(payload) as archive:
-                        written, skipped, written_bytes = _populate(
+                        result = _populate(
                             _tar_entries(archive),
                             staging,
                             baseline,
                             apply_allowlist=False,
+                            digest=want_digests,
                         )
             except _ARCHIVE_ERRORS as exc:
                 raise UploadRejected(
                     f"archive could not be read: {type(exc).__name__}"
                 ) from exc
+
+            # Last guard before the swap. Raising here leaves the live tree
+            # untouched and staging cleaned up by the finally below, so a
+            # payload that does not match what the caller declared never
+            # becomes visible to the agent even momentarily.
+            if manifest is not None:
+                reason = compare_manifest(manifest, result.digests, result.filtered)
+                if reason is not None:
+                    raise UploadRejected(f"checksum mismatch: {reason}")
 
             _publish(staging, live)
         finally:
@@ -674,9 +777,10 @@ def _ingest(
 
     return UploadResponse(
         mode=mode,
-        files_written=written,
-        files_skipped=skipped,
-        bytes_written=written_bytes,
+        files_written=result.files_written,
+        files_skipped=result.files_skipped,
+        bytes_written=result.bytes_written,
+        files_verified=len(result.digests),
     )
 
 
@@ -758,15 +862,29 @@ async def _looks_like_archive(upload: UploadFile) -> bool:
     return head[_TAR_MAGIC_OFFSET:_TAR_MAGIC_END] == b"ustar"
 
 
-async def _buffer(upload: UploadFile, destination: Path) -> None:
+async def _buffer(
+    upload: UploadFile, destination: Path, *, digest: bool = False
+) -> str | None:
     """Stream an upload to disk, enforcing the archive size cap.
 
     Content-Length is not trusted, and the body is never held in memory.
+
+    Args:
+        upload: The single multipart part being buffered.
+        destination: Scratch path to write it to.
+        digest: Whether to hash the bytes on the way past, so the caller's
+            declared ``checksum`` can be checked before the payload is
+            unpacked or staged. Hashing here rather than re-reading the
+            scratch file keeps it to one pass.
+
+    Returns:
+        Lowercase hex sha256 of the body, or None when not requested.
 
     Raises:
         HTTPException: 413 if the body exceeds UPLOAD_MAX_ARCHIVE_BYTES.
     """
     total = 0
+    hasher = hashlib.sha256() if digest else None
     with destination.open("wb") as out:
         while chunk := await upload.read(_CHUNK):
             total += len(chunk)
@@ -778,8 +896,11 @@ async def _buffer(upload: UploadFile, destination: Path) -> None:
                         f"{settings.UPLOAD_MAX_ARCHIVE_BYTES} bytes"
                     ),
                 )
+            if hasher is not None:
+                hasher.update(chunk)
             out.write(chunk)
     await upload.seek(0)
+    return hasher.hexdigest() if hasher is not None else None
 
 
 # ── Route ─────────────────────────────────────────────────────────────
@@ -803,7 +924,28 @@ _UPLOAD_REQUEST_BODY_SCHEMA = {
                                 "whole tree, or one or more loose files, "
                                 "which are merged into it."
                             ),
-                        }
+                        },
+                        "checksum": {
+                            "type": "string",
+                            "description": (
+                                "sha256 of the single uploaded file as sent -- "
+                                "the .zip/.tar itself for an archive upload, "
+                                "or the file's own bytes for one loose file. "
+                                'Written "sha256:<hex>" or bare hex. Checked '
+                                "before the payload is unpacked."
+                            ),
+                        },
+                        "checksums": {
+                            "type": "string",
+                            "description": (
+                                "JSON object mapping each uploaded filename to "
+                                'its sha256, e.g. {"notes.md": "sha256:9f..."}. '
+                                "For individually uploaded files only; an "
+                                "archive is covered by 'checksum' instead. "
+                                "Verified before anything is published, so a "
+                                "mismatch is a 400 and nothing lands."
+                            ),
+                        },
                     },
                     "required": ["files"],
                 }
@@ -823,6 +965,13 @@ async def upload(request: Request) -> UploadResponse:
 
     A single ``.zip``/``.tar`` replaces the whole tree; loose files are merged
     into it. Caller-supplied names are preserved verbatim.
+
+    Integrity is declared per payload type: ``checksum`` is the sha256 of the
+    single uploaded file as sent -- the archive itself, or a lone loose
+    file's bytes -- while ``checksums`` is a JSON object of filename to
+    digest for several loose files. A mismatch is a 400 and nothing is
+    published. ``UPLOAD_CHECKSUM_REQUIRED`` makes the applicable one
+    mandatory.
 
     The multipart body is read **after** the feature flag and authorization
     checks, which is why this takes a raw Request rather than declaring
@@ -862,7 +1011,26 @@ async def upload(request: Request) -> UploadResponse:
                 # subclass of it, so filtering on the fastapi class drops
                 # every part.
                 files = [f for f in form.getlist("files") if isinstance(f, UploadFile)]
-                return await _handle_upload(files, data_root, scratch, user_id)
+                # Sent as a file part rather than a text field, this comes
+                # back as an UploadFile. Refuse it rather than reading an
+                # unbounded part looking for JSON.
+                raw: dict[str, str | None] = {}
+                for field in ("checksum", "checksums"):
+                    value = form.get(field)
+                    if value is not None and not isinstance(value, str):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{field} must be a text field, not a file",
+                        )
+                    raw[field] = value
+                return await _handle_upload(
+                    files,
+                    data_root,
+                    scratch,
+                    user_id,
+                    raw["checksum"],
+                    raw["checksums"],
+                )
         except HTTPException:
             raise
         except (ValueError, AssertionError) as exc:
@@ -874,30 +1042,111 @@ async def upload(request: Request) -> UploadResponse:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+_REQUIRED_ARCHIVE_DETAIL = (
+    "A 'checksum' over the uploaded archive is required. Compute it with "
+    "sha256sum on the .zip/.tar file itself"
+)
+_REQUIRED_FILES_DETAIL = (
+    "A sha256 is required for every uploaded file: 'checksum' for a single "
+    "file, or 'checksums' as a JSON object of filename to digest"
+)
+
+
+def _reject(user_id: str, mode: str, reason: str) -> NoReturn:
+    """Log, audit and raise a 400 for a payload that failed verification.
+
+    A refused push onto shared storage is exactly the kind of event worth
+    seeing a pattern of, so it is audited rather than only logged.
+    """
+    logger.warning("upload_rejected", user_id=user_id, reason=reason)
+    emit_audit_event(
+        AuditEventType.DATA_UPLOAD_REJECTED,
+        user=user_id,
+        mode=mode,
+        reason=reason,
+    )
+    raise HTTPException(status_code=400, detail=reason)
+
+
 async def _handle_upload(
-    files: list[UploadFile], data_root: Path, scratch: Path, user_id: str
+    files: list[UploadFile],
+    data_root: Path,
+    scratch: Path,
+    user_id: str,
+    raw_checksum: str | None = None,
+    raw_checksums: str | None = None,
 ) -> UploadResponse:
     """Validate the parsed parts and publish them. Body is already read."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
+    # Parsed before the payload is touched, so a malformed digest or a missing
+    # mandatory one costs nothing. Anything the caller did send is always
+    # honoured, flag or no flag: they asserted something, and ignoring a
+    # broken assertion is worse than refusing it.
+    # Mode is not known until the payload is sniffed, so these early
+    # rejections audit as "unknown" -- same convention as a sniff failure.
+    try:
+        expected_payload_digest = (
+            None if raw_checksum is None else parse_digest(raw_checksum)
+        )
+        manifest: dict[str, str] | None = (
+            None
+            if raw_checksums is None
+            else parse_manifest(raw_checksums, settings.UPLOAD_MAX_FILE_COUNT)
+        )
+    except ChecksumInvalid as exc:
+        _reject(user_id, "unknown", str(exc))
+
     payload: Path | list[UploadFile]
     mode: Mode
     if len(files) == 1:
         buffered = scratch / "payload"
-        await _buffer(files[0], buffered)
+        # Hash while buffering when there is something to compare against:
+        # one pass over bytes already being written to scratch.
+        actual_digest = await _buffer(
+            files[0], buffered, digest=expected_payload_digest is not None
+        )
         # Mode is decided by content, never by filename or content-type.
         try:
             is_archive = _sniff_archive(buffered)
         except UploadRejected as exc:
-            logger.warning("upload_rejected", user_id=user_id, reason=str(exc))
-            emit_audit_event(
-                AuditEventType.DATA_UPLOAD_REJECTED,
-                user=user_id,
-                mode="unknown",
-                reason=str(exc),
+            _reject(user_id, "unknown", str(exc))
+
+        # Known from here on, so rejections carry the real mode rather than
+        # the "unknown" the sniff-failure above has to use.
+        sniffed: Mode = "replace" if is_archive else "merge"
+
+        if is_archive and manifest is not None:
+            # An archive is verified as transmitted; its members are not.
+            # Accepting a per-file manifest here would report a verification
+            # that never happened.
+            _reject(
+                user_id,
+                sniffed,
+                "'checksums' applies to individually uploaded files. For an "
+                "archive, send 'checksum' over the archive file itself",
             )
-            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+        # A lone file is its own payload, so either spelling verifies the
+        # same bytes; an archive can only be covered by 'checksum'.
+        if settings.UPLOAD_CHECKSUM_REQUIRED and expected_payload_digest is None:
+            if is_archive:
+                _reject(user_id, sniffed, _REQUIRED_ARCHIVE_DETAIL)
+            if manifest is None:
+                _reject(user_id, sniffed, _REQUIRED_FILES_DETAIL)
+
+        if expected_payload_digest is not None and actual_digest != (
+            expected_payload_digest
+        ):
+            _reject(
+                user_id,
+                sniffed,
+                f"checksum mismatch: expected sha256:{expected_payload_digest}, "
+                f"got sha256:{actual_digest}",
+            )
+        payload_verified = expected_payload_digest is not None
+
         if is_archive:
             payload, mode = buffered, "replace"
         else:
@@ -924,21 +1173,24 @@ async def _handle_upload(
                         f"its own, not alongside other files"
                     ),
                 )
+        # Several parts, so there is no single stream to digest. Refusing a
+        # 'checksum' here beats letting the caller believe one was checked.
+        if expected_payload_digest is not None:
+            _reject(
+                user_id,
+                "merge",
+                "'checksum' covers a single uploaded file. Send 'checksums', "
+                "a JSON object of filename to sha256, for several files",
+            )
+        if settings.UPLOAD_CHECKSUM_REQUIRED and manifest is None:
+            _reject(user_id, "merge", _REQUIRED_FILES_DETAIL)
+        payload_verified = False
         payload, mode = files, "merge"
 
     try:
-        result = await asyncio.to_thread(_ingest, payload, mode, data_root)
+        result = await asyncio.to_thread(_ingest, payload, mode, data_root, manifest)
     except UploadRejected as exc:
-        logger.warning("upload_rejected", user_id=user_id, reason=str(exc))
-        # Audited too: a rejected push onto shared storage is exactly the
-        # kind of event worth seeing a pattern of.
-        emit_audit_event(
-            AuditEventType.DATA_UPLOAD_REJECTED,
-            user=user_id,
-            mode=mode,
-            reason=str(exc),
-        )
-        raise HTTPException(status_code=400, detail=str(exc)) from None
+        _reject(user_id, mode, str(exc))
     except UploadBusy as exc:
         logger.info("upload_busy", user_id=user_id)
         raise HTTPException(status_code=409, detail=str(exc)) from None
@@ -952,6 +1204,10 @@ async def _handle_upload(
             status_code=500, detail="Failed to publish upload"
         ) from None
 
+    # The archive's own digest is checked up in this function, before the
+    # payload is ever unpacked, so _ingest knows nothing about it.
+    result.checksum_verified = payload_verified
+
     logger.info(
         "upload_published",
         user_id=user_id,
@@ -959,6 +1215,8 @@ async def _handle_upload(
         files_written=result.files_written,
         files_skipped=result.files_skipped,
         bytes_written=result.bytes_written,
+        checksum_verified=result.checksum_verified,
+        files_verified=result.files_verified,
     )
     emit_audit_event(
         AuditEventType.DATA_UPLOAD,
@@ -967,6 +1225,8 @@ async def _handle_upload(
         files_written=result.files_written,
         files_skipped=result.files_skipped,
         bytes_written=result.bytes_written,
+        checksum_verified=result.checksum_verified,
+        files_verified=result.files_verified,
     )
     return result
 
