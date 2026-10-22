@@ -415,7 +415,6 @@ class TestValidateMcpServerApiKey:
             "auth_env_var": "MCP_X_API_KEY",
             "api_key_name": "X-API-Key",
             "api_key_location": "header",
-            "api_key_scheme": "none",
         }
         base.update(overrides)
         return base
@@ -451,22 +450,6 @@ class TestValidateMcpServerApiKey:
             AgentConfig._validate_mcp_server("m", self._cfg(api_key_location="cookie"))
         assert "invalid api_key_location 'cookie'" in caplog.text
 
-    def test_invalid_scheme_logs_error(self, caplog):
-        import logging
-
-        with caplog.at_level(logging.ERROR):
-            AgentConfig._validate_mcp_server("m", self._cfg(api_key_scheme="digest"))
-        assert "invalid api_key_scheme 'digest'" in caplog.text
-
-    def test_scheme_with_non_header_location_logs_error(self, caplog):
-        import logging
-
-        with caplog.at_level(logging.ERROR):
-            AgentConfig._validate_mcp_server(
-                "m", self._cfg(api_key_scheme="basic", api_key_location="query")
-            )
-        assert "requires api_key_location 'header'" in caplog.text
-
     def test_location_without_name_logs_error(self, caplog):
         import logging
 
@@ -481,27 +464,3 @@ class TestValidateMcpServerApiKey:
             AgentConfig._validate_mcp_server("m", {"auth_mode": "magic"})
         assert "invalid auth_mode 'magic'" in caplog.text
         assert "auth_env_var" not in caplog.text
-
-    def test_scheme_without_name_logs_error(self, caplog):
-        """Scheme with no name would silently send Bearer instead."""
-        import logging
-
-        with caplog.at_level(logging.ERROR):
-            AgentConfig._validate_mcp_server(
-                "m",
-                {
-                    "auth_mode": "api_key",
-                    "auth_env_var": "MCP_X_API_KEY",
-                    "api_key_scheme": "basic",
-                },
-            )
-        assert "requires 'api_key_name'" in caplog.text
-
-    def test_scheme_none_without_name_logs_no_error(self, caplog):
-        import logging
-
-        with caplog.at_level(logging.ERROR):
-            AgentConfig._validate_mcp_server(
-                "m", {"auth_mode": "api_key", "auth_env_var": "MCP_X_API_KEY"}
-            )
-        assert caplog.text == ""

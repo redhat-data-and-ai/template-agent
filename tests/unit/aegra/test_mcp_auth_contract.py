@@ -34,7 +34,7 @@ def _entry(**extra):
 
 def test_accepted_key_locations_match_the_builder():
     """Must equal registry MCP_API_KEY_LOCATIONS and the UI dropdown."""
-    assert _API_KEY_LOCATIONS == ("header", "query", "body")
+    assert _API_KEY_LOCATIONS == ("header", "query")
 
 
 @pytest.mark.asyncio
@@ -63,9 +63,8 @@ async def test_sso_mode_still_uses_the_sso_token():
 
 
 def test_bearer_shape_from_agent_engine_sends_authorization_bearer():
-    """agent-engine omits api_key_name for bearer; default placement applies."""
     cfg = _build_server_config(
-        _entry(auth_mode="api_key", auth_env_var="MCP_M_BEARER_TOKEN"), "tok"
+        _entry(auth_mode="bearer", auth_env_var="MCP_M_BEARER_TOKEN"), "tok"
     )
     assert cfg["headers"]["Authorization"] == "Bearer tok"
 
@@ -84,148 +83,7 @@ def test_api_key_shape_from_agent_engine_uses_configured_placement():
     assert "Authorization" not in cfg["headers"]
 
 
-# --- api_key_scheme: Basic vs Bearer (RHITAIF-894) ---
-
-
-def test_basic_scheme_sends_authorization_basic():
-    """Langfuse case: Authorization: Basic <base64>."""
-    cfg = _build_server_config(
-        _entry(
-            auth_mode="api_key",
-            auth_env_var="MCP_LANGFUSE_API_KEY",
-            api_key_name="Authorization",
-            api_key_location="header",
-            api_key_scheme="basic",
-        ),
-        "YmFzZTY0OnRva2Vu",
-    )
-    assert cfg["headers"]["Authorization"] == "Basic YmFzZTY0OnRva2Vu"
-
-
-def test_bearer_scheme_sends_authorization_bearer():
-    cfg = _build_server_config(
-        _entry(
-            auth_mode="api_key",
-            auth_env_var="MCP_X_API_KEY",
-            api_key_name="Authorization",
-            api_key_scheme="bearer",
-        ),
-        "tok",
-    )
-    assert cfg["headers"]["Authorization"] == "Bearer tok"
-
-
-def test_none_scheme_sends_the_raw_key():
-    cfg = _build_server_config(
-        _entry(
-            auth_mode="api_key",
-            auth_env_var="MCP_X_API_KEY",
-            api_key_name="X-API-Key",
-            api_key_scheme="none",
-        ),
-        "raw-key",
-    )
-    assert cfg["headers"]["X-API-Key"] == "raw-key"
-
-
-def test_absent_scheme_defaults_to_raw_key():
-    """Configs written before auth_scheme existed must not change behaviour."""
-    cfg = _build_server_config(
-        _entry(
-            auth_mode="api_key",
-            auth_env_var="MCP_X_API_KEY",
-            api_key_name="X-API-Key",
-        ),
-        "raw-key",
-    )
-    assert cfg["headers"]["X-API-Key"] == "raw-key"
-
-
-def test_unknown_scheme_falls_back_to_raw_key():
-    cfg = _build_server_config(
-        _entry(
-            auth_mode="api_key",
-            auth_env_var="MCP_X_API_KEY",
-            api_key_name="X-API-Key",
-            api_key_scheme="digest",
-        ),
-        "raw-key",
-    )
-    assert cfg["headers"]["X-API-Key"] == "raw-key"
-
-
-# --- scheme set without a key name (CodeRabbit, PR #399) ---
-
-
-def test_basic_scheme_without_name_uses_authorization_header():
-    """Previously sent 'Bearer <key>' when 'Basic' was requested."""
-    cfg = _build_server_config(
-        _entry(
-            auth_mode="api_key",
-            auth_env_var="MCP_X_API_KEY",
-            api_key_scheme="basic",
-        ),
-        "k",
-    )
-    assert cfg["headers"]["Authorization"] == "Basic k"
-
-
-def test_bearer_scheme_without_name_is_unchanged():
-    cfg = _build_server_config(
-        _entry(
-            auth_mode="api_key",
-            auth_env_var="MCP_X_API_KEY",
-            api_key_scheme="bearer",
-        ),
-        "k",
-    )
-    assert cfg["headers"]["Authorization"] == "Bearer k"
-
-
-def test_no_scheme_and_no_name_keeps_default_path():
-    cfg = _build_server_config(
-        _entry(auth_mode="api_key", auth_env_var="MCP_X_API_KEY"), "k"
-    )
-    assert cfg["headers"]["Authorization"] == "Bearer k"
-
-
-def test_explicit_name_still_wins_over_the_default():
-    cfg = _build_server_config(
-        _entry(
-            auth_mode="api_key",
-            auth_env_var="MCP_X_API_KEY",
-            api_key_name="X-API-Key",
-            api_key_scheme="none",
-        ),
-        "k",
-    )
-    assert cfg["headers"]["X-API-Key"] == "k"
-    assert "Authorization" not in cfg["headers"]
-
-
 # --- non-string scheme and duplicate query keys (CodeRabbit, PR #399) ---
-
-
-def test_non_string_scheme_falls_back_to_raw_key():
-    """A numeric scheme in mcp.json must not raise during connection setup."""
-    from deep_agent.aegra.mcp import _apply_api_key_scheme
-
-    assert _apply_api_key_scheme("k", 123) == "k"
-    assert _apply_api_key_scheme("k", True) == "k"
-    assert _apply_api_key_scheme("k", None) == "k"
-
-
-def test_non_string_scheme_in_server_config_does_not_raise():
-    cfg = _build_server_config(
-        _entry(
-            auth_mode="api_key",
-            auth_env_var="MCP_X_API_KEY",
-            api_key_name="X-API-Key",
-            api_key_scheme=123,
-        ),
-        "k",
-    )
-    assert cfg["headers"]["X-API-Key"] == "k"
 
 
 def test_query_placement_replaces_an_existing_key():
@@ -381,3 +239,149 @@ def test_log_filter_masks_exception_tracebacks():
         assert record.exc_text is not None
         assert "s3cret" not in record.exc_text
         assert "apikey=REDACTED" in record.exc_text
+
+
+# --- basic token auth type ---
+
+
+def test_basic_mode_sends_authorization_basic():
+    cfg = _build_server_config(
+        _entry(auth_mode="basic", auth_env_var="MCP_M_BASIC_TOKEN"), "tok"
+    )
+    assert cfg["headers"]["Authorization"] == "Basic tok"
+
+
+def test_legacy_api_key_without_name_still_sends_bearer():
+    """Agents deployed before the mode split keep working until redeployed."""
+    cfg = _build_server_config(
+        _entry(auth_mode="api_key", auth_env_var="MCP_M_BEARER_TOKEN"), "tok"
+    )
+    assert cfg["headers"]["Authorization"] == "Bearer tok"
+
+
+@pytest.mark.asyncio
+async def test_basic_mode_reads_the_injected_env_var():
+    entry = _entry(auth_mode="basic", auth_env_var="MCP_M_BASIC_TOKEN")
+    with patch.dict(os.environ, {"MCP_M_BASIC_TOKEN": "b64tok"}):
+        token = await _resolve_connection_token("m", entry, None, None)
+    assert token == "b64tok"
+
+
+@pytest.mark.asyncio
+async def test_basic_mode_never_falls_back_to_sso():
+    entry = _entry(auth_mode="basic", auth_env_var="MCP_UNSET")
+    with patch.dict(os.environ, {}, clear=True):
+        token = await _resolve_connection_token("m", entry, "sso-token", "user-1")
+    assert token is None
+
+
+# --- the shipped sample config must stay valid against the runtime ---
+
+
+def _load_sample_mcp_json() -> dict:
+    """Parse config/agent/mcp.json, which is JSONC (allows // comments)."""
+    import json
+    import pathlib
+    import re
+
+    path = pathlib.Path(__file__).parents[3] / "config" / "agent" / "mcp.json"
+    text = re.sub(r"^\s*//.*$", "", path.read_text(), flags=re.M)
+    return json.loads(text)["mcpServers"]
+
+
+def test_sample_config_covers_every_static_credential_mode():
+    servers = _load_sample_mcp_json()
+    modes = {
+        name: cfg.get("auth_mode")
+        for name, cfg in servers.items()
+        if cfg.get("auth_mode") in ("api_key", "bearer", "basic")
+    }
+    assert modes == {
+        "template-mcp-server-bearer": "bearer",
+        "template-mcp-server-basic": "basic",
+        "template-mcp-server-api-key": "api_key",
+        "template-mcp-server-api-key-query": "api_key",
+    }
+
+
+def test_sample_static_credential_entries_declare_an_env_var():
+    for name, cfg in _load_sample_mcp_json().items():
+        if cfg.get("auth_mode") in ("api_key", "bearer", "basic"):
+            assert cfg.get("auth_env_var"), name
+
+
+def test_sample_entries_produce_the_documented_headers():
+    """Each sample, fed a token, must yield what its comment claims."""
+    servers = _load_sample_mcp_json()
+
+    bearer = _build_server_config(servers["template-mcp-server-bearer"], "tok")
+    assert bearer["headers"]["Authorization"] == "Bearer tok"
+
+    basic = _build_server_config(servers["template-mcp-server-basic"], "tok")
+    assert basic["headers"]["Authorization"] == "Basic tok"
+
+    api_key = _build_server_config(servers["template-mcp-server-api-key"], "tok")
+    assert api_key["headers"]["X-API-Key"] == "tok"
+    assert "Authorization" not in api_key["headers"]
+
+    query = _build_server_config(servers["template-mcp-server-api-key-query"], "tok")
+    assert query["url"].endswith("?apikey=tok")
+    assert "Authorization" not in query["headers"]
+
+
+def test_sample_api_key_locations_are_all_supported():
+    for name, cfg in _load_sample_mcp_json().items():
+        loc = cfg.get("api_key_location")
+        if loc is not None:
+            assert loc in _API_KEY_LOCATIONS, f"{name} uses {loc}"
+
+
+def test_host_proxy_blocks_basic_with_no_credential():
+    """Regression: basic must be guarded like api_key, not fall through."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from deep_agent.aegra.mcp_host import _resolve_bearer
+
+    entry = _entry(auth_mode="basic", auth_env_var="MCP_UNSET")
+    with patch.dict(os.environ, {}, clear=True):
+        try:
+            asyncio.run(_resolve_bearer("m", entry, user_id="u", sso_token=None))
+        except HTTPException as exc:
+            assert exc.status_code == 500
+            assert "basic" in str(exc.detail)
+        else:
+            raise AssertionError("expected the host proxy to block basic")
+
+
+def test_host_proxy_still_blocks_api_key_with_no_credential():
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from deep_agent.aegra.mcp_host import _resolve_bearer
+
+    entry = _entry(auth_mode="api_key", auth_env_var="MCP_UNSET", api_key_name="X-Key")
+    with patch.dict(os.environ, {}, clear=True):
+        try:
+            asyncio.run(_resolve_bearer("m", entry, user_id="u", sso_token=None))
+        except HTTPException as exc:
+            assert exc.status_code == 500
+            assert "api_key" in str(exc.detail)
+        else:
+            raise AssertionError("expected the host proxy to block api_key")
+
+
+def test_every_static_credential_mode_is_distinct():
+    """bearer / basic / api_key are three separate runtime modes."""
+    schemes = {}
+    for mode in ("bearer", "basic"):
+        cfg = _build_server_config(_entry(auth_mode=mode, auth_env_var="V"), "tok")
+        schemes[mode] = cfg["headers"]["Authorization"]
+    assert schemes == {"bearer": "Bearer tok", "basic": "Basic tok"}
+
+    api_key = _build_server_config(
+        _entry(auth_mode="api_key", auth_env_var="V", api_key_name="X-Key"), "tok"
+    )
+    assert api_key["headers"] == {"X-Key": "tok"}

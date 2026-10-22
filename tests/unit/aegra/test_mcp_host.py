@@ -1567,8 +1567,8 @@ class TestApiKeyPlacement:
         )
         assert cfg["url"] == "https://x.example.com/mcp?v=2&apikey=k"
 
-    def test_body_location_falls_back_to_header(self):
-        """Body placement is unsupported by streamable-http; degrade to header."""
+    def test_removed_body_location_falls_back_to_header(self):
+        """Body was removed as an option; an old config must still work."""
         from deep_agent.aegra.mcp import _build_server_config
 
         cfg = _build_server_config(

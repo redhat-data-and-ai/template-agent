@@ -108,7 +108,7 @@ class _TokenInjectorInterceptor:
         user_id = _current_user_id.get()
         auth_mode = self._server_cfg.get("auth_mode", "sso")
 
-        if auth_mode == "api_key":
+        if auth_mode in _STATIC_CREDENTIAL_MODES:
             return await handler(request)
 
         try:
@@ -389,11 +389,11 @@ async def _resolve_connection_token(
     if auth_mode == "sso":
         return sso_token
 
-    if auth_mode == "api_key":
+    if auth_mode in _STATIC_CREDENTIAL_MODES:
         env_var = entry.get("auth_env_var", "")
         api_key = os.environ.get(env_var, "").strip().strip('"')
         if not api_key:
-            logger.warning("MCP auth_mode=api_key but %s is not set", env_var)
+            logger.warning("MCP auth_mode=%s but %s is not set", auth_mode, env_var)
         return api_key or None
 
     if not user_id:
@@ -414,27 +414,11 @@ async def _resolve_connection_token(
         return None
 
 
-_API_KEY_LOCATIONS = ("header", "query", "body")
-_API_KEY_SCHEMES = ("none", "basic", "bearer")
+_API_KEY_LOCATIONS = ("header", "query")
 
-
-def _apply_api_key_scheme(value: str, scheme: str | None) -> str:
-    """Prefix *value* with its RFC 7235 scheme, e.g. ``Basic <token>``.
-
-    ``none`` (the default) sends the raw value, which is what a custom header
-    such as ``X-API-Key`` expects. Mirrors the registry helper of the same
-    name; both are pinned by the cross-repo contract tests.
-    """
-    normalized = str(scheme if scheme is not None else "none").strip().lower()
-    if normalized in ("", "none"):
-        return value
-    if normalized not in _API_KEY_SCHEMES:
-        logger.warning(
-            "MCP api_key_scheme '%s' is not recognised — sending the raw key",
-            normalized,
-        )
-        return value
-    return f"{normalized.capitalize()} {value}"
+# Static-credential auth modes: the secret comes from auth_env_var and the
+# user's SSO token is never used as a fallback.
+_STATIC_CREDENTIAL_MODES = ("api_key", "bearer", "basic")
 
 
 def redact_url_query(url: str) -> str:
@@ -482,29 +466,15 @@ def _api_key_placement(entry: dict[str, Any]) -> tuple[str | None, str]:
     ``None`` means "use the default ``Authorization: Bearer`` placement", which
     is what every pre-existing config (sso / oauth / dcr / plain bearer) wants.
 
-    ``body`` placement is accepted and normalised to a header: the MCP
-    streamable-http transport owns the JSON-RPC envelope, so there is no
-    supported hook to inject a credential into the request body without
-    corrupting the protocol frame. This is logged once per server so the
-    behaviour is visible rather than silent.
+    Only ``header`` and ``query`` are supported; the streamable-http
+    transport owns the JSON-RPC envelope, so there is no hook for body
+    placement. An unrecognised location falls back to a header with a warning.
     """
     if entry.get("auth_mode") != "api_key":
         return None, ""
 
     key_name = str(entry.get("api_key_name") or "").strip()
     if not key_name:
-        scheme = str(entry.get("api_key_scheme") or "none").strip().lower()
-        if scheme in ("basic", "bearer"):
-            # An explicit scheme with no name can only mean the Authorization
-            # header. Without this the default path would send
-            # "Authorization: Bearer" even when "basic" was requested.
-            logger.warning(
-                "MCP server '%s': api_key_scheme '%s' set without "
-                "api_key_name — defaulting to the Authorization header",
-                entry.get("name", entry.get("url", "unknown")),
-                scheme,
-            )
-            return "Authorization", "header"
         return None, ""
 
     location = str(entry.get("api_key_location") or "header").strip().lower()
@@ -515,15 +485,28 @@ def _api_key_placement(entry: dict[str, Any]) -> tuple[str | None, str]:
             location,
         )
         location = "header"
-    elif location == "body":
-        logger.warning(
-            "MCP server '%s': api_key_location 'body' is not supported by the "
-            "streamable-http transport — sending '%s' as a header instead",
-            entry.get("name", entry.get("url", "unknown")),
-            key_name,
-        )
-        location = "header"
     return key_name, location
+
+
+def _authorization_scheme(entry: dict[str, Any]) -> str:
+    """Return the Authorization scheme for an entry using default placement.
+
+    ``basic`` sends Basic; everything else — sso, oauth, dcr, bearer, and
+    legacy ``api_key`` entries written before the modes were split — sends
+    Bearer.
+    """
+    auth_mode = entry.get("auth_mode", "sso")
+    if auth_mode == "basic":
+        return "Basic"
+    if auth_mode == "api_key" and not str(entry.get("api_key_name") or "").strip():
+        # Pre-split configs used api_key with no name to mean bearer. Agents
+        # deployed before the split still carry this shape until redeployed.
+        logger.warning(
+            "MCP server '%s': auth_mode 'api_key' without api_key_name is "
+            "deprecated — use auth_mode 'bearer'",
+            entry.get("name", entry.get("url", "unknown")),
+        )
+    return "Bearer"
 
 
 def _build_server_config(
@@ -546,17 +529,12 @@ def _build_server_config(
     if entry.get("auth", True) and bearer_token:
         key_name, location = _api_key_placement(entry)
         if key_name is None:
-            # Default placement: Authorization: Bearer <token>. Covers sso,
-            # oauth, dcr, and api_key entries configured as a bearer token.
-            headers["Authorization"] = f"Bearer {bearer_token}"
+            headers["Authorization"] = f"{_authorization_scheme(entry)} {bearer_token}"
         elif location == "query":
             url = _with_query_param(url, key_name, bearer_token)
         else:
-            # "header" (default) and "body" both send the key as a header;
-            # see _api_key_placement for why body is normalised to a header.
-            headers[key_name] = _apply_api_key_scheme(
-                bearer_token, entry.get("api_key_scheme")
-            )
+            # "header" is the default and only remaining header placement.
+            headers[key_name] = bearer_token
 
     trace_id = _trace_id_var.get()
     if trace_id:

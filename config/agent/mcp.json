@@ -31,21 +31,41 @@
                 "scopes": ["email", "openid", "profile", "session:role-any"]
             }
         },
-        "template-mcp-server-api-key": {
+        // --- Static-credential auth modes -------------------------------
+        // All three resolve their secret from the environment variable named
+        // by "auth_env_var", which the platform populates from Vault at
+        // deploy time. None of them fall back to the user's SSO token.
+
+        // Bearer token: sends "Authorization: Bearer <token>".
+        "template-mcp-server-bearer": {
             "url": "http://localhost:5001/mcp",
             "transport": "streamable_http",
             "enabled": false,
             "auth": true,
-            "auth_mode": "api_key",
-            "auth_env_var": "template_mcp_api_key",
+            "auth_mode": "bearer",
+            "auth_env_var": "template_mcp_bearer_token",
             "ssl_verify": false,
             "timeout": 30,
-            "tool_prefix": "template-api-key"
+            "tool_prefix": "template-bearer"
         },
-        "template-mcp-server-custom-header": {
-            // Flexible API-key placement: the raw key is sent under the
-            // configured name instead of "Authorization: Bearer <token>".
-            // api_key_location may be "header" (default) or "query".
+
+        // Basic token: sends "Authorization: Basic <token>". The value is
+        // used verbatim, so it must already be base64-encoded.
+        "template-mcp-server-basic": {
+            "url": "http://localhost:5001/mcp",
+            "transport": "streamable_http",
+            "enabled": false,
+            "auth": true,
+            "auth_mode": "basic",
+            "auth_env_var": "template_mcp_basic_token",
+            "ssl_verify": false,
+            "timeout": 30,
+            "tool_prefix": "template-basic"
+        },
+
+        // API key in a custom header: the raw key is sent under
+        // "api_key_name" instead of the Authorization header.
+        "template-mcp-server-api-key": {
             "url": "http://localhost:5001/mcp",
             "transport": "streamable_http",
             "enabled": false,
@@ -54,26 +74,26 @@
             "auth_env_var": "template_mcp_api_key",
             "api_key_name": "X-API-Key",
             "api_key_location": "header",
-            "api_key_scheme": "none",
             "ssl_verify": false,
             "timeout": 30,
-            "tool_prefix": "template-custom-header"
+            "tool_prefix": "template-api-key"
         },
-        "template-mcp-server-basic-auth": {
-            // api_key_scheme prefixes the key with an RFC 7235 scheme, so the
-            // header becomes "Authorization: Basic <token>". Used by Langfuse.
+
+        // API key in a query parameter: appended to the URL as
+        // "?apikey=<key>", replacing any existing value for that name.
+        // api_key_location accepts "header" (default) or "query".
+        "template-mcp-server-api-key-query": {
             "url": "http://localhost:5001/mcp",
             "transport": "streamable_http",
             "enabled": false,
             "auth": true,
             "auth_mode": "api_key",
             "auth_env_var": "template_mcp_api_key",
-            "api_key_name": "Authorization",
-            "api_key_location": "header",
-            "api_key_scheme": "basic",
+            "api_key_name": "apikey",
+            "api_key_location": "query",
             "ssl_verify": false,
             "timeout": 30,
-            "tool_prefix": "template-basic"
+            "tool_prefix": "template-api-key-query"
         }
     }
 }

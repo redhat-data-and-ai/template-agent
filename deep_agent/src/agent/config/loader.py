@@ -583,42 +583,28 @@ class AgentConfig:
         auth_mode = cfg.get("auth_mode", "sso")
         cfg["auth_mode"] = auth_mode
 
-        if auth_mode not in ("sso", "oauth", "dcr", "api_key"):
+        if auth_mode not in ("sso", "oauth", "dcr", "api_key", "bearer", "basic"):
             logger.error(
-                "MCP server '%s': invalid auth_mode '%s' (expected sso, oauth, dcr, or api_key)",
+                "MCP server '%s': invalid auth_mode '%s' "
+                "(expected sso, oauth, dcr, api_key, bearer, or basic)",
                 name,
                 auth_mode,
             )
             return
 
-        if auth_mode == "api_key":
+        if auth_mode in ("api_key", "bearer", "basic"):
             if not str(cfg.get("auth_env_var") or "").strip():
                 logger.error(
-                    "MCP server '%s': auth_mode 'api_key' requires 'auth_env_var'",
+                    "MCP server '%s': auth_mode '%s' requires 'auth_env_var'",
                     name,
+                    auth_mode,
                 )
             location = str(cfg.get("api_key_location") or "header").strip().lower()
-            if location not in ("header", "query", "body"):
+            if location not in ("header", "query"):
                 logger.error(
                     "MCP server '%s': invalid api_key_location '%s' "
-                    "(expected header, query, or body)",
+                    "(expected header or query)",
                     name,
-                    location,
-                )
-            scheme = str(cfg.get("api_key_scheme") or "none").strip().lower()
-            if scheme not in ("none", "basic", "bearer"):
-                logger.error(
-                    "MCP server '%s': invalid api_key_scheme '%s' "
-                    "(expected none, basic, or bearer)",
-                    name,
-                    scheme,
-                )
-            elif scheme != "none" and location != "header":
-                logger.error(
-                    "MCP server '%s': api_key_scheme '%s' requires "
-                    "api_key_location 'header' (got '%s')",
-                    name,
-                    scheme,
                     location,
                 )
             has_name = bool(str(cfg.get("api_key_name") or "").strip())
@@ -627,15 +613,6 @@ class AgentConfig:
                     "MCP server '%s': api_key_location is set but 'api_key_name' "
                     "is missing",
                     name,
-                )
-            elif scheme != "none" and not has_name:
-                # Without a name the runtime would fall back to
-                # "Authorization: Bearer", silently ignoring the scheme.
-                logger.error(
-                    "MCP server '%s': api_key_scheme '%s' requires "
-                    "'api_key_name' (defaulting to Authorization)",
-                    name,
-                    scheme,
                 )
             return
 
