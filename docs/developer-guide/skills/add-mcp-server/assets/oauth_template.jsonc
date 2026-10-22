@@ -1,0 +1,23 @@
+{
+    "mcpServers": {
+        "my-server": {
+            "url": "https://my-mcp-server.example.com/mcp",
+            "transport": "streamable_http",
+            "enabled": true,
+            "auth": true,
+            "auth_mode": "oauth",
+            "ssl_verify": true,
+            "timeout": 30,
+            "tool_prefix": "myserver",
+            "oauth": {
+                "authorization_endpoint": "https://auth.example.com/authorize",
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "my-client-id",
+                // Use an env var for the secret — never inline
+                "client_secret_env": "MY_SERVER_CLIENT_SECRET",
+                "grant_type": "authorization_code",
+                "scopes": ["read", "write"]
+            }
+        }
+    }
+}
