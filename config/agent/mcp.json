@@ -82,6 +82,12 @@
         // API key in a query parameter: appended to the URL as
         // "?apikey=<key>", replacing any existing value for that name.
         // api_key_location accepts "header" (default) or "query".
+        //
+        // SECURITY: a query-placed key is part of the URL. The agent redacts
+        // it from its own logs, but the MCP server's access logs, any proxy
+        // or load balancer in between, and Referer headers will still record
+        // it. RFC 6750 section 2.3 deprecates query-param credentials for
+        // this reason — prefer "header" unless the server requires otherwise.
         "template-mcp-server-api-key-query": {
             "url": "http://localhost:5001/mcp",
             "transport": "streamable_http",

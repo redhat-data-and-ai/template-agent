@@ -447,3 +447,32 @@ def test_legacy_api_key_without_name_logs_a_deprecation_warning(caplog):
         cfg = _build_server_config(_entry(auth_mode="api_key", auth_env_var="V"), "tok")
     assert cfg["headers"]["Authorization"] == "Bearer tok"
     assert "deprecated" in caplog.text
+
+
+def test_redaction_keeps_structlog_json_valid():
+    """The filter runs on rendered JSON; it must not eat delimiters."""
+    import json
+
+    from deep_agent.utils.pylogger import _mask_url_queries
+
+    cases = [
+        {"event": "calling https://x.example.com/mcp?apikey=s3cret", "logger": "m"},
+        {"event": "https://x/mcp?k=v", "next": "field"},
+        {"event": "not reachable (https://x/mcp?apikey=s3cret) — skipped"},
+        {"event": "multi https://x/mcp?a=1&b=2 done"},
+    ]
+    for payload in cases:
+        masked = _mask_url_queries(json.dumps(payload))
+        json.loads(masked)  # must not raise
+        assert "s3cret" not in masked
+        assert "REDACTED" in masked
+
+
+def test_redaction_preserves_trailing_punctuation():
+    from deep_agent.utils.pylogger import _mask_url_queries
+
+    assert (
+        _mask_url_queries("see (https://x/mcp?k=v) now")
+        == "see (https://x/mcp?k=REDACTED) now"
+    )
+    assert _mask_url_queries('"https://x/mcp?k=v"') == '"https://x/mcp?k=REDACTED"'

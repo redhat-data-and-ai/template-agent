@@ -186,7 +186,14 @@ def _clear_handlers(logger: logging.Logger) -> None:
     logger.filters.clear()
 
 
-_URL_QUERY_RE = re.compile(r"(\?|&)([^=&\s]+)=([^&\s]*)")
+# The value class must stop at characters that can legitimately follow a URL
+# in a log line. This filter runs on the already-rendered structlog JSON, so
+# swallowing a closing quote, bracket or comma would emit invalid JSON and
+# break log ingestion.
+_URL_QUERY_VALUE_STOP = r"&\s\"'`\\()\[\]{}<>,;#"
+_URL_QUERY_RE = re.compile(
+    rf"(\?|&)([^=&\s{_URL_QUERY_VALUE_STOP}]+)=([^{_URL_QUERY_VALUE_STOP}]*)"
+)
 
 
 def _mask_url_queries(text: str) -> str:
