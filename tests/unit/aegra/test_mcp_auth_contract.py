@@ -385,3 +385,65 @@ def test_every_static_credential_mode_is_distinct():
         _entry(auth_mode="api_key", auth_env_var="V", api_key_name="X-Key"), "tok"
     )
     assert api_key["headers"] == {"X-Key": "tok"}
+
+
+def test_redact_url_query_handles_an_unparseable_url():
+    """A malformed URL must not raise inside a log path."""
+    from deep_agent.aegra.mcp import redact_url_query
+
+    assert redact_url_query("http://[") == "<unparseable-url>"
+
+
+def test_log_filter_masks_dict_style_args():
+    """logging supports %(name)s formatting with a dict for args."""
+    import logging
+
+    from deep_agent.utils.pylogger import RedactUrlQueryFilter
+
+    record = logging.LogRecord(
+        name="httpx",
+        level=logging.INFO,
+        pathname="f.py",
+        lineno=1,
+        msg="calling %(url)s",
+        # logging accepts the mapping form wrapped in a tuple and unwraps it,
+        # which is how record.args ends up a dict.
+        args=({"url": "https://x.example.com/mcp?apikey=s3cret"},),
+        exc_info=None,
+    )
+    RedactUrlQueryFilter().filter(record)
+    assert "s3cret" not in record.getMessage()
+    assert "apikey=REDACTED" in record.getMessage()
+
+
+def test_log_filter_masks_preformatted_exc_text():
+    """A formatter may have already rendered exc_info into exc_text."""
+    import logging
+
+    from deep_agent.utils.pylogger import RedactUrlQueryFilter
+
+    record = logging.LogRecord(
+        name="httpx",
+        level=logging.ERROR,
+        pathname="f.py",
+        lineno=1,
+        msg="boom",
+        args=(),
+        exc_info=None,
+    )
+    record.exc_text = "Traceback: url 'https://x.example.com/mcp?apikey=s3cret'"
+    RedactUrlQueryFilter().filter(record)
+    assert "s3cret" not in record.exc_text
+    assert "apikey=REDACTED" in record.exc_text
+
+
+def test_legacy_api_key_without_name_logs_a_deprecation_warning(caplog):
+    """The pre-split shape still works, but says so."""
+    import logging
+
+    from deep_agent.aegra.mcp import _build_server_config
+
+    with caplog.at_level(logging.WARNING):
+        cfg = _build_server_config(_entry(auth_mode="api_key", auth_env_var="V"), "tok")
+    assert cfg["headers"]["Authorization"] == "Bearer tok"
+    assert "deprecated" in caplog.text
