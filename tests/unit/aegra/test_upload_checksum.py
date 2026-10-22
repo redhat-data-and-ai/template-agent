@@ -94,6 +94,25 @@ class TestParseManifest:
         with pytest.raises(ChecksumInvalid, match="not valid JSON"):
             parse_manifest("{not json", MAX)
 
+    def test_deeply_nested_input_is_rejected(self):
+        """json.loads raises RecursionError, which is not a ValueError.
+
+        Unhandled it escapes the route's (ValueError, AssertionError)
+        handler too, so the caller got a 500 for what is a bad field.
+        """
+        with pytest.raises(ChecksumInvalid, match="not valid JSON"):
+            parse_manifest("[" * 100_000, MAX)
+
+    def test_oversized_integer_literal_is_rejected(self):
+        """CPython's int/str conversion guard raises a bare ValueError.
+
+        That one did reach the client, but as a "malformed multipart body"
+        400 from the route -- blaming the wrong part of the request, and
+        skipping the checksum rejection audit.
+        """
+        with pytest.raises(ChecksumInvalid, match="not valid JSON"):
+            parse_manifest('{"a.md": ' + "1" * 5000 + "}", MAX)
+
     def test_non_object_is_rejected(self):
         with pytest.raises(ChecksumInvalid, match="must be a JSON object"):
             parse_manifest(json.dumps(["a.md"]), MAX)
@@ -157,8 +176,15 @@ class TestCompareManifest:
         assert _sha("A") in reason and _sha("B") in reason
 
     def test_reason_is_deterministic_across_runs(self):
-        """Same payload, same message -- not whichever key iterated first."""
-        expected = {f"f{i}.md": _sha(str(i)) for i in range(20)}
+        """Same payload, same message -- not whichever key iterated first.
+
+        Insertion order is DESCENDING on purpose. With ascending keys an
+        unsorted implementation also reaches f3.md first, so the assertion
+        below would hold either way and the test could never fail. Built
+        f19..f0, unsorted iteration hits f7.md first and sorted hits
+        f3.md, so this now actually pins the sorted() in compare_manifest.
+        """
+        expected = {f"f{i}.md": _sha(str(i)) for i in reversed(range(20))}
         actual = {k: v for k, v in expected.items() if k not in ("f3.md", "f7.md")}
         reasons = {compare_manifest(expected, dict(actual)) for _ in range(5)}
         assert len(reasons) == 1

@@ -126,6 +126,19 @@ def parse_manifest(raw: str, max_entries: int) -> dict[str, str]:
         loaded = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ChecksumInvalid(f"checksums is not valid JSON: {exc.msg}") from None
+    except (RecursionError, ValueError):
+        # json.loads has two failure modes that are NOT JSONDecodeError:
+        # deeply nested input ("[" * 100000, which fits comfortably in a
+        # text part) blows the recursion limit, and an over-long integer
+        # literal trips CPython's int/str conversion guard with a bare
+        # ValueError. RecursionError is not a ValueError at all, so without
+        # this it escapes the route entirely as a 500; the ValueError lands
+        # in the route's multipart handler and is misreported as a
+        # malformed body. Both are a bad `checksums` field, so both belong
+        # here -- a 400 naming the real field, audited as a rejection.
+        # JSONDecodeError is itself a ValueError subclass, hence the
+        # ordering above.
+        raise ChecksumInvalid("checksums is not valid JSON") from None
 
     if not isinstance(loaded, dict):
         raise ChecksumInvalid("checksums must be a JSON object of path to digest")
