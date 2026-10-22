@@ -72,7 +72,7 @@ class TestGuardianModel:
         cfg = MagicMock()
         cfg.model = "my-model"
         with patch("deep_agent.src.guardrails.get_guardrails_config", return_value=cfg):
-            assert _guardian_model() == "/data/my-model"
+            assert _guardian_model() == "my-model"
 
     def test_raises_when_no_config(self):
         with patch(
@@ -89,19 +89,19 @@ class TestGuardianModel:
                 _guardian_model()
 
     @pytest.mark.parametrize(
-        "input_name, expected",
+        "model_name",
         [
-            ("granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
-            ("/data/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
-            ("data/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
-            ("/granite-guardian-3.1-8b", "/data/granite-guardian-3.1-8b"),
+            "granite-guardian-3.1-8b",
+            "/data/granite-guardian-3.1-8b",
+            "data/granite-guardian-3.1-8b",
         ],
     )
-    def test_normalizes_model_name(self, input_name, expected):
+    def test_model_name_passed_through_unchanged(self, model_name):
+        """No prefixing — the configured name reaches the endpoint verbatim."""
         cfg = MagicMock()
-        cfg.model = input_name
+        cfg.model = model_name
         with patch("deep_agent.src.guardrails.get_guardrails_config", return_value=cfg):
-            assert _guardian_model() == expected
+            assert _guardian_model() == model_name
 
 
 class TestCallGuardian:

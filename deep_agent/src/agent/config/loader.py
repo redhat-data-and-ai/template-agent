@@ -36,6 +36,7 @@ from .middleware import (
     ResolvedMiddlewareConfig,
     resolve_middleware,
 )
+from .model import Provider, supported_provider_values
 from .opa import OpaFileConfig
 from .otel import OtelFileConfig
 from .parser import parse_frontmatter
@@ -43,6 +44,80 @@ from .providers import ProvidersFileConfig
 from .resolver import resolve_skill_paths, resolve_tools
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
+
+
+# Model configs are keyed by a canonical (provider, model_id) pair rather than
+# a ":"-joined string: model_id has no character restrictions, so names like
+# Ollama's "llama3:8b" would otherwise be re-split into a bogus provider half
+# and collide with a genuinely provider-scoped entry.
+ModelConfigKey = tuple[str | None, str]
+ModelConfigs = dict[ModelConfigKey, dict[str, Any]]
+
+
+def _canonical_provider(provider_raw: Any, source: str) -> str | None:
+    """Canonical provider string for keying a model config, or None.
+
+    Returns None only when no provider is declared, which makes the entry
+    provider-agnostic. A declared-but-unsupported value is fatal rather than
+    ignored: silently dropping it would route the model to whatever the name
+    heuristics guess, which is a wrong backend rather than a missing default.
+
+    Args:
+        provider_raw: Raw ``provider:`` value from the model YAML.
+        source: Filename, for error messages.
+
+    Raises:
+        AppException: If the value is not a supported provider spelling.
+    """
+    if provider_raw is None:
+        return None
+    if isinstance(provider_raw, str):
+        try:
+            return Provider(provider_raw).value
+        except ValueError:
+            pass
+    raise AppException(
+        f"Unsupported provider {provider_raw!r} in {source}; "
+        f"must be one of: {supported_provider_values()}",
+        ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+    )
+
+
+def _index_declared_providers(configs: ModelConfigs) -> dict[str, str]:
+    """Reverse-index model_id → declared provider from the config keys.
+
+    Lets frontmatter that omits ``provider:`` pick up the provider declared
+    alongside the model in ``models/*.yaml``. A model_id declared under two
+    different providers is ambiguous — there is no basis to choose — so it is
+    dropped from the index and inference falls through to the default.
+
+    Args:
+        configs: The loaded model configs, keyed (provider | None, model_id).
+
+    Returns:
+        Mapping of model_id to its unambiguous declared provider.
+    """
+    index: dict[str, str] = {}
+    ambiguous: set[str] = set()
+
+    for provider, model_id in configs:
+        if provider is None:
+            continue  # declares no provider
+        existing = index.get(model_id)
+        if existing is not None and existing != provider:
+            ambiguous.add(model_id)
+            continue
+        index[model_id] = provider
+
+    for model_id in ambiguous:
+        index.pop(model_id, None)
+        logger.warning(
+            "Model %r is declared under multiple providers; frontmatter for it "
+            "must set 'provider:' explicitly",
+            model_id,
+        )
+
+    return index
 
 
 def _strip_jsonc_comments(text: str) -> str:
@@ -121,7 +196,7 @@ class AgentConfig:
     _token_budget_config: TokenBudgetConfig
     _guardrails_config: GuardrailsConfig
     _pii_config: PIIConfig
-    _model_configs: dict[str, dict[str, Any]]
+    _model_configs: ModelConfigs
     _name: str
 
     def __new__(cls, base_dir: Path | None = None) -> "AgentConfig":
@@ -301,7 +376,10 @@ class AgentConfig:
         self._name = raw.get("name", "Agent")
         # Scan skills first, as orchestrator and subagents need them for resolution
         self._available_skills: dict[str, Path] = self._scan_available_skills()
-        self._model_configs: dict[str, dict[str, Any]] = self._load_model_configs()
+        self._model_configs: ModelConfigs = self._load_model_configs()
+        self._model_declared_providers: dict[str, str] = _index_declared_providers(
+            self._model_configs
+        )
         self._orchestrator: dict[str, Any] = self._load_orchestrator()
         self._subagents: dict[str, dict[str, Any]] = self._load_all_subagents()
         self._mcp_servers: dict[str, Any] = self._load_mcp_servers()
@@ -382,27 +460,33 @@ class AgentConfig:
                 ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
             )
 
-    def _load_model_configs(self) -> dict[str, dict[str, Any]]:
+    def _load_model_configs(self) -> ModelConfigs:
         """Load model config YAML files from config/agent/models/.
 
         Each file provides runtime LLM parameters (temperature, max_tokens,
-        provider, project, location) that the agent-engine materialized from
-        the registry's MODEL.yaml packages.
+        location) that the agent-engine materialized from the registry's
+        MODEL.yaml packages. ``project`` is carried through but not read.
+
+        Entries are keyed ``(provider, model_id)`` when the file declares a
+        recognised ``provider:``, so the same model name served by two
+        providers stays distinct, and ``(None, model_id)`` otherwise for
+        provider-agnostic matching. See :meth:`get_model_params` for the
+        corresponding lookup order.
 
         Returns:
-            Dict mapping model_id to its config dict.
+            Dict mapping each key to its config dict.
         """
         models_dir = self._base_dir / "models"
         if not models_dir.is_dir():
             return {}
 
-        configs: dict[str, dict[str, Any]] = {}
+        configs: ModelConfigs = {}
         for model_file in sorted(models_dir.glob("*.yaml")):
             try:
                 data = yaml.safe_load(model_file.read_text()) or {}
                 if not isinstance(data, dict):
                     continue
-                model_id = data.get("model_id", model_file.stem)
+                model_id = str(data.get("model_id", model_file.stem))
 
                 raw_temp = data.get("temperature")
                 if raw_temp is not None:
@@ -428,11 +512,22 @@ class AgentConfig:
                         )
                         data.pop("max_tokens")
 
-                configs[model_id] = data
+                provider = _canonical_provider(data.get("provider"), model_file.name)
+                key: ModelConfigKey = (provider, model_id)
+                if key in configs:
+                    logger.warning(
+                        "Duplicate model config for provider=%s model_id=%r in %s, "
+                        "overriding previous",
+                        provider or "any",
+                        model_id,
+                        model_file.name,
+                    )
+
+                configs[key] = data
                 logger.info(
                     "Loaded model config: %s (provider=%s, temp=%s, max_tokens=%s)",
                     model_id,
-                    data.get("provider", "?"),
+                    provider or "any",
                     data.get("temperature", "default"),
                     data.get("max_tokens", "default"),
                 )
@@ -609,14 +704,48 @@ class AgentConfig:
         self._ensure_loaded()
         return self._orchestrator
 
-    def get_model_params(self, model_id: str) -> dict[str, Any]:
-        """Look up runtime LLM parameters for a model by model_id.
+    def get_model_params(
+        self,
+        model_id: str,
+        provider: Provider | str | None = None,
+    ) -> dict[str, Any]:
+        """Look up runtime LLM parameters for a model.
 
-        Returns the model config dict if a matching models/{name}.yaml
-        was materialized by agent-engine, or an empty dict if not found.
+        Lookup order mirrors the harness-profile convention: the
+        provider-scoped key wins, then the provider-agnostic one. Passing
+        ``provider`` is what lets the same model name served by two providers
+        resolve to different configs.
+
+        Args:
+            model_id: Model name as written in agent frontmatter.
+            provider: Resolved provider for that model, if known.
+
+        Returns:
+            The model config dict, or an empty dict when nothing matches.
         """
         self._ensure_loaded()
-        return self._model_configs.get(model_id, {})
+
+        if provider is not None:
+            canonical = _canonical_provider(
+                provider.value if isinstance(provider, Provider) else provider,
+                "model lookup",
+            )
+            if canonical is not None:
+                scoped = self._model_configs.get((canonical, model_id))
+                if scoped is not None:
+                    return scoped
+
+        return self._model_configs.get((None, model_id), {})
+
+    def get_declared_provider(self, model_id: str) -> str | None:
+        """Provider declared for this model in ``models/*.yaml``, if any.
+
+        Used to resolve the provider for frontmatter that omits ``provider:``.
+        Returns None when no file declares one, or when the model is declared
+        under more than one provider.
+        """
+        self._ensure_loaded()
+        return self._model_declared_providers.get(model_id)
 
     def get_all_subagent_configs(self) -> dict[str, dict[str, Any]]:
         """Get all subagent configurations.

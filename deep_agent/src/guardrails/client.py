@@ -81,8 +81,9 @@ def _guardian_model() -> str:
         )
     if cfg.model is None:
         raise RuntimeError("Guardian model requested but no model is configured")
-    model = cfg.model
-    return "/data/" + model.lstrip("/").removeprefix("data/")
+    # Sent to the endpoint verbatim: deployments that namespace their models
+    # must include the prefix in the configured name.
+    return str(cfg.model)
 
 
 def _is_config_error(exc: Exception) -> bool:

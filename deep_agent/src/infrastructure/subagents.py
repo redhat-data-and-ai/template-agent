@@ -279,7 +279,7 @@ def _resolve_subagent_model(agent_cfg: dict[str, Any]) -> object:
 
     spec = parse_model_config(raw_model)
 
-    model_params = agent_config.get_model_params(spec.name)
+    model_params = agent_config.get_model_params(spec.name, spec.provider)
     temp = model_params.get("temperature")
     max_tok = model_params.get("max_tokens")
     loc = model_params.get("location")
@@ -301,7 +301,8 @@ def _build_fallback_middleware(spec: ModelSpec) -> list[Any]:
     """Build ModelFallbackMiddleware with BaseChatModel if spec has fallback configured.
 
     Creates the fallback model using get_or_create_model_from_spec to preserve custom
-    initialization logic (MAAS base URLs, Vertex credentials, etc) and enable caching.
+    initialization logic (OpenAI-compatible base URLs, Vertex credentials, etc) and
+    enable caching.
 
     Args:
         spec: Parsed model specification.
