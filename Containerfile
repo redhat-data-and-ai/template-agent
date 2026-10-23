@@ -6,7 +6,11 @@
 # Build: podman build -t template-agent .
 # Run:   podman run -v ./config:/app/config:ro -p 5002:5002 template-agent
 
-ARG PYTHON_TAG=3.14.4-builder
+# Pin at minor level, not patch. Patch-level Hummingbird tags are frozen and do
+# not receive security rebuilds: 3.14.4-builder still ships
+# ca-certificates-2025.2.80_v9.0.304-7.2.hum1, which carries the eMudhra roots
+# removed by CVE-2026-114406. 3.14-builder has 2026.2.92_v9.0.319-2.hum1.
+ARG PYTHON_TAG=3.14-builder
 FROM registry.access.redhat.com/hi/python:${PYTHON_TAG}
 
 WORKDIR /app
