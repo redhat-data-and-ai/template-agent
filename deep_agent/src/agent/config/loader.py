@@ -49,6 +49,15 @@ logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 # RFC 7230 token characters — a valid HTTP header or query parameter name.
 _HTTP_TOKEN_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 
+# Static-credential auth modes: the secret comes from auth_env_var and the
+# user's SSO token is never used as a fallback. Imported by aegra.mcp so the
+# loader and the request path cannot drift apart.
+STATIC_CREDENTIAL_MODES = ("api_key", "bearer", "basic")
+
+# Every auth_mode the loader accepts. Derived from the static-credential modes
+# so adding one here is the only edit required.
+VALID_AUTH_MODES = ("sso", "oauth", "dcr", *STATIC_CREDENTIAL_MODES)
+
 
 # Model configs are keyed by a canonical (provider, model_id) pair rather than
 # a ":"-joined string: model_id has no character restrictions, so names like
@@ -647,18 +656,18 @@ class AgentConfig:
         auth_mode = str(cfg.get("auth_mode") or "sso").strip().lower()
         cfg["auth_mode"] = auth_mode
 
-        if auth_mode not in ("sso", "oauth", "dcr", "api_key", "bearer", "basic"):
+        if auth_mode not in VALID_AUTH_MODES:
             logger.error(
-                "MCP server '%s': invalid auth_mode '%s' "
-                "(expected sso, oauth, dcr, api_key, bearer, or basic) "
+                "MCP server '%s': invalid auth_mode '%s' (expected %s) "
                 "— disabling this server",
                 name,
                 auth_mode,
+                ", ".join(VALID_AUTH_MODES),
             )
             cfg["enabled"] = False
             return
 
-        if auth_mode in ("api_key", "bearer", "basic"):
+        if auth_mode in STATIC_CREDENTIAL_MODES:
             AgentConfig._validate_static_credential_server(name, cfg, auth_mode)
             return
 

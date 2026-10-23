@@ -221,7 +221,14 @@ class RedactUrlQueryFilter(logging.Filter):
         """
         if isinstance(value, str):
             return _mask_url_queries(value) if "?" in value else value
-        text = str(value)
+        try:
+            text = str(value)
+        except Exception:
+            # logging.Handler.handle does not catch filter exceptions, so a
+            # __str__ that raises would propagate out of the caller's log
+            # call. Leave the argument untouched and let the handler deal
+            # with it as it would without this filter installed.
+            return value
         return _mask_url_queries(text) if "?" in text else value
 
     def filter(self, record: logging.LogRecord) -> bool:

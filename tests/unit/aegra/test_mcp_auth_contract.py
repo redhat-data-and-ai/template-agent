@@ -213,6 +213,35 @@ def test_log_filter_masks_non_string_url_objects():
     assert "apikey=REDACTED" in msg
 
 
+def test_log_filter_survives_an_argument_whose_str_raises():
+    """A broken __str__ must not escape the filter.
+
+    logging.Handler.handle does not catch filter exceptions, so raising here
+    would propagate out of the caller's log call.
+    """
+    import logging
+
+    from deep_agent.utils.pylogger import RedactUrlQueryFilter
+
+    class Unprintable:
+        def __str__(self) -> str:
+            raise ValueError("boom")
+
+    bad = Unprintable()
+    record = logging.LogRecord(
+        name="x",
+        level=logging.INFO,
+        pathname="f.py",
+        lineno=1,
+        msg="value: %r",
+        args=(bad,),
+        exc_info=None,
+    )
+    assert RedactUrlQueryFilter().filter(record) is True
+    # The argument is passed through untouched rather than stringified.
+    assert record.args == (bad,)
+
+
 def test_log_filter_masks_exception_tracebacks():
     """httpx.HTTPStatusError embeds the raw URL in its message."""
     import logging

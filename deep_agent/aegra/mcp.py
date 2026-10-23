@@ -32,6 +32,7 @@ from deep_agent.aegra.mcp_apps import (
     prepare_tools_for_model,
 )
 from deep_agent.src.agent.config import agent_config
+from deep_agent.src.agent.config.loader import STATIC_CREDENTIAL_MODES
 from deep_agent.src.error_handling import CircuitBreaker, create_circuit_breaker
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -438,8 +439,9 @@ async def _resolve_connection_token(
 _API_KEY_LOCATIONS = ("header", "query")
 
 # Static-credential auth modes: the secret comes from auth_env_var and the
-# user's SSO token is never used as a fallback.
-_STATIC_CREDENTIAL_MODES = ("api_key", "bearer", "basic")
+# user's SSO token is never used as a fallback. Defined in the config loader,
+# which validates auth_mode, so the two cannot drift apart.
+_STATIC_CREDENTIAL_MODES = STATIC_CREDENTIAL_MODES
 
 
 def redact_url_query(url: str) -> str:
