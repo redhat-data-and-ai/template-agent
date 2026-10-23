@@ -18,7 +18,9 @@ Context binding:
 
 import logging
 import os
+import re
 import sys
+import traceback
 from contextvars import ContextVar
 from typing import Any
 
@@ -184,6 +186,71 @@ def _clear_handlers(logger: logging.Logger) -> None:
     logger.filters.clear()
 
 
+# Stop the value only at characters that genuinely close a URL in a log
+# line: whitespace, quotes, a backslash, or a closing bracket. Commas,
+# semicolons and '#' are consumed so a value containing one is masked in
+# full rather than leaving a tail behind. This filter runs on rendered
+# structlog JSON, so swallowing a closing quote would emit invalid JSON.
+_URL_QUERY_STOP = r"\s\"'`\\)\]}>"
+_URL_QUERY_RE = re.compile(
+    rf"(\?|&amp;|&)([^=&\s{_URL_QUERY_STOP}]+)=([^&{_URL_QUERY_STOP}]*)"
+)
+
+
+def _mask_url_queries(text: str) -> str:
+    """Mask every query-string value in *text*."""
+    return _URL_QUERY_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}=REDACTED", text)
+
+
+class RedactUrlQueryFilter(logging.Filter):
+    """Mask query-string values in log records that carry a URL.
+
+    HTTP clients log the full request URL, so an MCP credential configured
+    with ``api_key_location: query`` would otherwise appear in plain text on
+    every request. The parameter name is user-configured, so all values are
+    masked; host and path are preserved for debugging.
+    """
+
+    @staticmethod
+    def _mask_arg(value: Any) -> Any:
+        """Mask one log argument, including non-string URL objects.
+
+        HTTPX passes ``Request.url`` as an :class:`httpx.URL`, not a ``str``,
+        and relies on lazy ``%s`` formatting — so a type check alone would let
+        the credential through.
+        """
+        if isinstance(value, str):
+            return _mask_url_queries(value) if "?" in value else value
+        try:
+            text = str(value)
+        except Exception:
+            # logging.Handler.handle does not catch filter exceptions, so a
+            # __str__ that raises would propagate out of the caller's log
+            # call. Leave the argument untouched and let the handler deal
+            # with it as it would without this filter installed.
+            return value
+        return _mask_url_queries(text) if "?" in text else value
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Mask query values on *record*, in place. Always returns True."""
+        if isinstance(record.msg, str) and "?" in record.msg:
+            record.msg = _mask_url_queries(record.msg)
+        if record.args:
+            if isinstance(record.args, tuple):
+                record.args = tuple(self._mask_arg(a) for a in record.args)
+            elif isinstance(record.args, dict):
+                record.args = {k: self._mask_arg(v) for k, v in record.args.items()}
+        # Tracebacks repeat the raw URL — httpx.HTTPStatusError embeds it in
+        # its message. Pre-render and mask so formatters reuse the safe text.
+        if record.exc_info and record.exc_info[0] is not None:
+            if not record.exc_text:
+                record.exc_text = "".join(traceback.format_exception(*record.exc_info))
+            record.exc_text = _mask_url_queries(record.exc_text)
+        elif record.exc_text and "?" in record.exc_text:
+            record.exc_text = _mask_url_queries(record.exc_text)
+        return True
+
+
 def _setup_logger(logger_name: str, level: str) -> None:
     lgr = logging.getLogger(logger_name)
     _clear_handlers(lgr)
@@ -196,10 +263,28 @@ def _setup_logger(logger_name: str, level: str) -> None:
     lgr.propagate = True
 
 
+# One shared instance: Handler.addFilter dedupes by identity, so re-applying
+# the same object is idempotent where a new instance each time would stack up.
+_URL_REDACTOR = RedactUrlQueryFilter()
+
+
+def _attach_url_redactor_to_root_handlers() -> None:
+    """Attach the redaction filter to every current root handler.
+
+    Handler-level rather than logger-level, so it also sees records
+    propagated from application loggers — that is what redacts exc_info
+    tracebacks. Re-run on each configure call so handlers added later (OTel,
+    Langfuse, uvicorn, a test harness) are covered too.
+    """
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(_URL_REDACTOR)
+
+
 def _configure_third_party_loggers(log_level: str) -> None:
     """Apply structured logging to selected third-party loggers."""
     for name in THIRD_PARTY_LOGGERS:
         _setup_logger(name, log_level)
+    _attach_url_redactor_to_root_handlers()
 
 
 def _get_renderer() -> Any:
