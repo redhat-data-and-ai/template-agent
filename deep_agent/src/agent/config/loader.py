@@ -161,6 +161,13 @@ def _load_jsonc(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(_strip_jsonc_comments(raw)))
 
 
+# AI Factory writes Atlan as DCR. A secret variable on the agent Environment
+# step is injected into the pod as this env var; when it is set, Atlan uses
+# the key and does not start a DCR connect flow.
+_ATLAN_API_KEY_ENV = "ATLAN_MCP_API_KEY"
+_ATLAN_MCP_URL_ENV = "ATLAN_MCP_URL"
+_DEFAULT_ATLAN_MCP_URL = "https://mcp.atlan.com/mcp"
+
 # Config directory path - read from CONFIG_PATH env var for base image pattern
 # Falls back to repo-root config/agent/ for backward compatibility
 _AGENT_CONFIG_DIR = Path(
@@ -383,6 +390,7 @@ class AgentConfig:
         self._orchestrator: dict[str, Any] = self._load_orchestrator()
         self._subagents: dict[str, dict[str, Any]] = self._load_all_subagents()
         self._mcp_servers: dict[str, Any] = self._load_mcp_servers()
+        self._apply_atlan_api_key_from_env()
 
         self._configs_loaded = True
         logger.info(
@@ -651,6 +659,77 @@ class AgentConfig:
                 "MCP server '%s': oauth.registration_endpoint is required for auth_mode 'dcr'",
                 name,
             )
+
+    @staticmethod
+    def _atlan_api_key() -> str:
+        """Return the Atlan API key from the process environment."""
+        return os.environ.get(_ATLAN_API_KEY_ENV, "").strip().strip('"')
+
+    @staticmethod
+    def _server_is_atlan(name: str, cfg: dict[str, Any]) -> bool:
+        """True when this MCP entry is an Atlan server."""
+        url = str(cfg.get("url", "")).lower()
+        return "atlan" in name.lower() or "atlan.com" in url
+
+    def _apply_atlan_api_key_from_env(self) -> None:
+        """Use ATLAN_MCP_API_KEY for Atlan instead of the DCR block AIF writes.
+
+        AI Factory materializes the registry Atlan package as ``auth_mode: dcr``
+        and mounts that ``mcp.json`` over the image. The Environment step stores
+        a secret variable in Vault and injects it as a pod env var. When
+        ``ATLAN_MCP_API_KEY`` is set, every Atlan server is switched to
+        ``api_key``. If the agent did not select the Atlan package, the server
+        is added and included in a non-empty ``mcps`` list.
+        """
+        if not self._atlan_api_key():
+            return
+
+        atlan_names: list[str] = []
+        for name, cfg in self._mcp_servers.items():
+            if isinstance(cfg, dict) and self._server_is_atlan(name, cfg):
+                cfg["enabled"] = True
+                cfg["auth"] = True
+                cfg["auth_mode"] = "api_key"
+                cfg["auth_env_var"] = _ATLAN_API_KEY_ENV
+                cfg.pop("oauth", None)
+                atlan_names.append(name)
+                logger.info(
+                    "Atlan MCP '%s' uses %s instead of DCR",
+                    name,
+                    _ATLAN_API_KEY_ENV,
+                )
+
+        if not atlan_names:
+            url = (
+                os.environ.get(_ATLAN_MCP_URL_ENV, "").strip() or _DEFAULT_ATLAN_MCP_URL
+            )
+            self._mcp_servers["atlan-mcp"] = {
+                "url": url,
+                "transport": "streamable_http",
+                "enabled": True,
+                "auth": True,
+                "auth_mode": "api_key",
+                "auth_env_var": _ATLAN_API_KEY_ENV,
+                "ssl_verify": True,
+                "timeout": 30,
+                "description": (
+                    "Atlan MCP. Uses ATLAN_MCP_API_KEY from the environment "
+                    "instead of DCR."
+                ),
+            }
+            atlan_names.append("atlan-mcp")
+            logger.info(
+                "Added atlan-mcp from %s at %s",
+                _ATLAN_API_KEY_ENV,
+                url,
+            )
+
+        mcps = self._orchestrator.get("mcps")
+        if not mcps:
+            return
+        if any(self._server_is_atlan(name, {}) for name in mcps):
+            return
+        mcps.extend(atlan_names)
 
     def _load_mcp_servers(self) -> dict[str, Any]:
         """Load MCP server configuration at initialization.
