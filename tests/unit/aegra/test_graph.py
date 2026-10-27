@@ -777,6 +777,17 @@ class TestAgentFactory:
 class TestGraphHelpers:
     """Tests for pure helper functions in deep_agent.aegra.graph."""
 
+    def test_graph_fingerprint_includes_compaction_threshold(self):
+        from deep_agent.aegra.graph import _graph_fingerprint
+
+        default = _graph_fingerprint("model", "prompt", [])
+        assert default == _graph_fingerprint(
+            "model", "prompt", [], compaction_threshold=0.75
+        )
+        assert default != _graph_fingerprint(
+            "model", "prompt", [], compaction_threshold=0.60
+        )
+
     def test_graph_fingerprint_is_deterministic(self):
         """Same inputs always produce the same fingerprint."""
         from deep_agent.aegra.graph import _graph_fingerprint

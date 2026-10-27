@@ -122,6 +122,7 @@ def _graph_fingerprint(
     mcp_names: list[str] | None = None,
     resource_uris: list[str] | None = None,
     location: str | None = None,
+    compaction_threshold: float = 0.75,
 ) -> str:
     """Stable fingerprint for graph cache keying."""
     hitl_flag = (
@@ -135,6 +136,7 @@ def _graph_fingerprint(
     raw = (
         f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}"
         f"\0{hitl_flag}\0{model_flag}\0{mcp_flag}\0{resources_flag}"
+        f"\0compaction_threshold={compaction_threshold}"
     )
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
@@ -468,6 +470,7 @@ async def agent(runtime: ServerRuntime) -> Any:
         mcp_names=mcp_server_names or None,
         resource_uris=orchestrator_cfg.get("resources") or None,
         location=orch_location,
+        compaction_threshold=resolved_mw.compaction_threshold,
     )
     now = time.time()
     graph_ttl = float(agent_config.get_cache_config().graph.ttl)

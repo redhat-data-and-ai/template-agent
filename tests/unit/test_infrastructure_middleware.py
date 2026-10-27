@@ -7,6 +7,7 @@ import pytest
 from deep_agent.src.agent.config.middleware import ResolvedMiddlewareConfig
 from deep_agent.src.infrastructure.middleware import (
     _build_model_fallback,
+    _build_summarization_middleware,
     _build_summarization_tool_middleware,
     _current_user_info,
     _import_middleware,
@@ -51,6 +52,24 @@ class TestBuildMiddlewareList:
         assert type(result[1]).__name__ == "UserIdentityMiddleware"
         assert type(result[2]).__name__ == "CurrentDatetimeMiddleware"
         assert type(result[3]).__name__ == "ImageSanitizeMiddleware"
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_automatic_compaction_independent_of_optional_middleware(self, enabled):
+        resolved = ResolvedMiddlewareConfig(
+            compaction_threshold=0.60, summarization_tool_enabled=False
+        )
+        model, backend, automatic = MagicMock(), MagicMock(), MagicMock()
+        with (
+            patch("deep_agent.src.infrastructure.middleware.settings") as settings,
+            patch(
+                "deep_agent.src.infrastructure.middleware._build_summarization_middleware",
+                return_value=automatic,
+            ) as build,
+        ):
+            settings.MIDDLEWARE_ENABLED = enabled
+            result = build_middleware_list(resolved, model=model, backend=backend)
+        build.assert_called_once_with(model=model, backend=backend, threshold=0.60)
+        assert result.count(automatic) == 1
 
     def test_includes_summarization_tool_when_enabled(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
@@ -836,6 +855,94 @@ class TestBuildModelFallbackEdgeCases:
         ):
             result = _build_model_fallback("some-model")
         assert result is None
+
+
+class TestBuildAutomaticSummarization:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("threshold,should_compact", [(0.60, True), (0.90, False)])
+    async def test_automatic_threshold_and_history_offloading(
+        self, tmp_path, threshold, should_compact
+    ):
+        from deepagents.backends import FilesystemBackend
+        from langchain.agents.middleware.types import ModelRequest, ModelResponse
+        from langchain_core.language_models.fake_chat_models import (
+            FakeMessagesListChatModel,
+        )
+        from langchain_core.messages import AIMessage, HumanMessage
+        from langchain_core.messages.utils import count_tokens_approximately
+
+        model = FakeMessagesListChatModel(
+            responses=[AIMessage(content="Summary of older conversation")],
+            profile={"max_input_tokens": 10000},
+        )
+        backend = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+        middleware = _build_summarization_middleware(
+            model=model, backend=backend, threshold=threshold
+        )
+        messages = [HumanMessage(content="history " * 500, id=str(i)) for i in range(7)]
+        assert 6000 < count_tokens_approximately(messages) < 9000
+        request = ModelRequest(
+            model=model, messages=messages, state={"messages": messages}
+        )
+        handler = AsyncMock(
+            return_value=ModelResponse(result=[AIMessage(content="OK")])
+        )
+
+        response = await middleware.awrap_model_call(request, handler)
+
+        handler.assert_awaited_once()
+        archives = list((tmp_path / "conversation_history").glob("*.md"))
+        if should_compact:
+            assert len(archives) == 1
+            assert "history history" in archives[0].read_text()
+            event = response.command.update["_summarization_event"]
+            assert event["cutoff_index"] > 0
+            sent = handler.call_args.args[0].messages
+            assert "Summary of older conversation" in sent[0].content
+            assert sent[-1] == messages[-1]
+        else:
+            assert archives == []
+            assert handler.call_args.args[0].messages == messages
+
+    def test_configured_engine_replaces_deepagents_default(self, tmp_path):
+        from deepagents import create_deep_agent
+        from deepagents.backends import FilesystemBackend
+        from langchain_core.language_models.fake_chat_models import (
+            FakeMessagesListChatModel,
+        )
+
+        model = FakeMessagesListChatModel(
+            responses=[], profile={"max_input_tokens": 10000}
+        )
+        backend = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+        middleware = _build_summarization_middleware(
+            model=model, backend=backend, threshold=0.60
+        )
+        with patch("deepagents.graph.create_agent") as create:
+            create_deep_agent(model=model, backend=backend, middleware=[middleware])
+        summarizers = [
+            mw
+            for mw in create.call_args.kwargs["middleware"]
+            if mw.name == "SummarizationMiddleware"
+        ]
+        assert summarizers == [middleware]
+
+    @pytest.mark.parametrize("threshold", [0.50, 0.75, 0.90])
+    def test_config_passed_to_engine(self, threshold):
+        model, backend = MagicMock(), MagicMock()
+        with patch(
+            "deepagents.middleware.summarization.SummarizationMiddleware"
+        ) as engine:
+            result = _build_summarization_middleware(
+                model=model, backend=backend, threshold=threshold
+            )
+        engine.assert_called_once_with(
+            model=model,
+            backend=backend,
+            trigger=("fraction", threshold),
+            keep=("fraction", 0.10),
+        )
+        assert result is engine.return_value
 
 
 class TestBuildSummarizationToolMiddlewareEdgeCases:

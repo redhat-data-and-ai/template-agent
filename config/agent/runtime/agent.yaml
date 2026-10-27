@@ -123,6 +123,9 @@ middleware:
     exclude:
       - write_todos         # internal task tracking — no user approval needed
       - compact_conversation  # internal memory management — no user approval needed
+  # Automatically compact at this fraction of the model's context window.
+  # Range: 0.50–0.90; keeps 10% of the context window as recent history.
+  compaction_threshold: 0.75
   summarization_tool:
     enabled: true
   memory:

@@ -457,6 +457,14 @@ def build_middleware_list(
     if image_sanitize_mw is not None:
         middlewares.append(image_sanitize_mw)
 
+    # Automatic compaction at threshold override
+    _append_if_built(
+        middlewares,
+        _build_summarization_middleware(
+            model=model, backend=backend, threshold=resolved.compaction_threshold
+        ),
+    )
+
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
         return middlewares
@@ -728,6 +736,26 @@ def _build_pii_middleware(config: Any) -> list[Any]:
     except ImportError:
         logger.debug("PIIMiddleware not available")
         return []
+
+
+def _build_summarization_middleware(
+    *,
+    model: Any | None,
+    backend: Any | None,
+    threshold: float,
+) -> Any | None:
+    """Configure automatic compaction and history offloading."""
+    if model is None or backend is None:
+        return None
+
+    from deepagents.middleware.summarization import SummarizationMiddleware
+
+    return SummarizationMiddleware(
+        model=model,
+        backend=backend,
+        trigger=("fraction", threshold),
+        keep=("fraction", 0.10),
+    )
 
 
 def _build_summarization_tool_middleware(
