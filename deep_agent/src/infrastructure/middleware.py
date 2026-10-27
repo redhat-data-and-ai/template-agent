@@ -761,6 +761,7 @@ def _build_summarization_middleware(
         trigger=trigger,
         keep=defaults["keep"],
         trim_tokens_to_summarize=None,
+        truncate_args_settings=defaults["truncate_args_settings"],
     )
 
 

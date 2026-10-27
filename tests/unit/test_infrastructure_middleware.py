@@ -954,6 +954,10 @@ class TestBuildAutomaticSummarization:
             trigger=("fraction", threshold),
             keep=("fraction", 0.10),
             trim_tokens_to_summarize=None,
+            truncate_args_settings={
+                "trigger": ("fraction", 0.85),
+                "keep": ("fraction", 0.10),
+            },
         )
         assert result is engine.return_value
 
@@ -974,7 +978,64 @@ class TestBuildAutomaticSummarization:
             trigger=("tokens", 170000),
             keep=("messages", 6),
             trim_tokens_to_summarize=None,
+            truncate_args_settings={
+                "trigger": ("messages", 20),
+                "keep": ("messages", 20),
+            },
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool_name,arg_name", [("write_file", "content"), ("edit_file", "new_string")]
+    )
+    async def test_large_old_file_arguments_are_clipped_before_model_call(
+        self, tmp_path, tool_name, arg_name
+    ):
+        """Restored argument truncation reclaims context before calling the model."""
+        from deepagents.backends import FilesystemBackend
+        from langchain.agents.middleware.types import ModelRequest, ModelResponse
+        from langchain_core.language_models.fake_chat_models import (
+            FakeMessagesListChatModel,
+        )
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        model = FakeMessagesListChatModel(
+            responses=[], profile={"max_input_tokens": 10000}
+        )
+        middleware = _build_summarization_middleware(
+            model=model,
+            backend=FilesystemBackend(root_dir=tmp_path, virtual_mode=True),
+            threshold=0.75,
+        )
+        old_call = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": tool_name,
+                    "args": {"file_path": "/large.txt", arg_name: "x" * 40000},
+                    "id": "old-file-call",
+                }
+            ],
+        )
+        recent = HumanMessage(content="Continue with the next task.")
+        messages = [
+            old_call,
+            ToolMessage(content="Done", tool_call_id="old-file-call"),
+            recent,
+        ]
+        handler = AsyncMock(
+            return_value=ModelResponse(result=[AIMessage(content="OK")])
+        )
+
+        await middleware.awrap_model_call(
+            ModelRequest(model=model, messages=messages, state={"messages": messages}),
+            handler,
+        )
+
+        sent = handler.call_args.args[0].messages
+        assert len(sent[0].tool_calls[0]["args"][arg_name]) < 40000
+        assert sent[-1] == recent
+        assert len(old_call.tool_calls[0]["args"][arg_name]) == 40000
 
     def test_model_without_profile_can_build_graph(self, tmp_path):
         """A custom model with no token profile must not break graph construction."""
