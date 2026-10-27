@@ -105,14 +105,18 @@ async def _resolve_bearer(
             detail="Missing Authorization bearer token for SSO MCP access",
         )
 
-    if auth_mode == "api_key" and not bearer:
+    if auth_mode in ("api_key", "bearer", "basic") and not bearer:
         logger.info(
-            "[%s] api_key not configured on agent — host proxy blocked",
+            "[%s] %s credential not configured on agent — host proxy blocked",
             mcp_name,
+            auth_mode,
         )
         raise HTTPException(
             status_code=500,
-            detail=f"MCP '{mcp_name}' api_key is not configured on the agent",
+            detail=(
+                f"MCP '{mcp_name}' {auth_mode} credential is not configured "
+                "on the agent"
+            ),
         )
 
     return bearer

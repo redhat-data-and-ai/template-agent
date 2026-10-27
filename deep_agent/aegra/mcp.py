@@ -16,6 +16,7 @@ Functions:
 
 import asyncio
 import base64
+import binascii
 import contextvars
 import json
 import os
@@ -31,6 +32,7 @@ from deep_agent.aegra.mcp_apps import (
     prepare_tools_for_model,
 )
 from deep_agent.src.agent.config import agent_config
+from deep_agent.src.agent.config.loader import STATIC_CREDENTIAL_MODES
 from deep_agent.src.error_handling import CircuitBreaker, create_circuit_breaker
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
@@ -108,7 +110,7 @@ class _TokenInjectorInterceptor:
         user_id = _current_user_id.get()
         auth_mode = self._server_cfg.get("auth_mode", "sso")
 
-        if auth_mode == "api_key":
+        if auth_mode in _STATIC_CREDENTIAL_MODES:
             return await handler(request)
 
         try:
@@ -378,6 +380,15 @@ def _get_server_configs() -> dict[str, dict[str, Any]]:
     return agent_config.get_mcp_servers()
 
 
+def _is_base64(value: str) -> bool:
+    """True when *value* decodes cleanly as base64."""
+    try:
+        base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        return False
+    return True
+
+
 async def _resolve_connection_token(
     name: str,
     entry: dict[str, Any],
@@ -389,11 +400,22 @@ async def _resolve_connection_token(
     if auth_mode == "sso":
         return sso_token
 
-    if auth_mode == "api_key":
+    if auth_mode in _STATIC_CREDENTIAL_MODES:
         env_var = entry.get("auth_env_var", "")
         api_key = os.environ.get(env_var, "").strip().strip('"')
         if not api_key:
-            logger.warning("MCP auth_mode=api_key but %s is not set", env_var)
+            logger.warning("MCP auth_mode=%s but %s is not set", auth_mode, env_var)
+        elif auth_mode == "basic" and not _is_base64(api_key):
+            # Basic credentials are base64(user:password) per RFC 7617 and are
+            # sent verbatim. A plaintext value produces a malformed header and
+            # an opaque 401, so say so plainly here.
+            logger.error(
+                "MCP server '%s': auth_mode 'basic' expects a base64-encoded "
+                "credential in %s, got what looks like plaintext — the server "
+                "will reject it",
+                name,
+                env_var,
+            )
         return api_key or None
 
     if not user_id:
@@ -414,6 +436,93 @@ async def _resolve_connection_token(
         return None
 
 
+_API_KEY_LOCATIONS = ("header", "query")
+
+# Static-credential auth modes: the secret comes from auth_env_var and the
+# user's SSO token is never used as a fallback. Defined in the config loader,
+# which validates auth_mode, so the two cannot drift apart.
+_STATIC_CREDENTIAL_MODES = STATIC_CREDENTIAL_MODES
+
+
+def redact_url_query(url: str) -> str:
+    """Return *url* with every query value masked, for safe logging.
+
+    A credential placed with ``api_key_location: query`` is part of the URL,
+    so any log line carrying the raw URL leaks it. The parameter name is
+    user-configured, so rather than guessing which key is sensitive every
+    value is masked; host and path, which is what debugging needs, are kept.
+    """
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return "<unparseable-url>"
+    if not parsed.query:
+        return url
+    masked = [
+        (k, "REDACTED") for k, _ in parse_qsl(parsed.query, keep_blank_values=True)
+    ]
+    return urlunparse(parsed._replace(query=urlencode(masked)))
+
+
+def _with_query_param(url: str, name: str, value: str) -> str:
+    """Return *url* with ``name=value`` set on its query string.
+
+    Any existing occurrence of *name* is dropped so a stale key cannot win on
+    servers that read the first value. Other parameters are preserved
+    byte-for-byte rather than re-encoded, since round-tripping through
+    ``urlencode`` would rewrite ``?flag`` as ``flag=`` and ``%20`` as ``+``.
+    """
+    from urllib.parse import quote, urlparse, urlunparse
+
+    parsed = urlparse(url)
+    kept = [
+        part
+        for part in parsed.query.split("&")
+        if part and part.split("=", 1)[0] != name
+    ]
+    kept.append(f"{quote(name, safe='')}={quote(value, safe='')}")
+    return urlunparse(parsed._replace(query="&".join(kept)))
+
+
+def _api_key_placement(entry: dict[str, Any]) -> tuple[str | None, str]:
+    """Return ``(key_name, location)`` for a flexible API key, or ``(None, "")``.
+
+    ``None`` means "use the default ``Authorization: Bearer`` placement", which
+    is what every pre-existing config (sso / oauth / dcr / plain bearer) wants.
+
+    Only ``header`` and ``query`` are supported; the streamable-http
+    transport owns the JSON-RPC envelope, so there is no hook for body
+    placement. An unrecognised location falls back to a header with a warning.
+    """
+    if entry.get("auth_mode") != "api_key":
+        return None, ""
+
+    key_name = str(entry.get("api_key_name") or "").strip()
+    if not key_name:
+        return None, ""
+
+    location = str(entry.get("api_key_location") or "header").strip().lower()
+    if location not in _API_KEY_LOCATIONS:
+        # Reported once by the config loader; fall back silently here.
+        location = "header"
+    return key_name, location
+
+
+def _authorization_scheme(entry: dict[str, Any]) -> str:
+    """Return the Authorization scheme for an entry using default placement.
+
+    ``basic`` sends Basic; everything else — sso, oauth, dcr, bearer, and
+    legacy ``api_key`` entries written before the modes were split — sends
+    Bearer.
+    """
+    auth_mode = entry.get("auth_mode", "sso")
+    if auth_mode == "basic":
+        return "Basic"
+    return "Bearer"
+
+
 def _build_server_config(
     entry: dict[str, Any],
     bearer_token: str | None,
@@ -429,16 +538,24 @@ def _build_server_config(
     """
     from deep_agent.utils.pylogger import _trace_id_var
 
+    url = entry["url"]
     headers: dict[str, str] = {}
     if entry.get("auth", True) and bearer_token:
-        headers["Authorization"] = f"Bearer {bearer_token}"
+        key_name, location = _api_key_placement(entry)
+        if key_name is None:
+            headers["Authorization"] = f"{_authorization_scheme(entry)} {bearer_token}"
+        elif location == "query":
+            url = _with_query_param(url, key_name, bearer_token)
+        else:
+            # "header" is the default and only remaining header placement.
+            headers[key_name] = bearer_token
 
     trace_id = _trace_id_var.get()
     if trace_id:
         headers["X-Trace-ID"] = trace_id
 
     config: dict[str, Any] = {
-        "url": entry["url"],
+        "url": url,
         "transport": entry.get("transport", "streamable_http"),
         "headers": headers,
     }
@@ -609,7 +726,10 @@ async def _connect_single_server(
                 )
                 continue
             breaker.record_failure()
-            logger.error(f"[{name}] timeout after {timeout}s ({config.get('url')})")
+            logger.error(
+                f"[{name}] timeout after {timeout}s "
+                f"({redact_url_query(str(config.get('url', '')))})"
+            )
         except Exception as exc:
             if _is_needs_authorization(exc):
                 logger.info(
@@ -644,12 +764,15 @@ async def _connect_single_server(
             elif _is_connection_error(exc) and not required:
                 breaker.record_failure()
                 logger.warning(
-                    f"[{name}] not reachable ({config.get('url')}) — skipped"
+                    f"[{name}] not reachable "
+                    f"({redact_url_query(str(config.get('url', '')))}) — skipped"
                 )
             else:
                 breaker.record_failure()
                 logger.error(
-                    f"[{name}] connection failed ({config.get('url')})", exc_info=True
+                    f"[{name}] connection failed "
+                    f"({redact_url_query(str(config.get('url', '')))})",
+                    exc_info=True,
                 )
             return []
     return []
