@@ -1,7 +1,7 @@
 # Default owners for everything
-* @redhat-data-and-ai/template-agent-maintainers
+* @redhat-data-and-ai/team-dva
 
 # CI and infrastructure
-.github/ @redhat-data-and-ai/template-agent-maintainers
-Containerfile @redhat-data-and-ai/template-agent-maintainers
-deployment/ @redhat-data-and-ai/template-agent-maintainers
+.github/ @redhat-data-and-ai/team-dva
+Containerfile @redhat-data-and-ai/team-dva
+deployment/ @redhat-data-and-ai/team-dva
