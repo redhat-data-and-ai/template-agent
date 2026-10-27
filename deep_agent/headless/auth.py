@@ -157,6 +157,63 @@ def exchange_authorization_code(
     return token
 
 
+def _token_from_agent_callback(
+    settings: HeadlessSettings,
+    auth_url: str,
+    state: str,
+    verifier: str,
+) -> str | None:
+    """Sign in through the agent when it already owns the callback port.
+
+    The registered redirect is ``http://localhost:8080/auth/callback/oidc``.
+    When the agent is the process on that port, it stores the code and this
+    command reads it back.
+    """
+    base = f"http://127.0.0.1:{settings.sso_callback_port}"
+    try:
+        ready = httpx.post(
+            f"{base}/auth/callback/oidc/expect",
+            json={"state": state},
+            timeout=5.0,
+        )
+    except httpx.HTTPError:
+        ready = None
+    if ready is None or ready.status_code != 200:
+        print(
+            f"Port {settings.sso_callback_port} is already in use, and it does "
+            "not accept the headless sign-in. Start this agent on that port.",
+            file=sys.stderr,
+        )
+        return None
+    print(f"Waiting for SSO at {settings.callback_url()}")
+    print(auth_url)
+    webbrowser.open(auth_url)
+    deadline = time.time() + 180
+    code: str | None = None
+    error = "timed out"
+    while time.time() < deadline:
+        try:
+            pending = httpx.get(f"{base}/auth/callback/oidc/pending", timeout=5.0)
+        except httpx.HTTPError:
+            time.sleep(0.2)
+            continue
+        if pending.status_code != 200:
+            time.sleep(0.2)
+            continue
+        body = pending.json()
+        if isinstance(body, dict) and isinstance(body.get("code"), str):
+            code = body["code"]
+            break
+        if isinstance(body, dict) and body.get("error"):
+            error = str(body["error"])
+            break
+        time.sleep(0.2)
+    if not code:
+        print(f"SSO did not return a code ({error}).", file=sys.stderr)
+        return None
+    return exchange_authorization_code(settings, code, verifier)
+
+
 def browser_token(settings: HeadlessSettings) -> str | None:
     """Open a browser, catch the code, and exchange it for an access token."""
     authorize = settings.authorization_url()
@@ -192,8 +249,7 @@ def browser_token(settings: HeadlessSettings) -> str | None:
     callback = _Callback(settings.sso_callback_port)
     bind_error = callback.start()
     if bind_error:
-        print(bind_error, file=sys.stderr)
-        return None
+        return _token_from_agent_callback(settings, auth_url, state, verifier)
     print(f"Waiting for SSO at {settings.callback_url()}")
     print(auth_url)
     webbrowser.open(auth_url)

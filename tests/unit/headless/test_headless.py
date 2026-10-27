@@ -50,7 +50,8 @@ def test_local_workflow_uses_sso_and_skips_jit(monkeypatch) -> None:
     )
     assert settings.auth_mode == "sso"
     assert settings.request_jit is False
-    assert settings.headless_target == "local"
+    assert settings.headless_target == "aif"
+    assert settings.aif_invoke_url() == "http://127.0.0.1:8080/invoke"
 
     invoker = HeadlessInvoker(settings, "user-token")
 
@@ -173,6 +174,7 @@ def test_issuer_urls_are_derived_when_endpoints_are_blank() -> None:
 def test_aif_invoke_url_uses_org_and_name() -> None:
     settings = HeadlessSettings(
         _env_file=None,
+        workflow="preprod",
         agent_base_url="https://aif.example",
         agent_org="aurora",
         agent_name="dva",
@@ -191,6 +193,89 @@ def test_chat_url_gains_an_invoke_suffix() -> None:
     assert (
         settings.aif_invoke_url()
         == "https://aifactory.example/preprod/aurora/dva/chat/invoke"
+    )
+
+
+def test_local_invoke_url_uses_port_8080() -> None:
+    settings = HeadlessSettings(_env_file=None, workflow="local")
+    assert settings.aif_invoke_url() == "http://127.0.0.1:8080/invoke"
+
+    explicit = HeadlessSettings(
+        _env_file=None,
+        workflow="local",
+        agent_url="http://127.0.0.1:8080",
+    )
+    assert explicit.aif_invoke_url() == "http://127.0.0.1:8080/invoke"
+
+
+def test_invoke_message_becomes_a_run_body() -> None:
+    from deep_agent.aegra.invoke_routes import run_body
+
+    started = run_body({"message": "who is dpundir's manager"})
+    assert started is not None
+    assert started["input"]["messages"][0]["content"] == "who is dpundir's manager"
+
+    resumed = run_body(
+        {
+            "thread_id": "thread-1",
+            "command": {"resume": {"decisions": [{"type": "approve"}]}},
+            "assistant_id": "agent",
+        }
+    )
+    assert resumed is not None
+    assert resumed["command"]["resume"]["decisions"] == [{"type": "approve"}]
+    assert run_body({}) is None
+
+
+def test_invoke_keepalive_says_thinking() -> None:
+    from deep_agent.aegra.invoke_routes import rewrite_keepalive
+
+    pending = bytearray()
+    first = rewrite_keepalive(pending, b"event: end\n: heart")
+    second = rewrite_keepalive(pending, b"beat\r\n\r\n", final=True)
+    assert first + second == b"event: end\n: thinking\r\n\r\n"
+
+
+def test_invoke_approves_a_tool_pause_and_stops_on_mcp_login() -> None:
+    from deep_agent.aegra.invoke_routes import approval_resume
+
+    paused = [
+        (
+            "updates",
+            {
+                "__interrupt__": [
+                    {"value": {"action_requests": [{"name": "read_file"}]}}
+                ]
+            },
+        ),
+        ("end", {"status": "interrupted"}),
+    ]
+    resume = approval_resume(paused)
+    assert resume is not None
+    assert resume["command"]["resume"]["decisions"] == [{"type": "approve"}]
+
+    finished = paused + [("end", {"status": "success"})]
+    assert approval_resume(finished) is None
+    assert (
+        approval_resume(
+            [
+                (
+                    "updates",
+                    {
+                        "__interrupt__": [
+                            {
+                                "value": {
+                                    "type": "mcp_auth_required",
+                                    "mcp_name": "atlan-mcp",
+                                }
+                            }
+                        ]
+                    },
+                ),
+                ("end", {"status": "interrupted"}),
+            ]
+        )
+        is None
     )
 
 

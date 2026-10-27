@@ -46,6 +46,19 @@ def thread_id_from_events(
     return None
 
 
+def end_status(events: list[tuple[str, Any]]) -> str | None:
+    """Return the last SSE end status, when the stream sent one."""
+    status: str | None = None
+    for event_type, data in events:
+        if (
+            event_type == "end"
+            and isinstance(data, dict)
+            and isinstance(data.get("status"), str)
+        ):
+            status = data["status"]
+    return status
+
+
 def interrupts_from_events(events: list[tuple[str, Any]]) -> list[Any]:
     """Collect ``__interrupt__`` payloads from a stream."""
     found: list[Any] = []

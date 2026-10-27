@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Workflow: {settings.workflow}")
     print(f"Auth: {settings.auth_mode}")
+    print(f"URL: {settings.aif_invoke_url()}")
     token = access_token(settings)
     if not token:
         return 1

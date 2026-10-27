@@ -21,6 +21,7 @@ from deep_agent.aegra.auth_helpers import authenticated_user_id
 from deep_agent.aegra.eval_routes import eval_mgmt_router
 from deep_agent.aegra.eval_routes import router as eval_router
 from deep_agent.aegra.feedback import feedback_router
+from deep_agent.aegra.invoke_routes import router as invoke_router
 from deep_agent.aegra.mcp_routes import router as mcp_router
 from deep_agent.aegra.personalization_routes import router as personalization_router
 from deep_agent.aegra.projects_routes import projects_router
@@ -232,6 +233,7 @@ app.add_middleware(
     max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
     path_limits=_BODY_LIMITS,
 )
+app.include_router(invoke_router)
 app.include_router(thread_cleanup_router)
 app.include_router(personalization_router)
 app.include_router(projects_router)

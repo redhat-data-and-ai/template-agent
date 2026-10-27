@@ -17,6 +17,7 @@ from deep_agent.headless.interrupts import (
 from deep_agent.headless.jit_access import JITSession
 from deep_agent.headless.settings import HeadlessSettings
 from deep_agent.headless.stream import (
+    end_status,
     interrupts_from_events,
     message_texts,
     parse_sse_lines,
@@ -192,7 +193,7 @@ class HeadlessInvoker:
     ) -> int | None:
         """Return an exit code when the turn is finished, else ``None`` to resume."""
         interrupts = interrupts_from_events(events)
-        if not interrupts:
+        if end_status(events) == "success" or not interrupts:
             print("Agent completed.")
             return 0
         mcp_auth = find_mcp_auth(interrupts)

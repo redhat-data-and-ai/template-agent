@@ -119,17 +119,23 @@ class HeadlessSettings(BaseSettings):
         return f"http://localhost:{self.sso_callback_port}/auth/callback/oidc"
 
     def aif_invoke_url(self) -> str:
-        """Return the headless URL for the agent AI Factory shows.
+        """Return the URL a headless run posts to.
 
-        That screen shows the chat UI. Appending ``/invoke`` is the call
-        Soham's client makes. A loopback ``AGENT_URL`` is the local agent,
-        so the engine path is used when org and name are set instead.
+        A local run calls ``http://127.0.0.1:8080/invoke``. A deployed run
+        calls the chat URL AI Factory shows, with ``/invoke`` added.
         """
         direct = self.agent_url.strip().rstrip("/")
         host = (urlparse(direct).hostname or "").lower()
-        if direct and host not in {"localhost", "127.0.0.1", "::1"}:
+        loopback = host in {"localhost", "127.0.0.1", "::1"}
+        if direct and not loopback:
             if direct.endswith("/invoke"):
                 return direct
             return f"{direct}/invoke"
+        if self.workflow == "local":
+            if direct and loopback and urlparse(direct).port not in {None, 5002}:
+                if direct.endswith("/invoke"):
+                    return direct
+                return f"{direct}/invoke"
+            return "http://127.0.0.1:8080/invoke"
         base = self.agent_base_url.rstrip("/")
         return f"{base}/api/engine/v1/agents/{self.agent_org}/{self.agent_name}/invoke"

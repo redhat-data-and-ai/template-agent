@@ -1,8 +1,9 @@
 """Choose one headless workflow and the behavior that belongs to it.
 
 ``local``
-    The caller signs in with their own SSO. The question goes to the local
-    agent. Snowflake access is the caller's, so no JIT grant is requested.
+    The caller signs in with their own SSO. The question goes to
+    ``http://127.0.0.1:8080/invoke``. Snowflake access is the caller's, so
+    no JIT grant is requested.
 
 ``preprod`` and ``prod``
     The caller signs in as the service account for that environment. JIT
@@ -37,7 +38,7 @@ def apply_workflow(settings: HeadlessSettings, workflow: str) -> HeadlessSetting
                 update={
                     "workflow": LOCAL,
                     "auth_mode": "sso",
-                    "headless_target": "local",
+                    "headless_target": "aif",
                     "request_jit": False,
                 }
             ),
