@@ -116,13 +116,61 @@ def _token_error(response: httpx.Response) -> str:
     return detail or f"HTTP {response.status_code}"
 
 
+def exchange_authorization_code(
+    settings: HeadlessSettings,
+    code: str,
+    verifier: str,
+) -> str | None:
+    """Exchange a browser login code using the environment's client secret."""
+    account = settings.service_account()
+    if (
+        not account["client_id"]
+        or not account["client_secret"]
+        or not account["token_url"]
+    ):
+        print(
+            "SSO browser login needs SSO_CLIENT_ID, SSO_ISSUER_URL, and "
+            "SSO_CLIENT_SECRET or SSO_CLIENT_SECRET_<ENVIRONMENT>.",
+            file=sys.stderr,
+        )
+        return None
+    form = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": settings.callback_url(),
+        "client_id": account["client_id"],
+        "client_secret": account["client_secret"],
+        "code_verifier": verifier,
+    }
+    try:
+        response = httpx.post(account["token_url"], data=form, timeout=30.0)
+    except httpx.HTTPError as exc:
+        print(f"Token exchange failed: {exc}", file=sys.stderr)
+        return None
+    if response.status_code != 200:
+        print(f"Token exchange failed: {_token_error(response)}", file=sys.stderr)
+        return None
+    token = response.json().get("access_token")
+    if not isinstance(token, str) or not token:
+        print("Token response had no access_token.", file=sys.stderr)
+        return None
+    return token
+
+
 def browser_token(settings: HeadlessSettings) -> str | None:
     """Open a browser, catch the code, and exchange it for an access token."""
     authorize = settings.authorization_url()
-    token_url = settings.token_url()
-    if not settings.sso_client_id or not authorize or not token_url:
+    account = settings.service_account()
+    if not account["client_id"] or not authorize or not account["token_url"]:
         print(
             "SSO browser login needs SSO_CLIENT_ID and SSO_ISSUER_URL.",
+            file=sys.stderr,
+        )
+        return None
+    if not account["client_secret"]:
+        print(
+            "SSO browser login needs SSO_CLIENT_SECRET or "
+            "SSO_CLIENT_SECRET_<ENVIRONMENT>.",
             file=sys.stderr,
         )
         return None
@@ -132,7 +180,7 @@ def browser_token(settings: HeadlessSettings) -> str | None:
     query = urlencode(
         {
             "response_type": "code",
-            "client_id": settings.sso_client_id,
+            "client_id": account["client_id"],
             "redirect_uri": settings.callback_url(),
             "scope": settings.sso_scope,
             "state": state,
@@ -165,28 +213,7 @@ def browser_token(settings: HeadlessSettings) -> str | None:
         )
         return None
 
-    form = {
-        "grant_type": "authorization_code",
-        "code": callback.code,
-        "redirect_uri": settings.callback_url(),
-        "client_id": settings.sso_client_id,
-        "code_verifier": verifier,
-    }
-    if settings.sso_client_secret:
-        form["client_secret"] = settings.sso_client_secret
-    try:
-        response = httpx.post(token_url, data=form, timeout=30.0)
-    except httpx.HTTPError as exc:
-        print(f"Token exchange failed: {exc}", file=sys.stderr)
-        return None
-    if response.status_code != 200:
-        print(f"Token exchange failed: {_token_error(response)}", file=sys.stderr)
-        return None
-    token = response.json().get("access_token")
-    if not isinstance(token, str) or not token:
-        print("Token response had no access_token.", file=sys.stderr)
-        return None
-    return token
+    return exchange_authorization_code(settings, callback.code, verifier)
 
 
 def client_credentials_token(settings: HeadlessSettings) -> str | None:

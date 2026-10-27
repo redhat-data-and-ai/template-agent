@@ -1,5 +1,5 @@
 """Headless runner for this agent.
 
-Two targets: the local Aegra API, or an AI Factory invoke URL.
-Two auth modes: browser SSO, or a client-credentials token.
+``local`` uses the caller's SSO and the local agent.
+``preprod`` and ``prod`` use the service account, Snowflake JIT, and the deployed agent.
 """

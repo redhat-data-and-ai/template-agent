@@ -8,6 +8,7 @@ import sys
 from deep_agent.headless.auth import access_token
 from deep_agent.headless.invoke import HeadlessInvoker
 from deep_agent.headless.settings import HeadlessSettings
+from deep_agent.headless.workflow import WORKFLOWS, WorkflowError, apply_workflow
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -16,32 +17,28 @@ def main(argv: list[str] | None = None) -> int:
         description="Invoke this agent without the chat UI."
     )
     parser.add_argument(
+        "workflow",
+        choices=WORKFLOWS,
+        help=(
+            "local signs in with your SSO and skips JIT. "
+            "preprod and prod use the service account, grant JIT, and call the deployed agent."
+        ),
+    )
+    parser.add_argument(
         "message", nargs="?", help="Prompt to send. Defaults to AGENT_MESSAGE."
-    )
-    parser.add_argument(
-        "--target",
-        choices=("local", "aif"),
-        help="local talks to this agent API. aif talks to AI Factory. Default: HEADLESS_TARGET or local.",
-    )
-    parser.add_argument(
-        "--auth",
-        choices=("sso", "password", "client-creds"),
-        help="sso opens a browser. password uses SSO_SA_USERNAME. client-creds uses the client secret only.",
     )
     args = parser.parse_args(argv)
 
     settings = HeadlessSettings()
-    updates: dict[str, str] = {}
-    if args.target:
-        updates["headless_target"] = args.target
-    if args.auth:
-        updates["auth_mode"] = args.auth
+    try:
+        settings = apply_workflow(settings, args.workflow)
+    except WorkflowError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if args.message:
-        updates["agent_message"] = args.message
-    if updates:
-        settings = settings.model_copy(update=updates)
+        settings = settings.model_copy(update={"agent_message": args.message})
 
-    print(f"Target: {settings.headless_target}")
+    print(f"Workflow: {settings.workflow}")
     print(f"Auth: {settings.auth_mode}")
     token = access_token(settings)
     if not token:

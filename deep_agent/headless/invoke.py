@@ -79,7 +79,9 @@ class HeadlessInvoker:
         self._headers = _headers(token)
 
     def run(self) -> int:
-        """Grant JIT access, run the message, then revoke that access."""
+        """Run the message. Grant Snowflake JIT only for a deployed workflow."""
+        if not self._settings.request_jit:
+            return self._dispatch()
         session = JITSession(self._settings)
         try:
             if not session.grant():

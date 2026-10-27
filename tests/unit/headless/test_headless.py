@@ -38,6 +38,125 @@ def test_password_grant_uses_the_prod_service_account() -> None:
     assert account["token_url"] == "https://auth.example/token"
 
 
+def test_local_workflow_uses_sso_and_skips_jit(monkeypatch) -> None:
+    from deep_agent.headless.invoke import HeadlessInvoker
+    from deep_agent.headless.workflow import apply_workflow
+
+    settings = apply_workflow(
+        HeadlessSettings(
+            _env_file=None, environment="prod", dice_jit_trigger_token="t"
+        ),
+        "local",
+    )
+    assert settings.auth_mode == "sso"
+    assert settings.request_jit is False
+    assert settings.headless_target == "local"
+
+    invoker = HeadlessInvoker(settings, "user-token")
+
+    def reject_jit(*_args, **_kwargs):
+        raise AssertionError("JIT should not run for the local workflow")
+
+    monkeypatch.setattr("deep_agent.headless.invoke.JITSession", reject_jit)
+    monkeypatch.setattr(invoker, "_dispatch", lambda: 0)
+    assert invoker.run() == 0
+
+
+def test_prod_workflow_uses_the_service_account_and_jit(monkeypatch) -> None:
+    from deep_agent.headless.invoke import HeadlessInvoker
+    from deep_agent.headless.workflow import apply_workflow
+
+    calls: list[str] = []
+
+    class FakeJIT:
+        def __init__(self, _settings) -> None:
+            calls.append("init")
+
+        def grant(self) -> bool:
+            calls.append("grant")
+            return True
+
+        def revoke(self) -> None:
+            calls.append("revoke")
+
+        def close(self) -> None:
+            calls.append("close")
+
+    settings = apply_workflow(
+        HeadlessSettings(
+            _env_file=None,
+            agent_base_url="https://aif.example",
+            agent_org="aurora",
+            agent_name="dva",
+        ),
+        "prod",
+    )
+    assert settings.environment == "prod"
+    assert settings.auth_mode == "password"
+    assert settings.headless_target == "aif"
+    assert settings.request_jit is True
+
+    invoker = HeadlessInvoker(settings, "sa-token")
+    monkeypatch.setattr("deep_agent.headless.invoke.JITSession", FakeJIT)
+    monkeypatch.setattr(invoker, "_dispatch", lambda: 0)
+    assert invoker.run() == 0
+    assert calls == ["init", "grant", "revoke", "close"]
+
+
+def test_prod_workflow_refuses_the_laptop_agent() -> None:
+    from deep_agent.headless.workflow import WorkflowError, apply_workflow
+
+    try:
+        apply_workflow(HeadlessSettings(_env_file=None), "prod")
+    except WorkflowError as exc:
+        assert "deployed agent" in str(exc)
+    else:
+        raise AssertionError("expected a workflow error")
+
+
+def test_preprod_workflow_can_call_a_remote_agent_url() -> None:
+    from deep_agent.headless.workflow import apply_workflow
+
+    settings = apply_workflow(
+        HeadlessSettings(_env_file=None, agent_url="https://agent.example"),
+        "preprod",
+    )
+    assert settings.environment == "preprod"
+    assert settings.headless_target == "local"
+    assert settings.request_jit is True
+
+
+def test_sso_exchange_sends_the_environment_client_secret(monkeypatch) -> None:
+    from deep_agent.headless.auth import exchange_authorization_code
+
+    captured: dict[str, object] = {}
+
+    class _Response:
+        status_code = 200
+
+        def json(self) -> dict[str, str]:
+            return {"access_token": "user-token"}
+
+    def fake_post(url: str, data: dict[str, str], timeout: float) -> _Response:
+        captured["url"] = url
+        captured["data"] = data
+        return _Response()
+
+    monkeypatch.setattr("deep_agent.headless.auth.httpx.post", fake_post)
+    settings = HeadlessSettings(
+        _env_file=None,
+        environment="prod",
+        sso_client_id="ask-data-ui",
+        sso_client_secret_prod="prod-secret",
+        sso_token_url_prod="https://auth.example/token",
+    )
+    assert exchange_authorization_code(settings, "code", "verifier") == "user-token"
+    sent = captured["data"]
+    assert isinstance(sent, dict)
+    assert sent["client_secret"] == "prod-secret"
+    assert captured["url"] == "https://auth.example/token"
+
+
 def test_issuer_urls_are_derived_when_endpoints_are_blank() -> None:
     settings = HeadlessSettings(
         _env_file=None,

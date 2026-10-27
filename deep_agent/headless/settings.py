@@ -16,16 +16,11 @@ def _unwrap(value: str) -> str:
 class HeadlessSettings(BaseSettings):
     """Load headless options from the environment and ``.env``.
 
-    ``HEADLESS_TARGET`` selects where the call goes:
+    The CLI selects a workflow, which sets the fields below:
 
-    * ``local`` — this process's Aegra API (``POST /threads`` and ``/runs/stream``).
-    * ``aif`` — AI Factory ``/api/engine/v1/agents/{org}/{name}/invoke``.
-
-    ``AUTH_MODE`` selects how the bearer token is obtained:
-
-    * ``sso`` — browser login with PKCE.
-    * ``client-creds`` — service-account client-credentials grant.
-    * ``password`` — ``SSO_SA_USERNAME`` and ``SSO_SA_PASSWORD_<ENVIRONMENT>``.
+    * ``local`` — browser SSO, the local agent, no Snowflake JIT.
+    * ``preprod`` or ``prod`` — service-account password grant, JIT, and the
+      deployed agent.
     """
 
     model_config = SettingsConfigDict(
@@ -34,8 +29,10 @@ class HeadlessSettings(BaseSettings):
         extra="ignore",
     )
 
+    workflow: str = "local"
     auth_mode: str = "sso"
     headless_target: str = "local"
+    request_jit: bool = False
     environment: str = "preprod"
 
     sso_client_id: str = ""
