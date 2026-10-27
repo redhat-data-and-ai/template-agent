@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ main, deep-agent ]
+    branches: [ main, deep-agent, dva ]
   pull_request:
-    branches: [ main, deep-agent ]
+    branches: [ main, deep-agent, dva ]
     paths-ignore:
       - '**.md'
       - 'docs/**'

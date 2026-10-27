@@ -2,7 +2,7 @@ name: Draft Check
 
 on:
   pull_request:
-    branches: [main, deep-agent]
+    branches: [main, deep-agent, dva]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
 
 jobs:

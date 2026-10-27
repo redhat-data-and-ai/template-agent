@@ -2,7 +2,7 @@ name: Require Linked Issue
 
 on:
   pull_request:
-    branches: [main, deep-agent]
+    branches: [main, deep-agent, dva]
     types: [opened, edited, synchronize, reopened, ready_for_review]
 
 permissions:

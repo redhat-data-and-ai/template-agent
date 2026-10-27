@@ -2,14 +2,14 @@ name: License Compliance
 
 on:
   push:
-    branches: [main, deep-agent]
+    branches: [main, deep-agent, dva]
     paths:
       - 'pyproject.toml'
       - 'uv.lock'
       - 'requirements*.txt'
       - 'Containerfile'
   pull_request:
-    branches: [main, deep-agent]
+    branches: [main, deep-agent, dva]
     paths:
       - 'pyproject.toml'
       - 'uv.lock'

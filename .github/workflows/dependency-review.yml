@@ -2,7 +2,7 @@ name: Dependency Review
 
 on:
   pull_request:
-    branches: [ main, deep-agent ]
+    branches: [ main, deep-agent, dva ]
 
 permissions:
   contents: read

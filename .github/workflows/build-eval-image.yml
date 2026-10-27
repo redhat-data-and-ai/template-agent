@@ -6,8 +6,9 @@ on:
       - '*'
     branches:
       - main
+      - dva
   pull_request:
-    branches: [ main ]
+    branches: [ main, dva ]
     paths:
       - 'eval-runner/**'
       - 'eval-runner/Containerfile'

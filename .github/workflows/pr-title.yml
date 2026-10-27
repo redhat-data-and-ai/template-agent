@@ -2,7 +2,7 @@ name: PR Title Lint
 
 on:
   pull_request:
-    branches: [main, deep-agent]
+    branches: [main, deep-agent, dva]
     types: [opened, edited, synchronize]
 
 permissions:
