@@ -778,6 +778,7 @@ class TestGraphHelpers:
     """Tests for pure helper functions in deep_agent.aegra.graph."""
 
     def test_graph_fingerprint_includes_compaction_threshold(self):
+        """Threshold changes must invalidate a graph built with older settings."""
         from deep_agent.aegra.graph import _graph_fingerprint
 
         default = _graph_fingerprint("model", "prompt", [])

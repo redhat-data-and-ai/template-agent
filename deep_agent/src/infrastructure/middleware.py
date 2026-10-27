@@ -745,13 +745,22 @@ def _build_summarization_middleware(
     if model is None or backend is None:
         return None
 
-    from deepagents.middleware.summarization import SummarizationMiddleware
+    from deepagents.middleware.summarization import (
+        SummarizationMiddleware,
+        compute_summarization_defaults,
+    )
+
+    defaults = compute_summarization_defaults(model)
+    trigger = defaults["trigger"]
+    if trigger[0] == "fraction":
+        trigger = ("fraction", threshold)
 
     return SummarizationMiddleware(
         model=model,
         backend=backend,
-        trigger=("fraction", threshold),
-        keep=("fraction", 0.10),
+        trigger=trigger,
+        keep=defaults["keep"],
+        trim_tokens_to_summarize=None,
     )
 
 

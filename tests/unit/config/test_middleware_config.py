@@ -86,10 +86,12 @@ class TestResolveMiddleware:
     """Test the resolution logic: defaults → profile → overrides."""
 
     def test_compaction_default(self):
+        """Default the automatic compaction trigger to 75% of input capacity."""
         resolved = resolve_middleware(MiddlewareFileConfig(), "model")
         assert resolved.compaction_threshold == 0.75
 
     def test_compaction_yaml_default_and_agent_override(self, tmp_path):
+        """Per-agent overrides take precedence over the YAML middleware default."""
         path = tmp_path / "middleware.yaml"
         path.write_text("defaults:\n  compaction_threshold: 0.80\n")
         config = load_middleware_config(path)
@@ -103,6 +105,7 @@ class TestResolveMiddleware:
 
     @pytest.mark.parametrize("threshold", [0.50, 0.90])
     def test_compaction_bounds(self, threshold):
+        """Accept both supported threshold boundaries."""
         resolved = resolve_middleware(
             MiddlewareFileConfig(), "model", {"compaction_threshold": threshold}
         )
@@ -110,6 +113,7 @@ class TestResolveMiddleware:
 
     @pytest.mark.parametrize("threshold", [0.49, 0.91, None, "invalid", float("nan")])
     def test_compaction_rejects_invalid_values(self, threshold):
+        """Reject out-of-range and malformed global or per-agent thresholds."""
         with pytest.raises(ValidationError):
             MiddlewareDefaults(compaction_threshold=threshold)
         with pytest.raises(ValidationError):

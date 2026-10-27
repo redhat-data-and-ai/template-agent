@@ -8,6 +8,7 @@ from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field
 
@@ -23,6 +24,7 @@ class RecordingChatModel(FakeMessagesListChatModel):
     requests: list[list[BaseMessage]] = Field(default_factory=list)
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+        """Accept graph tool binding while retaining scripted responses."""
         return self
 
     def _generate(
@@ -32,11 +34,13 @@ class RecordingChatModel(FakeMessagesListChatModel):
         run_manager: Any = None,
         **kwargs: Any,
     ) -> Any:
+        """Record the actual model input before returning a scripted response."""
         self.requests.append(list(messages))
         return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
 
 def _compact_call(input_tokens: int) -> AIMessage:
+    """Return a manual compaction tool call with provider-reported usage."""
     return AIMessage(
         content="",
         tool_calls=[{"name": "compact_conversation", "args": {}, "id": "compact-1"}],
@@ -49,6 +53,7 @@ def _compact_call(input_tokens: int) -> AIMessage:
 
 
 def _build_agent(tmp_path, responses, threshold=0.75):
+    """Build a local graph with shared compaction middleware and checkpoints."""
     model = RecordingChatModel(
         responses=responses, profile={"max_input_tokens": 100000}
     )
@@ -72,12 +77,18 @@ def _build_agent(tmp_path, responses, threshold=0.75):
 
 
 def _history():
-    return [HumanMessage(content="history " * 1000, id=str(i)) for i in range(7)]
+    """Create long history with a unique fact in its earliest message."""
+    messages = [HumanMessage(content="history " * 1000, id=str(i)) for i in range(7)]
+    messages[0].content = (
+        "Earliest fact: project codename is Lantern. " + messages[0].content
+    )
+    return messages
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("threshold,eligible", [(0.60, True), (0.90, False)])
 async def test_manual_compaction_uses_configured_engine(tmp_path, threshold, eligible):
+    """Respect configured eligibility, archive history, and continue from a summary."""
     responses = [_compact_call(40000)]
     if eligible:
         responses.append(AIMessage(content="Summary of older conversation"))
@@ -106,6 +117,11 @@ async def test_manual_compaction_uses_configured_engine(tmp_path, threshold, eli
         assert "history history" in archives[0].read_text()
         event = state["_summarization_event"]
         assert event["cutoff_index"] > 0
+        assert count_tokens_approximately(history[: event["cutoff_index"]]) > 4000
+        assert any(
+            "Earliest fact: project codename is Lantern." in message.text
+            for message in model.requests[1]
+        )
         assert "Summary of older conversation" in event["summary_message"].content
         # The model receives compacted context while the checkpoint retains the log.
         assert history[0] not in model.requests[-1]
@@ -130,6 +146,7 @@ async def test_manual_compaction_uses_configured_engine(tmp_path, threshold, eli
 
 @pytest.mark.asyncio
 async def test_short_conversation_returns_nothing_to_compact(tmp_path):
+    """Short conversations must return a no-op without creating an archive."""
     graph, _, _ = _build_agent(
         tmp_path, [_compact_call(20), AIMessage(content="Nothing to compact yet.")]
     )
@@ -148,6 +165,7 @@ async def test_short_conversation_returns_nothing_to_compact(tmp_path):
 async def test_summary_failure_returns_tool_error_without_losing_history(
     tmp_path, monkeypatch
 ):
+    """A failed summary must preserve the conversation and surface a tool error."""
     graph, _, automatic = _build_agent(
         tmp_path, [_compact_call(40000), AIMessage(content="Compaction failed.")]
     )

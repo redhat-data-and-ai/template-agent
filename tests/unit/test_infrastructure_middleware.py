@@ -55,6 +55,7 @@ class TestBuildMiddlewareList:
 
     @pytest.mark.parametrize("enabled", [True, False])
     def test_automatic_compaction_independent_of_optional_middleware(self, enabled):
+        """Automatic compaction stays active when optional middleware is disabled."""
         resolved = ResolvedMiddlewareConfig(
             compaction_threshold=0.60, summarization_tool_enabled=False
         )
@@ -72,6 +73,7 @@ class TestBuildMiddlewareList:
         assert result.count(automatic) == 1
 
     def test_includes_summarization_tool_when_enabled(self):
+        """The manual tool must reuse the automatic summarization engine."""
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
         automatic, manual = MagicMock(), MagicMock()
         with (
@@ -869,6 +871,7 @@ class TestBuildAutomaticSummarization:
     async def test_automatic_threshold_and_history_offloading(
         self, tmp_path, threshold, should_compact
     ):
+        """Crossing the configured threshold archives and summarizes old history."""
         from deepagents.backends import FilesystemBackend
         from langchain.agents.middleware.types import ModelRequest, ModelResponse
         from langchain_core.language_models.fake_chat_models import (
@@ -911,6 +914,7 @@ class TestBuildAutomaticSummarization:
             assert handler.call_args.args[0].messages == messages
 
     def test_configured_engine_replaces_deepagents_default(self, tmp_path):
+        """The configured engine replaces, rather than duplicates, the default."""
         from deepagents import create_deep_agent
         from deepagents.backends import FilesystemBackend
         from langchain_core.language_models.fake_chat_models import (
@@ -935,7 +939,9 @@ class TestBuildAutomaticSummarization:
 
     @pytest.mark.parametrize("threshold", [0.50, 0.75, 0.90])
     def test_config_passed_to_engine(self, threshold):
+        """Use configured fractions and preserve the full summary input."""
         model, backend = MagicMock(), MagicMock()
+        model.profile = {"max_input_tokens": 10000}
         with patch(
             "deepagents.middleware.summarization.SummarizationMiddleware"
         ) as engine:
@@ -947,18 +953,61 @@ class TestBuildAutomaticSummarization:
             backend=backend,
             trigger=("fraction", threshold),
             keep=("fraction", 0.10),
+            trim_tokens_to_summarize=None,
         )
         assert result is engine.return_value
+
+    @pytest.mark.parametrize("profile", [None, {}, {"max_input_tokens": None}])
+    def test_missing_token_profile_uses_absolute_fallback(self, profile):
+        """Models without a usable input capacity retain Deep Agents defaults."""
+        model, backend = MagicMock(), MagicMock()
+        model.profile = profile
+        with patch(
+            "deepagents.middleware.summarization.SummarizationMiddleware"
+        ) as engine:
+            _build_summarization_middleware(
+                model=model, backend=backend, threshold=0.60
+            )
+        engine.assert_called_once_with(
+            model=model,
+            backend=backend,
+            trigger=("tokens", 170000),
+            keep=("messages", 6),
+            trim_tokens_to_summarize=None,
+        )
+
+    def test_model_without_profile_can_build_graph(self, tmp_path):
+        """A custom model with no token profile must not break graph construction."""
+        from deepagents import create_deep_agent
+        from deepagents.backends import FilesystemBackend
+        from langchain_core.language_models.fake_chat_models import (
+            FakeMessagesListChatModel,
+        )
+
+        model = FakeMessagesListChatModel(responses=[])
+        backend = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+        automatic = _build_summarization_middleware(
+            model=model, backend=backend, threshold=0.60
+        )
+        manual = _build_summarization_tool_middleware(summarization=automatic)
+        with patch("deepagents.graph.create_agent") as create:
+            create_deep_agent(
+                model=model, backend=backend, middleware=[automatic, manual]
+            )
+        assert automatic in create.call_args.kwargs["middleware"]
+        assert manual in create.call_args.kwargs["middleware"]
 
 
 class TestBuildSummarizationToolMiddlewareEdgeCases:
     """Test edge cases for _build_summarization_tool_middleware."""
 
     def test_missing_engine_returns_none(self):
+        """Skip the manual tool when no summarization engine is available."""
         result = _build_summarization_tool_middleware(summarization=None)
         assert result is None
 
     def test_shared_engine_and_conversational_instruction(self):
+        """Expose the shared engine with instructions for conversational requests."""
         engine = MagicMock()
         middleware = _build_summarization_tool_middleware(summarization=engine)
         assert middleware._summarization is engine
@@ -970,6 +1019,7 @@ class TestBuildSummarizationToolMiddlewareEdgeCases:
         assert "nothing to compact" in middleware.system_prompt
 
     def test_exception_during_creation_returns_none(self):
+        """Optional tool construction failures must not prevent graph creation."""
         with patch(
             "deepagents.middleware.summarization.SummarizationToolMiddleware",
             side_effect=Exception("creation error"),
