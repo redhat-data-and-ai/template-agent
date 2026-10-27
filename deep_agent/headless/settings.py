@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -117,6 +119,17 @@ class HeadlessSettings(BaseSettings):
         return f"http://localhost:{self.sso_callback_port}/auth/callback/oidc"
 
     def aif_invoke_url(self) -> str:
-        """Return the AI Factory invoke URL for this agent."""
+        """Return the headless URL for the agent AI Factory shows.
+
+        That screen shows the chat UI. Appending ``/invoke`` is the call
+        Soham's client makes. A loopback ``AGENT_URL`` is the local agent,
+        so the engine path is used when org and name are set instead.
+        """
+        direct = self.agent_url.strip().rstrip("/")
+        host = (urlparse(direct).hostname or "").lower()
+        if direct and host not in {"localhost", "127.0.0.1", "::1"}:
+            if direct.endswith("/invoke"):
+                return direct
+            return f"{direct}/invoke"
         base = self.agent_base_url.rstrip("/")
         return f"{base}/api/engine/v1/agents/{self.agent_org}/{self.agent_name}/invoke"

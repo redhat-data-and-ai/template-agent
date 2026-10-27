@@ -141,17 +141,14 @@ class HeadlessInvoker:
         return 3
 
     def _run_aif(self) -> int:
-        if (
-            not self._settings.agent_base_url
-            or not self._settings.agent_org
-            or not self._settings.agent_name
-        ):
+        url = self._settings.aif_invoke_url()
+        if not url.endswith("/invoke"):
             print(
-                "AI Factory target needs AGENT_BASE_URL, AGENT_ORG, and AGENT_NAME.",
+                "AI Factory target needs the chat URL in AGENT_URL, "
+                "or AGENT_BASE_URL, AGENT_ORG, and AGENT_NAME.",
                 file=sys.stderr,
             )
             return 1
-        url = self._settings.aif_invoke_url()
         timeout = httpx.Timeout(self._settings.agent_timeout)
         body: dict[str, Any] = {"message": self._settings.agent_message}
         try:

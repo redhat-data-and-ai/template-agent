@@ -122,7 +122,8 @@ def test_preprod_workflow_can_call_a_remote_agent_url() -> None:
         "preprod",
     )
     assert settings.environment == "preprod"
-    assert settings.headless_target == "local"
+    assert settings.headless_target == "aif"
+    assert settings.aif_invoke_url() == "https://agent.example/invoke"
     assert settings.request_jit is True
 
 
@@ -179,6 +180,17 @@ def test_aif_invoke_url_uses_org_and_name() -> None:
     assert (
         settings.aif_invoke_url()
         == "https://aif.example/api/engine/v1/agents/aurora/dva/invoke"
+    )
+
+
+def test_chat_url_gains_an_invoke_suffix() -> None:
+    settings = HeadlessSettings(
+        _env_file=None,
+        agent_url="https://aifactory.example/preprod/aurora/dva/chat",
+    )
+    assert (
+        settings.aif_invoke_url()
+        == "https://aifactory.example/preprod/aurora/dva/chat/invoke"
     )
 
 

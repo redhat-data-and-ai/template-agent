@@ -52,7 +52,7 @@ def apply_workflow(settings: HeadlessSettings, workflow: str) -> HeadlessSetting
             "Set AGENT_BASE_URL, AGENT_ORG, and AGENT_NAME, "
             "or set AGENT_URL to that agent's URL."
         )
-    target = "aif" if _aif_configured(settings) else "local"
+    target = "aif" if _uses_invoke_url(settings) else "local"
     return cast(
         HeadlessSettings,
         settings.model_copy(
@@ -68,7 +68,7 @@ def apply_workflow(settings: HeadlessSettings, workflow: str) -> HeadlessSetting
 
 
 def _aif_configured(settings: HeadlessSettings) -> bool:
-    """Return True when the AI Factory invoke URL can be built."""
+    """Return True when org and name can build an engine invoke URL."""
     return bool(
         settings.agent_base_url.strip()
         and settings.agent_org.strip()
@@ -76,9 +76,19 @@ def _aif_configured(settings: HeadlessSettings) -> bool:
     )
 
 
+def _uses_invoke_url(settings: HeadlessSettings) -> bool:
+    """Return True when the call posts to a URL ending in ``/invoke``."""
+    if _remote_agent_url(settings):
+        return True
+    return _aif_configured(settings)
+
+
 def _has_deployed_destination(settings: HeadlessSettings) -> bool:
     """Return True when the call has a deployed agent to reach."""
-    if _aif_configured(settings):
-        return True
+    return _uses_invoke_url(settings)
+
+
+def _remote_agent_url(settings: HeadlessSettings) -> bool:
+    """Return True when ``AGENT_URL`` is the chat URL from AI Factory."""
     host = (urlparse(settings.agent_url).hostname or "").lower()
     return bool(host) and host not in _LOOPBACK
