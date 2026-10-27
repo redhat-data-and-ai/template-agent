@@ -248,6 +248,3 @@ docker-compose.override.yml
 # Aegra-generated scaffolding (conflicts with existing compose.yaml + k8s deployment)
 Dockerfile
 docker-compose.yml
-
-# Local DVA agent config copied from template-main. Keep it out of this branch.
-config/agent/
