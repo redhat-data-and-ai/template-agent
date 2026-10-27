@@ -73,17 +73,23 @@ class TestBuildMiddlewareList:
 
     def test_includes_summarization_tool_when_enabled(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
-        mock_mw = MagicMock()
+        automatic, manual = MagicMock(), MagicMock()
         with (
             patch("deep_agent.src.infrastructure.middleware.settings") as mock_settings,
             patch(
-                "deep_agent.src.infrastructure.middleware._build_summarization_tool_middleware",
-                return_value=mock_mw,
+                "deep_agent.src.infrastructure.middleware._build_summarization_middleware",
+                return_value=automatic,
             ),
+            patch(
+                "deep_agent.src.infrastructure.middleware._build_summarization_tool_middleware",
+                return_value=manual,
+            ) as build_tool,
         ):
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert mock_mw in result
+        build_tool.assert_called_once_with(summarization=automatic)
+        assert automatic in result
+        assert manual in result
 
     def test_excludes_summarization_tool_when_disabled(self):
         resolved = ResolvedMiddlewareConfig(
@@ -948,20 +954,25 @@ class TestBuildAutomaticSummarization:
 class TestBuildSummarizationToolMiddlewareEdgeCases:
     """Test edge cases for _build_summarization_tool_middleware."""
 
-    def test_none_model_returns_none(self):
-        result = _build_summarization_tool_middleware(model=None, backend=MagicMock())
+    def test_missing_engine_returns_none(self):
+        result = _build_summarization_tool_middleware(summarization=None)
         assert result is None
 
-    def test_none_backend_returns_none(self):
-        result = _build_summarization_tool_middleware(model=MagicMock(), backend=None)
-        assert result is None
+    def test_shared_engine_and_conversational_instruction(self):
+        engine = MagicMock()
+        middleware = _build_summarization_tool_middleware(summarization=engine)
+        assert middleware._summarization is engine
+        assert [tool.name for tool in middleware.tools] == ["compact_conversation"]
+        assert (
+            "When the user asks to compact the conversation" in middleware.system_prompt
+        )
+        assert "call compact_conversation" in middleware.system_prompt
+        assert "nothing to compact" in middleware.system_prompt
 
     def test_exception_during_creation_returns_none(self):
         with patch(
-            "deepagents.middleware.summarization.create_summarization_tool_middleware",
+            "deepagents.middleware.summarization.SummarizationToolMiddleware",
             side_effect=Exception("creation error"),
         ):
-            result = _build_summarization_tool_middleware(
-                model=MagicMock(), backend=MagicMock()
-            )
+            result = _build_summarization_tool_middleware(summarization=MagicMock())
         assert result is None
