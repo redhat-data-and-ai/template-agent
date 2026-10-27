@@ -600,12 +600,14 @@ class AgentConfig:
         ``_build_server_config``, which runs on every connection attempt and
         every host-proxy request.
         """
-        if not str(cfg.get("auth_env_var") or "").strip():
+        auth_env_var = cfg.get("auth_env_var")
+        if not isinstance(auth_env_var, str) or not auth_env_var.strip():
             logger.error(
                 "MCP server '%s': auth_mode '%s' requires 'auth_env_var'",
                 name,
                 auth_mode,
             )
+            cfg["enabled"] = False
 
         has_placement = bool(cfg.get("api_key_location") or cfg.get("api_key_name"))
         if auth_mode != "api_key":
