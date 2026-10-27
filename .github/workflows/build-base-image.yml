@@ -275,8 +275,42 @@ jobs:
           echo "$FILES" >> $GITHUB_OUTPUT
           echo "RELEASE_EOF" >> $GITHUB_OUTPUT
 
+      - name: Detect tag on dva
+        id: dva-tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --unshallow origin
+          fi
+          ls_status=0
+          git ls-remote --exit-code --heads origin refs/heads/dva >/dev/null || ls_status=$?
+          if [ "$ls_status" -eq 2 ]; then
+            echo "value=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$ls_status" -ne 0 ]; then
+            exit "$ls_status"
+          fi
+          git fetch --no-tags origin +refs/heads/dva:refs/remotes/origin/dva
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          dva_status=0
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/dva || dva_status=$?
+          main_status=0
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main || main_status=$?
+          if [ "$dva_status" -gt 1 ]; then
+            exit "$dva_status"
+          fi
+          if [ "$main_status" -gt 1 ]; then
+            exit "$main_status"
+          fi
+          if [ "$dva_status" -eq 0 ] && [ "$main_status" -eq 1 ]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GitHub Release (for tags only)
-        if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'
+        if: startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request' && steps.dva-tag.outputs.value != 'true'
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           files: ${{ steps.release-files.outputs.files }}
@@ -322,7 +356,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload deployment package as artifact (for branch builds)
-        if: "!startsWith(github.ref, 'refs/tags/') && github.event_name != 'pull_request'"
+        if: github.event_name != 'pull_request' && (steps.dva-tag.outputs.value == 'true' || !startsWith(github.ref, 'refs/tags/'))
         continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
