@@ -132,7 +132,7 @@ class PIIConfig(BaseModel):
 class MiddlewareDefaults(BaseModel):
     """Global middleware defaults from agent.yaml."""
 
-    compaction_threshold: CompactionThreshold = 0.75
+    compaction_threshold: CompactionThreshold = 0.85
     summarization_tool: SummarizationToolConfig = Field(
         default_factory=SummarizationToolConfig
     )
@@ -167,7 +167,7 @@ class MiddlewareFileConfig(BaseModel):
 class ResolvedMiddlewareConfig(BaseModel):
     """Final resolved config for a single agent after merge."""
 
-    compaction_threshold: CompactionThreshold = 0.75
+    compaction_threshold: CompactionThreshold = 0.85
     summarization_tool_enabled: bool = True
     human_approval: HumanApprovalConfig = Field(default_factory=HumanApprovalConfig)
     memory_enabled: bool = True

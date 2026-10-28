@@ -122,7 +122,7 @@ def _graph_fingerprint(
     mcp_names: list[str] | None = None,
     resource_uris: list[str] | None = None,
     location: str | None = None,
-    compaction_threshold: float = 0.75,
+    compaction_threshold: float = 0.85,
 ) -> str:
     """Stable fingerprint for graph cache keying."""
     hitl_flag = (

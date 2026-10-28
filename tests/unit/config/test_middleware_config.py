@@ -86,9 +86,9 @@ class TestResolveMiddleware:
     """Test the resolution logic: defaults → profile → overrides."""
 
     def test_compaction_default(self):
-        """Default the automatic compaction trigger to 75% of input capacity."""
+        """Default the automatic compaction trigger to 85% of input capacity."""
         resolved = resolve_middleware(MiddlewareFileConfig(), "model")
-        assert resolved.compaction_threshold == 0.75
+        assert resolved.compaction_threshold == 0.85
 
     def test_compaction_yaml_default_and_agent_override(self, tmp_path):
         """Per-agent overrides take precedence over the YAML middleware default."""

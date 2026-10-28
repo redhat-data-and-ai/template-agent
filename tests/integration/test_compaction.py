@@ -52,7 +52,7 @@ def _compact_call(input_tokens: int) -> AIMessage:
     )
 
 
-def _build_agent(tmp_path, responses, threshold=0.75):
+def _build_agent(tmp_path, responses, threshold=0.85):
     """Build a local graph with shared compaction middleware and checkpoints."""
     model = RecordingChatModel(
         responses=responses, profile={"max_input_tokens": 100000}
@@ -167,7 +167,7 @@ async def test_summary_failure_returns_tool_error_without_losing_history(
 ):
     """A failed summary must preserve the conversation and surface a tool error."""
     graph, _, automatic = _build_agent(
-        tmp_path, [_compact_call(40000), AIMessage(content="Compaction failed.")]
+        tmp_path, [_compact_call(50000), AIMessage(content="Compaction failed.")]
     )
     monkeypatch.setattr(
         automatic,

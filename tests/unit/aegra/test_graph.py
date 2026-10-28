@@ -783,7 +783,7 @@ class TestGraphHelpers:
 
         default = _graph_fingerprint("model", "prompt", [])
         assert default == _graph_fingerprint(
-            "model", "prompt", [], compaction_threshold=0.75
+            "model", "prompt", [], compaction_threshold=0.85
         )
         assert default != _graph_fingerprint(
             "model", "prompt", [], compaction_threshold=0.60
