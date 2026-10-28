@@ -10,3 +10,15 @@
 # imports it and never opens fsspec reference documents, so the attack vector
 # is not exposed. Revisit when lightspeed-evaluation bumps its datasets pin.
 CVE-2026-104851
+
+# GHSA-g5ff-637f-6q2m: LiteLLM proxy arbitrary local file read (HIGH)
+# https://github.com/advisories/GHSA-g5ff-637f-6q2m
+# Fixed in litellm 1.95.0, but lightspeed-evaluation v0.8.0 requires
+# litellm>=1.84.0,<=1.89.3, preventing a compatible upgrade.
+# The advisory targets the LiteLLM proxy's /utils/transform_request endpoint.
+# This image starts uvicorn eval_api:app and invokes lightspeed-eval for
+# scoring; it does not start the LiteLLM proxy or mount its routes, so the
+# reported attack path is not exposed in this deployment.
+# Revisit when lightspeed-evaluation permits litellm>=1.95.0, or before
+# introducing any LiteLLM proxy server/routes into this image.
+GHSA-g5ff-637f-6q2m
