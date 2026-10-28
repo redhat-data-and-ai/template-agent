@@ -151,6 +151,153 @@ def build_user_identity_middleware() -> Any | None:
     return UserIdentityMiddleware()
 
 
+def build_restricted_filesystem_middleware(
+    backend: Any, blocked: frozenset[str]
+) -> Any | None:
+    """Build a FilesystemMiddleware that never registers the blocked tools.
+
+    ``create_deep_agent`` builds its own FilesystemMiddleware, but merges a
+    caller-supplied one by ``.name`` — an instance named ``FilesystemMiddleware``
+    replaces the internal one in place. Passing an explicit ``tools=`` opt-in
+    list omits the rest entirely: per deepagents, a name outside that list
+    "never reaches the dispatchable tool node". That is strictly stronger than
+    hiding the tool from the model, which leaves it callable.
+
+    Args:
+        backend: Backend instance the filesystem tools operate on.
+        blocked: Tool names to leave unregistered.
+
+    Returns:
+        Replacement middleware, or None when nothing filesystem-related is
+        blocked (leave deepagents' own instance alone).
+    """
+    if not blocked or backend is None:
+        return None
+
+    try:
+        from deepagents.middleware.filesystem import FilesystemMiddleware
+    except ImportError:
+        logger.warning("FilesystemMiddleware unavailable — excluded_tools not applied")
+        return None
+
+    try:
+        default_names = [t.name for t in FilesystemMiddleware(backend=backend).tools]
+    except Exception as e:
+        logger.warning("Could not enumerate filesystem tools: %s", e)
+        return None
+
+    keep = [name for name in default_names if name not in blocked]
+    if len(keep) == len(default_names):
+        return None  # nothing blocked is a filesystem tool
+
+    removed = sorted(set(default_names) - set(keep))
+    logger.info("Filesystem tools not registered (excluded_tools): %s", removed)
+    return FilesystemMiddleware(backend=backend, tools=keep)
+
+
+def build_tool_access_middleware(blocked: frozenset[str]) -> Any | None:
+    """Build middleware enforcing ``middleware.excluded_tools`` from agent.yaml.
+
+    Three layers, because hiding a tool is not the same as denying it:
+
+    1. the tool is stripped from the model request, so the model never sees it;
+    2. a call that arrives anyway (hallucinated name, replayed transcript,
+       subagent with its own schema) is refused at the tool node;
+    3. the system prompt names the blocked tools so the agent can tell the
+       user plainly instead of inventing a reason.
+
+    Args:
+        blocked: Tool names denied for this agent.
+
+    Returns:
+        Middleware instance, or None if nothing is blocked or the langchain
+        middleware API is unavailable.
+    """
+    if not blocked:
+        return None
+
+    try:
+        from langchain.agents.middleware.types import (
+            AgentMiddleware,
+            ModelRequest,
+            ModelResponse,
+        )
+        from langchain_core.messages import ToolMessage
+    except ImportError:
+        logger.warning("langchain middleware API unavailable — excluded_tools ignored")
+        return None
+
+    denial = (
+        "Tool '%s' is disabled by configuration and was not executed. "
+        "Tell the user this action is not permitted, and do not retry it."
+    )
+
+    class ToolAccessMiddleware(AgentMiddleware):
+        def _apply(self, request: ModelRequest[Any]) -> ModelRequest[Any]:
+            from deepagents.middleware.subagents import append_to_system_message
+
+            visible = [t for t in request.tools if _tool_name(t) not in blocked]
+            names = ", ".join(sorted(blocked))
+            notice = (
+                "<disabled-tools>\n"
+                f"These tools are disabled and unavailable: {names}.\n"
+                "If the user asks for one of these actions, say plainly that it "
+                "is not permitted and suggest an alternative. Never claim to "
+                "have performed it.\n"
+                "</disabled-tools>"
+            )
+            return request.override(
+                tools=visible,
+                system_message=append_to_system_message(request.system_message, notice),
+            )
+
+        def wrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return handler(self._apply(request))
+
+        async def awrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return await handler(self._apply(request))
+
+        def wrap_tool_call(self, request: Any, handler: Any) -> Any:
+            name = request.tool_call.get("name")
+            if name in blocked:
+                logger.warning("Blocked call to disabled tool '%s'", name)
+                return ToolMessage(
+                    content=denial % name,
+                    tool_call_id=request.tool_call.get("id", ""),
+                    name=name,
+                    status="error",
+                )
+            return handler(request)
+
+        async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
+            name = request.tool_call.get("name")
+            if name in blocked:
+                logger.warning("Blocked call to disabled tool '%s'", name)
+                return ToolMessage(
+                    content=denial % name,
+                    tool_call_id=request.tool_call.get("id", ""),
+                    name=name,
+                    status="error",
+                )
+            return await handler(request)
+
+    logger.info("Tool access: %d tool(s) disabled: %s", len(blocked), sorted(blocked))
+    return ToolAccessMiddleware()
+
+
+def _tool_name(tool: Any) -> str | None:
+    """Extract a tool name from a BaseTool or a dict-shaped tool spec."""
+    if isinstance(tool, dict):
+        name = tool.get("name")
+        return name if isinstance(name, str) else None
+    name = getattr(tool, "name", None)
+    return name if isinstance(name, str) else None
+
+
 def build_current_datetime_middleware() -> Any | None:
     """Build middleware that injects the current date and time (UTC) into the system prompt."""
     try:
@@ -478,6 +625,18 @@ def build_middleware_list(
 
     for dotted_path in resolved.extra_middleware:
         _append_if_built(middlewares, _import_middleware(dotted_path))
+
+    # Replaces deepagents' own FilesystemMiddleware so blocked filesystem
+    # tools are never registered at all.
+    _append_if_built(
+        middlewares,
+        build_restricted_filesystem_middleware(backend, resolved.blocked_tools),
+    )
+
+    # Backstop for blocked tools that are not filesystem tools (MCP, task),
+    # and the source of the user-facing "not permitted" wording. Last, so a
+    # custom wrap_model_call earlier cannot put a disabled tool back.
+    _append_if_built(middlewares, build_tool_access_middleware(resolved.blocked_tools))
 
     if middlewares:
         logger.info("Built %d extra middleware instance(s)", len(middlewares))

@@ -38,6 +38,8 @@ from deep_agent.src.infrastructure.middleware import (
     build_audit_middleware,
     build_current_datetime_middleware,
     build_opa_middleware,
+    build_restricted_filesystem_middleware,
+    build_tool_access_middleware,
     build_user_identity_middleware,
 )
 from deep_agent.src.settings import settings
@@ -356,7 +358,23 @@ def _subagent_middleware(
     if datetime_mw is not None:
         middleware.append(datetime_mw)
     middleware.extend(fallback_mw)
+    # excluded_tools is a global policy: a tool denied to the orchestrator must
+    # be denied to every subagent too, or delegation becomes a way around it.
+    blocked = _globally_blocked_tools()
+    from deep_agent.src.infrastructure.backend import get_configured_backend
+
+    fs_mw = build_restricted_filesystem_middleware(get_configured_backend(), blocked)
+    if fs_mw is not None:
+        middleware.append(fs_mw)
+    access_mw = build_tool_access_middleware(blocked)
+    if access_mw is not None:
+        middleware.append(access_mw)
     return middleware or None
+
+
+def _globally_blocked_tools() -> frozenset[str]:
+    """Tool names excluded for every agent via ``middleware.excluded_tools``."""
+    return frozenset(agent_config.get_middleware_config().defaults.excluded_tools)
 
 
 def _build_single_subagent(

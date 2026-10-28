@@ -123,6 +123,18 @@ middleware:
     exclude:
       - write_todos         # internal task tracking — no user approval needed
       - compact_conversation  # internal memory management — no user approval needed
+      - ls                  # read-only directory listing — no side effects
+      - read_file           # read-only file read — no side effects
+      - glob                # read-only filename pattern match — no side effects
+      - grep                # read-only content search — no side effects
+  # Tools the agent may not use. Listed = excluded: the tool is never
+  # registered, so neither the orchestrator nor any subagent can see or call
+  # it, and the agent is told to say the action is not permitted. A subagent
+  # may exclude more tools, never fewer.
+  excluded_tools:
+    - delete   # destructive and unrecoverable — users have deleted packaged
+               # files by accident. Memory deletion is unaffected: it goes
+               # through DELETE /memories, not this tool.
   summarization_tool:
     enabled: true
   memory:
