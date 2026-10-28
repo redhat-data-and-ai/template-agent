@@ -215,3 +215,43 @@ class TestAtlanApiKeyFromEnv:
         assert servers["atlan-mcp"]["url"] == "https://redhat.atlan.com/mcp"
         assert servers["atlan-mcp"]["auth_mode"] == "api_key"
         assert "oauth" not in servers["atlan-mcp"]
+
+    def test_aif_mcp_json_still_grants_atlan_to_subagents(self, tmp_path, monkeypatch):
+        """A mounted mcp.json that only has Dataverse still connects Atlan."""
+        monkeypatch.setenv("ATLAN_MCP_API_KEY", "test-key")
+        monkeypatch.delenv("ATLAN_MCP_URL", raising=False)
+        _write_config(
+            tmp_path,
+            _PROMPT_WITHOUT_ATLAN,
+            {
+                "dataverse-mcp": {
+                    "url": "https://mcp.dataverse.redhat.com/mcp/",
+                    "transport": "streamable_http",
+                    "enabled": True,
+                    "auth": True,
+                    "auth_mode": "sso",
+                }
+            },
+        )
+        subagents = tmp_path / "agent" / "subagents"
+        subagents.mkdir()
+        (subagents / "catalog.md").write_text(
+            "---\n"
+            "name: catalog\n"
+            "model: claude-sonnet-4-6@default\n"
+            "mcps:\n"
+            "  - dataverse-mcp\n"
+            "---\n\n"
+            "Catalog.\n"
+        )
+
+        cfg = _load(tmp_path)
+
+        assert (
+            cfg.get_mcp_servers()["atlan-mcp"]["url"] == "https://redhat.atlan.com/mcp"
+        )
+        assert cfg.get_orchestrator_config()["mcps"] == ["dataverse-mcp", "atlan-mcp"]
+        assert cfg.get_all_subagent_configs()["catalog"]["mcps"] == [
+            "dataverse-mcp",
+            "atlan-mcp",
+        ]

@@ -681,13 +681,13 @@ class AgentConfig:
         )
 
     def _apply_atlan_api_key_from_env(self) -> None:
-        """Connect Atlan MCP with the API key and URL from the environment.
+        """Connect Atlan MCP from code after AI Factory writes ``mcp.json``.
 
-        AI Factory does not have to connect Atlan. ``ATLAN_MCP_API_KEY`` is the
-        secret, and the URL comes from ``mcp.json`` or ``ATLAN_MCP_URL``. When
-        the key is set, every Atlan server uses ``api_key``. If ``mcp.json``
-        has no Atlan server, one is added at the DVA URL and included in a
-        non-empty ``mcps`` list.
+        Connecting Dataverse on AI Factory replaces ``mcp.json`` and omits
+        Atlan. ``ATLAN_MCP_API_KEY`` is the secret. The URL comes from
+        ``ATLAN_MCP_URL`` or the DVA default. When the key is set, Atlan is
+        added to the loaded servers and granted to the orchestrator and every
+        subagent that already lists MCP servers. Skills run with those tools.
         """
         if not self._atlan_api_key():
             return
@@ -734,10 +734,19 @@ class AgentConfig:
                 url,
             )
 
-        mcps = self._orchestrator.get("mcps")
-        if not mcps:
+        self._grant_atlan(self._orchestrator, atlan_names)
+        for subagent in self._subagents.values():
+            self._grant_atlan(subagent, atlan_names)
+
+    def _grant_atlan(self, config: dict[str, Any], atlan_names: list[str]) -> None:
+        """Add Atlan to an agent that already names its MCP servers.
+
+        An empty ``mcps`` list means every enabled server, including Atlan.
+        """
+        mcps = config.get("mcps")
+        if not isinstance(mcps, list) or not mcps:
             return
-        if any(self._server_is_atlan(name, {}) for name in mcps):
+        if any(self._server_is_atlan(str(name), {}) for name in mcps):
             return
         mcps.extend(atlan_names)
 
