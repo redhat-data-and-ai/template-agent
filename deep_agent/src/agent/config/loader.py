@@ -161,13 +161,9 @@ def _load_jsonc(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(_strip_jsonc_comments(raw)))
 
 
-# AI Factory writes Atlan as DCR. A secret variable on the agent Environment
-# step is injected into the pod as this env var; when it is set, Atlan uses
-# the key and does not start a DCR connect flow.
+# Set both on the agent in AI Factory. The URL is not stored in mcp.json.
 _ATLAN_API_KEY_ENV = "ATLAN_MCP_API_KEY"
 _ATLAN_MCP_URL_ENV = "ATLAN_MCP_URL"
-# DVA's Atlan MCP. Used when mcp.json has no Atlan server and ATLAN_MCP_URL is unset.
-_DEFAULT_ATLAN_MCP_URL = "https://redhat.atlan.com/mcp"
 
 # Config directory path - read from CONFIG_PATH env var for base image pattern
 # Falls back to repo-root config/agent/ for backward compatibility
@@ -674,25 +670,21 @@ class AgentConfig:
 
     @staticmethod
     def _atlan_mcp_url() -> str:
-        """Return the Atlan MCP URL from the environment, or the DVA default."""
-        return (
-            os.environ.get(_ATLAN_MCP_URL_ENV, "").strip().strip('"')
-            or _DEFAULT_ATLAN_MCP_URL
-        )
+        """Return the Atlan MCP URL from the process environment."""
+        return os.environ.get(_ATLAN_MCP_URL_ENV, "").strip().strip('"')
 
     def _apply_atlan_api_key_from_env(self) -> None:
-        """Connect Atlan MCP from code after AI Factory writes ``mcp.json``.
+        """Connect Atlan MCP when AI Factory supplies the URL and API key.
 
-        Connecting Dataverse on AI Factory replaces ``mcp.json`` and omits
-        Atlan. ``ATLAN_MCP_API_KEY`` is the secret. The URL comes from
-        ``ATLAN_MCP_URL`` or the DVA default. When the key is set, Atlan is
-        added to the loaded servers and granted to the orchestrator and every
-        subagent that already lists MCP servers. Skills run with those tools.
+        Connecting other MCP servers replaces ``mcp.json``. Atlan is added
+        only when both ``ATLAN_MCP_URL`` and ``ATLAN_MCP_API_KEY`` are set,
+        then granted to the orchestrator and every subagent that already
+        lists MCP servers.
         """
-        if not self._atlan_api_key():
+        url = self._atlan_mcp_url()
+        if not self._atlan_api_key() or not url:
             return
 
-        override_url = os.environ.get(_ATLAN_MCP_URL_ENV, "").strip().strip('"')
         atlan_names: list[str] = []
         for name, cfg in self._mcp_servers.items():
             if isinstance(cfg, dict) and self._server_is_atlan(name, cfg):
@@ -700,19 +692,17 @@ class AgentConfig:
                 cfg["auth"] = True
                 cfg["auth_mode"] = "api_key"
                 cfg["auth_env_var"] = _ATLAN_API_KEY_ENV
-                if override_url:
-                    cfg["url"] = override_url
+                cfg["url"] = url
                 cfg.pop("oauth", None)
                 atlan_names.append(name)
                 logger.info(
                     "Atlan MCP '%s' uses %s at %s",
                     name,
                     _ATLAN_API_KEY_ENV,
-                    cfg.get("url"),
+                    url,
                 )
 
         if not atlan_names:
-            url = self._atlan_mcp_url()
             self._mcp_servers["atlan-mcp"] = {
                 "url": url,
                 "transport": "streamable_http",
@@ -723,8 +713,7 @@ class AgentConfig:
                 "ssl_verify": True,
                 "timeout": 30,
                 "description": (
-                    "Atlan MCP. Uses ATLAN_MCP_API_KEY from the environment "
-                    "instead of DCR."
+                    "Atlan MCP. URL from ATLAN_MCP_URL and key from ATLAN_MCP_API_KEY."
                 ),
             }
             atlan_names.append("atlan-mcp")

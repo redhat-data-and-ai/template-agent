@@ -41,17 +41,6 @@
             "ssl_verify": false,
             "timeout": 30,
             "tool_prefix": "template-api-key"
-        },
-        "atlan-mcp": {
-            "url": "https://redhat.atlan.com/mcp",
-            "transport": "streamable_http",
-            "enabled": true,
-            "auth": true,
-            "auth_mode": "api_key",
-            "auth_env_var": "ATLAN_MCP_API_KEY",
-            "ssl_verify": true,
-            "timeout": 30,
-            "description": "Atlan MCP. Set ATLAN_MCP_API_KEY. Override the URL with ATLAN_MCP_URL."
         }
     }
 }
