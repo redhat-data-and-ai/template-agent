@@ -167,3 +167,51 @@ class TestAtlanApiKeyFromEnv:
         assert cfg.get_mcp_servers()["atlan-mcp"]["auth_mode"] == "api_key"
         assert cfg.get_mcp_servers()["atlan-mcp"]["url"] == "https://mcp.atlan.com/mcp"
         assert cfg.get_orchestrator_config()["mcps"] == ["dataverse-mcp", "atlan-mcp"]
+
+    def test_uses_redhat_atlan_url_when_url_env_is_unset(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ATLAN_MCP_API_KEY", "test-key")
+        monkeypatch.delenv("ATLAN_MCP_URL", raising=False)
+        _write_config(
+            tmp_path,
+            _PROMPT_WITHOUT_ATLAN,
+            {
+                "dataverse-mcp": {
+                    "url": "https://mcp.dataverse.redhat.com/mcp/",
+                    "auth_mode": "sso",
+                    "enabled": True,
+                }
+            },
+        )
+
+        servers = _load(tmp_path).get_mcp_servers()
+
+        assert servers["atlan-mcp"]["url"] == "https://redhat.atlan.com/mcp"
+        assert servers["atlan-mcp"]["auth_mode"] == "api_key"
+
+    def test_url_env_overrides_mcp_json_url(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ATLAN_MCP_API_KEY", "test-key")
+        monkeypatch.setenv("ATLAN_MCP_URL", "https://redhat.atlan.com/mcp")
+        _write_config(
+            tmp_path,
+            _PROMPT,
+            {
+                "atlan-mcp": {
+                    "url": "https://mcp.atlan.com/mcp",
+                    "transport": "streamable_http",
+                    "enabled": True,
+                    "auth": True,
+                    "auth_mode": "dcr",
+                    "oauth": {
+                        "registration_endpoint": "https://mcp.atlan.com/oauth/register",
+                        "authorization_endpoint": "https://mcp.atlan.com/oauth/authorize",
+                        "token_endpoint": "https://mcp.atlan.com/oauth/token",
+                    },
+                }
+            },
+        )
+
+        servers = _load(tmp_path).get_mcp_servers()
+
+        assert servers["atlan-mcp"]["url"] == "https://redhat.atlan.com/mcp"
+        assert servers["atlan-mcp"]["auth_mode"] == "api_key"
+        assert "oauth" not in servers["atlan-mcp"]
