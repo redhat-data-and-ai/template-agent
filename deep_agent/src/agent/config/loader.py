@@ -174,6 +174,14 @@ def _load_jsonc(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(_strip_jsonc_comments(raw)))
 
 
+# A secret variable on the AI Factory Environment step is injected into the
+# pod as this env var. When it is set, the agent connects to Atlan MCP itself.
+# Atlan does not need to be added as an MCP connection in AI Factory.
+_ATLAN_API_KEY_ENV = "ATLAN_MCP_API_KEY"
+_ATLAN_MCP_URL_ENV = "ATLAN_MCP_URL"
+_DEFAULT_ATLAN_MCP_URL = "https://mcp.atlan.com/mcp"
+
+
 # Config directory path - read from CONFIG_PATH env var for base image pattern
 # Falls back to repo-root config/agent/ for backward compatibility
 _AGENT_CONFIG_DIR = Path(
@@ -396,6 +404,7 @@ class AgentConfig:
         self._orchestrator: dict[str, Any] = self._load_orchestrator()
         self._subagents: dict[str, dict[str, Any]] = self._load_all_subagents()
         self._mcp_servers: dict[str, Any] = self._load_mcp_servers()
+        self._apply_atlan_api_key_from_env()
 
         self._configs_loaded = True
         logger.info(
@@ -733,6 +742,78 @@ class AgentConfig:
                 "MCP server '%s': oauth.registration_endpoint is required for auth_mode 'dcr'",
                 name,
             )
+
+    @staticmethod
+    def _atlan_api_key() -> str:
+        """Return the Atlan API key from the process environment."""
+        return os.environ.get(_ATLAN_API_KEY_ENV, "").strip().strip('"')
+
+    @staticmethod
+    def _server_is_atlan(name: str, cfg: dict[str, Any]) -> bool:
+        """Return True when this MCP entry is an Atlan server."""
+        url = str(cfg.get("url", "")).lower()
+        return "atlan" in name.lower() or "atlan.com" in url
+
+    def _apply_atlan_api_key_from_env(self) -> None:
+        """Connect Atlan MCP with ``ATLAN_MCP_API_KEY`` from the environment.
+
+        AI Factory can materialize a selected Atlan package as ``auth_mode: dcr``,
+        which asks a person to connect the server. When the API key is present,
+        every Atlan server is switched to ``bearer`` and that connect flow is
+        skipped. If Atlan was not selected in AI Factory, the server is added
+        here and included in a non-empty ``mcps`` list.
+        """
+        if not self._atlan_api_key():
+            return
+
+        atlan_names: list[str] = []
+        for name, cfg in list(self._mcp_servers.items()):
+            if isinstance(cfg, dict) and self._server_is_atlan(name, cfg):
+                cfg["enabled"] = True
+                cfg["auth"] = True
+                cfg["auth_mode"] = "bearer"
+                cfg["auth_env_var"] = _ATLAN_API_KEY_ENV
+                cfg.pop("oauth", None)
+                cfg.pop("api_key_name", None)
+                cfg.pop("api_key_location", None)
+                self._validate_mcp_server(name, cfg)
+                atlan_names.append(name)
+                logger.info(
+                    "Atlan MCP '%s' uses %s and does not start a connect flow",
+                    name,
+                    _ATLAN_API_KEY_ENV,
+                )
+
+        if not atlan_names:
+            url = (
+                os.environ.get(_ATLAN_MCP_URL_ENV, "").strip().strip('"')
+                or _DEFAULT_ATLAN_MCP_URL
+            )
+            entry = {
+                "url": url,
+                "transport": "streamable_http",
+                "enabled": True,
+                "auth": True,
+                "auth_mode": "bearer",
+                "auth_env_var": _ATLAN_API_KEY_ENV,
+                "ssl_verify": True,
+                "timeout": 30,
+                "description": (
+                    "Atlan MCP. Authenticates with ATLAN_MCP_API_KEY from the "
+                    "environment."
+                ),
+            }
+            self._validate_mcp_server("atlan-mcp", entry)
+            self._mcp_servers["atlan-mcp"] = entry
+            atlan_names.append("atlan-mcp")
+            logger.info("Added atlan-mcp from %s at %s", _ATLAN_API_KEY_ENV, url)
+
+        mcps = self._orchestrator.get("mcps")
+        if not isinstance(mcps, list) or not mcps:
+            return
+        if any(self._server_is_atlan(str(name), {}) for name in mcps):
+            return
+        mcps.extend(atlan_names)
 
     def _load_mcp_servers(self) -> dict[str, Any]:
         """Load MCP server configuration at initialization.
