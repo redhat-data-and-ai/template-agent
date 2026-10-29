@@ -1,5 +1,6 @@
 """Unit tests for global tool exclusion (``middleware.excluded_tools``)."""
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -223,6 +224,43 @@ class TestEnforcementSurvivesMiddlewareToggle:
 
         assert self._blocks_delete(self._stack(middleware_enabled=False))
         assert self._blocks_delete(_subagent_middleware("analyst", [], []) or [])
+
+
+class TestMisconfigurationIsLoud:
+    """A policy that silently fails to apply is worse than no policy."""
+
+    def _backend(self):
+        from deepagents.backends.state import StateBackend
+
+        return StateBackend()
+
+    def test_warns_when_an_excluded_name_matches_no_tool(self, caplog):
+        """A typo would otherwise exclude nothing and say nothing."""
+        with caplog.at_level(logging.WARNING):
+            build_restricted_filesystem_middleware(
+                self._backend(), frozenset({"delte"})
+            )
+        assert "delte" in caplog.text
+        assert "typo" in caplog.text.lower()
+
+    def test_does_not_warn_for_known_non_filesystem_tools(self, caplog):
+        """`task` and `write_todos` are real tools, just not filesystem ones."""
+        with caplog.at_level(logging.WARNING):
+            build_restricted_filesystem_middleware(
+                self._backend(), frozenset({"task", "write_todos", "delete"})
+            )
+        assert "match no built-in tool" not in caplog.text
+
+    def test_warns_when_enforcement_is_skipped_for_want_of_a_backend(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            result = build_restricted_filesystem_middleware(None, frozenset({"delete"}))
+        assert result is None
+        assert "NOT enforced" in caplog.text
+
+    def test_silent_when_nothing_is_excluded(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            build_restricted_filesystem_middleware(None, frozenset())
+        assert caplog.text == ""
 
 
 class TestSubagentCoverage:

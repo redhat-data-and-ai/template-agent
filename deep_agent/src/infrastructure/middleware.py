@@ -151,6 +151,38 @@ def build_user_identity_middleware() -> Any | None:
     return UserIdentityMiddleware()
 
 
+#: Non-filesystem tools deepagents registers, so a name listed in
+#: ``excluded_tools`` can be recognised rather than flagged as a typo.
+#: Filesystem tool names are discovered from FilesystemMiddleware itself.
+_KNOWN_NON_FS_TOOLS: frozenset[str] = frozenset(
+    {"write_todos", "task", "compact_conversation"}
+)
+
+
+def _warn_unknown_excluded_tools(
+    blocked: frozenset[str], fs_tool_names: list[str]
+) -> None:
+    """Warn about excluded names that match no known tool.
+
+    A typo in ``excluded_tools`` would otherwise exclude nothing and say
+    nothing, leaving the operator believing a tool is blocked when it is not.
+    MCP tool names are not known here, so this warns rather than raises.
+
+    Args:
+        blocked: Tool names from config.
+        fs_tool_names: Filesystem tools this deepagents version registers.
+    """
+    unknown = sorted(blocked - set(fs_tool_names) - _KNOWN_NON_FS_TOOLS)
+    if unknown:
+        logger.warning(
+            "excluded_tools names match no built-in tool: %s. "
+            "Check for a typo — built-ins are %s. "
+            "(MCP tool names are not validated here.)",
+            unknown,
+            sorted(set(fs_tool_names) | _KNOWN_NON_FS_TOOLS),
+        )
+
+
 def build_restricted_filesystem_middleware(
     backend: Any, blocked: frozenset[str]
 ) -> Any | None:
@@ -171,7 +203,16 @@ def build_restricted_filesystem_middleware(
         Replacement middleware, or None when nothing filesystem-related is
         blocked (leave deepagents' own instance alone).
     """
-    if not blocked or backend is None:
+    if not blocked:
+        return None
+
+    if backend is None:
+        # Enforcement needs a backend to bind the replacement to. Say so
+        # loudly: silently skipping it looks identical to having no policy.
+        logger.warning(
+            "excluded_tools %s NOT enforced for filesystem tools: no backend given",
+            sorted(blocked),
+        )
         return None
 
     try:
@@ -185,6 +226,8 @@ def build_restricted_filesystem_middleware(
     except Exception as e:
         logger.warning("Could not enumerate filesystem tools: %s", e)
         return None
+
+    _warn_unknown_excluded_tools(blocked, default_names)
 
     keep = [name for name in default_names if name not in blocked]
     if len(keep) == len(default_names):
