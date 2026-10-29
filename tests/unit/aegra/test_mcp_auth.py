@@ -683,3 +683,73 @@ class TestClientCredentialsGrant:
         call_kwargs = mock_ctx.post.call_args
         data = call_kwargs.kwargs.get("data", call_kwargs[1].get("data", {}))
         assert data["scope"] == "read write"
+
+
+@pytest.mark.asyncio
+class TestClientCredentialsContentType:
+    """Tests for explicit Content-Type header in client_credentials POST."""
+
+    async def test_content_type_header_is_explicit(self):
+        """The POST includes an explicit Content-Type header."""
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "access_token": "tok",
+            "expires_in": 3600,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+                "client_secret": "csecret",
+            },
+        }
+
+        with patch("deep_agent.aegra.mcp_auth.httpx.AsyncClient") as mock_client:
+            mock_ctx = AsyncMock(post=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            await resolver.resolve("user-1", "cc-mcp", cfg)
+
+        call_kwargs = mock_ctx.post.call_args
+        headers = call_kwargs.kwargs.get("headers", call_kwargs[1].get("headers", {}))
+        assert headers.get("Content-Type") == "application/x-www-form-urlencoded"
+
+    async def test_error_log_includes_response_keys(self, caplog):
+        """When access_token is missing, the error log shows raw response keys."""
+        import logging
+
+        store = AsyncMock()
+        resolver = McpCredentialResolver(token_store=store)
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"unknownField": "value"}
+        mock_response.raise_for_status = MagicMock()
+
+        cfg = {
+            "auth_mode": "oauth",
+            "oauth": {
+                "grant_type": "client_credentials",
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "cid",
+                "client_secret": "csecret",
+            },
+        }
+
+        with (
+            patch("deep_agent.aegra.mcp_auth.httpx.AsyncClient") as mock_client,
+            caplog.at_level(logging.ERROR),
+        ):
+            mock_ctx = AsyncMock(post=AsyncMock(return_value=mock_response))
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(RuntimeError, match="missing access_token"):
+                await resolver.resolve("user-1", "bad-mcp", cfg)
+
+        assert any("response keys" in r.message for r in caplog.records)
