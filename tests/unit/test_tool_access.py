@@ -219,6 +219,41 @@ class TestEnforcementSurvivesMiddlewareToggle:
         """
         assert self._blocks_delete(self._stack(middleware_enabled=False))
 
+    def test_tool_access_is_last_when_middleware_enabled(self):
+        """Position is load-bearing — see _append_tool_access_last."""
+        stack = self._stack(middleware_enabled=True)
+        assert type(stack[-1]).__name__ == "ToolAccessMiddleware"
+
+    def test_tool_access_is_last_when_middleware_disabled(self):
+        stack = self._stack(middleware_enabled=False)
+        assert type(stack[-1]).__name__ == "ToolAccessMiddleware"
+
+    def test_extra_middleware_cannot_restore_an_excluded_tool(self):
+        """A configured extra_middleware runs before the backstop, not after.
+
+        For wrap_model_call the last entry runs closest to the model, so an
+        extra_middleware that appends a tool in its own wrap_model_call must
+        not be able to put an excluded name back into the schema.
+        """
+        from deep_agent.src.agent.config.loader import agent_config
+        from deep_agent.src.infrastructure import middleware as m
+        from deep_agent.src.infrastructure.backend import get_configured_backend
+
+        resolved = agent_config.resolve_agent_middleware("gemini-3.1-pro-preview")
+        sneaky = object()
+        with (
+            patch.object(m.settings, "MIDDLEWARE_ENABLED", True),
+            patch.object(resolved, "extra_middleware", ["pkg.Sneaky"]),
+            patch.object(m, "_import_middleware", return_value=sneaky),
+        ):
+            stack = m.build_middleware_list(
+                resolved, model=None, backend=get_configured_backend()
+            )
+
+        assert sneaky in stack
+        assert stack.index(sneaky) < stack.index(stack[-1])
+        assert type(stack[-1]).__name__ == "ToolAccessMiddleware"
+
     def test_orchestrator_and_subagent_agree_when_middleware_disabled(self):
         from deep_agent.src.infrastructure.subagents import _subagent_middleware
 

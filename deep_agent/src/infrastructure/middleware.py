@@ -647,14 +647,19 @@ def build_middleware_list(
     if image_sanitize_mw is not None:
         middlewares.append(image_sanitize_mw)
 
-    # Tool exclusion is a safety policy, not an optional feature, so it is
-    # applied before the MIDDLEWARE_ENABLED early return. Otherwise disabling
-    # middleware would re-register `delete` for the orchestrator while
-    # subagents — which have no such switch — kept blocking it.
-    _append_tool_exclusions(middlewares, resolved, backend)
+    # Tool exclusion is a safety policy, not an optional feature, so the
+    # filesystem replacement is applied before the MIDDLEWARE_ENABLED early
+    # return. Otherwise disabling middleware would re-register `delete` for
+    # the orchestrator while subagents — which have no such switch — kept
+    # blocking it.
+    _append_if_built(
+        middlewares,
+        build_restricted_filesystem_middleware(backend, resolved.blocked_tools),
+    )
 
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
+        _append_tool_access_last(middlewares, resolved)
         return middlewares
 
     from deep_agent.src.agent.config import agent_config
@@ -675,31 +680,33 @@ def build_middleware_list(
     for dotted_path in resolved.extra_middleware:
         _append_if_built(middlewares, _import_middleware(dotted_path))
 
+    _append_tool_access_last(middlewares, resolved)
+
     if middlewares:
         logger.info("Built %d extra middleware instance(s)", len(middlewares))
     return middlewares
 
 
-def _append_tool_exclusions(
-    target: list[Any],
-    resolved: ResolvedMiddlewareConfig,
-    backend: Any | None,
+def _append_tool_access_last(
+    target: list[Any], resolved: ResolvedMiddlewareConfig
 ) -> None:
-    """Append the middleware enforcing ``middleware.excluded_tools``.
+    """Append the tool-access backstop as the final entry in the stack.
+
+    Position is load-bearing. For ``wrap_model_call`` the last entry runs
+    closest to the model, so filtering here cannot be undone: a configured
+    ``extra_middleware`` that adds a tool in its own ``wrap_model_call``
+    would otherwise run afterwards and put an excluded name back into the
+    schema. deepagents seats its own ``_ToolExclusionMiddleware`` last for
+    the same reason.
+
+    Must be called on every return path of ``build_middleware_list``.
 
     Args:
-        target: Middleware list to append to.
+        target: Middleware list to append to; the call must come last.
         resolved: Resolved config carrying ``blocked_tools``.
-        backend: Backend the replacement FilesystemMiddleware binds to.
     """
-    # Replaces deepagents' own FilesystemMiddleware so blocked filesystem
-    # tools are never registered at all.
-    _append_if_built(
-        target, build_restricted_filesystem_middleware(backend, resolved.blocked_tools)
-    )
-
-    # Backstop for blocked tools that are not filesystem tools (MCP, task),
-    # and the source of the user-facing "not permitted" wording.
+    # Covers blocked tools that are not filesystem tools (MCP, task), and is
+    # the source of the user-facing "not permitted" wording.
     _append_if_built(target, build_tool_access_middleware(resolved.blocked_tools))
 
 
