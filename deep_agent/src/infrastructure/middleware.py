@@ -604,6 +604,12 @@ def build_middleware_list(
     if image_sanitize_mw is not None:
         middlewares.append(image_sanitize_mw)
 
+    # Tool exclusion is a safety policy, not an optional feature, so it is
+    # applied before the MIDDLEWARE_ENABLED early return. Otherwise disabling
+    # middleware would re-register `delete` for the orchestrator while
+    # subagents — which have no such switch — kept blocking it.
+    _append_tool_exclusions(middlewares, resolved, backend)
+
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
         return middlewares
@@ -626,21 +632,32 @@ def build_middleware_list(
     for dotted_path in resolved.extra_middleware:
         _append_if_built(middlewares, _import_middleware(dotted_path))
 
-    # Replaces deepagents' own FilesystemMiddleware so blocked filesystem
-    # tools are never registered at all.
-    _append_if_built(
-        middlewares,
-        build_restricted_filesystem_middleware(backend, resolved.blocked_tools),
-    )
-
-    # Backstop for blocked tools that are not filesystem tools (MCP, task),
-    # and the source of the user-facing "not permitted" wording. Last, so a
-    # custom wrap_model_call earlier cannot put a disabled tool back.
-    _append_if_built(middlewares, build_tool_access_middleware(resolved.blocked_tools))
-
     if middlewares:
         logger.info("Built %d extra middleware instance(s)", len(middlewares))
     return middlewares
+
+
+def _append_tool_exclusions(
+    target: list[Any],
+    resolved: ResolvedMiddlewareConfig,
+    backend: Any | None,
+) -> None:
+    """Append the middleware enforcing ``middleware.excluded_tools``.
+
+    Args:
+        target: Middleware list to append to.
+        resolved: Resolved config carrying ``blocked_tools``.
+        backend: Backend the replacement FilesystemMiddleware binds to.
+    """
+    # Replaces deepagents' own FilesystemMiddleware so blocked filesystem
+    # tools are never registered at all.
+    _append_if_built(
+        target, build_restricted_filesystem_middleware(backend, resolved.blocked_tools)
+    )
+
+    # Backstop for blocked tools that are not filesystem tools (MCP, task),
+    # and the source of the user-facing "not permitted" wording.
+    _append_if_built(target, build_tool_access_middleware(resolved.blocked_tools))
 
 
 def _append_if_built(target: list[Any], mw: Any | None) -> None:

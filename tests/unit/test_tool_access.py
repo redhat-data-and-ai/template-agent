@@ -186,6 +186,45 @@ class TestRestrictedFilesystemMiddleware:
             )
 
 
+class TestEnforcementSurvivesMiddlewareToggle:
+    """Tool exclusion is a safety policy, not an optional middleware feature."""
+
+    def _stack(self, *, middleware_enabled: bool):
+        from deep_agent.src.agent.config.loader import agent_config
+        from deep_agent.src.infrastructure import middleware as m
+        from deep_agent.src.infrastructure.backend import get_configured_backend
+
+        resolved = agent_config.resolve_agent_middleware("gemini-3.1-pro-preview")
+        with patch.object(m.settings, "MIDDLEWARE_ENABLED", middleware_enabled):
+            return m.build_middleware_list(
+                resolved, model=None, backend=get_configured_backend()
+            )
+
+    def _blocks_delete(self, stack) -> bool:
+        fs = next(
+            (m for m in stack if type(m).__name__ == "FilesystemMiddleware"), None
+        )
+        return fs is not None and "delete" not in [t.name for t in fs.tools]
+
+    def test_enforced_when_middleware_enabled(self):
+        assert self._blocks_delete(self._stack(middleware_enabled=True))
+
+    def test_still_enforced_when_middleware_disabled(self):
+        """MIDDLEWARE_ENABLED=false must not hand `delete` back to the orchestrator.
+
+        The early return in build_middleware_list skips optional middleware;
+        subagents have no such switch, so leaving exclusion below it would
+        block delete for subagents while re-registering it for the orchestrator.
+        """
+        assert self._blocks_delete(self._stack(middleware_enabled=False))
+
+    def test_orchestrator_and_subagent_agree_when_middleware_disabled(self):
+        from deep_agent.src.infrastructure.subagents import _subagent_middleware
+
+        assert self._blocks_delete(self._stack(middleware_enabled=False))
+        assert self._blocks_delete(_subagent_middleware("analyst", [], []) or [])
+
+
 class TestSubagentCoverage:
     def test_subagents_get_the_global_restriction(self):
         """Delegation must not be a way around excluded_tools."""
