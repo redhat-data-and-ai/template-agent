@@ -122,9 +122,9 @@ def _create_vertex_model(
             return ChatAnthropicVertex(
                 model=model_name,
                 project=project,
-                location=location or settings.CLAUDE_LOCATION,
+                location=location or settings.CLAUDE_LOCATION or "us-east5",
                 credentials=credentials,
-                # temperature=temperature, # this is not supported in the latest version of the library
+                # temperature=temperature, # not supported in the latest version of the library
                 max_tokens=max_output_tokens,
                 max_retries=2,
                 streaming=True,
@@ -135,6 +135,9 @@ def _create_vertex_model(
                 temperature=temperature,
                 credentials=credentials,
                 project=project,
+                location=location
+                or settings.GEMINI_LOCATION
+                or settings.GOOGLE_CLOUD_LOCATION,
                 max_output_tokens=max_output_tokens,
                 max_retries=2,
                 streaming=True,

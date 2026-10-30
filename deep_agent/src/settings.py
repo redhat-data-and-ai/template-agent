@@ -114,7 +114,8 @@ class Settings(BaseSettings):
 
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
-    CLAUDE_LOCATION: str = Field(default="us-east5")
+    CLAUDE_LOCATION: Optional[str] = Field(default=None)
+    GEMINI_LOCATION: Optional[str] = Field(default=None)
 
     # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────
     SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
@@ -188,6 +189,9 @@ class Settings(BaseSettings):
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
         "OTEL_AUTH_TOKEN",
         "PII_HASH_KEY",
+        "CLAUDE_LOCATION",
+        "GEMINI_LOCATION",
+        "GOOGLE_CLOUD_LOCATION",
         mode="before",
     )
     @classmethod
@@ -207,6 +211,11 @@ class Settings(BaseSettings):
     # ── Google Cloud ──────────────────────────────────────────────────
     GOOGLE_APPLICATION_CREDENTIALS_CONTENT: Optional[str] = Field(default=None)
     GOOGLE_CLOUD_PROJECT: Optional[str] = Field(default=None)
+    GOOGLE_CLOUD_LOCATION: Optional[str] = Field(
+        default=None,
+        description="Global Google Cloud location fallback. "
+        "Provider-specific defaults (GEMINI_LOCATION, CLAUDE_LOCATION) take precedence.",
+    )
 
     # ── vLLM / OpenAI-compatible ─────────────────────────────────────
     VLLM_BASE_URL: Optional[str] = Field(default=None)
