@@ -39,6 +39,8 @@ class PromptAccessConfig:
 
     groups: list[GroupRoleMapping] | None = None
     accessibility: str = "private"
+    service_accounts: list[str] | None = None
+    headless_auth: str = "any"
 
 
 _cached_config: PromptAccessConfig | None = None
@@ -63,9 +65,29 @@ def _parse_groups_from_frontmatter(path: Path) -> PromptAccessConfig:
 
     accessibility = "public" if fm.get("accessibility") == "public" else "private"
 
+    raw_sas = fm.get("service_accounts")
+    service_accounts = (
+        [str(sa).strip() for sa in raw_sas if isinstance(sa, str) and sa.strip()]
+        if isinstance(raw_sas, list)
+        else None
+    )
+
+    headless_auth_raw = str(fm.get("headless_auth", "any")).strip().lower()
+    if headless_auth_raw not in ("any", "sa_only"):
+        logger.warning(
+            "Invalid headless_auth value '%s' in PROMPT.md — failing closed to 'sa_only'",
+            headless_auth_raw,
+        )
+        headless_auth_raw = "sa_only"
+
     raw_groups = fm.get("groups")
     if not isinstance(raw_groups, list) or len(raw_groups) == 0:
-        return PromptAccessConfig(groups=None, accessibility=accessibility)
+        return PromptAccessConfig(
+            groups=None,
+            accessibility=accessibility,
+            service_accounts=service_accounts if service_accounts else None,
+            headless_auth=headless_auth_raw,
+        )
 
     groups: list[GroupRoleMapping] = []
     for entry in raw_groups:
@@ -84,6 +106,8 @@ def _parse_groups_from_frontmatter(path: Path) -> PromptAccessConfig:
     return PromptAccessConfig(
         groups=groups if groups else None,
         accessibility=accessibility,
+        service_accounts=service_accounts if service_accounts else None,
+        headless_auth=headless_auth_raw,
     )
 
 
