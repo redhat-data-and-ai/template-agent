@@ -62,7 +62,9 @@ def _ensure_bound() -> Any:
         return None
 
     if _ldap_conn is not None and not _bind_failed:
-        return _ldap_conn
+        if not getattr(_ldap_conn, "closed", False):
+            return _ldap_conn
+        _ldap_conn = None
 
     try:
         import ssl
@@ -140,64 +142,104 @@ def _cache_set(key: str, value: bool) -> None:
 
 def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
     """Check if a user belongs to an LDAP group (synchronous)."""
+    global _ldap_conn, _bind_failed
+
     cache_key = f"ldap:membership:{user_id}:{group_cn}"
 
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
-    with _ldap_lock:
-        conn = _ensure_bound()
-        if conn is None:
-            return False
+    # Non-fatal LDAP result codes that should not destroy the connection.
+    # 0 = success with zero entries, 10 = referral, 32 = noSuchObject,
+    # 34 = invalidDNSyntax.
+    _LDAP_NON_FATAL_RESULT_CODES = {0, 10, 32, 34}
+    # Only cache when the result is conclusive (code 0 = search succeeded,
+    # group simply has no matching entries). Codes 10/32/34 are inconclusive
+    # — the group may become reachable later.
+    _LDAP_CACHEABLE_RESULT_CODES = {0}
 
+    with _ldap_lock:
         search_base = ldap_settings.get_group_search_base()
         base_dn = _derive_base_dn()
         member_attrs = ["member", "uniqueMember", "memberUid"]
 
-        try:
-            from ldap3 import SUBTREE
+        for attempt in range(2):
+            conn = _ensure_bound()
+            if conn is None:
+                return False
 
-            safe_cn = _escape_ldap_filter(group_cn)
-            conn.search(
-                search_base,
-                f"(cn={safe_cn})",
-                search_scope=SUBTREE,
-                attributes=member_attrs,
-            )
+            try:
+                from ldap3 import SUBTREE
 
-            found = False
-            for entry in conn.entries:
-                for attr in member_attrs:
-                    values = getattr(entry, attr, None)
-                    if values is None:
-                        continue
-                    raw_values = values.values if hasattr(values, "values") else values
-                    if not isinstance(raw_values, (list, tuple)):
-                        raw_values = [raw_values]
-                    for member_val in raw_values:
-                        member_str = str(member_val).lower()
-                        user_lower = user_id.lower()
-                        if (
-                            member_str == user_lower
-                            or member_str == f"uid={user_lower},ou=users,{base_dn}"
-                            or member_str.startswith(f"uid={user_lower},")
-                        ):
-                            found = True
+                safe_cn = _escape_ldap_filter(group_cn)
+                search_ok = conn.search(
+                    search_base,
+                    f"(cn={safe_cn})",
+                    search_scope=SUBTREE,
+                    attributes=member_attrs,
+                )
+
+                if not search_ok:
+                    result_code = conn.result.get("result", -1) if conn.result else -1
+                    if result_code in _LDAP_NON_FATAL_RESULT_CODES:
+                        logger.warning(
+                            "LDAP group '%s' not found (result code %d: %s) — "
+                            "skipping, other groups unaffected",
+                            group_cn,
+                            result_code,
+                            conn.result.get("description", "unknown"),
+                        )
+                        if result_code in _LDAP_CACHEABLE_RESULT_CODES:
+                            _cache_set(cache_key, False)
+                        return False
+                    raise RuntimeError(
+                        f"LDAP search returned False (result: {conn.result})"
+                    )
+
+                found = False
+                for entry in conn.entries:
+                    for attr in member_attrs:
+                        values = getattr(entry, attr, None)
+                        if values is None:
+                            continue
+                        raw_values = (
+                            values.values if hasattr(values, "values") else values
+                        )
+                        if not isinstance(raw_values, (list, tuple)):
+                            raw_values = [raw_values]
+                        for member_val in raw_values:
+                            member_str = str(member_val).lower()
+                            user_lower = user_id.lower()
+                            if (
+                                member_str == user_lower
+                                or member_str == f"uid={user_lower},ou=users,{base_dn}"
+                                or member_str.startswith(f"uid={user_lower},")
+                            ):
+                                found = True
+                                break
+                        if found:
                             break
                     if found:
                         break
-                if found:
-                    break
 
-        except Exception as exc:
-            global _bind_failed
-            logger.error("LDAP search failed for group %s: %s", group_cn, exc)
-            _bind_failed = True
-            return False
+                _cache_set(cache_key, found)
+                return found
 
-    _cache_set(cache_key, found)
-    return found
+            except Exception as exc:
+                logger.error("LDAP search failed for group %s: %s", group_cn, exc)
+                try:
+                    conn.unbind()
+                except Exception:
+                    pass
+                _ldap_conn = None
+                _bind_failed = True
+                if attempt == 0:
+                    logger.info("Retrying LDAP search with fresh connection")
+                    continue
+                return False
+
+        return False
 
 
 def _resolve_user_role_sync(
@@ -208,11 +250,20 @@ def _resolve_user_role_sync(
     highest_priority = 0
 
     for mapping in group_mappings:
-        if _is_user_in_group_sync(user_id, mapping.group):
-            priority = ROLE_HIERARCHY.get(mapping.role, 0)
-            if priority > highest_priority:
-                highest_priority = priority
-                highest_role = mapping.role
+        try:
+            if _is_user_in_group_sync(user_id, mapping.group):
+                priority = ROLE_HIERARCHY.get(mapping.role, 0)
+                if priority > highest_priority:
+                    highest_priority = priority
+                    highest_role = mapping.role
+        except Exception as exc:
+            logger.error(
+                "LDAP check failed for group '%s' (role '%s'), "
+                "continuing with remaining groups: %s",
+                mapping.group,
+                mapping.role,
+                exc,
+            )
 
     return highest_role or "denied"
 

@@ -85,6 +85,18 @@ harness_profiles:
     excluded_middleware: []
     general_purpose_subagent:
       enabled: true
+  gemini-3-flash-preview:
+    system_prompt_suffix: ""
+    excluded_tools: []
+    excluded_middleware: []
+    general_purpose_subagent:
+      enabled: true
+  gemini-3.8-flash:
+    system_prompt_suffix: ""
+    excluded_tools: []
+    excluded_middleware: []
+    general_purpose_subagent:
+      enabled: true
   claude-sonnet-4:
     system_prompt_suffix: ""
     excluded_tools: []
@@ -111,6 +123,9 @@ middleware:
     exclude:
       - write_todos         # internal task tracking — no user approval needed
       - compact_conversation  # internal memory management — no user approval needed
+  # Automatically compact at this fraction of the model's context window.
+  # Range: 0.50–0.90; keeps 10% of the context window as recent history.
+  compaction_threshold: 0.85
   summarization_tool:
     enabled: true
   memory:
@@ -171,14 +186,25 @@ filesystem:
     store:
       enabled: true
       scope: user
+    # Optional per-route directory override. A relative value is resolved
+    # inside the config tree ("/skills/" -> skills); an absolute one points
+    # elsewhere, and ${VAR} is expanded first.
+    # /data/ lives on its own volume rather than in the config tree, so it
+    # follows DATA_PATH and the same file works in a pod and locally. The
+    # extra "current" level exists because DATA_PATH is a mount point and
+    # cannot be renamed over; it stays invisible to the agent, which sees
+    # /data/<exactly what was uploaded>.
+    roots:
+      "/data/": "${DATA_PATH}/current"
     routes:
       "/skills/": filesystem_readonly
+      "/data/": filesystem_readonly
       "/memories/": store
       "/reports/": store
       "/": state
   permissions:
     - operations: [read, glob, grep, ls]
-      paths: ["config/**", "docs/**", "reports/**", "skills/**"]
+      paths: ["config/**", "docs/**", "reports/**", "skills/**", "data/**"]
       mode: allow
     - operations: [write, edit]
       paths: ["reports/**", "memories/**"]

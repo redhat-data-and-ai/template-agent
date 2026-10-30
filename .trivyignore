@@ -17,3 +17,23 @@ CVE-2026-25087
 # Revisit when pip upstream updates its vendored copies.
 GHSA-6v7p-g79w-8964
 CVE-2025-47273
+
+# CVE-2026-112940: filelock 3.32.7 arbitrary file overwrite via insecure
+# database file reopening (HIGH)
+# Risk mitigated: the advisory is specific to filelock's ReadWriteLock, which
+# nothing in the dependency tree uses. huggingface-hub, litellm and tldextract
+# are the only packages pulling filelock in, and all three contain zero
+# references to ReadWriteLock — they use FileLock. Exploitation additionally
+# requires a local attacker able to plant a symlink or journal file in the lock
+# directory inside the container.
+# Fixed in filelock 4.2.1, but the version is capped by upstream pins: adding
+# filelock>=4.2.1 forces huggingface-hub 1.33.0 → 2.3.0 (a major bump) and
+# downgrades litellm 1.106.4 → 1.103.9, which is not an acceptable trade for an
+# unreachable code path.
+# Scope note: this file is also loaded for the eval image, where the entry is
+# inert — eval resolves filelock 4.2.4, outside the advisory's affected range
+# (>= 3.20.4, <= 4.2.0), because nothing in that tree caps filelock. Only the
+# base image is affected, and only because its newer litellm holds filelock at
+# 3.x.
+# Revisit when litellm allows filelock 4.x.
+CVE-2026-112940

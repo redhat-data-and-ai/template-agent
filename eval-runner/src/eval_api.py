@@ -658,7 +658,10 @@ async def _run_eval(
         total_error,
     )
 
-    # Write results to Postgres so agentpod /evals/results can serve them
+    # Write results to Postgres so agentpod /evals/results can serve them.
+    # Strip bulky 'turns' from results_detail — turn-level data already lives
+    # in evaluation_results and is fetched on demand by the agentpod.
+    persist_detail = {k: v for k, v in results_detail.items() if k != "turns"}
     try:
         write_eval_result(
             passed=total_pass,
@@ -666,7 +669,7 @@ async def _run_eval(
             errors=total_error,
             eval_score=eval_score,
             ls_run_ids=results_detail.get("ls_run_ids"),
-            results_detail=results_detail,
+            results_detail=persist_detail,
             config_hash=config_hash,
             eval_row_id=eval_row_id,
         )

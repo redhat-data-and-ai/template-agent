@@ -9,7 +9,10 @@ middleware API. Template-agent users never import or call this directly.
 
 from __future__ import annotations
 
+import contextvars
 import importlib
+import re
+from datetime import datetime, timezone
 from typing import Any
 
 from deep_agent.src.agent.config.middleware import ResolvedMiddlewareConfig
@@ -17,6 +20,49 @@ from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
+
+_current_user_info: contextvars.ContextVar[dict[str, str] | None] = (
+    contextvars.ContextVar("_current_user_info", default=None)
+)
+
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+_DELIMITER_RE = re.compile(r"[<>\[\]]")
+
+
+def _sanitize_identity_value(value: str) -> str:
+    """Strip control characters and delimiter characters from an identity value.
+
+    Prevents a crafted JWT claim from injecting newlines or fake XML/markdown
+    tags into the system message.
+    """
+    value = _CONTROL_CHAR_RE.sub("", value)
+    value = _DELIMITER_RE.sub("", value)
+    return value.strip()
+
+
+def set_user_info(
+    *,
+    user_id: str | None = None,
+    display_name: str | None = None,
+    email: str | None = None,
+) -> None:
+    """Store the current user's identity fields for system-prompt injection.
+
+    Values are sanitized at storage time to strip control characters and
+    delimiter characters that could be used to inject fake instructions.
+    """
+    raw = {"user_id": user_id, "display_name": display_name, "email": email}
+    info = {k: _sanitize_identity_value(v) for k, v in raw.items() if v}
+    _current_user_info.set(info or None)
+
+
+def get_current_datetime() -> str:
+    """Get the current date and time (UTC) in a formatted string.
+
+    Returns:
+        The current date and time (UTC) formatted as "Month Day, Year, Hour:Minute:Second" (e.g., "September 25, 2026, 12:00:00").
+    """
+    return datetime.now(timezone.utc).strftime("%B %d, %Y, %H:%M:%S UTC")
 
 
 def build_audit_middleware(
@@ -54,6 +100,96 @@ def build_opa_middleware() -> Any | None:
     from deep_agent.src.opa.middleware import OPAMiddleware
 
     return OPAMiddleware()
+
+
+def build_user_identity_middleware() -> Any | None:
+    """Build middleware that injects the current user's identity into the system prompt.
+
+    Reads from ``_current_user_info`` ContextVar at invocation time, so a
+    cached graph still picks up the correct user per request.
+    """
+    try:
+        from langchain.agents.middleware.types import (
+            AgentMiddleware,
+            ModelRequest,
+            ModelResponse,
+        )
+    except ImportError:
+        return None
+
+    class UserIdentityMiddleware(AgentMiddleware):
+        def _inject_identity(self, request: ModelRequest[Any]) -> ModelRequest[Any]:
+            info = _current_user_info.get()
+            if not info:
+                return request
+            from deepagents.middleware.subagents import append_to_system_message
+
+            parts = [f"  {k}: {v}" for k, v in info.items()]
+            identity_block = (
+                "<authenticated-user>\n" + "\n".join(parts) + "\n</authenticated-user>"
+            )
+
+            logger.info(
+                "UserIdentityMiddleware: injected user identity into system prompt"
+            )
+            return request.override(
+                system_message=append_to_system_message(
+                    request.system_message, identity_block
+                ),
+            )
+
+        def wrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return handler(self._inject_identity(request))
+
+        async def awrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return await handler(self._inject_identity(request))
+
+    return UserIdentityMiddleware()
+
+
+def build_current_datetime_middleware() -> Any | None:
+    """Build middleware that injects the current date and time (UTC) into the system prompt."""
+    try:
+        from langchain.agents.middleware.types import (
+            AgentMiddleware,
+            ModelRequest,
+            ModelResponse,
+        )
+    except ImportError:
+        return None
+
+    class CurrentDatetimeMiddleware(AgentMiddleware):
+        def _inject_current_datetime(
+            self, request: ModelRequest[Any]
+        ) -> ModelRequest[Any]:
+            from deepagents.middleware.subagents import append_to_system_message
+
+            current_datetime = get_current_datetime()
+            current_datetime_block = (
+                "<current-datetime>\n" + current_datetime + "\n</current-datetime>"
+            )
+
+            return request.override(
+                system_message=append_to_system_message(
+                    request.system_message, current_datetime_block
+                ),
+            )
+
+        def wrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return handler(self._inject_current_datetime(request))
+
+        async def awrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return await handler(self._inject_current_datetime(request))
+
+    return CurrentDatetimeMiddleware()
 
 
 def _build_gemini_safety_log_middleware() -> Any | None:
@@ -151,6 +287,126 @@ def _build_gemini_safety_log_middleware() -> Any | None:
     return GeminiSafetyLogMiddleware()
 
 
+def _build_image_sanitize_middleware() -> Any | None:
+    """Build middleware that strips markdown image tags from user input and model responses."""
+    try:
+        from langchain.agents.middleware import AgentMiddleware
+    except ImportError:
+        return None
+
+    import re
+
+    _IMG_INLINE = re.compile(r"!\[([^\]]*)\]\([^)]+\)")
+    _IMG_REF = re.compile(r"!\[([^\]]*)\]\[([^\]]+)\]")
+    _REF_DEF = re.compile(r"^\s{0,3}\[([^\]]+)\]:\s+\S+[^\n]*$", re.MULTILINE)
+
+    def _strip_images(text: str) -> str:
+        used_labels: set[str] = set()
+        result = text
+        while True:
+            for match in _IMG_REF.finditer(result):
+                used_labels.add(match.group(2).lower())
+            updated = _IMG_REF.sub(r"\1", _IMG_INLINE.sub(r"\1", result))
+            if updated == result:
+                break
+            result = updated
+        if used_labels:
+            result = _REF_DEF.sub(
+                lambda m: "" if m.group(1).lower() in used_labels else m.group(0),
+                result,
+            )
+        return result
+
+    def _sanitize_content(content: Any) -> tuple[Any, bool]:
+        """Sanitize string or list-based message content. Returns (new_content, changed)."""
+        if isinstance(content, str):
+            sanitized = _strip_images(content)
+            return sanitized, sanitized != content
+        if isinstance(content, list):
+            changed = False
+            new_blocks: list[Any] = []
+            for block in content:
+                if isinstance(block, str):
+                    sanitized = _strip_images(block)
+                    if sanitized != block:
+                        changed = True
+                    new_blocks.append(sanitized)
+                elif (
+                    isinstance(block, dict)
+                    and block.get("type") == "text"
+                    and isinstance(block.get("text"), str)
+                ):
+                    sanitized = _strip_images(block["text"])
+                    if sanitized != block["text"]:
+                        changed = True
+                        new_blocks.append({**block, "text": sanitized})
+                    else:
+                        new_blocks.append(block)
+                else:
+                    new_blocks.append(block)
+            return new_blocks, changed
+        return content, False
+
+    class ImageSanitizeMiddleware(AgentMiddleware):
+        """Strip markdown image tags from both user input and AI responses."""
+
+        def before_model(self, state: Any, runtime: Any) -> Any:
+            return self._sanitize_input(state)
+
+        async def abefore_model(self, state: Any, runtime: Any) -> Any:
+            return self._sanitize_input(state)
+
+        def after_model(self, state: Any, runtime: Any) -> Any:
+            return self._sanitize_output(state)
+
+        async def aafter_model(self, state: Any, runtime: Any) -> Any:
+            return self._sanitize_output(state)
+
+        def _sanitize_input(self, state: Any) -> Any:
+            from langchain_core.messages import HumanMessage, ToolMessage
+
+            msgs = state.get("messages", []) if isinstance(state, dict) else []
+            if not msgs:
+                return None
+            modified = False
+            for i in range(len(msgs) - 1, -1, -1):
+                msg = msgs[i]
+                if isinstance(msg, (HumanMessage, ToolMessage)) and msg.content:
+                    sanitized, changed = _sanitize_content(msg.content)
+                    if changed:
+                        label = (
+                            "user input"
+                            if isinstance(msg, HumanMessage)
+                            else "tool result"
+                        )
+                        logger.warning("Stripped markdown image tag(s) from %s", label)
+                        msgs[i] = msg.model_copy(update={"content": sanitized})
+                        modified = True
+            if not modified:
+                return None
+            return {"messages": msgs}
+
+        def _sanitize_output(self, state: Any) -> Any:
+            from langchain_core.messages import AIMessage
+
+            msgs = state.get("messages", []) if isinstance(state, dict) else []
+            if not msgs:
+                return None
+            last = msgs[-1]
+            if not isinstance(last, AIMessage):
+                return None
+            if not last.content:
+                return None
+            sanitized, changed = _sanitize_content(last.content)
+            if not changed:
+                return None
+            logger.warning("Stripped markdown image tag(s) from model response")
+            msgs[-1] = last.model_copy(update={"content": sanitized})
+            return {"messages": msgs}
+
+    return ImageSanitizeMiddleware()
+
+
 def build_middleware_list(
     resolved: ResolvedMiddlewareConfig,
     *,
@@ -160,15 +416,14 @@ def build_middleware_list(
 ) -> list[Any]:
     """Build a list of middleware instances from resolved config.
 
-    Only instantiates middleware that deepagents does NOT auto-include.
-    The auto-included middleware (SubAgentMiddleware, SummarizationMiddleware,
-    PatchToolCallsMiddleware, FilesystemMiddleware, TodoListMiddleware) are
-    handled by create_deep_agent() itself.
+    Overrides built-in summarization with the configured engine and optionally
+    exposes that engine through the manual compaction tool. Other core
+    middleware is handled by create_deep_agent() itself.
 
     Args:
         resolved: Fully resolved middleware configuration for this agent.
-        model: Chat model instance for SummarizationToolMiddleware.
-        backend: Backend instance for SummarizationToolMiddleware.
+        model: Chat model instance for summarization.
+        backend: Backend instance for history offloading.
         mcp_tool_names: MCP tool names for platform audit classification.
 
     Returns:
@@ -189,6 +444,24 @@ def build_middleware_list(
     if safety_mw is not None:
         middlewares.append(safety_mw)
 
+    identity_mw = build_user_identity_middleware()
+    if identity_mw is not None:
+        middlewares.append(identity_mw)
+
+    datetime_mw = build_current_datetime_middleware()
+    if datetime_mw is not None:
+        middlewares.append(datetime_mw)
+
+    image_sanitize_mw = _build_image_sanitize_middleware()
+    if image_sanitize_mw is not None:
+        middlewares.append(image_sanitize_mw)
+
+    # Automatic compaction at threshold override
+    summarization = _build_summarization_middleware(
+        model=model, backend=backend, threshold=resolved.compaction_threshold
+    )
+    _append_if_built(middlewares, summarization)
+
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
         return middlewares
@@ -203,7 +476,7 @@ def build_middleware_list(
     if resolved.summarization_tool_enabled:
         _append_if_built(
             middlewares,
-            _build_summarization_tool_middleware(model=model, backend=backend),
+            _build_summarization_tool_middleware(summarization=summarization),
         )
 
     _append_guardrails(middlewares, resolved)
@@ -462,26 +735,60 @@ def _build_pii_middleware(config: Any) -> list[Any]:
         return []
 
 
+def _build_summarization_middleware(
+    *,
+    model: Any | None,
+    backend: Any | None,
+    threshold: float,
+) -> Any | None:
+    """Configure automatic compaction and history offloading."""
+    if model is None or backend is None:
+        return None
+
+    from deepagents.middleware.summarization import (
+        SummarizationMiddleware,
+        compute_summarization_defaults,
+    )
+
+    defaults = compute_summarization_defaults(model)
+    trigger = defaults["trigger"]
+    if trigger[0] == "fraction":
+        trigger = ("fraction", threshold)
+
+    return SummarizationMiddleware(
+        model=model,
+        backend=backend,
+        trigger=trigger,
+        keep=defaults["keep"],
+        trim_tokens_to_summarize=None,
+        truncate_args_settings=defaults["truncate_args_settings"],
+    )
+
+
 def _build_summarization_tool_middleware(
     *,
-    model: Any | None = None,
-    backend: Any | None = None,
+    summarization: Any | None,
 ) -> Any | None:
-    """Build SummarizationToolMiddleware instance.
+    """Expose manual compaction using the automatic engine and its settings.
 
-    This gives the agent a tool to proactively trigger summarization
-    at opportune moments (e.g., between tasks) rather than only at
-    fixed token thresholds.
+    The model can invoke the tool in response to conversational requests;
+    the library retains its normal minimum-usage gate.
     """
-    if model is None or backend is None:
-        logger.warning("Summarization tool requires model and backend; skipping")
+    if summarization is None:
+        logger.warning("Summarization tool requires a summarization engine; skipping")
         return None
     try:
-        from deepagents.middleware.summarization import (
-            create_summarization_tool_middleware,
-        )
+        from deepagents.middleware.summarization import SummarizationToolMiddleware
 
-        return create_summarization_tool_middleware(model, backend)
+        return SummarizationToolMiddleware(
+            summarization,
+            system_prompt=(
+                "When the user asks to compact the conversation, compress the "
+                "chat history, or free up context, call compact_conversation. "
+                "Report the tool's result accurately, including when there is "
+                "nothing to compact or compaction fails."
+            ),
+        )
     except ImportError:
         logger.debug(
             "SummarizationToolMiddleware not available in this deepagents version"

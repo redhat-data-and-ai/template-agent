@@ -13,7 +13,7 @@ declarative config into the parameters needed by the middleware builder.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -21,6 +21,8 @@ from pydantic import BaseModel, Field, model_validator
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
+
+CompactionThreshold = Annotated[float, Field(ge=0.50, le=0.90)]
 
 
 class SummarizationToolConfig(BaseModel):
@@ -130,6 +132,7 @@ class PIIConfig(BaseModel):
 class MiddlewareDefaults(BaseModel):
     """Global middleware defaults from agent.yaml."""
 
+    compaction_threshold: CompactionThreshold = 0.85
     summarization_tool: SummarizationToolConfig = Field(
         default_factory=SummarizationToolConfig
     )
@@ -164,6 +167,7 @@ class MiddlewareFileConfig(BaseModel):
 class ResolvedMiddlewareConfig(BaseModel):
     """Final resolved config for a single agent after merge."""
 
+    compaction_threshold: CompactionThreshold = 0.85
     summarization_tool_enabled: bool = True
     human_approval: HumanApprovalConfig = Field(default_factory=HumanApprovalConfig)
     memory_enabled: bool = True
@@ -258,6 +262,9 @@ def resolve_middleware(
         human_approval = HumanApprovalConfig(enabled=overrides["human_approval"])
 
     return ResolvedMiddlewareConfig(
+        compaction_threshold=overrides.get(
+            "compaction_threshold", defaults.compaction_threshold
+        ),
         summarization_tool_enabled=summarization_enabled,
         human_approval=human_approval,
         memory_enabled=memory_enabled,

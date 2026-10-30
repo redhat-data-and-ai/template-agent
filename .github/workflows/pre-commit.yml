@@ -9,11 +9,21 @@ on:
       - '**.md'
       - 'docs/**'
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  GITLEAKS_VERSION: "8.28.0"
+  # sha256 from https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_checksums.txt
+  GITLEAKS_SHA256: "a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb"
+
 jobs:
+  # PR-controlled install/hooks: shallow checkout so full git history is not
+  # exposed to untrusted PR code.
   pre-commit:
     name: Pre Commit
     runs-on: ubuntu-latest
@@ -22,6 +32,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
 
     - name: Setup Python with uv
       uses: ./.github/actions/setup-python-uv
@@ -29,3 +41,30 @@ jobs:
     - name: Run Pre Commit
       run: |
         source .venv/bin/activate && pre-commit run --all-files
+
+  # Isolated full-history secret scan: no PR package install or hooks.
+  # The gitleaks pre-commit hook only scans --staged (empty in CI).
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Install Gitleaks
+      run: |
+        set -euo pipefail
+        ARCHIVE="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+        curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${ARCHIVE}" -o "${ARCHIVE}"
+        echo "${GITLEAKS_SHA256}  ${ARCHIVE}" | sha256sum -c -
+        tar -xzf "${ARCHIVE}" gitleaks
+        sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+        gitleaks version
+
+    - name: Gitleaks full history scan
+      run: gitleaks git --config .gitleaks.toml --log-opts="--all" --redact --verbose

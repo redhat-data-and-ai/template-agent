@@ -19,21 +19,21 @@ readme = "README.md"
 keywords = ["mcp", "template", "server"]
 requires-python = ">=3.12.2"
 dependencies = [
-    "deepagents==0.7.6",
+    "deepagents==0.7.26",
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
     "python-dotenv==1.2.2",
-    "langchain-google-genai==4.3.4",
+    "langchain-google-genai==4.4.2",
     "langchain-google-vertexai==3.2.4",
     "langchain-openai>=0.3.0",
     "langchain-mcp-adapters==0.3.2",
     "mcp>=1.28.1,<2",
     "langfuse>=4.9.0",
-    "langgraph==1.2.9",
+    "langgraph==1.2.14",
     "langgraph-checkpoint-postgres==3.1.2",
     "langgraph-sdk>=0.1.51",
-    "aegra-api==0.9.24",
-    "aegra-cli==0.9.24",
+    "aegra-api==0.10.8",
+    "aegra-cli==0.10.8",
     "psycopg[binary,pool]==3.3.4",
     "psycopg2-binary==2.9.12",
     "motor==3.7.1",
@@ -55,8 +55,11 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.52b1,<1.0.0",
     "litellm>=1.40.0",
     "aiokafka>=0.10.0",
-    "msgpack==1.2.1",
+    "msgpack==1.2.4",
     "ldap3==2.9.1",
+    "python-multipart>=0.0.31,<1",
+    "certifi>=2026.10.19",
+    "botocore>=1.43.116",
 ]
 
 [project.optional-dependencies]
@@ -78,6 +81,7 @@ Issues = "https://github.com/redhat-data-and-ai/template-agent/issues"
 
 [dependency-groups]
 dev = [
+    "pytest-asyncio>=1.4.0",
     "pytest-cov>=6.2.1",
 ]
 

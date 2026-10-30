@@ -1,0 +1,16 @@
+title = "template-agent gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Template env file with placeholder values (not production secrets)"
+paths = [
+  '''^\.env\.example$''',
+]
+
+[[allowlists]]
+description = "Test fixtures with mock credentials (not real secrets)"
+paths = [
+  '''^tests/''',
+]

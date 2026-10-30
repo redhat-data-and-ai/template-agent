@@ -6,6 +6,8 @@ application and merges core LangGraph Platform routes onto.
 
 from __future__ import annotations
 
+import asyncio
+import copy
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -15,6 +17,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from deep_agent.aegra.auth_helpers import authenticated_user_id
 from deep_agent.aegra.eval_routes import eval_mgmt_router
 from deep_agent.aegra.eval_routes import router as eval_router
 from deep_agent.aegra.feedback import feedback_router
@@ -24,8 +27,11 @@ from deep_agent.aegra.projects_routes import projects_router
 from deep_agent.aegra.security_middleware import (
     RequestSizeLimitMiddleware,
     SecurityHeadersMiddleware,
+    StreamingBodyLimitMiddleware,
 )
 from deep_agent.aegra.thread_cleanup import thread_cleanup_router
+from deep_agent.aegra.upload_routes import upload_router
+from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import (
     bind_request_context,
@@ -187,8 +193,44 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+# Multipart framing (boundary, part headers) sits on top of the archive
+# bytes; 64KB is ample for a handful of parts and keeps the body cap from
+# rejecting an archive that is itself within UPLOAD_MAX_ARCHIVE_BYTES.
+_MULTIPART_OVERHEAD_ALLOWANCE = 64 * 1024
+
+# The optional `checksums` manifest is one text part holding a digest per
+# published file -- roughly 100 bytes each, so ~50KB at UPLOAD_MAX_FILE_COUNT.
+# Budgeted separately from the framing allowance above, which would otherwise
+# be swallowed whole and start rejecting archives that are within their cap.
+_CHECKSUM_FIELD_ALLOWANCE = 128 * 1024
+
+# /upload legitimately carries more than the global cap, but it is never
+# exempt: FastAPI parses and spools a multipart body before the route can
+# check the feature flag or authorization, so an unlimited route would let
+# an unauthenticated caller fill the disk. It gets a higher limit instead,
+# with headroom over UPLOAD_MAX_ARCHIVE_BYTES for multipart framing and the
+# checksum manifest -- the archive itself is still capped exactly while it is
+# buffered.
+_UPLOAD_BODY_LIMIT = (
+    settings.UPLOAD_MAX_ARCHIVE_BYTES
+    + _MULTIPART_OVERHEAD_ALLOWANCE
+    + _CHECKSUM_FIELD_ALLOWANCE
+)
+_BODY_LIMITS = {"/upload": _UPLOAD_BODY_LIMIT}
+
+# Counts bytes as they stream in, so an oversized body is cut off before
+# the multipart parser ever sees it. Added first so it wraps outermost.
 app.add_middleware(
-    RequestSizeLimitMiddleware, max_size_bytes=settings.REQUEST_BODY_MAX_SIZE
+    StreamingBodyLimitMiddleware,
+    max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
+    path_limits=_BODY_LIMITS,
+)
+# Cheap pre-check on the declared Content-Length, so a well-behaved client
+# is rejected before sending anything at all.
+app.add_middleware(
+    RequestSizeLimitMiddleware,
+    max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
+    path_limits=_BODY_LIMITS,
 )
 app.include_router(thread_cleanup_router)
 app.include_router(personalization_router)
@@ -197,6 +239,7 @@ app.include_router(mcp_router)
 app.include_router(feedback_router)
 app.include_router(eval_router)
 app.include_router(eval_mgmt_router)
+app.include_router(upload_router)
 
 
 @app.get("/version")
@@ -205,3 +248,35 @@ def version() -> dict[str, str]:
     from deep_agent.aegra import __version__
 
     return {"service": "template-agent", "version": __version__}
+
+
+@app.get("/config/agent-structure")
+async def agent_structure(request: Request) -> dict:
+    """Return the agent structure in a dict from config."""
+    await authenticated_user_id(request)
+    name: str = agent_config.get_name()
+
+    orchestrator: dict[str, Any] = copy.deepcopy(agent_config.get_orchestrator_config())
+    orchestrator.pop("skill_paths", None)
+
+    subagents: dict[str, dict[str, Any]] = copy.deepcopy(
+        agent_config.get_all_subagent_configs()
+    )
+    for key in subagents:
+        subagents[key].pop("skill_paths", None)
+
+    mcp_servers: dict[str, Any] = copy.deepcopy(agent_config.get_mcp_servers())
+    for key in mcp_servers:
+        mcp_servers[key].pop("ssl_verify", None)
+        mcp_servers[key].pop("oauth", None)
+        mcp_servers[key].pop("auth_env_var", None)
+
+    skills = await asyncio.to_thread(agent_config.get_available_skills)
+
+    return {
+        "name": name,
+        "orchestrator": orchestrator,
+        "subagents": subagents,
+        "mcp_servers": mcp_servers,
+        "skills": skills,
+    }

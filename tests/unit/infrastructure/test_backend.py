@@ -2,13 +2,19 @@
 
 import inspect
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from deepagents.backends.protocol import EditResult, ReadResult, WriteResult
+from deepagents.backends.protocol import (
+    EditResult,
+    FileUploadResponse,
+    ReadResult,
+    WriteResult,
+)
 
 from deep_agent.src.infrastructure.backend import (
-    DeduplicatingStoreBackend,
     _STORE_NAMESPACE_FACTORIES,
+    DeduplicatingStoreBackend,
     _as_runtime,
     _backend_accepts_runtime,
     _base_python,
@@ -489,3 +495,123 @@ class TestDeduplicatingStoreBackendWrite:
         written = inner.writes[-1]
         assert "date of birth" in written
         assert "joining date" in written
+
+
+class TestResolveRouteRoot:
+    """Filesystem route roots may point outside the agent's config tree.
+
+    Uploaded data lives on its own volume, so the /data/ route cannot be
+    named relative to CONFIG_PATH the way /skills/ is. Roots accept an
+    absolute path, and expand ${VAR} first so one agent.yaml works both in
+    a pod and on a developer's machine. See adrs/upload-data-pvc.md.
+    """
+
+    def test_relative_root_stays_inside_the_config_tree(self):
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        assert (
+            _resolve_route_root("skills", "skills") == agent_config.base_dir / "skills"
+        )
+
+    def test_absolute_root_is_used_as_given(self):
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        assert _resolve_route_root("/mnt/data/current", "data") == Path(
+            "/mnt/data/current"
+        )
+
+    def test_env_var_is_expanded(self):
+        """Lets the data route follow DATA_PATH without hardcoding a mount."""
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        with patch.dict(os.environ, {"DATA_PATH": "/app/data"}):
+            assert _resolve_route_root("${DATA_PATH}/current", "data") == Path(
+                "/app/data/current"
+            )
+
+    def test_unset_variable_falls_back_instead_of_making_a_literal_path(self):
+        """An unexpanded ${VAR} would silently become an empty directory."""
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DEFINITELY_UNSET_VAR", None)
+            resolved = _resolve_route_root("${DEFINITELY_UNSET_VAR}/current", "data")
+
+        assert resolved.is_relative_to(agent_config.base_dir)
+
+    def test_empty_variable_falls_back_instead_of_escaping_to_the_root(self):
+        """An empty ${VAR} collapses "${VAR}/current" to the filesystem root."""
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        for value in ("", "   "):
+            with patch.dict(os.environ, {"DATA_PATH": value}):
+                resolved = _resolve_route_root("${DATA_PATH}/current", "data")
+
+            assert resolved == agent_config.base_dir / "data"
+            assert resolved != Path("/current")
+
+    def test_fallback_uses_the_route_name_not_the_raw_pattern(self):
+        """The old fallback produced a directory literally named "${VAR}"."""
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DEFINITELY_UNSET_VAR", None)
+            resolved = _resolve_route_root("${DEFINITELY_UNSET_VAR}/current", "data")
+
+        assert resolved == agent_config.base_dir / "data"
+        assert "$" not in str(resolved)
+
+    def test_shipped_data_route_points_at_the_data_volume(self):
+        """The template default must follow DATA_PATH, not the config tree."""
+        from deep_agent.src.agent.config import agent_config
+        from deep_agent.src.infrastructure.backend import _resolve_route_root
+
+        root = agent_config.get_filesystem_config().backend.roots["/data/"]
+        with patch.dict(os.environ, {"DATA_PATH": "/app/data"}):
+            resolved = _resolve_route_root(root, "data")
+
+        assert resolved == Path("/app/data/current")
+        assert not resolved.is_relative_to(agent_config.base_dir)
+
+
+class TestReadOnlyFilesystemBackend:
+    """Verify ReadOnlyFilesystemBackend reject-paths return correct deepagents result types.
+
+    deepagents has a track record of changing result class shapes across patch
+    versions (see _text_from_read comment in backend.py). These tests validate
+    that WriteResult, EditResult, and FileUploadResponse constructors still
+    accept the keyword arguments we pass.
+    """
+
+    def test_write_returns_write_result_with_error(self, tmp_path):
+        from deep_agent.src.infrastructure.backend import ReadOnlyFilesystemBackend
+
+        backend = ReadOnlyFilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+        result = backend.write("test.txt", "content")
+        assert isinstance(result, WriteResult)
+        assert result.error is not None
+        assert "not permitted" in result.error
+
+    def test_edit_returns_edit_result_with_error(self, tmp_path):
+        from deep_agent.src.infrastructure.backend import ReadOnlyFilesystemBackend
+
+        backend = ReadOnlyFilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+        result = backend.edit("test.txt", "old", "new")
+        assert isinstance(result, EditResult)
+        assert result.error is not None
+        assert "not permitted" in result.error
+
+    def test_upload_files_returns_responses_with_errors(self, tmp_path):
+        from deep_agent.src.infrastructure.backend import ReadOnlyFilesystemBackend
+
+        backend = ReadOnlyFilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+        results = backend.upload_files([("a.txt", b"data"), ("b.txt", b"more")])
+        assert len(results) == 2
+        for resp in results:
+            assert isinstance(resp, FileUploadResponse)
+            assert resp.error is not None
+            assert "not permitted" in resp.error

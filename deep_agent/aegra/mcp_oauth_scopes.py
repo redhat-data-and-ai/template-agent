@@ -26,7 +26,7 @@ def parse_token_scopes(body: dict[str, Any]) -> list[str] | None:
     where scopes live under ``authed_user.scope`` as a comma-separated string.
     """
     scope_raw = body.get("scope")
-    if not scope_raw:
+    if scope_raw is None:
         authed_user = body.get("authed_user")
         if isinstance(authed_user, dict):
             scope_raw = authed_user.get("scope")
@@ -50,17 +50,24 @@ def validate_granted_scopes(
     requested: list[str],
     mcp_name: str,
 ) -> list[str] | None:
-    """Return granted scopes when they include all requested scopes, else None."""
+    """Return granted scopes when they include all requested scopes, else None.
+
+    Per RFC 6749 section 5.1, if the authorization server omits ``scope`` from
+    the token response, the client may assume the granted scope equals the
+    requested scope. Skip comparison when granted is empty/missing.
+    """
     if not requested:
         return granted
 
-    if not granted:
-        logger.error(
-            "OAuth token for '%s' returned no scopes; requested %s",
+    # RFC 6749 §5.1: scope is optional when identical to what was requested.
+    # Only assume requested when scope is truly absent (None), not explicitly empty.
+    if granted is None:
+        logger.debug(
+            "OAuth token for '%s' omitted scopes; assuming requested %s",
             mcp_name,
             requested,
         )
-        return None
+        return list(requested)
 
     missing = [scope for scope in requested if scope not in set(granted)]
     if missing:

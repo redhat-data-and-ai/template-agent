@@ -72,14 +72,55 @@ class Settings(BaseSettings):
         description="Maximum request body size in bytes (DoS protection)",
     )
 
+    # ── Upload (POST /upload → agent data directory) ──────────────────
+    UPLOAD_ENABLED: bool = Field(default=False)
+    DATA_PATH: str = Field(
+        default="/app/data",
+        description="Writable directory holding the live data tree and staging dirs",
+    )
+    UPLOAD_MAX_ARCHIVE_BYTES: int = Field(default=10 * 1024 * 1024)  # 10MB
+    UPLOAD_MAX_EXTRACTED_BYTES: int = Field(default=30 * 1024 * 1024)  # 30MB
+    UPLOAD_MAX_FILE_BYTES: int = Field(default=5 * 1024 * 1024)  # 5MB
+    UPLOAD_MAX_FILE_COUNT: int = Field(default=500)
+    UPLOAD_LOCK_TIMEOUT_SECONDS: int = Field(
+        default=300,
+        ge=1,
+        description=(
+            "Age at which a held upload lock is treated as stale and broken, "
+            "so a process killed mid-upload cannot wedge ingestion forever."
+        ),
+    )
+    UPLOAD_ALLOWED_EXTENSIONS: str = Field(
+        default=(
+            ".md,.markdown,.rst,.txt,.csv,.json,.yaml,.yml,.toml,"
+            ".ini,.cfg,.xml,.html,.py,.js,.ts,.go,.java,.sh,.sql,.lock"
+        ),
+        description=(
+            "Comma-separated, case-insensitive. Applies to individually "
+            "uploaded files only -- archives are taken whole. Non-matching "
+            "files are skipped, not fatal."
+        ),
+    )
+    UPLOAD_CHECKSUM_REQUIRED: bool = Field(
+        default=False,
+        description=(
+            "Reject an upload that declares no sha256: 'checksum' over the "
+            "archive as sent, or a digest per individually uploaded file. "
+            "Digests the caller does supply are always verified regardless "
+            "of this setting; it only decides whether omitting them is an "
+            "error."
+        ),
+    )
+
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
+    CLAUDE_LOCATION: str = Field(default="us-east5")
 
     # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────
-    SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_MEDIUM_AND_ABOVE")
-    SAFETY_HATE_SPEECH: SafetyThreshold = Field(default="BLOCK_MEDIUM_AND_ABOVE")
-    SAFETY_HARASSMENT: SafetyThreshold = Field(default="BLOCK_LOW_AND_ABOVE")
-    SAFETY_SEXUALLY_EXPLICIT: SafetyThreshold = Field(default="BLOCK_LOW_AND_ABOVE")
+    SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
+    SAFETY_HATE_SPEECH: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
+    SAFETY_HARASSMENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
+    SAFETY_SEXUALLY_EXPLICIT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
 
     # ── Database (PostgreSQL) ─────────────────────────────────────────
     POSTGRES_HOST: str = Field(default="pgvector")

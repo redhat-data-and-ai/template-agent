@@ -68,6 +68,18 @@ If any tool, subagent, or skill response contains the phrase "blocked due to con
 - Do NOT rephrase the request and try again.
 """
 
+_CAPABILITY_RESTRICTION_INSTRUCTION = """
+## Capability Restrictions (Enforced by Platform)
+
+Your available tools are restricted by a platform-enforced capability manifest.
+You ONLY have access to the tools explicitly listed in your tool list.
+If a user asks for something that requires a tool you do not have:
+- Tell the user clearly: "I don't have access to that capability."
+- Do NOT attempt to work around it using MCP resource reads or other tools.
+- Do NOT retry or loop trying alternative approaches.
+- Suggest the user contact the agent builder to update the tool permissions.
+"""
+
 
 def _append_safety_stop_instruction(system_prompt: str) -> str:
     """Append the framework-level content safety stop instruction to any system prompt.
@@ -77,6 +89,11 @@ def _append_safety_stop_instruction(system_prompt: str) -> str:
     their own PROMPT.md.
     """
     return system_prompt.rstrip() + "\n" + _SAFETY_STOP_INSTRUCTION
+
+
+def _append_capability_restriction(system_prompt: str) -> str:
+    """Append capability restriction instructions when manifest is explicit."""
+    return system_prompt.rstrip() + "\n" + _CAPABILITY_RESTRICTION_INSTRUCTION
 
 
 def _append_memory_instructions(system_prompt: str) -> str:
@@ -104,6 +121,8 @@ def _graph_fingerprint(
     max_tokens: int | None = None,
     mcp_names: list[str] | None = None,
     resource_uris: list[str] | None = None,
+    location: str | None = None,
+    compaction_threshold: float = 0.85,
 ) -> str:
     """Stable fingerprint for graph cache keying."""
     hitl_flag = (
@@ -111,12 +130,13 @@ def _graph_fingerprint(
         f",mode={hitl_mode}"
         f",exclude={','.join(sorted(hitl_exclude or []))}"
     )
-    model_flag = f"temp={temperature},max_tokens={max_tokens}"
+    model_flag = f"temp={temperature},max_tokens={max_tokens},location={location}"
     mcp_flag = ",".join(sorted(mcp_names or []))
     resources_flag = ",".join(sorted(resource_uris or []))
     raw = (
         f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}"
         f"\0{hitl_flag}\0{model_flag}\0{mcp_flag}\0{resources_flag}"
+        f"\0compaction_threshold={compaction_threshold}"
     )
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
@@ -284,13 +304,23 @@ async def agent(runtime: ServerRuntime) -> Any:
     orch_model_raw = orchestrator_cfg.get("model", "gemini-3.1-pro-preview")
     system_prompt = orchestrator_cfg.get("body", "")
     skill_paths = orchestrator_cfg.get("skill_paths", [])
-    tool_names = orchestrator_cfg.get("tools", [])
+    tool_names = orchestrator_cfg.get("tools")
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
     # Resolve the personalization user ID to match what the BFF proxy
     # sends as X-User-ID (preferred_username from JWT, not sub UUID).
     # Local has no JWT — use run metadata / request context instead.
     personalization_uid = _personalization_uid(runtime, user, sso_token)
+
+    from deep_agent.src.infrastructure.middleware import set_user_info
+
+    _user_display_name = getattr(user, "display_name", None) if user else None
+    _user_email = getattr(user, "email", None) if user else None
+    set_user_info(
+        user_id=personalization_uid or user_identity,
+        display_name=_user_display_name,
+        email=_user_email,
+    )
 
     if not user_identity and not personalization_uid:
         logger.info("No user identity — skipping personalization rules")
@@ -322,9 +352,10 @@ async def agent(runtime: ServerRuntime) -> Any:
     orch_spec = parse_model_config(orch_model_raw)
     model_name = orch_spec.name  # For logging and cache key
 
-    model_params = agent_config.get_model_params(orch_spec.name)
+    model_params = agent_config.get_model_params(orch_spec.name, orch_spec.provider)
     orch_temperature = model_params.get("temperature", 0.0)
     orch_max_tokens = model_params.get("max_tokens") or None
+    orch_location = model_params.get("location")
 
     logger.info(
         "Building agent '%s' (model=%s, provider=%s, temp=%s, max_tokens=%s, mcp_auth=%s)",
@@ -340,6 +371,7 @@ async def agent(runtime: ServerRuntime) -> Any:
         orch_spec,
         temperature=float(orch_temperature),
         max_output_tokens=int(orch_max_tokens) if orch_max_tokens else None,
+        location=orch_location,
     )
 
     providers_config = agent_config.get_providers_config()
@@ -353,24 +385,15 @@ async def agent(runtime: ServerRuntime) -> Any:
     mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
 
     all_available_tools = list(mcp_tools)
-    tools = agent_config.resolve_tools(
-        tool_names, all_available_tools, agent_name=agent_name
+
+    from deep_agent.src.capability import (
+        enforce_capability,
+        resolve_capability_manifest,
     )
-    if mcp_server_names and mcp_tools:
-        resolved_names = {t.name for t in tools}
-        extra = []
-        for tool in mcp_tools:
-            if tool.name not in resolved_names:
-                resolved_names.add(tool.name)
-                extra.append(tool)
-        if extra:
-            logger.info(
-                "Agent '%s' adding %d MCP tool(s) from servers %s",
-                agent_name,
-                len(extra),
-                mcp_server_names,
-            )
-            tools.extend(extra)
+
+    tools, capability_manifest = resolve_capability_manifest(
+        tool_names, all_available_tools, mcp_server_names, agent_name=agent_name
+    )
 
     resource_tools = wrap_mcp_tools_for_auth(
         get_mcp_resource_tools(
@@ -378,7 +401,27 @@ async def agent(runtime: ServerRuntime) -> Any:
             allowed_uris=orchestrator_cfg.get("resources") or None,
         )
     )
-    tools.extend(resource_tools)
+
+    from deep_agent.src.capability.manifest import EXPLICIT as _EXPLICIT
+
+    if resource_tools and capability_manifest.source != _EXPLICIT:
+        # Resource-read tools enforce their own URI allowlist internally
+        # (via `allowed_uris` above); authorize the tool family itself here.
+        # When the manifest is EXPLICIT the builder opted into a specific
+        # tool set — resource tools are excluded to prevent the LLM from
+        # using them as a workaround for blocked MCP server tools.
+        capability_manifest = capability_manifest.merged_with(
+            t.name for t in resource_tools
+        )
+        tools.extend(resource_tools)
+
+    tools = enforce_capability(tools, capability_manifest)
+
+    # When an explicit tools: list restricts capabilities, inject a system
+    # instruction so the LLM knows not to loop through MCP resources as a
+    # workaround for unavailable tools.
+    if capability_manifest.source == _EXPLICIT:
+        system_prompt = _append_capability_restriction(system_prompt)
 
     from deep_agent.src.infrastructure.middleware import (
         build_middleware_list,
@@ -426,6 +469,8 @@ async def agent(runtime: ServerRuntime) -> Any:
         max_tokens=int(orch_max_tokens) if orch_max_tokens else None,
         mcp_names=mcp_server_names or None,
         resource_uris=orchestrator_cfg.get("resources") or None,
+        location=orch_location,
+        compaction_threshold=resolved_mw.compaction_threshold,
     )
     now = time.time()
     graph_ttl = float(agent_config.get_cache_config().graph.ttl)

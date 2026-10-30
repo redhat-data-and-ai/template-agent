@@ -28,6 +28,7 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
+
 _RESOLVED_TOKEN_TTL_SECONDS = 30.0
 _TOKEN_EXPIRY_BUFFER_SECONDS = 30.0
 _TOKEN_REFRESH_LOCK_TTL_SECONDS = 30
@@ -208,7 +209,14 @@ class McpCredentialResolver:
                 async with httpx.AsyncClient(
                     verify=mcp_httpx_verify(server_cfg)
                 ) as client:
-                    resp = await client.post(token_endpoint, data=data, timeout=30)
+                    resp = await client.post(
+                        token_endpoint,
+                        data=data,
+                        headers={
+                            "Content-Type": "application/x-www-form-urlencoded",
+                        },
+                        timeout=30,
+                    )
                     resp.raise_for_status()
                     body: dict[str, Any] = resp.json()
             except Exception:
@@ -223,6 +231,11 @@ class McpCredentialResolver:
 
             access_token = body.get("access_token")
             if not isinstance(access_token, str) or not access_token:
+                logger.error(
+                    "MCP '%s': token response missing access_token; response keys: %s",
+                    mcp_name,
+                    list(body.keys()),
+                )
                 raise RuntimeError(
                     f"MCP '{mcp_name}': client_credentials response missing access_token"
                 )

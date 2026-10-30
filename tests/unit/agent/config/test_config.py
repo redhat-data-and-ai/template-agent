@@ -1,7 +1,8 @@
 """Unit tests for agent_config skill path resolution."""
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from deep_agent.src.agent.config import AgentConfig
 from deep_agent.src.exceptions import AppException
@@ -106,6 +107,32 @@ Test orchestrator prompt.
         assert len(skill_paths) == 0
 
         assert "unknown skills" in caplog.text.lower()
+
+    def test_available_skills_reads_each_skill_instruction_file(self, tmp_path):
+        """Expose complete skill instructions and tolerate an incomplete skill."""
+        config_dir = tmp_path / "agent_config"
+        config_dir.mkdir()
+        (config_dir / "PROMPT.md").write_text(
+            "---\nname: test-orchestrator\n---\nTest prompt.\n"
+        )
+        skills_dir = config_dir / "skills"
+        skills_dir.mkdir()
+
+        documented_skill = skills_dir / "client-intake"
+        documented_skill.mkdir()
+        (documented_skill / "SKILL.md").write_text(
+            "# Client intake\n\nGather requirements.\n"
+        )
+
+        undocumented_skill = skills_dir / "draft"
+        undocumented_skill.mkdir()
+
+        contents = AgentConfig(config_dir).get_available_skills()
+
+        assert contents == {
+            "client-intake": "# Client intake\n\nGather requirements.\n",
+            "draft": "",
+        }
 
 
 class TestMcpsValidation:
@@ -372,3 +399,77 @@ Test prompt.
         ):
             result = cfg._load_guardrails_config({"enabled": True, "model": "x"})
         assert result.enabled is False
+
+
+class TestValidateMcpServerApiKey:
+    """_validate_mcp_server api_key branches (RHITAIF-894).
+
+    Validation logs errors rather than raising, so a misconfigured MCP is
+    visible at config load without failing the whole agent.
+    """
+
+    @staticmethod
+    def _cfg(**overrides):
+        base = {
+            "auth_mode": "api_key",
+            "auth_env_var": "MCP_X_API_KEY",
+            "api_key_name": "X-API-Key",
+            "api_key_location": "header",
+        }
+        base.update(overrides)
+        return base
+
+    def test_valid_config_logs_no_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", self._cfg())
+        assert caplog.text == ""
+
+    def test_api_key_without_a_name_is_an_error(self, caplog):
+        """api_key needs a name; without one the runtime would send Bearer."""
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server(
+                "m", {"auth_mode": "api_key", "auth_env_var": "MCP_X_API_KEY"}
+            )
+        assert "requires 'api_key_name'" in caplog.text
+
+    def test_bearer_needs_only_an_env_var(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server(
+                "m", {"auth_mode": "bearer", "auth_env_var": "MCP_X_BEARER_TOKEN"}
+            )
+        assert caplog.text == ""
+
+    def test_missing_auth_env_var_logs_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", self._cfg(auth_env_var=""))
+        assert "requires 'auth_env_var'" in caplog.text
+
+    def test_invalid_location_logs_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", self._cfg(api_key_location="cookie"))
+        assert "invalid api_key_location 'cookie'" in caplog.text
+
+    def test_location_without_name_logs_error(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", self._cfg(api_key_name=""))
+        assert "requires 'api_key_name'" in caplog.text
+
+    def test_invalid_auth_mode_returns_before_api_key_checks(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            AgentConfig._validate_mcp_server("m", {"auth_mode": "magic"})
+        assert "invalid auth_mode 'magic'" in caplog.text
+        assert "auth_env_var" not in caplog.text

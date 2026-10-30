@@ -30,7 +30,7 @@ def mock_service_account_info():
         "type": "service_account",
         "project_id": "test-project-123",
         "private_key_id": "key123",
-        "private_key": "-----BEGIN PRIVATE KEY-----\nMOCK_KEY\n-----END PRIVATE KEY-----",
+        "private_key": "mock-private-key-not-a-real-pem",
         "client_email": "test@test-project-123.iam.gserviceaccount.com",
         "client_id": "123456789",
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",

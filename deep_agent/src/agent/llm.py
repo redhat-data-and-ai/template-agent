@@ -32,6 +32,8 @@ GEMINI_MODELS: list[str] = [
     "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.8-flash",
 ]
 
 CLAUDE_MODELS: list[str] = [
@@ -58,6 +60,7 @@ def create_model(
     model_name: str,
     temperature: float = 0.0,
     max_output_tokens: int | None = None,
+    location: str | None = None,
 ) -> BaseChatModel:
     """Create a model instance (Vertex AI, or vLLM/OpenAI-compatible).
 
@@ -87,7 +90,9 @@ def create_model(
     is_claude = model_name in CLAUDE_MODELS
 
     if is_gemini or is_claude:
-        return _create_vertex_model(model_name, temperature, max_output_tokens)
+        return _create_vertex_model(
+            model_name, temperature, max_output_tokens, location=location
+        )
 
     return _create_vllm_model(model_name, temperature, max_output_tokens)
 
@@ -96,6 +101,7 @@ def _create_vertex_model(
     model_name: str,
     temperature: float,
     max_output_tokens: int,
+    location: str | None = None,
 ) -> BaseChatModel:
     """Create a Vertex AI model (Gemini or Claude)."""
     is_claude = model_name in CLAUDE_MODELS
@@ -116,6 +122,7 @@ def _create_vertex_model(
             return ChatAnthropicVertex(
                 model=model_name,
                 project=project,
+                location=location or settings.CLAUDE_LOCATION,
                 credentials=credentials,
                 # temperature=temperature, # this is not supported in the latest version of the library
                 max_tokens=max_output_tokens,
