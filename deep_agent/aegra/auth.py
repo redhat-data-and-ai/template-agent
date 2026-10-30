@@ -198,12 +198,38 @@ def _build_dev_user() -> dict[str, Any]:
 
 
 async def _resolve_ldap_role(payload: dict[str, Any]) -> str | None:
-    """Resolve the user's LDAP role from PROMPT.md groups."""
+    """Resolve the user's LDAP role from PROMPT.md groups.
+
+    When ``headless_auth: sa_only`` is set in PROMPT.md, only identities
+    listed in ``service_accounts`` are allowed — all other users are denied.
+    This restricts which callers can invoke the agent headlessly.
+
+    When ``headless_auth: any`` (default), ``service-account-*`` identities
+    are checked against the allowlist, and all other users go through the
+    normal LDAP group resolution.
+    """
+    from deep_agent.src.ldap.prompt_config import get_prompt_access_config
     from deep_agent.src.ldap.service import resolve_user_role
 
     user_id = str(payload.get("preferred_username") or payload.get("sub") or "").strip()
     if not user_id:
         return "denied"
+
+    config = get_prompt_access_config()
+    safe_id = encrypt_user_id(user_id)
+
+    if config.service_accounts is not None and user_id in config.service_accounts:
+        logger.info("sa_allowed_by_allowlist", user_id=safe_id)
+        return None
+
+    if user_id.startswith("service-account-"):
+        logger.warning("sa_denied_not_in_allowlist", user_id=safe_id)
+        return "denied"
+
+    if config.headless_auth == "sa_only":
+        logger.warning("headless_auth_sa_only_rejected_user", user_id=safe_id)
+        return "denied"
+
     return await resolve_user_role(user_id)
 
 
