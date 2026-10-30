@@ -33,6 +33,7 @@ GEMINI_MODELS: list[str] = [
     "gemini-2.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
+    "gemini-3.5-flash",
     "gemini-3.8-flash",
 ]
 
@@ -40,6 +41,13 @@ CLAUDE_MODELS: list[str] = [
     "claude-sonnet-4",
     "claude-sonnet-4-6@default",
 ]
+
+_THINKING_CAPABLE_MODELS: set[str] = {
+    "gemini-2.5-flash",
+    "gemini-3.1-pro-preview",
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
+}
 
 _THRESHOLD_MAP = {v.name: v for v in HarmBlockThreshold}
 
@@ -137,7 +145,7 @@ def _create_vertex_model(
                 model_kwargs=claude_kwargs,
             )
         else:
-            return ChatGoogleGenerativeAI(
+            kwargs: dict = dict(
                 model=model_name,
                 temperature=temperature,
                 credentials=credentials,
@@ -148,6 +156,10 @@ def _create_vertex_model(
                 safety_settings=safety_settings,
                 include_thoughts=True,
             )
+            if model_name in _THINKING_CAPABLE_MODELS:
+                kwargs["thinking_level"] = settings.AGENT_THINKING_LEVEL
+                kwargs["include_thoughts"] = settings.AGENT_INCLUDE_THOUGHTS
+            return ChatGoogleGenerativeAI(**kwargs)
 
     except (ValueError, LLMError):
         raise

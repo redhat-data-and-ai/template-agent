@@ -1,10 +1,19 @@
 {
     "mcpServers": {
+        "pathfinder": {
+            "url": "http://localhost:5003/mcp",
+            "transport": "streamable_http",
+            "enabled": true,
+            "auth": false,
+            "ssl_verify": false,
+            "timeout": 60,
+            "tool_prefix": "pathfinder"
+        },
         "template-mcp-server": {
             "url": "http://localhost:5001/mcp",
             // "url": "http://host.containers.internal:5001/mcp",
             "transport": "streamable_http",
-            "enabled": true,
+            "enabled": false,
             "auth": true,
             "auth_mode": "sso",
             "ssl_verify": false,

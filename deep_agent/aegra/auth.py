@@ -59,6 +59,7 @@ SSO_JWT_AUDIENCE = os.environ.get("SSO_JWT_AUDIENCE", "")
 
 DEV_USERNAME = os.environ.get("SSO_DEV_USERNAME", "John Doe")
 DEV_USER_ID = os.environ.get("SSO_DEV_USER_ID", "dev-user")
+DEV_EMAIL = os.environ.get("SSO_DEV_EMAIL", "dev@localhost")
 
 ENABLE_USER_ID_ENCRYPTION = (
     os.environ.get("ENABLE_USER_ID_ENCRYPTION", "false").lower() == "true"
@@ -191,7 +192,7 @@ def _build_dev_user() -> dict[str, Any]:
         "display_name": DEV_USERNAME,
         "permissions": ["read", "write", "admin"],
         "is_authenticated": True,
-        "email": "dev@localhost",
+        "email": DEV_EMAIL,
         "encrypted_id": encrypt_user_id(DEV_USER_ID),
         "ldap_role": None,
     }

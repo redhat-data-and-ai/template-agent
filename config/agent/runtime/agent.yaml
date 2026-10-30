@@ -15,12 +15,12 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Identity                                                        [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-name: "Health Assistant"
+name: "DVA 2.0"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Model                                                              [env-var]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 model:
-  max_output_tokens: 8192
+  max_output_tokens: 65536
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Providers                                                      [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -67,12 +67,21 @@ providers:
 #
 # Key format: "provider:model" or just "model" for provider-agnostic matching.
 harness_profiles:
-  gemini-2.5-pro:
+  google_genai:gemini-3.1-pro-preview:
     system_prompt_suffix: ""
-    excluded_tools: []
+    excluded_tools:
+      - task
+      - ls
+      - read_file
+      - write_file
+      - edit_file
+      - delete
+      - glob
+      - grep
+      - compact_conversation
     excluded_middleware: []
     general_purpose_subagent:
-      enabled: true
+      enabled: false
   gemini-2.5-flash:
     system_prompt_suffix: ""
     excluded_tools: []
@@ -118,12 +127,9 @@ harness_profiles:
 # Resolution order: defaults → profile (matched from model: field) → per-agent overrides
 middleware:
   human_approval:
-    enabled: true    # set to false to disable human-in-the-loop tool approval
-    mode: all        # 'all' = every tool; 'none' = disabled
-    exclude:
-      - write_todos         # internal task tracking — no user approval needed
-      - compact_conversation  # internal memory management — no user approval needed
-      - ask_user            # clarifying question — the question card is the pause
+    enabled: false
+    mode: none
+    exclude: []
   summarization_tool:
     enabled: true
   memory:
@@ -137,10 +143,10 @@ middleware:
   # --- Production guardrails ---
   model_call_limit:
     enabled: true
-    run_limit: 50
+    run_limit: 30
   tool_call_limit:
     enabled: true
-    run_limit: 200
+    run_limit: 100
   model_retry:
     enabled: true
     max_retries: 3
@@ -154,13 +160,13 @@ middleware:
   tool_retry:
     enabled: true
     max_retries: 2
-    tools: ["template_calculate_bmi", "template_search_web", "template_send_email"]
+    tools: ["pathfinder_search", "pathfinder_search_semantic", "pathfinder_search_keyword"]
   extra: []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async_tasks:
-  enabled: true
+  enabled: false
   system_prompt: null
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Filesystem & Storage                                           [YAML-loaded]
@@ -177,39 +183,8 @@ async_tasks:
 #   - For readOnlyRootFilesystem SCC, use state or composite with emptyDir volume.
 filesystem:
   backend:
-    type: composite
-    local_shell:
-      timeout: 120
-      max_output_bytes: 100000
-    store:
-      enabled: true
-      scope: user
-    # Optional per-route directory override. A relative value is resolved
-    # inside the config tree ("/skills/" -> skills); an absolute one points
-    # elsewhere, and ${VAR} is expanded first.
-    # /data/ lives on its own volume rather than in the config tree, so it
-    # follows DATA_PATH and the same file works in a pod and locally. The
-    # extra "current" level exists because DATA_PATH is a mount point and
-    # cannot be renamed over; it stays invisible to the agent, which sees
-    # /data/<exactly what was uploaded>.
-    roots:
-      "/data/": "${DATA_PATH}/current"
-    routes:
-      "/skills/": filesystem_readonly
-      "/data/": filesystem_readonly
-      "/memories/": store
-      "/reports/": store
-      "/": state
-  permissions:
-    - operations: [read, glob, grep, ls]
-      paths: ["config/**", "docs/**", "reports/**", "skills/**", "data/**"]
-      mode: allow
-    - operations: [write, edit]
-      paths: ["reports/**", "memories/**"]
-      mode: allow
-    - operations: [write, edit]
-      paths: ["config/**", "*.py", "*.sh"]
-      mode: deny
+    type: state
+  permissions: []
   permission_inheritance: false
   settings:
     tool_token_limit_before_evict: 20000

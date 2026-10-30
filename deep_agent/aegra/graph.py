@@ -415,6 +415,10 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     tools = enforce_capability(tools, capability_manifest)
 
+    from deep_agent.aegra.clarify_tool import clarify
+
+    tools.append(clarify)
+
     # When an explicit tools: list restricts capabilities, inject a system
     # instruction so the LLM knows not to loop through MCP resources as a
     # workaround for unavailable tools.
@@ -479,7 +483,16 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     logger.warning("Graph cache MISS — full rebuild")
 
-    subagents = load_subagents(tools=mcp_tools)
+    # Only load subagents if the orchestrator config does NOT have an explicit tools list.
+    # When tools: is set in PROMPT.md frontmatter, the builder wants a restricted tool set
+    # and subagents (which inject the `task` tool) should be excluded.
+    # Pass [] (not None) — deepagents treats None as "use defaults" (auto-injects
+    # a general-purpose subagent + task tool), while [] means "explicitly no subagents."
+    if tool_names is not None:
+        subagents = []
+        logger.info("Explicit tools manifest — subagents disabled (no task tool)")
+    else:
+        subagents = load_subagents(tools=mcp_tools)
     backend = get_configured_backend()
 
     middleware = build_middleware_list(
