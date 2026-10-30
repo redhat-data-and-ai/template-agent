@@ -21,7 +21,7 @@ A template for building [Deep Agents](https://github.com/langchain-ai/deepagents
 - PostgreSQL checkpoints, memory, and feedback storage
 - LDAP-based access control with group-to-role mappings defined in PROMPT.md
 - Eval and dataset APIs gated by LDAP role — see [`eval-runner/docs/`](./eval-runner/docs/) for eval documentation
-- Config-as-code in `config/agent/` (no Python edits for most changes)
+- Config-as-code in `config/agent/` (no Python edits for most changes) — see [`docs/developer-guide/`](./docs/developer-guide/) for the full developer guide, configuration reference, and developer skills
 - Container-ready with Red Hat UBI; OpenShift and Kind deployment overlays
 
 ## Quick Start
