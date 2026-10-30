@@ -70,15 +70,24 @@ harness_profiles:
   google_genai:gemini-3.1-pro-preview:
     system_prompt_suffix: ""
     excluded_tools:
+      # deepagents built-in tools not needed
       - task
       - ls
-      - read_file
       - write_file
       - edit_file
       - delete
       - glob
       - grep
       - compact_conversation
+      - execute
+      # MCP tools replaced by dv-gemma-router pre-classification
+      - identify_dataproducts
+      - shortlist_tables
+      # MCP resource tools (guidance is handled internally by get_sql)
+      - mcp_read_resource
+      - mcp_list_resources
+      - mcp_list_resource_templates
+      - ask_user
     excluded_middleware: []
     general_purpose_subagent:
       enabled: false
@@ -90,10 +99,25 @@ harness_profiles:
       enabled: true
   gemini-3.1-pro-preview:
     system_prompt_suffix: ""
-    excluded_tools: []
+    excluded_tools:
+      - task
+      - ls
+      - write_file
+      - edit_file
+      - delete
+      - glob
+      - grep
+      - compact_conversation
+      - execute
+      - identify_dataproducts
+      - shortlist_tables
+      - mcp_read_resource
+      - mcp_list_resources
+      - mcp_list_resource_templates
+      - ask_user
     excluded_middleware: []
     general_purpose_subagent:
-      enabled: true
+      enabled: false
   gemini-3-flash-preview:
     system_prompt_suffix: ""
     excluded_tools: []
@@ -160,7 +184,7 @@ middleware:
   tool_retry:
     enabled: true
     max_retries: 2
-    tools: ["pathfinder_search", "pathfinder_search_semantic", "pathfinder_search_keyword"]
+    tools: ["execute_sql", "get_sql"]
   extra: []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Async Tasks                                                    [YAML-loaded]
@@ -183,7 +207,7 @@ async_tasks:
 #   - For readOnlyRootFilesystem SCC, use state or composite with emptyDir volume.
 filesystem:
   backend:
-    type: state
+    type: local_shell
   permissions: []
   permission_inheritance: false
   settings:

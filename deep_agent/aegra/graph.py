@@ -305,6 +305,11 @@ async def agent(runtime: ServerRuntime) -> Any:
     tool_names = orchestrator_cfg.get("tools")
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
+    # DVA 2.0: Classification is injected into the human message by the BFF
+    # (as a <classification> block), not into the system prompt. The graph
+    # factory has no access to per-run config (runtime.config is None in Aegra).
+    # PROMPT.md instructs the agent on how to parse and use the classification block.
+
     # Resolve the personalization user ID to match what the BFF proxy
     # sends as X-User-ID (preferred_username from JWT, not sub UUID).
     # Local has no JWT — use run metadata / request context instead.
@@ -416,8 +421,43 @@ async def agent(runtime: ServerRuntime) -> Any:
     tools = enforce_capability(tools, capability_manifest)
 
     from deep_agent.aegra.clarify_tool import clarify
+    from deep_agent.aegra.config_data_tool import read_config_data
 
     tools.append(clarify)
+    tools.append(read_config_data)
+
+    # ── Apply excluded_tools from harness_profiles in agent.yaml ──
+    excluded: set[str] = set()
+    try:
+        import yaml as _yaml
+        config_dir = Path(os.environ.get("CONFIG_PATH", "config/agent"))
+        agent_yaml_path = config_dir / "runtime" / "agent.yaml"
+        if agent_yaml_path.exists():
+            with open(agent_yaml_path) as _f:
+                raw_yaml = _yaml.safe_load(_f) or {}
+            hp_cfg = raw_yaml.get("harness_profiles", {})
+            for profile_key in (
+                f"google_genai:{model_name}",
+                model_name,
+            ):
+                profile = hp_cfg.get(profile_key, {})
+                if isinstance(profile, dict):
+                    exc = profile.get("excluded_tools", [])
+                    if exc:
+                        excluded.update(exc)
+    except Exception:
+        logger.debug("Could not read excluded_tools from agent.yaml", exc_info=True)
+
+    if excluded:
+        pre = len(tools)
+        tools = [t for t in tools if t.name not in excluded]
+        logger.info("Excluded %d tools via harness_profiles: %s", pre - len(tools), sorted(excluded))
+
+    logger.info(
+        "Tools available: %d [%s]",
+        len(tools),
+        ", ".join(sorted(t.name for t in tools)),
+    )
 
     # When an explicit tools: list restricts capabilities, inject a system
     # instruction so the LLM knows not to loop through MCP resources as a

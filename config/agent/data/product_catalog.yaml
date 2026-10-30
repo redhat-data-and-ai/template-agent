@@ -1,0 +1,2038 @@
+version: '1.0'
+source: Generated from GUIDANCE.md (llm-foundry main branch)
+product_count: 74
+products:
+- name: adobe
+  database: adobe_db
+  schema: marts
+  maturity: ai_ready
+  category: source-aligned
+  description: Adobe Analytics data product providing hit-level web analytics for Red Hat's digital properties. The `adobe_mrktng`
+    mart exposes marketing touchpoints, campaign attribution, and visitor analytics from Adobe Analytics (via Fivetran).
+  route_when:
+  - Queries about Adobe Analytics hit data, web analytics, page views, sessions, marketing touchpoints, campaign performance
+    (Adobe), visitor/geo/device analytics from Adobe.
+  - '"Adobe Analytics..."** / **"Web analytics..."** / **"Marketing touchpoints..."** → **Adobe** (`adobe_mrktng`)'
+  - '"Email campaigns..."** / **"Marketo..."** → **Marketo**'
+  primary_use_cases:
+  - Hit-level Adobe Analytics data (page views, events, visits)
+  - Marketing touchpoint identifiers (`marketing_touchpoint_id`, `adobe_session_id`)
+  - Campaign and channel dimensions (`post_campaign`, `post_channel`)
+  - Geographic dimensions (`geo_country`, `geo_region`, `geo_city`)
+  - Device/browser dimensions (`browser`, `os`, `connection_type`)
+- name: jira
+  database: jira_db
+  schema: marts
+  maturity: unknown
+  category: source-aligned
+  description: Atlassian JIRA data providing project management analytics, issue tracking, and development workflow insights.
+  route_when:
+  - Queries about project management, issue tracking, sprint analytics, development workflows, bug tracking, or team productivity
+    in engineering/IT projects.
+  primary_use_cases:
+  - Issue tracking data (issues, tasks, bugs, epics) with PII-filtered views
+  - Project metadata (150+ projects) and configurations
+  - Sprint data with dates, status, and team assignments
+  - Issue statuses and workflows with status categories (To Do, In Progress, Done)
+  - Custom fields including Story Points and Sprint associations
+- name: officialproductlist
+  database: officialproductlist_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: Official Product List serves as the official corporate product catalog for Red Hat. This data product maintains
+    authoritative information about Red Hat products, including product attributes, aliases, components, market lifecycle,
+    partners, portfolios, and references.
+  route_when:
+  - Queries about Red Hat product catalog, product attributes, product types, product portfolios, product aliases, product
+    components, product market lifecycle (release/EOL dates), product partners, product references, or official product list.
+  - '"Product catalog"** / **"Official product list"** / **"Product attributes"** → **Official Product List**'
+  - '"Product lifecycle"** (reference dates, market lifecycle in catalog) / **"Product EOL"** / **"Product release date"**
+    → **Official Product List**'
+  - '"Product portfolio"** / **"Product type"** / **"Product alias"** → **Official Product List**'
+  - '"Product partners"** / **"Product references"** → **Official Product List**'
+  do_not_route:
+  - OLM**, **offering lifecycle**, **SKU leverage**, **inactivation candidates**, **SKU ARR on the OLM mart**, **quoting tier**,
+    **subscription coverage on OLM** → Use **Offering Lifecycle Management (OLM)**
+  primary_use_cases:
+  - Product master data (core product attributes, status)
+  - Product aliases (alternate names)
+  - Product components
+  - Product market lifecycle (release dates, end-of-life)
+  - Product-portfolio mapping
+- name: offeringlifecyclemgmt
+  database: offeringlifecyclemgmt_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: 'Offering Lifecycle Management (OLM) provides a unified **SKU-level** view of Red Hat offering lifecycle status:
+    catalog attributes, MSRP, offering taxonomy, pipeline-derived activeness, subscription coverage, leverage and inactivation
+    signals, and current/prior-quarter commercial metrics (ARR/ACV/TCV-style) for lifecycle decisions.'
+  route_when:
+  - Queries about **OLM**, **offering lifecycle**, **SKU** performance or lifecycle status, **MSRP** on the OLM mart, **quoting
+    tier**, leveraged/unleveraged SKUs, latest-closed-quarter ARR at SKU grain, subscription coverage on the mart, or offering-group/line
+    analytics.
+  - '"OLM"** / **"offering lifecycle"** / **"leveraged SKU"** / **"inactivation candidate"** → **OLM**'
+  - '"TSTT"** / **"too-soon"** / **"new SKU"** classification → **OLM**'
+  - '"Latest closed quarter ARR"** at SKU grain (OLM context) → **OLM**'
+  - '"Product catalog"** without SKU lifecycle metrics → **Official Product List**'
+  - '"ASP"** / **"average selling price"** → **Offering Performance Analytics (OPA)**'
+  do_not_route:
+  - Corporate product catalog** (aliases, components, reference lifecycle without OLM mart metrics) → **Official Product List**
+  - Parent/child SKU hierarchy**, counting children per parent, or `REFERENCED_MDM_ID` lookups → **MDMPRODUCT**
+  - Opportunity- or account-centric pipeline** beyond SKU rollups → **Bookingsmaster**
+  - Recognized GL revenue** → **RevenueMaster**
+  - Deal net price / CPQ discounts** → **Discounting** or transactional products as appropriate
+  - Enterprise-unique customer counts** by summing SKU-level customer fields → Not supported on this mart
+  - Average Selling Price (ASP)** / price per unit / entitled units → **Offering Performance Analytics (OPA)**
+  primary_use_cases:
+  - Corporate product catalog** (aliases, components, reference lifecycle without OLM mart metrics) → **Official Product List**
+  - Parent/child SKU hierarchy**, counting children per parent, or `REFERENCED_MDM_ID` lookups → **MDMPRODUCT**
+  - Opportunity- or account-centric pipeline** beyond SKU rollups → **Bookingsmaster**
+  - Recognized GL revenue** → **RevenueMaster**
+  - Deal net price / CPQ discounts** → **Discounting** or transactional products as appropriate
+- name: offeringperformanceanalytics
+  database: offeringperformanceanalytics_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: Offering Performance Analytics (OPA) provides **Average Selling Price (ASP)** analytics across RHEL, Ansible,
+    OpenShift, and Application Services (entitlement-based unit economics, channel-adjusted transfer price, and product-level
+    ASP summary) plus **product cohort retention analysis** (ANSIBLE, OPENSHIFT, RHEL).
+  route_when:
+  - Queries about **ASP**, **average selling price**, **average sales price**, **price per unit**, **price per core**, **price
+    per socket**, **price per node**, **entitled units**, **channel adjustment**, **transfer price**, **RHEL ASP**, **OpenShift
+    ASP**, **Ansible ASP**, **App Services ASP**, **ELS/EUS** pricing impact, **bare metal ASP**, **product cohort**, **cohort
+    analysis**, **cohort quarter**, **first active**, **net-new customers** by cohort, **cohort ARR**, or **average entry
+    ARR**.
+  - '"ASP"** / **"average selling price"** / **"price per core"** / **"entitled units"** → **Offering Performance Analytics
+    (OPA)**'
+  - '"Product cohort"** / **"cohort analysis"** / **"cohort quarter"** / **"first active"** / **"net-new customers" by cohort**
+    / **"cohort ARR"** / **"average entry ARR"** → `OFFERINGPERFORMANCEANALYTICS_DB.MARTS.PRODUCT_COHORT_ANALYSIS`'
+  - ASP / ARC / GRR / NRR** → **not** `product_cohort_analysis`
+  do_not_route:
+  - Pipeline, forecast categories, MJ tags, bookings targets** → Use **Forecasting**
+  - General bookings / ARR / ACV without ASP or cohort context** → Use **Bookingsmaster**
+  - Recognized/actual/GL revenue** → Use **RevenueMaster**
+  - Discount analysis (MSRP vs TCV)** → Use **Discounting**
+  - OLM offering lifecycle / SKU leverage** → Use **OLM**
+  - SKU master / product hierarchy** → Use **MDMPRODUCT**
+  primary_use_cases:
+  - Pipeline, forecast categories, MJ tags, bookings targets** → Use **Forecasting**
+  - General bookings / ARR / ACV without ASP or cohort context** → Use **Bookingsmaster**
+  - Recognized/actual/GL revenue** → Use **RevenueMaster**
+  - Discount analysis (MSRP vs TCV)** → Use **Discounting**
+  - OLM offering lifecycle / SKU leverage** → Use **OLM**
+  disambiguation: OPA (Offering Performance Analytics) is for product cohort retention, net-new customers by cohort quarter,
+    customer retention ARR, ASP (average selling price), price per unit/core/socket, ELS/EUS ASP, bare metal ASP.
+- name: modelscorp
+  database: ''
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: LLM-as-a-Service (models.corp) infrastructure and usage analytics for Red Hat's internal LLM platform. Provides
+    daily aggregated metrics for GPU-accelerated language models, including KV cache utilization, request throughput, prefix
+    cache efficiency, and per-consumer token consumption.
+  route_when:
+  - Queries about LLM model performance, GPU KV cache, vLLM metrics, model inference throughput, token usage, prefix cache
+    hit rate, request queue depth, model capacity, preemptions, consumer activity on models.corp
+  do_not_route:
+  - Real-time monitoring or alerting → Use **SignalFx** dashboards
+  - 'Individual request logs or traces → Use **SumoLogic** (index: rh_llm-001)'
+  - Model deployment or configuration → Use **OpenShift/ArgoCD**
+  - API gateway metrics (3scale) → Use **3scale admin portal**
+  - Cost analysis → Use **Dataverse Console** cost metrics
+  primary_use_cases:
+  - Real-time monitoring or alerting → Use **SignalFx** dashboards
+  - 'Individual request logs or traces → Use **SumoLogic** (index: rh_llm-001)'
+  - Model deployment or configuration → Use **OpenShift/ArgoCD**
+  - API gateway metrics (3scale) → Use **3scale admin portal**
+  - Cost analysis → Use **Dataverse Console** cost metrics
+- name: mdmparty
+  database: mdmparty_db
+  schema: partylens_marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: '**Build (dbt):** Party Lens objects are implemented in the **mdmparty-dbt** project under `models/partylens_marts/`
+    and deploy to **`mdmparty_db.partylens_marts`**. The **party** and **address** dimensions are loaded as **full-refresh
+    tables** from Party Service staging (`stg_mdm_party_lens_party`, plus **DUNS hierarchy** from `stg_mdm_party_lens_duns_relation`);
+    each keeps the **latest `ingested_'
+  route_when:
+  - Queries about **MDM party**, **MDMPARTY**, **golden party**, **party master**, **`mdm_party_id`**, DUNS/hierarchy at party
+    level, party addresses, or cross-system party identifiers **when the scope is party master data**. See **`source/mdmparty/README.md`**
+    for SQL patterns against **`partylens_marts`**.
+  - '"MDM party"** / **"party master"** / **`mdm_party_id`** / **"party hierarchy"** / **"party address"** / **"party identifiers"**
+    → **MDMPARTY** — **`mdmparty_db.partylens_marts`**'
+  - '`party_lens_*`** / **`mdm_party_lens_*`** / **`partylens_marts`** → **MDMPARTY** — **`mdmparty_db.partylens_marts`**'
+  - Legacy `party_dim` / `marts` in docs or old reports** → **MDMPARTY** — **rewrite against `partylens_marts`** (`party_lens_dim_v1`,
+    etc.); **`marts` is decommissioned**
+  - '"Map EBS to RHSC"** / **golden account mapping** (without party-master-only scope) → **Rosettastone**, not MDMPARTY alone'
+  primary_use_cases:
+  - Party name and address
+  - Party roles
+  - Party partner role classifications
+  - Party partner role modules
+  - Party aliases (names)
+  key_tables:
+  - partylens_marts
+  - mdm_party_lens_relation_flattened_v1
+  - mdm_party_lens_merged_businessid_v1
+  - party_lens_dim_v1
+  - party_dim
+  - party_lens_party_role_v1
+- name: mdmproduct
+  database: mdmproduct_db
+  schema: marts
+  maturity: unknown
+  category: source-aligned
+  description: MDMPRODUCT (Harbor) is the source-aligned product master for Red Hat — the authoritative "golden record" for
+    all offerings/SKUs. It covers product and offering definitions, pricing foundations (MSRP, List Price), parent/child SKU
+    hierarchy, quoting tiers, offering classifications, and business unit attribution.
+  route_when:
+  - Queries about MDM product, Harbor product, SKU, SKU hierarchy, product pricing, MSRP, list price, product master data,
+    quoting tier, offering group, or business unit ownership of products.
+  do_not_route:
+  - Bookings, ARR, ACV, pipeline, opportunities** → Use **Bookingsmaster**
+  - Recognized revenue** → Use **RevenueMaster**
+  - Product catalog (official corporate catalog, product portfolios, aliases, components)** → Use **Official Product List**
+  - Discount analysis, MSRP vs TCV comparison** → Use **Discounting**
+  - Customer/party master data** → Use **MDMPARTY**
+  primary_use_cases:
+  - Bookings, ARR, ACV, pipeline, opportunities** → Use **Bookingsmaster**
+  - Recognized revenue** → Use **RevenueMaster**
+  - Product catalog (official corporate catalog, product portfolios, aliases, components)** → Use **Official Product List**
+  - Discount analysis, MSRP vs TCV comparison** → Use **Discounting**
+  - Customer/party master data** → Use **MDMPARTY**
+- name: srcdatagovernance
+  database: srcdatagovernance_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: Centralized repository for enterprise data standards and reference data that ensures consistency across data
+    products and business systems. Provides standardized codes, descriptions, and classifications used throughout Red Hat's
+    data ecosystem.
+  route_when:
+  - Queries about enterprise data standards (EDS) codes, standardized code descriptions, industry hierarchy classifications,
+    SIC (Standard Industrial Classification) codes, reference data lookups, or data governance standards.
+  primary_use_cases:
+  - Enterprise Data Standards (EDS) with reference data - standardized codes and descriptions (e.g., billing_block, delivery_block,
+    credit_block)
+  - Industry hierarchy - Red Hat's proprietary industry classification system (Industry → SubIndustry → Vertical)
+  - SIC reference data - Standard Industrial Classification codes with Red Hat industry mappings
+  - Standardized code lookups - active codes with descriptions for data validation
+  - Industry to SIC mappings - Red Hat industry verticals mapped to standard SIC codes
+- name: siexecution
+  database: siexecution_db
+  schema: marts
+  maturity: ai_ready
+  category: source-aligned
+  description: Sales Incentives (SI) Execution data product integrating Varicent and Anaplan systems for comprehensive sales
+    compensation, quota management, and territory credit mapping analytics.
+  route_when:
+  - Queries about sales compensation, **past fiscal year quotas** (historical quota data), territory assignments, credit allocation,
+    sales incentive plans, manager approvals, payee performance, or sales operations planning. **For current fiscal year quotas,
+    use Sales Planning.**
+  primary_use_cases:
+  - Territory credit mapping data from Anaplan and IAR Hub systems
+  - Quota planning and approval workflows with manager sign-off tracking
+  - Historical/past fiscal year quota data** (for current year quotas, use **Sales Planning**)
+  - Payee (sales representative) information and assignments
+  - Compensation plan structures and components
+- name: salesplanning
+  database: salesplanning_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: '**Schemas:** `QUARTERIZATION_MARTS`, `QUOTA_MARTS`'
+  route_when:
+  - Target Planning:** Queries about sales targets, quarterly targets, target allocation, target vs. actual comparison, planning
+    targets, territory targets, or quarterization methods
+  - Seller Quotas (Current Year):** Queries about **current fiscal year** individual seller quotas, quota assignments, quota
+    by territory, quota by sales role, quota coverage, quota gap to minimum, or quota stacking
+  - Restated Renewals:** Queries explicitly about restated renewals should route to **Sales Planning MARTS**
+  - Current fiscal year quota queries** → **Sales Planning** (QUOTA_MARTS)
+  - Past fiscal year quota queries** (historical quota data) → **SI Execution**
+  - '"What are the sales targets for..."** → **Sales Planning** (sales target allocation data - bookings/ARR targets in QUARTERIZATION_MARTS)'
+  - '"How did we perform vs. target..."** → **Sales Planning** (target vs. actual comparison for sales targets in QUARTERIZATION_MARTS)'
+  - '"What is my quota this year..."** / **"Current year quota..."** / **"FY26 quota..."** → **Sales Planning** (current fiscal
+    year quota in QUOTA_MARTS)'
+  primary_use_cases:
+  - Quarterization Marts:** Quarterly target allocation, target vs. actual analysis, geographic target distribution, CCSP
+    (Cloud Computing Service Provider) target tracking, and sales plan period management
+  - Quota Marts:** Individual seller quota assignments, quota vs. target analysis, seller territory coverage, quota gap analysis,
+    and quota stacking scenarios
+  key_tables:
+  - QUARTERIZATION_MARTS
+  - QUOTA_MARTS
+  disambiguation: 'Sales Planning is for TARGET/QUOTA data: sales targets, quarterly targets, quota assignments, territory
+    targets, quota coverage, quota gap analysis, quarterization. NOT for bookings (use bookingsmaster) or revenue (use revenuemaster).'
+- name: roverpeople
+  database: roverpeople_db
+  schema: marts
+  maturity: unknown
+  category: source-aligned
+  description: Red Hat's internal corporate directory containing active employees, contractors, and employee-based organizational
+    hierarchy information.
+  route_when:
+  - Queries about employees, managers, organizational structure, reporting hierarchies, headcount, team composition, or workforce
+    demographics.
+  primary_use_cases:
+  - Active employees and contingent workers (contractors, consultants)
+  - Terminated/former employees with historical data for audit purposes
+  - Employee profile information (name, email, title, job role, employee type)
+  - Organizational hierarchy and manager relationships (complete self-referential structure)
+  - Manager span of control (direct and indirect reports)
+  disambiguation: 'RoverPeople is for EMPLOYEE/PEOPLE data: org charts, manager lookup, job titles, locations, email addresses,
+    department, headcount, Rover directory queries. NOT for sales org hierarchy (use saleshierarchy).'
+- name: fammatrix
+  database: fammatrix_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: Cost center financial accountability system mapping financial ownership and departmental organizational structure.
+  route_when:
+  - Questions about cost center financial ownership or finance managers
+  - FAM (Finance Account Manger Matrix) (Finance Account Manager) assignments, budget owners, cost center owners
+  - Departmental organizational structure (Marketing, Sales and Services, Products and Global Engineering, Corporate Functions)
+  - Financial management responsibilities for cost centers
+  primary_use_cases:
+  - Questions about cost center financial ownership or finance managers
+  - FAM (Finance Account Manger Matrix) (Finance Account Manager) assignments, budget owners, cost center owners
+  - Departmental organizational structure (Marketing, Sales and Services, Products and Global Engineering, Corporate Functions)
+  - Financial management responsibilities for cost centers
+- name: sfsaleslegacy
+  database: sfsaleslegacy_db
+  schema: marts
+  maturity: unknown
+  category: source-aligned
+  description: '- **DO NOT USE** for current/active sales, pipeline, or ANY analytical queries - **DEFAULT to Bookingsmaster**
+    for ALL sales/customer/booking/opportunity queries - **ONLY USE** when user explicitly requests to use the legacy system
+    with keywords: "legacy", "legacy system", "sfsaleslegacy", "use legacy data"'
+  route_when:
+  - 'ONLY when query explicitly mentions wanting to use the legacy system - keywords: "legacy", "legacy system", "old system",
+    "legacy Salesforce", "sfsaleslegacy", "use legacy data"'
+  disambiguation: 'SFSalesLegacy contains FROZEN Salesforce CRM data (no active sync). ONLY use when user explicitly requests
+    Salesforce-specific fields: SF opportunity IDs, SF account records, SF contact details, SF partner data, SF product catalog.
+    DEFAULT to bookingsmaster for any pipeline, deals, or sales analytics queries.'
+- name: hginsights
+  database: hginsights_db
+  schema: marts
+  maturity: unknown
+  category: source-aligned
+  description: The HG Insights data product provides comprehensive competitive intelligence and IT spend data to enable data-driven
+    marketing and sales strategies. This data product consolidates **technographic information** about hardware/software installations
+    and IT spending patterns across the market. This is **third-party data** sourced by scraping and processing billions of
+    publicly available digital docum
+  route_when:
+  - Queries about **IT spend and IT budgets** by technology category (comparing between companies, NOT specific product/vendor
+    spend)
+  - Queries about **non-Red Hat software/hardware usage** and adoption (cloud products, partner products)
+  - 'TAM/Market analysis**: "market penetration", "industries with high IT spend", "companies not using Red Hat"'
+  - 'Technographic data (market-wide)**: "companies using AWS/Azure/GCP", "multi-cloud strategy", "cloud migration" — when
+    comparing **across the market**, not Red Hat internal ledger spend'
+  - If asking about **comparing IT budgets/spend between companies** → **HG Insights**
+  - If asking about **RHSC account information** (product flags, intent, competitive footprint) → **GTM** (uses `GTM_HG_INSIGHTS`
+    for competitive/technographic data matched to RHSC accounts)
+  - If asking "What did customers BUY from Red Hat?" → **Bookingsmaster** (sales data)
+  - If asking about **Red Hat customers or Red Hat product analysis** → **Must use Bookingsmaster**, NOT HG Insights alone
+  primary_use_cases:
+  - Queries about **IT spend and IT budgets** by technology category (comparing between companies, NOT specific product/vendor
+    spend)
+  - Queries about **non-Red Hat software/hardware usage** and adoption (cloud products, partner products)
+  - 'TAM/Market analysis**: "market penetration", "industries with high IT spend", "companies not using Red Hat"'
+  - 'Technographic data (market-wide)**: "companies using AWS/Azure/GCP", "multi-cloud strategy", "cloud migration" — when
+    comparing **across the market**, not Red Hat internal ledger spend'
+- name: interestedparties
+  database: interestedparties_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: The Interested Parties data product captures relationships between Red Hat customer accounts and Jira engineering
+    work items. Data originates from the Interested Parties Forge application, where Red Hat account teams link customers
+    to Jira issues to indicate the customer is "affected by" or "interested in" that work. It serves as a pivot point connecting
+    customer identity (via MDM Party ID) to eng
+  route_when:
+  - Queries about which customers are affected by or interested in a Jira issue, which issues a customer cares about, customer
+    link counts per issue or project, audit trail of who linked a customer to an issue, customer impact on engineering work.
+  - '"Which customers are affected by / interested in [issue]?"** → **Interested Parties**'
+  - '"What issues does [customer] care about?"** → **Interested Parties**'
+  - '"How many customers are waiting on [issue/project]?"** → **Interested Parties**'
+  - '"Who linked [customer] to [issue]?"** → **Interested Parties** (audit trail in `FCT_LINK_TRANSACTIONS`)'
+  - '"What is [customer]''s account segment/region?"** → **Rosettastone** (join via `customer_mdm_pk`)'
+  - '"What is the status of [issue]?"** → **JIRA** (join via `issue_key`)'
+  - '"What is the NPS / satisfaction / adoption score for customers affected by [issue]?"** → **Interested Parties** + **CxaHub**
+    (via Rosettastone `RHSC_ACCT_ID`)'
+  primary_use_cases:
+  - Customer-to-Jira-issue link relationships (active and soft-deleted)
+  - 'Link context: `affected_by` (customer hit by a bug/issue) or `interested_in` (customer wants a feature)'
+  - Audit trail of all link create/update/delete operations with actor email and timestamps
+  - 'Customer identifiers: `customer_mdm_pk` (MDM Party ID), `customer_name`'
+  - 'Jira identifiers: `issue_key` (e.g., RHCLOUD-12345), `jira_project`'
+- name: agenthealth
+  database: agenthealth_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: '**Schemas:** `marts`, `dataverseagent_marts`'
+  route_when:
+  - Queries about AI agent metrics, Langfuse traces, LLM costs, agent latency, user feedback on AI agents, agent errors, throughput,
+    or agent operational health.
+  - '"Show metrics for [AGENT-NAME]"** / **"How is [AGENT] performing?"** / **"LLM costs for [AGENT]"** → `agenthealth_db.MARTS`'
+  - '"Compare agent performance"** → `agenthealth_db.MARTS` (multiple agent tables)'
+  - '"What questions are users asking about my data product?"** / **"Feedback on my data product"** → `agenthealth_db.DATAVERSEAGENT_MARTS`
+    (RLS-restricted, Dataverse Agent only)'
+  primary_use_cases:
+  - AI agent performance metrics (latency, response times, throughput, error rates)
+  - LLM cost data per request
+  - User feedback (positive/negative flags and comments)
+  - User questions and queries submitted to agents
+  - Data product access patterns
+  key_tables:
+  - dataverseagent_marts
+- name: customerreference
+  database: customerreference_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: '**Schemas:** `customerreference_marts`, `customervaluestories_marts`'
+  route_when:
+  - Queries about customer references, customer case studies, customer success stories, customer value stories, reference
+    library content, logo approval for customer stories, ABM customer references, journey stage of references, value framework
+    / value drivers in customer stories, benefit statements from references, seller slides for customer stories, Bambu/employee
+    advocacy for references, partner involvement in customer references, or published reference content by industry/region/segment/content
+    type.
+  do_not_route:
+  - Customer lifecycle classification (New / Expanding / Contracting / Lost via `customertype_*`) → Use **customer** instead
+  - General ARR/ACV by Sales Group, Global Sales Group, or fiscal quarter → Use **Bookingsmaster** instead
+  - Customer/party golden record, DUNS, addresses, MDM identifiers → Use **MDMPARTY** instead
+  - Marketing campaign responses, demand generation, Marketo/Eloqua email performance → Use **marketingtouchedinput**, **marketingperformancemodels**,
+    or **Marketo** instead
+  - Seller renewal risk, territory pipeline, PitchBuilder account insights → Use **pitchbuilder** instead
+  - Web analytics (pageviews, visits, Adobe site traffic) → Use **Adobe** instead
+  - Bookings, pipeline, opportunities, ACV/ARR transactions → Use **Bookingsmaster** instead
+  - Accounts receivable, invoices, credit holds → Use **AccountsReceivable** instead
+  primary_use_cases:
+  - '"customer reference", "customer references", "reference library", "case study", "case studies"'
+  - '"customer value story", "customer value stories", "value story", "value stories"'
+  - '"logo approved", "public logo", "logo approval" (in a customer reference / story context)'
+  - '"journey stage" of a customer reference / case study'
+  - '"value framework", "value driver", "KPI impacted" for a customer story'
+  key_tables:
+  - customerreference_marts
+  - customervaluestories_marts
+- name: orders
+  database: orders_db
+  schema: orders_marts
+  maturity: unknown
+  category: source-aligned
+  description: Orders is the source-aligned Oracle EBS Order Management (ONT) data product. It is the analytics-ready warehouse
+    for the full sales-order lifecycle — headers, lines, holds, pricing adjustments, transaction types, additional parties,
+    and inbound XML integration logs. OrderAnalytics is a narrow GBD reporting layer built on this product; generic EBS order
+    questions belong here.
+  route_when:
+  - Queries about EBS sales orders, order headers, order lines, order holds, booked/open/cancelled orders, order numbers,
+    order status / flow status, operating unit orders, ship-to / sold-to / invoice-to on orders, payment terms or freight
+    on orders, order transaction types, order pricing adjustments, order integration / XML logs, ONT order management, or
+    `orders_db` explicitly.
+  do_not_route:
+  - GBD / Autobook / In Region / Web / LMS / Bill Training IE reporting** → Use **OrderAnalytics** instead (built on Orders;
+    GBD-scope only)
+  - Bookings, ARR, ACV, pipeline, opportunities** → Use **Bookingsmaster** instead
+  - Recognized / GL revenue** → Use **RevenueMaster** instead
+  - Discount analysis (MSRP vs TCV/ACV)** → Use **Discounting** instead
+  - Purchase orders / AP / Source to Pay procurement** → Use **ExpenseMaster** (Source to Pay) instead
+  - Subscription entitlements / install base / service contracts** → Use **IntelligentAccess** instead (including "orders
+    for EBS account" when the ask includes subscription/entitlement/contract context)
+  - Customer/party master data** → Use **MDMPARTY** instead
+  - EBS ↔ RHSC account identifier mapping** → Use **Rosettastone** instead
+  primary_use_cases:
+  - '"EBS orders", "sales order", "order header", "order line", "order number", "ONT"'
+  - '"open order", "booked order", "cancelled order", "order status", "flow status"'
+  - '"order hold", "held orders", "order release", "fulfillment"'
+  - '"operating unit orders", "order source", "transaction type" (order context)'
+  - '"order integration", "XML integration", "inbound order XML"'
+  key_tables:
+  - orders_marts
+- name: acvplusconsumptionforecast
+  database: acvplusconsumptionforecast_db
+  schema: marts
+  maturity: ai_experimental
+  category: source-aligned
+  description: Source-sheet ACV+ Budget (Risk), Execution and target baseline for calendar 2026.
+  route_when:
+  - Explicit source-table or planning-sheet diagnostics;
+- name: gtm
+  database: gtm_db
+  schema: marts
+  maturity: ai_ready
+  category: aggregate
+  description: GTM is the source of truth for first- and third-party **account intelligence** used for demand generation at
+    Red Hat. It stitches signals from firmographics, technographics, intent, behavior, propensity, account scoring, and revenue
+    potential into a unified account profile for ~200K RHSC accounts.
+  route_when:
+  - 'Queries about account intelligence combining any of: product adoption flags, buyer intent signals, firmographics, competitive
+    tech footprint, IT budgets, and/or revenue potential — *for Red Hat''s account universe*.'
+  do_not_route:
+  - '"bookings", "opportunity", "opportunities", "pipeline", "closed won", "closed lost", "sales performance"'
+  - '"discount", "reseller", "distributor", "partner on deal"'
+  - '"recognized revenue", "actual revenue", "service revenue", "subscription revenue", "revenue forecast", "revenue planning"'
+  - '"quota", "compensation", "sales target", "expense", "profit", "headcount", "budget planning"'
+  - Internal Red Hat IT forecast, ITPF/TBM, IT actuals, GL, PO/contract impact, IT cost centers** → **ExpenseMaster** — do
+    not use **GTM**; it carries **third-party modeled IT budgets on RHSC accounts** for prospecting, not Snowflake ITPF or
+    ledger actuals
+  - '"org chart", "cost center", "EBS" — when the ask is **internal** finance, ledger, or RH org (not GTM account intelligence)
+    → **ExpenseMaster**, **fammatrix**, **RoverPeople**, or **EBS** as appropriate'
+  primary_use_cases:
+  - 'Account profile: "account profile", "account intelligence", "account data", "firmographic", "company profile"'
+  - 'Segmentation: "segment", "Fortune 500", "Fortune 1000", "Global 500", "S&P Global", "employee count", "company size",
+    "annual revenue"'
+  - 'Territory/Geo: "territory", "pod", "region", "geo", "GEO filter"'
+  - 'IT Budget (RHSC account context): "cloud spend", "cloud budget", "cloud maturity", "virtualization spend", "middleware
+    budget", "app dev budget", "OS spend" — for IT budget/spend on RHSC accounts. For comparing IT budgets between companies,
+    use **HG Insights** instead.'
+  - 'Technographics: "technology footprint", "product footprint", "installed base", "install base", "tech stack", "technographic",
+    "products installed", "vendor analysis"'
+  disambiguation: 'GTM is for GO-TO-MARKET strategy: territory assignments, account coverage, sales segments, coverage model,
+    TAM/SAM. NOT for actual sales/bookings data.'
+- name: grokket
+  database: grokket_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Detailed guidance:** `aggregate/grokket/README.md`'
+  route_when:
+  - Questions about **RHEL telemetry**, **RHEL usage**, **systems by RHEL version**, **bare metal vs VM vs public cloud**
+    mix, **workloads installed or running**, **RPM / process fingerprints**, **Grokket**, or **Insights + RHSM** fleet behavior—when
+    the result does **not** group, list, or compare customer accounts. Use **Telesense** whenever account is an output dimension,
+    including rollups across all accounts.
+  - Fleet only** (version, footprint, cloud, geo, segment, demographics) → **`FLEET_FOCUS_MART`**
+  - Workload / application / fingerprint / installed vs running** → **`PROD_GROKKET_MASKED`** (with time filters). Do **not**
+    query fingerprint-definition catalog tables.
+  do_not_route:
+  - Ansible or OpenShift as the **primary** subject (use the appropriate product)
+  - Named customer or any account-level RHEL output**, including systems/version grouped across all accounts → **Telesense**
+  - '"Bookings", "pipeline", "ARR" as primary intent → **Bookingsmaster** / **GTM** as appropriate'
+  primary_use_cases:
+  - NOT Ansible or OpenShift telemetry** as the primary scope → route to the correct product for those platforms.
+  - NOT customer-level usage** lists or ad-hoc **named customer** usage exports.
+  - 'On **`PROD_GROKKET_MASKED`**, self-service SQL must **not** return restricted identifiers: **`ACCOUNT_NAME`**, **`EBS_ACCOUNT_NUMBER`**,
+    **`GLOBAL_SALES_GROUP_NAME`**, **`ACCOUNT_ID`**—use **`GEO`**, **`SEGMENT`**, **`INDUSTRY`**, version/footprint dimensions
+    instead.'
+  - Always state **telemetry coverage is partial** (telemetry-enabled customers/systems only—see **`aggregate/grokket/README.md`**).
+  key_tables:
+  - FLEET_FOCUS_MART
+- name: telesense
+  database: telesense_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Schemas:** `RHEL_MARTS`, `LIGHTSPEED_MARTS`, `SWATCH_MARTS` **Detailed guidance:** `aggregate/telesense/README.md`'
+  route_when:
+  - Questions about **RHEL usage by customer/account**, **RHEL telemetry by account**, **socket counts by account**, **Lightspeed
+    rules hit for an account**, **customer risk scores**, **accounts connected to Lightspeed/Insights**, **account-level RHEL
+    version breakdown**, systems per RHEL version **across all accounts**, or **Telesense** explicitly.
+  - Account-specific RHEL usage** (systems, sockets, rules by customer) → **Telesense**
+  - Fleet-wide analysis** (version trends, demographics, workloads) without account filter → **Grokket**
+  do_not_route:
+  - '"Workloads", "fingerprints", "RPMs installed" (use **Grokket** for workload-level questions)'
+  - '"which packages go together" / package recommendations** → **rpmrex** (not Telesense / Grokket)'
+  - '"OpenShift", "OCP", "Kubernetes", "Ansible" (separate data products)'
+  - System-level telemetry without account context (use **Grokket**)
+  - '"Bookings", "ARR", "revenue" (use **Bookingsmaster** or **RevenueMaster**)'
+  primary_use_cases:
+  - NOT system-level telemetry** without account context → use **Grokket** instead.
+  - NOT OpenShift, Ansible, workloads, containers** → those belong to other data products.
+  - NOT internal cost/margin data** or **PII**.
+  - Always specify the **account number** when querying for a specific customer.
+  key_tables:
+  - RHEL_MARTS
+  - LIGHTSPEED_MARTS
+  - SWATCH_MARTS
+- name: renewals
+  database: renewals_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: Renewals is the aggregate data product for subscription renewal pipeline analytics, renewal forecasting, and
+    close-performance tracking. It consolidates renewal opportunities into a business-ready model for quarter-by-quarter planning
+    and renewal execution.
+  route_when:
+  - Queries about renewal pipeline, renewal ACV, renewal close rates, renewal opportunity stages, renewal forecasting, or
+    New-vs-Renewal (NVR) style renewal analysis.
+  do_not_route:
+  - Recognized/actual/GL revenue** → Use **RevenueMaster**
+  - General bookings-only analysis** without renewal scope → Use **Bookingsmaster**
+  - Discount analysis** (MSRP vs TCV/ACV discount %) → Use **Discounting**
+  - Restated renewals** → Use **Sales Planning** (`salesplanning_db.MARTS`)
+  primary_use_cases:
+  - '"renewals", "renewal pipeline", "renewal ACV", "renewal close rate"'
+  - '"planning renewal", "renewal forecast", "renewal stage"'
+  - '"new vs renewal", "NVR", "upcoming renewals", "renewal risk"'
+  - '"Net New bookings", "Renewal Bookings", "Transactional vs Subscriptions Bookings", "Net Renewal Rate", "NRR", "Renewal
+    Performance Rate"'
+  disambiguation: 'Renewals is for SUBSCRIPTION RENEWAL analytics: renewal pipeline, renewal ACV, renewal close rate, NRR
+    (net renewal rate), renewal risk, new vs renewal. NOT for general bookings (use bookingsmaster) or revenue (use revenuemaster).'
+- name: financialkpis
+  database: financialkpis_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Routing precedence:** OT/CLT deck ACV or ACV+ bookings summaries by Geo, Product or Segment use **Financial
+    KPIs**, even without the word CLT. This includes "Geo and Component ACV plus pipeline bookings" and "CLT ACV breakout".
+    These summary intents take precedence over generic Bookingsmaster/Forecasting pipeline routes; do not ask users to choose
+    a product merely because upstream products also '
+  disambiguation: Financial KPIs is for OT/CLT deck ACV/ACV+ summaries by Geo/Product/Segment, CCSP and Total pipeline views,
+    CLT Finance View. Routes here when query mentions OT, CLT, or Geo/Component pipeline in a finance reporting context.
+- name: forecasting
+  database: forecasting_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: Forecasting provides comprehensive **sales pipeline analytics and forecasting**. The `marts` schema covers
+    pipeline management, forecast categories, MJ tags, waterfall movements, historical bookings, pipeline snapshots, and bookings/quota
+    targets.
+  route_when:
+  - Queries about pipeline coverage ratios, pipeline velocity, waterfall movements, forecast vs actual, MJ overrides, statistical
+    forecasts.
+  do_not_route:
+  - OT/CLT deck ACV/ACV+ bookings summaries by Geo/Product/Segment** (including Geo and Component pipeline wording) → **Financial
+    KPIs**; default pipeline includes CCSP and Total. Explicit planning or historical actuals in the CLT Finance View also
+    stays there.
+  - Average Selling Price (ASP)** / price per unit/core/socket/node / entitled units / channel adjustment / transfer price
+    / ELS/EUS ASP / bare metal ASP → Use **Offering Performance Analytics (OPA)**
+  - Product cohort retention** / net-new customers by cohort quarter / customer retention ARR → Use **Offering Performance
+    Analytics (OPA)**
+  - General bookings / ARR / ACV without forecast context** → Use **Bookingsmaster**
+  - Recognized/actual/GL revenue** → Use **RevenueMaster**
+  - Discount analysis (MSRP vs TCV/ACV)** → Use **Discounting**
+  - Sales targets / quota assignments** → Use **Sales Planning**
+  - Renewal pipeline** → Use **Renewals**
+  primary_use_cases:
+  - '"pipeline coverage", "pipeline velocity", "waterfall movement", "forecast vs actual"'
+  - '"MJ", "manager judgment", "upside tag", "forecast tag" (broader tag analytics; defined monthly CLT ACV+ opportunity movements
+    use Financial KPIs)'
+  - '"statistical forecast", "fivecast", "ML forecast"'
+  disambiguation: 'Forecasting is for pipeline FORECAST analytics: forecast vs actual, pipeline coverage, pipeline velocity,
+    waterfall movement, MJ/manager judgment tags, statistical forecast, fivecast. NOT for general bookings/ARR (use bookingsmaster)
+    or recognized revenue (use revenuemaster).'
+- name: partnerprograms
+  database: partnerprograms_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: Partner Programs is the **aggregate** data product for partner rewards and incentive processing in RHSC. It
+    consolidates bookings, rebates, trainings, certifications, E2Open claims, and sell-with activities from multiple source
+    systems into **transaction journal (TJ) staging** and error diagnostics used to operationalize partner rewards via Workato.
+  route_when:
+  - Queries about **transaction journal**, **TJ failure**, **error reason**, **failed to process**, **open_mdm_id**, **partner
+    training**, **PTP**, **claims** (TJ context), **loyalty staging**, **rebate staging**, **credentials**, **certifications
+    expiring**, **pay_to**, **rebate paid to partner**, **EVF**, or **sell-with** in the partner programs context.
+  do_not_route:
+  - Loyalty points balances, points earned, tier, tier progression, next tier** → Use **SISALS** (RHSC loyalty module)
+  - Deal registration pipeline analytics** (rejected deals, CFQ+3, registration success rates) → Use **Forecasting**
+  - General bookings / ACV+ without partner-program or TJ context** → Use **Bookingsmaster**
+  - Recognized revenue / GL revenue** → Use **RevenueMaster**
+  - Sales quotas and compensation** → Use **SI Execution** / **Sales Planning**
+  - Partner attribution and EVF sell-with approval on incentive-eligible deals** (the Varicent ICM feed) → Use **Incentive
+    Management** (`incentivemanagement_db`)
+  primary_use_cases:
+  - Loyalty points balances, points earned, tier, tier progression, next tier** → Use **SISALS** (RHSC loyalty module)
+  - Deal registration pipeline analytics** (rejected deals, CFQ+3, registration success rates) → Use **Forecasting**
+  - General bookings / ACV+ without partner-program or TJ context** → Use **Bookingsmaster**
+  - Recognized revenue / GL revenue** → Use **RevenueMaster**
+  - Sales quotas and compensation** → Use **SI Execution** / **Sales Planning**
+- name: bookingsmaster
+  database: bookingsmaster_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: 'The comprehensive **bookings analytics** data product (deal pipeline management and sales forecasting) providing:
+    1. ARR (annual recurring revenue) - a bookings metric, NOT actual recognized revenue 2. ACV (annual Contract value) 3.
+    TCV/TB (Total contract value/ Total booking) 4. ACV plus (annual Contract value includes consumption) 5. ACV plus drawdown
+    (annual Contract value just HCS hybrid commi'
+  route_when:
+  - Queries about general **bookings**, ARR, ACV, **sales performance**, territory analysis, bookings by product, bookings
+    by customer, deal pipeline, and sales forecasting. Revenue Variance In-Quarter Yield and Subscription ACV close-pattern
+    questions are exceptions and route to **RevenueMaster**.
+  do_not_route:
+  - OT/CLT deck ACV/ACV+ bookings summaries by Geo/Product/Segment** (including Geo and Component pipeline wording) → **Financial
+    KPIs**; default pipeline includes CCSP and Total. Explicit planning or historical actuals in the CLT Finance View also
+    stays there.
+  - ⚠️ **ANY revenue questions** (actual revenue, recognized revenue, GL revenue, revenue reporting, revenue forecasting,
+    revenue planning, revenue by geography, service revenue, subscription revenue, revenue components, revenue under contract)
+    → Use **RevenueMaster** instead
+  - Revenue variance, Actual-versus-Forecast revenue, revenue variance commentary, Firm revenue evidence, or In-Quarter Yield
+    → Use **RevenueMaster**
+  - Subscription ACV booking-close pattern, weekly closing pace, or projected remaining close specifically for Revenue Variance
+    analysis → Use **RevenueMaster**
+  - Bookingsmaster is for **bookings/ARR/ACV** (what was sold/contracted), NOT revenue (what was recognized)
+  - The **incentive-eligible subset** of bookings sent to Varicent, or ICM feed snapshots → Use **Incentive Management** (`incentivemanagement_db`).
+    Amounts there are eligibility-filtered and will not reconcile to Bookingsmaster
+  primary_use_cases:
+  - OT/CLT deck ACV/ACV+ bookings summaries by Geo/Product/Segment** (including Geo and Component pipeline wording) → **Financial
+    KPIs**; default pipeline includes CCSP and Total. Explicit planning or historical actuals in the CLT Finance View also
+    stays there.
+  - ⚠️ **ANY revenue questions** (actual revenue, recognized revenue, GL revenue, revenue reporting, revenue forecasting,
+    revenue planning, revenue by geography, service revenue, subscription revenue, revenue components, revenue under contract)
+    → Use **RevenueMaster** instead
+  - Revenue variance, Actual-versus-Forecast revenue, revenue variance commentary, Firm revenue evidence, or In-Quarter Yield
+    → Use **RevenueMaster**
+  - Subscription ACV booking-close pattern, weekly closing pace, or projected remaining close specifically for Revenue Variance
+    analysis → Use **RevenueMaster**
+  - Bookingsmaster is for **bookings/ARR/ACV** (what was sold/contracted), NOT revenue (what was recognized)
+  disambiguation: 'Bookingsmaster is for BOOKINGS (what was sold/contracted): ARR, ACV, TCV, deal pipeline, pipeline value,
+    NRT pipeline, opportunity pipeline, sales performance, booking trends, SKU bookings. It is NOT for recognized revenue
+    (use revenuemaster) or forecast categories (use forecasting). If the query mentions pipeline, deals, ARR, ACV, TCV, bookings,
+    orders, or sales performance, choose bookingsmaster.'
+- name: revenuemaster
+  database: revenuemaster_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: Comprehensive **revenue analytics** data product consolidating RevStream transactional data, General Ledger
+    manual adjustments, and Salesforce CRM bookings to provide holistic revenue reporting, forecasting, and planning capabilities.
+  route_when:
+  - Queries about actual revenue, recognized revenue, GL revenue, revenue forecasting and planning, revenue components, revenue
+    by geography, service revenue, subscription revenue, revenue under contract, GL-based financial data, or Revenue Variance
+    analysis.
+  do_not_route:
+  - General bookings, ARR, ACV, TCV, sales performance, pipeline, opportunities, or deal analysis → Use **Bookingsmaster**
+  - 'Exception: In-Quarter Yield and Subscription ACV close-pattern questions used for Revenue Variance analysis belong to
+    **RevenueMaster**'
+  primary_use_cases:
+  - Revenue variance or Actual-versus-Forecast revenue
+  - Revenue variance commentary or material commentary components
+  - Firm Revenue variance, credit adjustments, or Firm customer YoY evidence
+  - In-Quarter Yield, including Yield with or without CCSP
+  - Subscription ACV booking-close pattern, weekly closing pace, historical pacing, or projected remaining close
+  disambiguation: 'RevenueMaster is for RECOGNIZED REVENUE (GAAP): actual revenue, GL revenue, revenue variance, revenue by
+    geography, fiscal revenue, revenue reporting, in-quarter yield, subscription close pattern for revenue variance. It is
+    NOT for bookings/ARR/ACV (use bookingsmaster) or pipeline (use bookingsmaster/forecasting).'
+- name: discounting
+  database: discounting_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: Comprehensive discount analytics data product providing line-level and opportunity-level discount calculations,
+    MSRP (Manufacturer's Suggested Retail Price) comparisons, and discount validation for Red Hat's sales transactions.
+  route_when:
+  - Queries about discount percentages, MSRP pricing, discount dollars, deals with high discounts, discount trends, discount
+    validation, or any analysis comparing MSRP to actual selling price (TCV/ACV).
+  do_not_route:
+  - Simple TCV/ACV questions without discount context** → Use **Bookingsmaster** (discounting data is pre-filtered for discount
+    analysis)
+  - General bookings questions** → Use **Bookingsmaster** (e.g., "What is total TCV for EMEA?")
+  - RHSC quote approval discounts, NAT-T guideline, quote approval levels, CSP pricing on quotes, or BU Guidance / Sales Assistance
+    cases** → Use **rhscdataanalysis**
+  - Revenue data** → Use **RevenueMaster**
+  - Sales targets or quotas** → Use **Sales Planning**
+  - Sales compensation** → Use **SI Execution**
+  primary_use_cases:
+  - Discount keywords:** "discount", "discount %", "discount percentage", "discount percent", "discounted", "discounting"
+  - MSRP keywords:** "MSRP", "manufacturer suggested retail price", "list price vs actual", "retail price"
+  - Discount analysis:** "discount trend", "discount rate", "discount analysis", "discount dollars", "discount $"
+  - High discount queries:** "high discount", "deals over X% discount", "excessive discount", "discount threshold"
+  - Price comparison:** "MSRP vs TCV", "MSRP vs ACV", "actual price vs list price"
+- name: rhscdataanalysis
+  database: rhscdataanalysis_db
+  schema: MARTS
+  maturity: unknown
+  category: aggregate
+  description: RHSCDATAANALYSIS is the aggregate data product for **quote-level discount and approval analytics in RHSC**
+    and for **BU Guidance cases** (Salesforce Sales Assistance, record type BU Guidance). It is the source for NAT-T guideline
+    compliance on quotes, not for booked-opportunity discount percent.
+  route_when:
+  - Queries about RHSC quotes, NAT-T, non-automatic threshold, quote approval levels, BU Approval on a quote, CSP or pre-approved
+    pricing on a quote, quote submitted quarter, or BU Guidance / Sales Assistance cases (reason code, primary product, primary
+    topic, case status).
+  do_not_route:
+  - Booked or pipeline **discount %**, MSRP versus TCV, high-discount deals on opportunities → Use **Discounting**
+  - Bookings, ARR, ACV targets, or sales pipeline with no quote or NAT-T context → Use **Bookingsmaster** or **Forecasting**
+  - Renewal pipeline → Use **Renewals**
+  - RHSC account intent, product-adoption flags, competitive footprint → Use **GTM**
+  - EBS number to RHSC account id → Use **Rosettastone**
+  - Support cases → Use **ExperienceOps**
+  - SKU catalog or offering lifecycle → Use **Offering Lifecycle Management**
+  primary_use_cases:
+  - '"NAT-T", "NAT T", "above NAT", "guideline discount" on a **quote**'
+  - '"RHSC quote", "quote approval", "BU Approval" on a quote, "approval level L2/L3/L4"'
+  - '"CSP pricing", "pre-approved pricing" on quotes'
+  - '"BU Guidance", "Sales Assistance" cases, "BU guidance reason code"'
+- name: expensemaster
+  database: expensemaster_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: 'ExpenseMaster provides comprehensive **expense and IT financial analytics** across Red Hat''s operations by
+    unifying:'
+  route_when:
+  - Queries about corporate expenses, budgets, expense forecasts, expense planning, vendor spend, GL transactions, **historical
+    IT spend**, **IT spend vs budget**, **IT forecast / future IT cost**, PO or contract planning impact in IT, spend-by-driver
+    / app / service cost in IT, past-period hyperscaler/cloud spend for internal Red Hat charge analytics, or source-to-pay
+    details (description, account coding, status, requisition/PO/invoice/receipt amounts, approval history, owner/requestor,
+    and invoice payment information).
+  do_not_route:
+  - Revenue data → Use **RevenueMaster**
+  - Bookings/ARR/ACV → Use **Bookingsmaster**
+  - Employee/org structure → Use **RoverPeople**
+  - Sales/opportunities → Use **Bookingsmaster**
+  - Employee expense reports/reimbursements → Not available in ExpenseMaster
+  - Third-party company IT budgets** on RHSC accounts (modeled market view) → Use **GTM** or **HG Insights** as appropriate
+    — not ExpenseMaster
+  primary_use_cases:
+  - 'Expense Planning & Budgeting** → OneStream: Budget vs actual, expense forecasting, P&L, entity / cost center performance,
+    variance vs plan'
+  - 'GL Transaction Analysis** → GL Sub Ledger: journal lines, sub-ledger detail, account balances'
+  - 'IT forecast & TBM** → ITPF / TBM marts inside ExpenseMaster: projected IT vendor spend, labor / asset / contract forecasts,
+    PO impact, app and service cost pools (IT-only)'
+  - 'Hyperscaler cloud spend (actuals)** → Cloudability mart: past-period cloud spend by vendor, cost center, department'
+  - 'Source to Pay (purchasing)** → Oracle EBS Source to Pay marts: details and amounts for Purchase Requisitions, Purchase
+    Orders, Invoices, and Purchase Receipts'
+  disambiguation: 'ExpenseMaster is for EXPENSES/COSTS: corporate expenses, IT spend, cloud costs, vendor spend, budgets,
+    P&L, GL expense journals, OneStream planning. NOT for revenue (use revenuemaster) or bookings (use bookingsmaster).'
+- name: rosettastone
+  database: rosettastone_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: '- Do **NOT** use tables from `REPORTING_MARTS` schema. Only use `MARTS` schema tables. - Do **NOT** use columns
+    `match_type` or `match_rank` — use `match_source` instead.'
+  route_when:
+  - Queries about mapping EBS numbers to RHSC IDs, mapping RHSC IDs to EBS numbers, mapping EBS to Sales Groups, mapping EBS
+    to Global Sales Groups, or any customer identifier translation between EBS and RHSC
+  do_not_route:
+  - MDM ↔ EBS patterns:** "MDM for EBS", "MDM assigned/linked/tied/corresponds/affiliated/related to EBS", "EBS for MDM",
+    "EBS assigned/linked/tied/corresponds/affiliated/related to MDM"
+  - MDM ↔ RHSC ID patterns:** "MDM for RHSC ID", "MDM assigned/linked/tied/corresponds/affiliated/related to RHSC ID", "RHSC
+    ID for MDM"
+  - MDM ↔ Sales Group patterns:** "MDM for Sales Group", "Sales Group for MDM", "MDM assigned/linked/tied/corresponds to Sales
+    Group"
+  - MDM ↔ Global Sales Group patterns:** "MDM for Global Sales Group", "Global Sales Group for MDM"
+  - Sales Group ↔ RHSC ID patterns (without EBS):** "Sales Group for RHSC ID", "RHSC ID for Sales Group", "Global Sales Group
+    for RHSC ID", "RHSC ID for Global Sales Group"
+  - MDM number/ID variants:** "MDM number for EBS", "MDM ID for EBS", "EBS number for MDM"
+  - Bookings Data queries:** "Bookings Data for Customer ID", "Bookings Data assigned/linked/tied to Customer ID"
+  - Transaction data:** Bookings, opportunities, revenue, customer transaction history → Use **Bookingsmaster** or **RevenueMaster**
+  primary_use_cases:
+  - EBS ↔ RHSC ID patterns:** "EBS for RHSC ID", "EBS assigned/linked/tied/corresponds/affiliated/related to RHSC ID", "RHSC
+    ID for EBS", "RHSC ID assigned/linked/tied/corresponds/affiliated/related to EBS"
+  - EBS ↔ Sales Group patterns:** "EBS for Sales Group", "EBS assigned/linked/tied/corresponds/affiliated/related to Sales
+    Group", "Sales Group for EBS", "Sales Group assigned/linked/tied/corresponds/affiliated/related to EBS"
+  - EBS ↔ Global Sales Group patterns:** "EBS for Global Sales Group", "EBS assigned/linked/tied/corresponds/affiliated/related
+    to Global Sales Group", "Global Sales Group for EBS", "Global Sales Group assigned/linked/tied/corresponds/affiliated/related
+    to EBS"
+  - EBS number/ID variants:** Same patterns with "EBS number" or "EBS ID" instead of "EBS"
+  - RHSC number variants:** Same patterns with "RHSC number" instead of "RHSC ID"
+  key_tables:
+  - REPORTING_MARTS
+- name: saleshierarchy
+  database: saleshierarchy_db
+  schema: MARTS
+  maturity: ai_ready
+  category: aggregate
+  description: Sales Hierarchy data product providing the authoritative client/customer hierarchy and segmentation that reflects
+    Red Hat's Go-to-Market motions. Global Sales Group (GSG) is the highest-level account grouping for a given customer globally,
+    used for discounting, HCS deals, and analytics. Sales Group (SG) is the first-level grouping for a given customer at the
+    country level, used for planning (segme
+  route_when:
+  - Queries about customer segmentation, sales hierarchy, Global Sales Group (GSG), Sales Group (SG), segment assignments,
+    territory assignments for accounts, account flags (global, telco, IBM, partner, HCS, Dragonfly, SIA, TNT30), Sales Group
+    ↔ Global Sales Group relationships, MDM party hierarchy within the sales structure, or planning-year hierarchy changes.
+  - '"Which segment is [account] in?"** / **"Customer segmentation for..."** → **SalesHierarchy**'
+  - '"What is the GSG for [account]?"** / **"Global Sales Group for..."** → **SalesHierarchy**'
+  - '"What is the Sales Group for MDM ID X?"** / **"MDM ID for Sales Group X?"** → **SalesHierarchy**'
+  - '"Which Sales Groups belong to Global Sales Group X?"** / **"GSG for Sales Group X?"** → **SalesHierarchy**'
+  - '"Is [account] a global account / telco / IBM / partner?"** → **SalesHierarchy**'
+  - '"Show accounts in Enterprise segment for EMEA"** → **SalesHierarchy**'
+  - '"Territory assignments for [account]"** → **SalesHierarchy**'
+  primary_use_cases:
+  - Sales hierarchy / segmentation / GSG / SG lookups** → Route to **SalesHierarchy**
+  - MDM-to-Sales Group / Global Sales Group mappings** → Route to **SalesHierarchy** (NOT Rosettastone)
+  - Sales Group ↔ Global Sales Group relationships (without EBS)** → Route to **SalesHierarchy** (NOT Rosettastone)
+  - EBS-to-RHSC / EBS-to-Sales Group mappings** → Route to **Rosettastone** (NOT SalesHierarchy)
+  - Actual bookings / ARR / ACV** → Route to **Bookingsmaster** (NOT SalesHierarchy)
+  key_tables:
+  - partylens_marts
+  disambiguation: 'Sales Hierarchy is for SALES ORG STRUCTURE: reporting lines, sales managers, org chart within sales organization,
+    span of control. NOT for employee data (use roverpeople) or sales metrics (use bookingsmaster).'
+- name: intelligentaccess
+  database: intelligentaccess_db
+  schema: MARTS
+  maturity: ai_experimental
+  category: aggregate
+  description: The Intelligent Access data product provides subscription line–level detail and aggregated entitlement views
+    by unifying data from Subscriptions, Orders, MDM Product, CIAM, EBS, Bookings Master, and Enterprise Shared. It supports
+    customer identity, account history, subscription entitlements, product attributes, orders, opportunities (where available),
+    and sales account/sales group segmentation for
+  primary_use_cases:
+  - Data Included:**
+  - Subscription line details (parent and child SKU)
+  - Subscription entitlements and associated accounting value
+  - Customer and account identity (EBS account, Sales Group, Global Sales Group)
+  - Product attributes (SKU/MDM); orders and opportunities (where available)
+- name: accountsreceivable
+  database: accountsreceivable_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: AccountsReceivable is an aggregate data product providing business-ready accounts receivable analytics for
+    Red Hat's global operations. It covers customer invoicing, collections management, credit risk profiling, billing control
+    exercises, and SAP/royalty contract tracking across all operating units.
+  route_when:
+  - Queries about accounts receivable, past-due invoices, overdue AR, collections, payment timeliness, customer credit limits,
+    credit hold status, credit rating changes, billing control exercise, EMEA invoicing volume, IBM intercompany billing,
+    SAP new contracts, royalty invoicing, MDF/rebate calculations, invoice aging buckets, AR outstanding amounts, adjustment
+    approval authority, order item revenue.
+  do_not_route:
+  - Accounts Payable / purchase orders / vendor invoices → Use **ExpenseMaster** (Source to Pay section) instead
+  - Revenue recognition data → Use **RevenueMaster** instead
+  - Bookings, ACV, ARR, pipeline → Use **Bookingsmaster** instead
+  - Customer master data or MDM party details → Use **MDMParty** instead
+  - Raw EBS AR transaction headers/lines/payment schedules → Use **EBSAccountsReceivable** (source-aligned) instead
+  - Corporate expenses or GL transactions → Use **ExpenseMaster** instead
+  - Sales compensation or quota → Use **SI Execution** or **Sales Planning** instead
+  primary_use_cases:
+  - Accounts Payable / purchase orders / vendor invoices → Use **ExpenseMaster** (Source to Pay section) instead
+  - Revenue recognition data → Use **RevenueMaster** instead
+  - Bookings, ACV, ARR, pipeline → Use **Bookingsmaster** instead
+  - Customer master data or MDM party details → Use **MDMParty** instead
+  - Raw EBS AR transaction headers/lines/payment schedules → Use **EBSAccountsReceivable** (source-aligned) instead
+- name: cloudmarketplace
+  database: cloudmarketplace_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: 'Cloud Marketplace is the aggregate data product for Red Hat''s cloud marketplace disbursement analytics across
+    AWS, Azure, and GCP. It consolidates disbursement data from Cloudoscope with MDM product enrichment (SKU descriptions,
+    MSRP pricing) and customer data (CIAM, MDM Party, Rosetta Stone) to provide unified financial and operational reporting
+    on marketplace offer revenue, fees, discounts, and '
+  route_when:
+  - Queries about cloud marketplace disbursements, marketplace offer revenue, marketplace private offers, marketplace public
+    offers, cloud marketplace fees, marketplace ROSA revenue, HPE orders, HPE license activations, marketplace gross revenue
+    by cloud, marketplace cash disbursed, marketplace offer discounts, marketplace ACV by hyperscaler.
+  do_not_route:
+  - Red Hat's internal cloud spend (what Red Hat pays AWS/Azure/GCP)** → Use **ExpenseMaster** (this is what Red Hat *receives*
+    from marketplaces)
+  - General bookings, ARR, ACV, sales pipeline** → Use **Bookingsmaster**
+  - Recognized revenue / GL revenue** → Use **RevenueMaster**
+  - Raw hyperscaler source data before consolidation** → Use **Cloudoscope** (`cloudoscope_db`)
+  - Discount analysis on bookings (MSRP vs TCV/ACV)** → Use **Discounting**
+  - SKU master data, product hierarchy** → Use **MDMPRODUCT**
+  - Customer master data, segmentation** → Use **MDMParty** or **SalesHierarchy**
+  primary_use_cases:
+  - '"cloud marketplace", "marketplace disbursement", "marketplace revenue", "marketplace offer"'
+  - '"private offer revenue" (marketplace context), "public offer revenue" (marketplace context)'
+  - '"marketplace fee", "listing fee", "marketplace discount"'
+  - '"ROSA revenue" (marketplace disbursement context), "ROSA offer"'
+  - '"HPE order", "HPE license", "HPE activation"'
+- name: digitalrenewals
+  database: digitalrenewals_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Schemas:** `INTERCOM_MARTS`'
+  route_when:
+  - Queries about digital renewal engagement, Intercom contacts in the renewal cohort, Intercom companies, renewal lifecycle
+    events, contract start/end milestones, welcome window engagement, renewal prep events, Adobe daily activity during renewal
+    lifecycle, customer offering flags (has_openshift, has_rhel, has_ansible), contact roles for renewal outreach, Marketo
+    enrichment for renewal contacts, kbase/docs/login activity for renewal cohort, digital renewal cohort membership.
+  do_not_route:
+  - Renewal pipeline ACV/TCV, renewal close rates, or renewal forecasting** → Use **Renewals** (`renewals_db`) instead
+  - General bookings, ARR, ACV, or sales pipeline** → Use **Bookingsmaster** instead
+  - Full Adobe Analytics hit-level web data** → Use **Adobe** (`adobe_db`) instead
+  - Email campaign delivery, opens, clicks (Marketo campaigns)** → Use **Marketo** instead
+  - Customer master data or account hierarchy** → Use **MDMParty** instead
+  - Subscription entitlements or system-level telemetry** → Use **Telesense** or **Grokket** instead
+  - Revenue recognition or GL reporting** → Use **RevenueMaster** instead
+  primary_use_cases:
+  - '"digital renewals", "digitalrenewals", "intercom contacts", "intercom companies", "intercom events"'
+  - '"renewal cohort contacts", "renewal engagement", "welcome window", "welcome entry", "welcome exit"'
+  - '"renewal prep events", "contract milestone events", "renewal lifecycle"'
+  - '"Adobe engagement renewal", "kbase views renewal cohort", "docs views renewal cohort"'
+  - '"offering flags by company", "has_openshift customers", "has_rhel customers"'
+  key_tables:
+  - INTERCOM_MARTS
+- name: hcs
+  database: hcs_db
+  schema: MARTS
+  maturity: ai_experimental
+  category: aggregate
+  description: HCS is the aggregate data product for Hybrid Committed Spend (HCS) and Essential Committed Spend (ECS) deal
+    analytics. It provides a specialized view of committed spend deals — both the commitment side (what was promised) and
+    the drawdown side (what was consumed against those commitments) — with reconciliation between the two.
+  route_when:
+  - Queries about comparing Commitments along with Drawdown Product comparison to the original contract, commitment reconciliation,
+    drawdown matching, cloud committed spend, CCSP/ESP committed deals.
+  do_not_route:
+  - General bookings/ARR/ACV analytics** (all deal types, not just HCS/ECS) → Use **Bookingsmaster**
+  - Recognized/actual/GL revenue** → Use **RevenueMaster**
+  - HCS arrangement review line-level revenue data** → Use **RevenueMaster** (operationalreporting_marts)
+  - Renewal pipeline** → Use **Renewals**
+  - Pipeline forecasting, waterfall, MJ tags** → Use **Forecasting**
+  - Discount analysis** → Use **Discounting**
+  primary_use_cases:
+  - '"CCSP commitment", "ESP commitment", "on-demand commitment"'
+- name: intelligenceengine
+  database: intelligenceengine_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: IntelligenceEngine is an aggregate data product that builds 360-degree customer persona profiles by integrating
+    Salesforce support data, CIAM portal identity, Adobe web journey analytics, Ask Red Hat AI conversation history, and entitlement
+    information. It provides per-user persona profiles, recent support cases and escalations, case summary statistics, account
+    team contacts, and web browsing foot
+  route_when:
+  - Queries about customer persona, user profile by SSO, recent support cases for a user, escalation history for a user, case
+    summary stats, account team (TAM, CSM) for a user, web browsing footprint on access.redhat.com, entitlement by case, customer
+    360, persona intelligence, user journey, or SSO identity mapping.
+  do_not_route:
+  - Bookings, ARR, ACV, pipeline, or opportunities → Use **Bookingsmaster** instead
+  - Customer master data (MDM party profile, addresses) → Use **MDMPARTY** instead
+  - Revenue recognition → Use **RevenueMaster** instead
+  - Subscription entitlements at the SKU line level → Use **IntelligentAccess** instead
+  - Employee or workforce data → Use **RoverPeople** instead
+  - EBS ↔ RHSC customer identifier mapping → Use **Rosettastone** instead
+  - Sales hierarchy or segmentation → Use **SalesHierarchy** instead
+  - AI agent operational health or Langfuse traces → Use **AgentHealth** instead
+  primary_use_cases:
+  - Bookings, ARR, ACV, pipeline, or opportunities → Use **Bookingsmaster** instead
+  - Customer master data (MDM party profile, addresses) → Use **MDMPARTY** instead
+  - Revenue recognition → Use **RevenueMaster** instead
+  - Subscription entitlements at the SKU line level → Use **IntelligentAccess** instead
+  - Employee or workforce data → Use **RoverPeople** instead
+- name: marketingtouchedinput
+  database: marketingtouchedinput_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: MarketingTouchedInput is the aggregate data product for marketing campaign analytics, demand generation reporting,
+    and marketing attribution at Red Hat. It consolidates campaign responses, lead/contact records, tactic metadata, Marketo/Eloqua
+    engagement, paid media performance, and opportunity attribution from multiple source systems (SFSales Legacy, RHSC/Lightning,
+    Marketo, Eloqua, CMDT, Datorama
+  route_when:
+  - Queries about marketing campaigns, campaign responses, inquiries, marketing tactics, demand generation programs, Marketo
+    contacts, Marketo email activity, Eloqua inquiries, Eloqua email activity, marketing attribution to opportunities, paid
+    media spend (Datorama), MDF (Market Development Fund) claims, partner marketing activities, marketing prospects, campaign
+    member data, tactic types, Summit responses, marketing lead status, or "how many responses did campaign X get."
+  do_not_route:
+  - Web analytics hit data (page views, sessions, Adobe eVars)** → Use **Adobe** instead
+  - Raw Salesforce data without marketing analytics context** → Use **SFSales** instead
+  - Bookings, ARR, ACV, sales pipeline deal amounts** → Use **Bookingsmaster** instead
+  - Recognized revenue or GL revenue** → Use **RevenueMaster** instead
+  - Account intelligence scores, propensity, or intent signals** → Use **GTM** instead
+  - Third-party technographics or IT spend data** → Use **HG Insights** instead
+  - Product catalog or SKU hierarchy** → Use **MDMPRODUCT** instead
+  - Loyalty points, tier status** → Use **SISALS** instead
+  primary_use_cases:
+  - '"marketing campaign", "campaign response", "campaign member", "inquiry count"'
+  - '"tactic", "tactic type", "tactic category", "demand gen program", "GTM campaign"'
+  - '"Marketo contacts", "Marketo email", "Marketo activity", "marketable contacts"'
+  - '"Eloqua inquiry", "Eloqua email", "Eloqua form submission"'
+  - '"paid media", "Datorama", "media spend", "ad impressions", "ad clicks"'
+- name: pitchbuilder
+  database: pitchbuilder_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Schemas:** `marts`, `foundation_marts`'
+  route_when:
+  - Queries that mention **PitchBuilder**, `pitchbuilder_db`, **seller insights**, **seller renewal opportunity**, **partner
+    pipeline** (partner-scoped), **partner performance** (partner-scoped), partner renewal available vs actual, **renewal
+    risk flags** (no-quote, no-MEDDPICC, AREN), at-risk renewals, slipped renewals, closed-lost renewals, **bookings walk**
+    (upsell/downsell/cross-sell/net-new decomposition), **product trial installations**, **PLG signals**, support cases by
+    account (`pb_support_data`), **errata downloads** by account, web/portal engagement by account (`pb_adobe_rh_dash_portal`),
+    **vendor technology flags** per account (`pb_account_vendor_insights`, `pb_account_focus_vendor_insights`), renewal subscription
+    lines (`pb_renewal_subscription_line`), subscription-to-partner mapping, supportable contacts for renewal outreach, territory-scoped
+    seller context, partner account summary, partner-distributor relationships.
+  do_not_route:
+  - Company-wide bookings, ARR, ACV totals (not territory-scoped) → Use **Bookingsmaster** instead
+  - Revenue recognition, GL revenue → Use **RevenueMaster** instead
+  - Company-wide renewal pipeline or NVR (new vs renewal) metrics → Use **Renewals** instead
+  - Discount analysis, MSRP vs TCV → Use **Discounting** instead
+  - IT spend, corporate expenses, vendor spend (financial) → Use **ExpenseMaster** instead
+  - Market-wide technographic data across all companies → Use **HG Insights** instead
+  - MDM party master, customer master data → Use **MDMParty** instead
+  - Sales hierarchy, customer segmentation → Use **SalesHierarchy** instead
+  primary_use_cases:
+  - '"PitchBuilder", "pitchbuilder", "pitchbuilder_db", "pb_seller", "pb_partner", "pb_product_trial", "pb_support", "pb_errata",
+    "pb_adobe", "pb_renewal", "pb_account_vendor", "pb_account_focus_vendor"'
+  - '"seller insights", "seller renewal", "seller user context", "seller territory scope"'
+  - '"partner pipeline" (partner-scoped, not company-wide), "partner performance rate", "partner account summary", "partner
+    distributor edges"'
+  - '"bookings walk", "growth decomposition", "upsell downsell cross-sell net-new"'
+  - '"product trial installations", "PLG signals", "high prospect strength trials"'
+  key_tables:
+  - foundation_marts
+- name: productpages
+  database: productpages_db
+  schema: rhai_marts
+  maturity: unknown
+  category: aggregate
+  description: '**dbt Project:** `productpages-dbt`'
+  route_when:
+  - Queries about **product lifecycle**, **release phase**, **GA dates**, **EOL dates**, **product schedules**, **milestones**,
+    or **release planning**
+  - Queries about **product hierarchy** (parent products, minor releases, async updates)
+  - Queries about **release dependencies** between products or components
+  - Queries about **Jira issues linked to a product release** within Product Pages
+  - Queries about **Customer Effort Scores (CES) per product** from the Product Pages platform
+  - Queries about **team assignments or role distribution** per product (without PII)
+  - Queries about **OPL product entries** mapped to Product Pages entities
+  - Queries referencing **Product Pages**, `productpages_db`, **PDPG**, **product schedules**, or **product roadmap** data
+    in the Product Pages system
+  do_not_route:
+  - Official Red Hat product catalog** (product attributes, aliases, market lifecycle reference data) → Use **Official Product
+    List** (`officialproductlist_db`)
+  - SKU-level lifecycle, leverage/inactivation, ARR at SKU grain** → Use **OLM** (`offeringlifecyclemgmt_db`)
+  - Jira issue details outside Product Pages context** (sprint data, team velocity, full Jira universe) → Use **JIRA** (`jira_db`)
+  - Customer satisfaction / NPS / CES surveys (enterprise-wide)** → Use **CXAHub** (`cxahub_db`)
+  - Red Hat product bookings, ARR, ACV, sales data** → Use **Bookingsmaster**
+  - Product pricing, MSRP, SKU hierarchy** → Use **MDMPRODUCT**
+  primary_use_cases:
+  - Queries about **product lifecycle**, **release phase**, **GA dates**, **EOL dates**, **product schedules**, **milestones**,
+    or **release planning**
+  - Queries about **product hierarchy** (parent products, minor releases, async updates)
+  - Queries about **release dependencies** between products or components
+  - Queries about **Jira issues linked to a product release** within Product Pages
+  - Queries about **Customer Effort Scores (CES) per product** from the Product Pages platform
+  key_tables:
+  - rhai_marts
+- name: projectaccounting
+  database: projectaccounting_db
+  schema: MARTS
+  maturity: ai_experimental
+  category: aggregate
+  description: Red Hat Professional Services project accounting data from Oracle EBS. Covers project backlog, revenue recognition,
+    budget burn rates, consultant timecards, travel expenditures, and regional clawback reporting for services delivery engagements.
+  route_when:
+  - Queries about project backlog, project budget vs revenue, services burn rate, consultant hours, timecard data, project
+    expenditures, professional services delivery, project accounting, clawback report, project funding, project revenue recognition,
+    operating unit project financials, OPA project numbers.
+  do_not_route:
+  - Corporate GL expenses or vendor spend** → Use **ExpenseMaster**
+  - Sales bookings, ARR, ACV, pipeline** → Use **Bookingsmaster**
+  - GL-level recognized revenue** → Use **RevenueMaster**
+  - Employee headcount or org structure** → Use **RoverPeople**
+  - Salesforce opportunity details** → Use **SFSales**
+  - IT spend forecasting or TBM** → Use **ExpenseMaster** (ITPF marts)
+  primary_use_cases:
+  - '"project backlog", "project budget", "project burn", "burn rate"'
+  - '"timecard", "consultant hours", "labor hours on project"'
+  - '"project expenditure", "travel expenses on project"'
+  - '"clawback", "clawback report", "funding consumption"'
+  - '"project revenue", "recognized revenue by project" (Oracle PA context)'
+- name: workforcemapping
+  database: workforcemapping_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: Workforce Mapping maps IT employee work activity from ServiceNow (Legacy + Hub) and Jira Cloud to applications,
+    cost centers, and org hierarchy levels. It normalizes ticket and issue effort into comparable work units for labor allocation
+    and capacity reporting within the CIO organization.
+  route_when:
+  - Queries about IT work items, IT ticket volume, work units, IT associate effort allocation, application mapping of tickets,
+    ServiceNow + Jira combined work view, IT labor attribution, IT workforce activity, work item counts by cost center, IT
+    team workload, or CIO org work distribution.
+  do_not_route:
+  - Raw Jira issues across all orgs (sprints, velocity, all 150+ projects)** → Use **JIRA** (`jira_db`) instead
+  - Raw ServiceNow tickets, SLA metrics, or full ticket lifecycle** → Not available to the agent; do not route to Workforce
+    Mapping
+  - Employee profiles, org chart, headcount** → Use **RoverPeople** instead
+  - Cost center financial ownership / FAM assignments** → Use **fammatrix** instead
+  - IT cost forecasting, IT spend (ITPF/TBM)** → Use **ExpenseMaster** instead
+  - Salary, compensation, or payroll** → Not available
+  - Non-IT employee work** → Not in scope (IT associates only)
+  primary_use_cases:
+  - Associate + application/cost center/region/work contribution** → **Workforce Mapping**, including "How many associates
+    from cost center X are aligned to application Y?"
+  - Jira project + cost center/work units/IT attribution** → **Workforce Mapping**, including "Which Jira projects drive work
+    in cost center X?"
+  - ServiceNow as an application + associate/region alignment** → **Workforce Mapping**. Do not treat the application name
+    "ServiceNow" as a request for raw ServiceNow operations data.
+  - Jira-versus-ServiceNow share for a cost center** → **Workforce Mapping** using ticket counts and percentages, not `work_units`.
+  - Employee profile, reporting line, or company headcount without work attribution** → **RoverPeople**, not Workforce Mapping.
+- name: orderanalytics
+  database: orderanalytics_db
+  schema: GBD_MARTS
+  maturity: ai_experimental
+  category: aggregate
+  description: OrderAnalytics is a GBD reporting layer built on **Orders** (`orders_db`). Scope is limited to GBD / Autobook
+    / In Region processing classification and specialized GBD report marts for Web orders, LMS/training orders, and Bill Training
+    Ireland — not the full EBS ONT order warehouse.
+  route_when:
+  - Queries that explicitly involve GBD, Autobook, In Region processing, Web orders, LMS/training orders, Bill Training Ireland
+    / Bill Training IE, the GBD period order report, or orderanalytics / `gbd_marts` explicitly.
+  do_not_route:
+  - Generic EBS sales orders, order holds, integration logs, account/OU/channel/royalty lookups without GBD / Autobook / Web
+    / LMS / Bill Training IE context** → Use **Orders** instead (`orders_db` is the source warehouse; OrderAnalytics is a
+    narrow GBD reporting slice)
+  - Bookings, ARR, ACV, sales performance, pipeline** → Use **Bookingsmaster** instead
+  - Recognized revenue, GL revenue** → Use **RevenueMaster** instead
+  - Discount analysis (MSRP vs TCV/ACV)** → Use **Discounting** instead
+  - Renewal pipeline or renewal analytics** → Use **Renewals** instead
+  - Sales targets, quotas, compensation** → Use **Sales Planning** or **SI Execution** instead
+  - Product catalog or SKU master data** → Use **Official Product List** or **MDMPRODUCT** instead
+  - Customer master data (MDM party hierarchy)** → Use **MDMPARTY** instead
+  primary_use_cases:
+  - Generic EBS sales orders, order holds, integration logs, account/OU/channel/royalty lookups without GBD / Autobook / Web
+    / LMS / Bill Training IE context** → Use **Orders** instead (`orders_db` is the source warehouse; OrderAnalytics is a
+    narrow GBD reporting slice)
+  - Bookings, ARR, ACV, sales performance, pipeline** → Use **Bookingsmaster** instead
+  - Recognized revenue, GL revenue** → Use **RevenueMaster** instead
+  - Discount analysis (MSRP vs TCV/ACV)** → Use **Discounting** instead
+  - Renewal pipeline or renewal analytics** → Use **Renewals** instead
+  key_tables:
+  - GBD_MARTS
+  - gbd_marts
+- name: inorbit
+  database: inorbit_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: 'InOrbit is the Dataverse **platform observability** aggregate: health scores, pipeline (Astro DAG) status,
+    ValidX/Astro data-quality checks, freshness SLAs, lineage/blast radius, and alerting history across registered data products.
+    Use it for “is this data product healthy / fresh / failing?” questions — not for business metrics inside those products.'
+  route_when:
+  - Queries about InOrbit, data product health score, TRUSTED/CAUTION/AT_RISK status, freshness SLA, pipeline DAG status (Astro),
+    ValidX check failures for a product, alerting candidates, blast radius / downstream consumers of an unhealthy product,
+    health score trends or snapshots, data product registry (owner team, slack channel) in the observability sense, or **InOrbit
+    business-impact tiles** (Freshness SLA / Data Quality Checks / Pipeline Execution / Overall Health marked IMPACTED vs
+    SAFE for a named data product).
+  - '"Is bookingsmaster healthy?"** / **"health score for forecasting"** / **"which products are AT_RISK?"** → **inorbit**'
+  - '"Why did my DAG fail?"** / **"Astro pipeline status for product X"** (platform ops) → **inorbit**'
+  - '"Sales pipeline coverage"** / **"open opportunities"** → **Forecasting** / **Bookingsmaster**, not InOrbit'
+  - '"How is the Dataverse Agent performing?"** / **LLM cost** → **agenthealth**, not InOrbit'
+  - '"Which InOrbit business impact metrics are IMPACTED for product X?"** / **platform health impact tiles** → **inorbit**
+    (not the domain product named in the question)'
+  do_not_route:
+  - AI agent / LLM performance, Langfuse, agent costs or user feedback on agents** → Use **agenthealth**
+  - Sales / opportunity / deal pipeline, ARR, ACV, bookings** → Use **Bookingsmaster** or **Forecasting** (InOrbit “pipeline”
+    means Astro DAGs, not sales)
+  - Enterprise Data Standards (EDS) codes, SIC, industry hierarchy reference lookups** → Use **srcdatagovernance**
+  - Business facts inside a domain product** (bookings rows, expenses, subscriptions, etc.) → Use that domain product’s database
+  - Help / how-to documentation for Dataverse Console** → Use **dataversehelp** (unstructured)
+  primary_use_cases:
+  - AI agent / LLM performance, Langfuse, agent costs or user feedback on agents** → Use **agenthealth**
+  - Sales / opportunity / deal pipeline, ARR, ACV, bookings** → Use **Bookingsmaster** or **Forecasting** (InOrbit “pipeline”
+    means Astro DAGs, not sales)
+  - Enterprise Data Standards (EDS) codes, SIC, industry hierarchy reference lookups** → Use **srcdatagovernance**
+  - Business facts inside a domain product** (bookings rows, expenses, subscriptions, etc.) → Use that domain product’s database
+  - Help / how-to documentation for Dataverse Console** → Use **dataversehelp** (unstructured)
+- name: learningaggregate
+  database: learningaggregate_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: 'LearningAggregate is the **aggregate** data product for Red Hat Learning analytics: Partner Training Portal
+    (PTP) user profiles linked to RHSC partner accounts, internal Learning cross-charge finance across cost centers, and TechWolf
+    skills-platform export feeds (employees, jobs, orgs, requisitions).'
+  route_when:
+  - Queries about **LearningAggregate**, **learningaggregate_db**, **Partner Training Portal users**, **PTP users** (directory/login/account
+    enrichment — not rewards TJ), **PTP channel programs**, **Seertech partner learner identity**, **internal learning cross-charge**,
+    **learning cost center debit/credit**, **course modality charges**, **IS_CENTER_CHARGED**, **TechWolf export**, **TechWolf
+    job requisition**, **TechWolf job family**, or **TechWolf employee baseline** for the learning/skills feed.
+  do_not_route:
+  - Partner **transaction journal / TJ failures**, rebate/loyalty **staging**, or **credentials for partner incentives** →
+    Use **partnerprograms** instead
+  - Enterprise **employee roster, org chart, headcount** → Use **roverpeople** instead
+  - IT **ticket/work-unit effort** (ServiceNow + Jira) → Use **workforcemapping** instead
+  - Broad **IT spend / TBM / Apptio** expense → Use **expensemaster** instead
+  - Partner **loyalty points / tier progression** → Use **SISALS** instead
+  - General **Salesforce partner account master** without PTP/learning context → Use **sfsales** / PRM sources as appropriate
+  - Lab usage / TOLE web sessions → Use **rhtole** instead
+  primary_use_cases:
+  - Partner **transaction journal / TJ failures**, rebate/loyalty **staging**, or **credentials for partner incentives** →
+    Use **partnerprograms** instead
+  - Enterprise **employee roster, org chart, headcount** → Use **roverpeople** instead
+  - IT **ticket/work-unit effort** (ServiceNow + Jira) → Use **workforcemapping** instead
+  - Broad **IT spend / TBM / Apptio** expense → Use **expensemaster** instead
+  - Partner **loyalty points / tier progression** → Use **SISALS** instead
+- name: learningsources
+  database: ''
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: '**Schema**: `internal_marts`'
+  route_when:
+  - Queries about learning activities of external Red Hat partners, learning materials available in partner catalogs.
+  do_not_route:
+  - Partner **transaction journal / TJ failures**, rebate/loyalty **staging**, or **credentials for partner incentives** →
+    Use **partnerprograms** instead
+  - Enterprise **employee roster, org chart, headcount** → Use **roverpeople** instead
+  - IT **ticket/work-unit effort** (ServiceNow + Jira) → Use **workforcemapping** instead
+  - Broad **IT spend / TBM / Apptio** expense → Use **expensemaster** instead
+  - Partner **loyalty points / tier progression** → Use **SISALS** instead
+  - General **Salesforce partner account master** without PTP/learning context → Use **sfsales** / PRM sources as appropriate
+  - Lab usage / TOLE web sessions → Use **rhtole** instead
+  primary_use_cases:
+  - Partner **transaction journal / TJ failures**, rebate/loyalty **staging**, or **credentials for partner incentives** →
+    Use **partnerprograms** instead
+  - Enterprise **employee roster, org chart, headcount** → Use **roverpeople** instead
+  - IT **ticket/work-unit effort** (ServiceNow + Jira) → Use **workforcemapping** instead
+  - Broad **IT spend / TBM / Apptio** expense → Use **expensemaster** instead
+  - Partner **loyalty points / tier progression** → Use **SISALS** instead
+  key_tables:
+  - internal_marts
+  - ptp_marts
+- name: lightspeedopenshift
+  database: lightspeedopenshift_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Detailed guidance:** `aggregate/lightspeedopenshift/README.md`'
+  route_when:
+  - Queries about **OpenShift Lightspeed**, **OLS**, **lightspeed-operator**, **OLS configuration**, **OLS transcripts / conversations
+    / feedback**, **OLS RAG chunks**, **OLS tool calls**, **OLS MCP servers**, **OLS API calls / telemetry on OpenShift**,
+    **OLS vs OCP version adoption**, or **lightspeedopenshift** / `lightspeedopenshift_db` explicitly.
+  - OpenShift Lightspeed / OLS** product analytics → **lightspeedopenshift**
+  - RHEL Insights “Lightspeed”** → **Telesense** (account) or **Grokket** (fleet)
+  - Ambiguous bare “Lightspeed” + RHEL terms → **not** this product; ambiguous + OpenShift/OLS terms → **this product**
+  do_not_route:
+  - '"Lightspeed rules", "Insights rules", "RHSM", "RHEL sockets", "Grokket", "Telesense" as primary intent'
+  - '"RHEL telemetry" / "RHEL usage" without OpenShift Lightspeed context'
+  - Bookings / pipeline / ARR as primary intent
+  primary_use_cases:
+  - OpenShift Lightspeed / OLS / lightspeed-operator** → **lightspeedopenshift** (this product).
+  - RHEL Insights Lightspeed** (rules, uploads, fleet check-ins, RHSM) → **Telesense** (account) or **Grokket** (system/fleet)
+    — **NOT** this product.
+  - If the user says only “Lightspeed” without OpenShift/OLS/OCP context, prefer clarifying; default **Telesense/Grokket**
+    for RHEL Insights language (rules, sockets, RHSM) and **this product** for OpenShift/OLS/operator language.
+- name: marketingperformancemodels
+  database: marketingperformancemodels_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Schemas:** `emailperformance_marts`, `webvisitor_marts`, `marketinganalytics_marts` (plus limited `apac_marts`;
+    `accountmarketing_marts` not yet for general consumers)'
+  route_when:
+  - Queries about Marketing Performance Models, MPM, Marketing Touched model outputs (`mt_inquiries`, `mt_inquiries_wide`,
+    `mt_model_union`, `mt_opps`), email performance marts (Marketo/Eloqua sends/opens/clicks by campaign or email asset),
+    `EMAILS_DATA_MODEL` grains, webvisitor marts with offer/tactic eVars on redhat.com, pipeline influence / MT opp category,
+    Engagement Sufficiency, Expected Value of Engagement, Next Best Action (NBA) dashboard scores for marketing.
+  do_not_route:
+  - Campaign member responses, raw Marketo/Eloqua contact activity, paid media (Datorama), MDF / partner marketing claims**
+    → Use **marketingtouchedinput** instead (input / attribution source layer)
+  - Raw Adobe Analytics hit-level page views/sessions without MPM offer/tactic webvisitor enrichment** → Use **adobe** instead
+  - Bookings, ARR, ACV deal books as the system of record** → Use **bookingsmaster** instead (MPM may show MT-attributed ACV
+    splits, not the bookings ledger)
+  - Recognized revenue / GL** → Use **revenuemaster** instead
+  - Account propensity, intent signals, competitive footprint** → Use **gtm** instead
+  - Raw Salesforce CRM without marketing performance models** → Use **sfsales** / **sfsaleslegacy** instead
+  - Generic org “Marketing” headcount or cost-center ownership** → Use **roverpeople** / **fammatrix** instead
+  primary_use_cases:
+  - '"Marketing Performance Models", "MPM", "marketingperformancemodels"'
+  - '"Marketing Touched inquiries", "MT inquiries", "mt_inquiries", "mt_tactics", "mt_offers", "inquiry by offer/tactic",
+    "marketinganalytics_marts"'
+  - '"email performance", "email open rate", "email click rate", "Marketo email reporting", "Eloqua email reporting" **in
+    the MPM / campaign-performance reporting sense**'
+  - '"EMAILS_DATA_MODEL", "email by account segment", "email by domain grain"'
+  - '"webvisitor marts" / MPM Adobe offer-tactic web engagement (when asking specifically for Marketing Performance Models
+    webvisitor — not raw adobe_db)'
+  key_tables:
+  - emailperformance_marts
+  - webvisitor_marts
+  - marketinganalytics_marts
+  - apac_marts
+  - accountmarketing_marts
+- name: harborintelligence
+  database: harborintelligence_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: HarborIntelligence is an aggregate SKU-intelligence layer that summarizes current vs previous commercial metrics
+    (ARR, active contracts, customer counts) and precomputed ranking flags (top ARR quintile, fast-growing quintile) for Red
+    Hat SKUs, derived from Offering Lifecycle Management. It answers “which SKUs are top ARR / fast growing / moving on contracts
+    or customers?” — not full product master
+  route_when:
+  - Queries about **HarborIntelligence**, **harbor intelligence**, **SKU insight**, **top ARR SKUs**, **fast growing SKUs**,
+    **rank SKUs by current ARR** (HarborIntelligence / SKU insight context), **SKU ARR growth flags**, **SKU active contract
+    movers**, or **SKU customer-count movers** on the HarborIntelligence mart (not full OLM catalog/lifecycle attributes,
+    not MDM product master, not Bookingsmaster deal ARR).
+  - '"HarborIntelligence"** / **"SKU insight"** / **"top ARR SKU"** / **"fast growing SKU"** (HarborIntelligence / SKU insight
+    context) → **HarborIntelligence**'
+  - '"OLM"** / **"offering lifecycle"** / **"leveraged SKU"** / **"inactivation candidate"** → **Offering Lifecycle Management
+    (OLM)**'
+  - '"MDM product"** / **"Harbor product master"** / **"SKU hierarchy"** / **"MSRP"** (master/pricing) → **MDMPRODUCT**'
+  - '"Bookings"** / **"pipeline ARR"** / **"opportunity ARR"** (deal/account) → **Bookingsmaster**'
+  do_not_route:
+  - Full OLM lifecycle** (leverage, inactivation candidates, MSRP on OLM, quoting tier, subscription coverage, offering-group
+    taxonomy on `olm_final_data`) → Use **Offering Lifecycle Management (OLM)**
+  - MDM / Harbor product master** (SKU hierarchy, list price, MSRP foundations, quoting tiers, BU ownership, product attributes)
+    → Use **MDMPRODUCT**
+  - Official corporate product catalog** (aliases, components, portfolios, market lifecycle / EOL reference dates) → Use **Official
+    Product List**
+  - Deal-, account-, or opportunity-level bookings / pipeline ARR / ACV** → Use **Bookingsmaster**
+  - Recognized GL revenue** → Use **RevenueMaster**
+  - Discount / MSRP vs TCV deal analysis** → Use **Discounting**
+  - Enterprise-unique customer counts** by summing SKU-level customer fields → Not supported
+  primary_use_cases:
+  - Full OLM lifecycle** (leverage, inactivation candidates, MSRP on OLM, quoting tier, subscription coverage, offering-group
+    taxonomy on `olm_final_data`) → Use **Offering Lifecycle Management (OLM)**
+  - MDM / Harbor product master** (SKU hierarchy, list price, MSRP foundations, quoting tiers, BU ownership, product attributes)
+    → Use **MDMPRODUCT**
+  - Official corporate product catalog** (aliases, components, portfolios, market lifecycle / EOL reference dates) → Use **Official
+    Product List**
+  - Deal-, account-, or opportunity-level bookings / pipeline ARR / ACV** → Use **Bookingsmaster**
+  - Recognized GL revenue** → Use **RevenueMaster**
+- name: openshift
+  database: openshift_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Schemas:** `marts` (primary); restricted ownership fields may require authorized restricted consumer access
+    (`restricted_marts` entitlement — schema may have no separate published tables) **Detailed guidance:** `aggregate/openshift/README.md`'
+  route_when:
+  - Questions about **OpenShift clusters**, **OCP fleet**, **cluster versions**, **ROSA/ARO/OSD**, **OpenShift nodes/workers/cores**,
+    **Insights rules/rule hits on OpenShift**, **OpenShift alerts**, **failing operators**, **cluster networks/MTU**, **OpenShift
+    telemetry fleet marts**, or explicit **openshift_db** / **OpenShift data product** mentions.
+  - OpenShift/OCP clusters, nodes, operators, OCP Insights** → **openshift**
+  - RHEL systems/fleet** → **Grokket** (system) or **Telesense** (account)
+  - Account is OpenShift customer (sales)** → **GTM**
+  do_not_route:
+  - RHEL usage / RHEL telemetry / workloads / fingerprints** → Use **Grokket**
+  - RHEL usage by customer/account, sockets, Lightspeed risk by account** → Use **Telesense**
+  - '"OpenShift customer" sales flag / intent / RHSC account intelligence** → Use **GTM**'
+  - OpenShift bookings, ARR, pipeline, renewals** → Use **Bookingsmaster** / **Renewals** / **Forecasting**
+  - Ansible automation platform telemetry** → Not this product
+  - How-to / platform documentation** → Use **DataverseHelp** when appropriate
+  primary_use_cases:
+  - OpenShift (`openshift_db`)** = **OpenShift/OCP cluster fleet** (clusters, nodes, OCP Insights rules/alerts/operators).
+  - Grokket** = **RHEL system telemetry** (hosts, footprints, workloads/fingerprints) — not OCP clusters.
+  - Telesense** = **Account-level RHEL** Lightspeed/Insights/socket analytics — not OpenShift fleet.
+  - GTM** = **RHSC account intelligence** including OpenShift *customer flags* — not live cluster telemetry.
+  key_tables:
+  - restricted_marts
+- name: partnertiering
+  database: partnertiering_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: Partner Tiering is the **aggregate analytics** data product for Partner Experience (PEX) engagement. It combines
+    loyalty points, partner certifications/credentials, capability flags (reseller / distributor / sell-with / build-certify),
+    and forward-looking pipeline ACV to compute **current and projected partner tiers** (Premier, Advanced, Ready, Unaffiliated-Untiered)
+    at the **parent partner** grai
+  route_when:
+  - Queries about **partner tiering**, **projected partner tier**, **uptier**, **downtier**, **Premier / Advanced / Ready
+    partners**, **Unaffiliated-Untiered**, **parent partner loyalty points + credentials for tier**, **projected RHEL / OpenShift
+    / Ansible points for tier**, **partner tier analytics**, **PEX partner tier**, or **partnertiering_db**.
+  - '"Projected partner tier"** / **"uptier"** / **"downtier"** / **"Premier partners"** / **"partner tiering"** → **partnertiering**'
+  - '"Why no transaction journal"** / **"TJ error"** / **"claims failed"** / **"pay_to"** → **partnerprograms**'
+  - '"Loyalty points balance"** / **"points earned"** (RHSC loyalty module, no tiering analytics) → **SISALS**'
+  - '"Bookings by account"** without partner-tier intent → **Bookingsmaster**'
+  do_not_route:
+  - Transaction journal (TJ) staging, TJ failures, claims errors, pay-to disbursements, EVF staging** → Use **partnerprograms**
+  - Published RHSC loyalty points balances, redemption catalogs, or loyalty-module “next tier” UI semantics without tiering
+    analytics** → Use **SISALS** (when available) — still prefer **partnertiering** when the user asks for **projected tier
+    / uptier readiness / cert+points tier thresholds**
+  - Raw deal- or opportunity-level bookings exploration** (not partner-tier context) → Use **Bookingsmaster**
+  - Partner training / PTP activity ops outside tier rollups** → Use **partnerprograms** or **learningsources** as appropriate
+  - Party master / partner hierarchy golden record** → Use **MDMPARTY**
+  - Partner vetting / onboarding workflow** → Use **partnervettingonboarding** (when in catalog)
+  - Recognized GL revenue** → Use **RevenueMaster**
+  primary_use_cases:
+  - Transaction journal (TJ) staging, TJ failures, claims errors, pay-to disbursements, EVF staging** → Use **partnerprograms**
+  - Published RHSC loyalty points balances, redemption catalogs, or loyalty-module “next tier” UI semantics without tiering
+    analytics** → Use **SISALS** (when available) — still prefer **partnertiering** when the user asks for **projected tier
+    / uptier readiness / cert+points tier thresholds**
+  - Raw deal- or opportunity-level bookings exploration** (not partner-tier context) → Use **Bookingsmaster**
+  - Partner training / PTP activity ops outside tier rollups** → Use **partnerprograms** or **learningsources** as appropriate
+  - Party master / partner hierarchy golden record** → Use **MDMPARTY**
+- name: partnervettingonboarding
+  database: partnervettingonboarding_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: Partner Vetting & Onboarding is the **aggregate** compliance data product for Red Hat partner **anti-corruption
+    / GAN** evaluations. It covers **new partner onboarding** questionnaires and **annual re-vetting (revet)** outcomes, enriched
+    with Salesforce account, loyalty-tier, and channel-program attributes for partner identity context.
+  route_when:
+  - Queries about **partner onboarding compliance**, **partner vetting**, **annual vetting**, **revet**, **anti-corruption
+    questionnaire**, **EQ completed**, **external questionnaire expiration**, **GAN onboarding / vetting**, **ACL warning**
+    in partner onboarding, partner compliance **status distribution**, or explicit mentions of `partnervettingonboarding`
+    / `partnervettingonboarding_db`.
+  do_not_route:
+  - Partner **rewards**, transaction journal (TJ), rebate staging, PTP trainings, certifications, or claims processing → Use
+    **partnerprograms** instead
+  - Partner **pipeline**, partner performance rate, PitchBuilder seller/partner insights → Use **PitchBuilder** instead
+  - Party master / hierarchy / addresses without vetting or onboarding compliance context → Use **MDMPARTY** instead
+  - Bookings, ACV, opportunity partners, deal attribution → Use **Bookingsmaster** instead
+  - “Is this account a partner?” / GSG / sales hierarchy flags without compliance process → Use **SalesHierarchy** instead
+  - General Salesforce CRM opportunity work (non-compliance) → Use **Bookingsmaster** (or **SFSalesLegacy** only if legacy
+    CRM is explicit)
+  primary_use_cases:
+  - Partner **rewards**, transaction journal (TJ), rebate staging, PTP trainings, certifications, or claims processing → Use
+    **partnerprograms** instead
+  - Partner **pipeline**, partner performance rate, PitchBuilder seller/partner insights → Use **PitchBuilder** instead
+  - Party master / hierarchy / addresses without vetting or onboarding compliance context → Use **MDMPARTY** instead
+  - Bookings, ACV, opportunity partners, deal attribution → Use **Bookingsmaster** instead
+  - “Is this account a partner?” / GSG / sales hierarchy flags without compliance process → Use **SalesHierarchy** instead
+- name: adoptionanalytics
+  database: adoptionanalytics_db
+  schema: aif_marts
+  maturity: ai_experimental
+  category: aggregate
+  description: 'adoptionanalytics is the aggregate data product that measures adoption of the AI Factory (AIF) platform —
+    where Red Hat teams build, deploy, and invoke AI agents, skills, MCPs, models, and datasources. It consumes audit events
+    from the aifgateway source data product and produces business-ready metrics: DAU/WAU/MAU, user growth, retention, churn,
+    builder/consumer segmentation, resource popularity, '
+  route_when:
+  - Queries about AIF platform usage, how many people are building or invoking AI agents, agent adoption trends, which agents
+    are most popular, builder vs consumer ratio, user retention/churn on AIF, new user growth on AIF, agent creator counts,
+    skill creator counts.
+  do_not_route:
+  - Cursor or Gemini adoption** (company-wide AI tool usage) → Use **aiusage** instead
+  - LLM infrastructure metrics, token consumption, GPU usage** → Use **modelscorp** instead
+  - AI agent health, latency, error rates, Langfuse traces** → Use **agenthealth** instead
+  - Employee profile data** (title, job role, hire date) → Use **roverpeople** instead
+  - Daily/weekly/monthly active users on the AIF platform (DAU/WAU/MAU)
+  - Builder vs consumer user segmentation (who builds agents vs who invokes them)
+  - Agent invocation counts (volume and distinct invokers)
+  - User growth (new users, cumulative users), retention, and churn
+  primary_use_cases:
+  - Cursor or Gemini adoption** (company-wide AI tool usage) → Use **aiusage** instead
+  - LLM infrastructure metrics, token consumption, GPU usage** → Use **modelscorp** instead
+  - AI agent health, latency, error rates, Langfuse traces** → Use **agenthealth** instead
+  - Employee profile data** (title, job role, hire date) → Use **roverpeople** instead
+  - Daily/weekly/monthly active users on the AIF platform (DAU/WAU/MAU)
+  key_tables:
+  - aif_marts
+- name: aiusage
+  database: aiusage_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: aiusage is the aggregate data product for tracking employee adoption and activity of AI productivity tools
+    — currently Cursor (AI coding assistant) and Gemini (Google Workspace AI assistant) — across Red Hat. It combines tool
+    usage with organizational context (geography, department, manager status) into weekly snapshots for adoption and engagement
+    reporting.
+  route_when:
+  - Queries about who is using Cursor or Gemini, how many employees have adopted an AI coding or productivity assistant, AI
+    tool usage frequency or intensity, AI adoption by org/region/department, or trends in AI tool usage over time.
+  do_not_route:
+  - AI tool licensing cost, subscription spend, or IT budget for AI tools** → Use **expensemaster** instead
+  - Employee profile data** (title, job role, hire date, full reporting chain, terminations) not tied to AI tool usage → Use
+    **roverpeople** instead
+  - Cost center financial ownership or organizational hierarchy levels/FAM assignments** → Use **fammatrix** instead
+  - IT ticket volume, ServiceNow/Jira work effort, or IT labor allocation** → Use **workforcemapping** instead
+  - General headcount or org-chart questions with no AI tool angle** → Use **roverpeople** instead
+  - Detailed per-request AI activity logs, code suggestion accept/reject rates, or chat transcripts** → Not available in this
+    aggregate view
+  primary_use_cases:
+  - AI tool licensing cost, subscription spend, or IT budget for AI tools** → Use **expensemaster** instead
+  - Employee profile data** (title, job role, hire date, full reporting chain, terminations) not tied to AI tool usage → Use
+    **roverpeople** instead
+  - Cost center financial ownership or organizational hierarchy levels/FAM assignments** → Use **fammatrix** instead
+  - IT ticket volume, ServiceNow/Jira work effort, or IT labor allocation** → Use **workforcemapping** instead
+  - General headcount or org-chart questions with no AI tool angle** → Use **roverpeople** instead
+- name: applicationsimplification
+  database: applicationsimplification_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: 'Application Simplification delivers business-ready application portfolio and OPEX spend analytics for Red
+    Hat''s application rationalization program. It combines application ownership data, vendor/GL spend, and Apptio TBM labor/infrastructure
+    cost into a single view scoped to applications in the simplification program, enabling KPI tracking, portfolio views,
+    retirement/sunset opportunity tracking, '
+  route_when:
+  - Queries about application portfolio spend, IT application vendor spend, application retirement or sunset cost impact,
+    which vendors are associated with an application, application-level labor/infrastructure cost for the simplification program,
+    application simplification KPIs, or unmapped/fallout vendor spend for applications.
+  do_not_route:
+  - General or non-IT corporate vendor spend, company-wide budgets, P&L, or expense forecasts → Use **ExpenseMaster** instead
+  - IT labor **hours** or **ticket/work-item volume** by application → Use **Workforcemapping** instead (this product has
+    dollar cost only, not effort/hours)
+  - Employee profiles, org charts, or headcount outside of application ownership → Use **RoverPeople** instead
+  - Cost center financial ownership or Finance Account Manager (FAM) assignments → Use **fammatrix** instead
+  - IT spend **forecasts**, planned/future IT budget, or contract/PO scenario modeling → Use **ExpenseMaster** ITPF/TBM marts
+    instead (this product is actuals only)
+  - Purchase order line items, invoice status, or payment history → Use **ExpenseMaster** Source-to-Pay marts instead
+  - Revenue, bookings, or sales pipeline data → Use **RevenueMaster** or **Bookingsmaster** instead
+  primary_use_cases:
+  - General or non-IT corporate vendor spend, company-wide budgets, P&L, or expense forecasts → Use **ExpenseMaster** instead
+  - IT labor **hours** or **ticket/work-item volume** by application → Use **Workforcemapping** instead (this product has
+    dollar cost only, not effort/hours)
+  - Employee profiles, org charts, or headcount outside of application ownership → Use **RoverPeople** instead
+  - Cost center financial ownership or Finance Account Manager (FAM) assignments → Use **fammatrix** instead
+  - IT spend **forecasts**, planned/future IT budget, or contract/PO scenario modeling → Use **ExpenseMaster** ITPF/TBM marts
+    instead (this product is actuals only)
+- name: aren
+  database: aren_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: AREN is the aggregate data product for Red Hat's account-level machine-learning prediction outputs. It publishes
+    model-generated forward-looking prediction scores per account and product — such as renewal, cross-sell, or growth likelihood,
+    depending on the prediction's outcome category — produced by internal ML models trained on booking, usage, support, and
+    engagement signals sourced from other Re
+  route_when:
+  - Queries about AREN predictions, machine-learning-generated renewal or cross-sell scores, an account's predicted likelihood
+    of renewing, expanding, or churning based on Red Hat's internal prediction models, or queries that explicitly mention
+    "AREN" as the underlying prediction model or score (not the seller-facing risk flag described below).
+  do_not_route:
+  - Actual renewal pipeline, ACV/TCV amounts, or renewal close rates** → Use **Renewals** instead
+  - Actual bookings, ARR, or sales pipeline/forecast data** → Use **Bookingsmaster** or **Forecasting** instead
+  - Actual OpenShift or RHEL usage/telemetry** → Use **Telesense** (account-level) or **Grokket** (system/fleet-level) instead
+  - Actual support case history, errata download activity, or portal engagement** → Use **PitchBuilder** instead
+  - The combined seller-facing renewal risk view** that blends an AREN-derived flag together with other risk signals (no-quote,
+    no-MEDDPICC, no-activity, downsell, late-renewal, slipped) for territory-scoped seller/partner workflows → Use **PitchBuilder**
+    instead; route here only when the user wants the underlying AREN model's own prediction scores, not the blended seller
+    risk view
+  - Explanations of why a model produced a particular score, or the underlying ML training features** → Not available in this
+    product; direct the user to the AREN data science team
+  - Predictions from a quarter other than the currently loaded release** → Not available; this product currently exposes a
+    single release only
+  primary_use_cases:
+  - Actual renewal pipeline, ACV/TCV amounts, or renewal close rates** → Use **Renewals** instead
+  - Actual bookings, ARR, or sales pipeline/forecast data** → Use **Bookingsmaster** or **Forecasting** instead
+  - Actual OpenShift or RHEL usage/telemetry** → Use **Telesense** (account-level) or **Grokket** (system/fleet-level) instead
+  - Actual support case history, errata download activity, or portal engagement** → Use **PitchBuilder** instead
+  - The combined seller-facing renewal risk view** that blends an AREN-derived flag together with other risk signals (no-quote,
+    no-MEDDPICC, no-activity, downsell, late-renewal, slipped) for territory-scoped seller/partner workflows → Use **PitchBuilder**
+    instead; route here only when the user wants the underlying AREN model's own prediction scores, not the blended seller
+    risk view
+- name: bringyourownsubscription
+  database: bringyourownsubscription_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: BringYourOwnSubscription (BYOS) is the aggregate data product estimating how much of each **closed RHEL and
+    OpenShift subscription deal's** booked value is attributable to each **public cloud provider** (AWS, Azure, GCP, IBM Cloud,
+    Alibaba Cloud) versus non-cloud infrastructure, based on customer telemetry. It combines closed-deal transaction data
+    with account and cloud-provider telemetry to answe
+  route_when:
+  - Queries about **BYOS**, "bring your own subscription", cloud provider split of RHEL or OpenShift **booked** deals, AWS/Azure/GCP/IBM/Alibaba
+    **share of subscription revenue**, "where do our OpenShift/RHEL customers run their subscriptions", or non-cloud (bare
+    metal/VMware) share of self-managed subscriptions.
+  do_not_route:
+  - General bookings, ARR, ACV, pipeline, or opportunities** (not specifically about cloud provider split) → Use **Bookingsmaster**
+    instead
+  - Actual recognized/GL revenue** → Use **RevenueMaster** instead
+  - Cloud marketplace disbursements, marketplace private/public offer revenue** (pay-as-you-go via AWS/Azure/GCP marketplace)
+    → Use **Cloud Marketplace** instead
+  - System-level RHEL telemetry, fleet footprint, or workload/software fingerprints** → Use **Grokket** instead
+  - Account-level RHEL usage, socket counts, or Lightspeed risk scores** → Use **Telesense** instead
+  - Renewal pipeline ACV or renewal forecasting** → Use **Renewals** instead
+  - Renewal engagement/lifecycle messaging (Intercom cohort)** → Use **DigitalRenewals** instead
+  - Ansible or Application Services subscription questions** → Not covered by this product
+  primary_use_cases:
+  - General bookings, ARR, ACV, pipeline, or opportunities** (not specifically about cloud provider split) → Use **Bookingsmaster**
+    instead
+  - Actual recognized/GL revenue** → Use **RevenueMaster** instead
+  - Cloud marketplace disbursements, marketplace private/public offer revenue** (pay-as-you-go via AWS/Azure/GCP marketplace)
+    → Use **Cloud Marketplace** instead
+  - System-level RHEL telemetry, fleet footprint, or workload/software fingerprints** → Use **Grokket** instead
+  - Account-level RHEL usage, socket counts, or Lightspeed risk scores** → Use **Telesense** instead
+- name: casesensitive
+  database: casesensitive_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: CaseSensitive is a restricted, consumer-aligned data product providing governed access to customer-sensitive
+    Red Hat support case content and escalation records. It specializes in the detailed narrative and operational side of
+    support cases — case descriptions, case comments, and escalation handling — rather than survey scores, ticketing metadata,
+    or account financials.
+  route_when:
+  - Queries about support case descriptions or comments, case escalations, critical situations / crit sit, escalation severity,
+    escalation requestor, one-touch closure, escalation resolution time, or "what did the customer/agent say" on a support
+    case.
+  do_not_route:
+  - Software engineering issue/sprint/epic tracking → Use **JIRA**
+  - Customer satisfaction survey scores (NPS, CSAT, CES) or survey verbatim → Use **CXAHub**
+  - Account revenue, bookings, ARR, or subscription data tied to a case's account → Use **Bookingsmaster** or **RevenueMaster**
+  - Employee/org lookups for the person named as an escalation requestor (their manager, team, cost center) → Use **RoverPeople**
+  - Account intelligence, product adoption flags, or intent signals for the account tied to a case → Use **GTM**
+  primary_use_cases:
+  - Software engineering issue/sprint/epic tracking → Use **JIRA**
+  - Customer satisfaction survey scores (NPS, CSAT, CES) or survey verbatim → Use **CXAHub**
+  - Account revenue, bookings, ARR, or subscription data tied to a case's account → Use **Bookingsmaster** or **RevenueMaster**
+  - Employee/org lookups for the person named as an escalation requestor (their manager, team, cost center) → Use **RoverPeople**
+  - Account intelligence, product adoption flags, or intent signals for the account tied to a case → Use **GTM**
+- name: customer
+  database: customer_db
+  schema: MARTS
+  maturity: unknown
+  category: aggregate
+  description: 'Customer data product providing quarter-over-quarter **customer lifecycle classification** (`customertype_*`:
+    New, Existing, Expanding, Contracting, Returning, Lost) for Sales Groups and Global Sales Groups. ARR amounts may appear
+    as a companion metric when filtering by customer type; this product is not the default for general ARR/ACV reporting.'
+  route_when:
+  - Queries about customer growth/decline/churn status ("Expanding", "Contracting", "Lost", "New", "Returning", "Existing"
+    customers), customer-type counts or lists, or quarter-over-quarter lifecycle trends that require `customertype_*`.
+  do_not_route:
+  - General ARR/ACV by Sales Group, Global Sales Group, or fiscal quarter** (totals, trends, rankings, geo/product breakouts
+    without a customer-type filter) → Use **Bookingsmaster** instead
+  - Pipeline ARR/ACV by forecast category** without customer type → Use **Bookingsmaster** instead
+  - Individual deal or opportunity-level bookings detail → Use **Bookingsmaster** instead
+  - Actual recognized/GL revenue → Use **RevenueMaster** instead
+  - The authoritative current-year or planning-year sales hierarchy, segmentation master data, or MDM-to-Sales-Group/Global-Sales-Group
+    mapping lookups with no lifecycle context → Use **SalesHierarchy** instead
+  - EBS-to-RHSC account ID mapping → Use **Rosettastone** instead
+  - Raw Salesforce opportunity or account records → Use **SFSales** instead
+  - Sales targets, quotas, or plan attainment → Use **Sales Planning** or **Forecasting** instead
+  primary_use_cases:
+  - '"Expanding", "Contracting", "Lost", "New", "Returning", "Existing" customer type'
+  - '"growing customer", "shrinking customer", "churned", "won back", "brand new customer" (lifecycle sense)'
+  - Customer-type distribution / how many customers in each lifecycle category
+- name: releasecompliance
+  database: releasecompliance_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**"Compliance" here means SOFTWARE RELEASE PROCESS compliance — change management and audit evidence for code
+    that shipped to production.** It has nothing to do with security/CVE compliance, licence compliance, partner anti-corruption
+    compliance, or discount policy compliance.'
+  route_when:
+  - Queries about **release compliance**, **change management compliance**, **release audit trail**, **release traceability**,
+    **change control evidence**, **deployed commits**, **which release deployed this commit / Jira issue**, **commits without
+    a Jira issue**, **unapproved production changes**, **merge request approvers** for released code, **release approver**
+    / who cut or authorised a release, **ServiceNow change request for a release**, **self-approved merge requests**, **segregation
+    of duties on code changes**, **commit-to-deploy lead time**, **deployment cadence by component or repository**, **production
+    branch configuration** for tracked repositories, **SOX / audit evidence for software releases**, or explicit mentions
+    of `releasecompliance` / `releasecompliance_db`.
+  - '"release compliance"** / **"change management audit"** / **"release audit trail"** → **releasecompliance**'
+  - '"which release deployed commit X / issue Y"** / **"commit to deploy traceability"** → **releasecompliance**'
+  - '"production changes without a Jira issue / without approval / without a change request"** → **releasecompliance**'
+  - '"who approved this merge request"** / **"who released this version"** / **"self-approved changes"** → **releasecompliance**'
+  - '"security compliance" / "CVE" / "vulnerability" / "errata"** → NOT releasecompliance'
+  - '"partner vetting / anti-corruption compliance"** → **PartnerVettingOnboarding**'
+  - '"discount compliance"** → **Discounting**'
+  primary_use_cases:
+  - Security or vulnerability compliance** — CVEs, security errata, flaw tracking, embargoed issues → Not this product; this
+    is release *process* compliance only
+  - Licence, export, or regulatory compliance** → Not this product
+  - Partner onboarding / anti-corruption / annual vetting compliance** → Use **PartnerVettingOnboarding** instead
+  - Discount policy or MSRP guideline compliance** → Use **Discounting** instead
+  - Data governance policy, access control, masking, or compliance frameworks** → Use **SourceDataGovernance** instead
+- name: rpmrex
+  database: rpmrex_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Detailed guidance:** `aggregate/rpmrex/README.md`'
+  route_when:
+  - Queries about **RPM package recommendations**, **recommended packages**, **package suggestions**, **which packages go
+    together / co-occur / are installed together**, **package pairs**, **association rules for packages**, **lift / confidence
+    / support between two RPM packages**, **market-basket or co-occurrence analysis of RPMs**, **Image Builder package recommendations**,
+    **RPM-REX**, **package recommendation engine**, or **rpmrex_db** explicitly. Also route here for **DNF package dependency
+    lists** (what an RPM requires) and for **how common / what proportion of the mined population has a given RPM package**.
+  - Package-to-package relationships** (recommendations, co-occurrence, association rules, lift/confidence/support between
+    packages) → **rpmrex**
+  - System-to-package relationships** (which hosts have which RPMs, fleet inventory, fingerprints) → **Grokket**
+  - Account-to-package or account-to-RHEL relationships** (customer estate, sockets, rule hits) → **Telesense**
+  - Package metadata** (version, release, architecture, repository, errata) → **not rpmrex**; upstream RHEL Insights content
+    sources
+  - '"Image Builder" + "recommend" / "suggest" packages** → always **rpmrex**'
+  primary_use_cases:
+  - RPM-REX (`rpmrex_db`)** = **package-to-package relationships**. Answers "which packages go with which". The answer is
+    always a package name or a pair of package names, never a system or a customer.
+  - Grokket** = **system-level RHEL telemetry**. Answers "which systems have which packages / versions / footprints". Fleet
+    inventory, host counts, workload fingerprints.
+  - Telesense** = **account-level RHEL analytics**. Answers "what does customer X's RHEL estate look like".
+- name: informationtechnology
+  database: informationtechnology_db
+  schema: ITXENDPOINT_MARTS
+  maturity: ai_experimental
+  category: aggregate
+  description: '**CRITICAL: the product name is far broader than the data. This is NOT a general-purpose IT data product.**
+    Despite being named "informationtechnology", it contains exactly one subject area: **Red Hat end-user endpoint hardware
+    — device and asset inventory, device assignment, and managed-device check-in compliance.** Treat it as if it were named
+    "itendpointdevices". Do not route a question here me'
+  route_when:
+  - Queries about endpoint devices, laptops, workstations, device inventory,
+  primary_use_cases:
+  - IT helpdesk tickets, incidents, service requests, problems, changes, SLA breaches, ticket volumes or resolution times**
+    → **Not available to the agent.** This product has no ticket data whatsoever. Do not substitute asset data for ticket
+    data.
+  - IT work items, IT associate effort or labor allocation, work-unit attribution, ticket-to-application mapping, CIO org
+    work distribution** → Use **workforcemapping** instead
+  - IT spend, IT budget, IT cost forecasting, ITPF/TBM, hardware or asset purchase cost, vendor spend, cloud/hyperscaler spend,
+    application TCO** → Use **ExpenseMaster** instead
+  - Purchase orders, requisitions, invoices, or receipts for hardware** → Use **sourcetopay** instead
+  - Software licences, subscriptions, entitlements, installed-software inventory, licence compliance or true-up** → **Not
+    available to the agent.** "Compliance" in this product means device check-in recency only
+  key_tables:
+  - ITXENDPOINT_MARTS
+- name: journey
+  database: journey_db
+  schema: marts
+  maturity: unknown
+  category: aggregate
+  description: '**Schemas:** `MARTS`, `DASHBOARD_MARTS`, `SIGNAL_MARTS` **Detailed guidance:** `aggregate/journey/README.md`'
+  route_when:
+  - Queries about the customer journey, journey stage, adoption journey, adoption stage, funnel stage, Discover/Learn/Evaluate/Adopt/Expand,
+    customer touchpoints, digital touchpoints, journey events, lead lists, lead generation, target lists, prospect strength,
+    prospect tiering, hot leads, modelled or estimated deal value for a prospect, account readiness, readiness score, readiness
+    tier, buying propensity, sales signals, signal history, why a signal fired, signal criteria, recommendations for an account,
+    next best action, recommendation effectiveness or feedback, services recommender, Account 360, A360, entitlement versus
+    usage for OpenShift, over-consumption or upsell capacity signals, or explicit mentions of `journey_db` or the journey
+    data product.
+  primary_use_cases:
+  - 'Journey: "customer journey", "journey stage", "adoption journey", "adoption stage", "funnel stage", "Discover/Learn/Evaluate/Adopt/Expand",
+    "journey events", "touchpoints", "where is this account in the journey"'
+  - 'Leads and prospects: "lead", "leads", "lead list", "which leads", "target list", "prospect", "prospect strength", "hot
+    lead", "high strength prospect", "prospecting list for AI/Virt/App Platform/Container Management", "estimated deal value",
+    "modelled deal size"'
+  - 'Lead qualifiers — any question of the form "which leads have X": "leads with VMware", "VMware footprint on a lead", "leads
+    with GPU operators detected", "OpenShift GPU", "RHEL GPU", "leads with GitOps / pipelines / Quay / ACM / ACS / ODF / Dev
+    Spaces installed", "leads that started a trial", "trial status of a lead", "usage days", "days since last usage", "recently
+    active leads", "bare metal or CSI on a lead", "systems checking in for a lead"'
+  - 'Readiness: "readiness score", "readiness tier", "readiness panel", "buying propensity", "which accounts are most ready
+    to buy", "buyer vs non-buyer"'
+  - 'Signals and recommendations: "sales signal", "which signals fired", "signal criteria", "why did this signal fire", "recommendation
+    for this account", "next best action", "live recommendations", "recommendation feedback", "did the recommendation convert",
+    "services recommendation"'
+  key_tables:
+  - DASHBOARD_MARTS
+  - SIGNAL_MARTS
+- name: contacthealth
+  database: contacthealth_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: Contact Health is the aggregate data product for **unified person-level contact health** across Red Hat Sales
+    Cloud (RHSC/Salesforce) and Marketo, with RHSC marketing lead attribution. It answers questions about whether a person
+    exists in sales vs marketing systems, email sync gaps, marketable/unsubscribe/bounce flags, PeopleAI and Outreach sequencing
+    on Salesforce contacts, and lead status / Lean
+  route_when:
+  - Queries about **contact health**, **unified contacts**, **RHSC vs Marketo contact presence**, **contacts only in Salesforce
+    / only in Marketo**, **email sync gaps between RHSC and Marketo**, **marketable contacts in the Contact Health mart**,
+    **PeopleAI engagement on contacts**, **Outreach sequences on contacts**, **do not do business / no longer at company on
+    contacts**, **RHSC lead status / buying persona / LeanData matched account** in a contact-health context, or explicit
+    mentions of **contacthealth** / **CONTACTHEALTH_DB**.
+  do_not_route:
+  - Marketing campaign responses, tactic counts, opens/clicks, demand gen attribution** → Use **marketingtouchedinput** (or
+    **Marketo** for raw email activity)
+  - Digital renewal cohort / Intercom renewal contacts / welcome-window engagement** → Use **digitalrenewals**
+  - Opportunity pipeline, bookings, ARR, ACV** → Use **bookingsmaster**
+  - Customer/party golden record, DUNS, party addresses** → Use **mdmparty**
+  - Jira customer-to-issue “interested in / affected by” links** → Use **interestedparties**
+  - SSO/portal persona profiles, support case journeys** → Use **intelligenceengine**
+  - Account intelligence scores, intent, technographics** → Use **gtm** / **hginsights**
+  - Legacy Salesforce frozen CRM (explicit legacy keyword)** → Use **sfsaleslegacy**
+  primary_use_cases:
+  - '"contact health", "contacthealth", "CONTACTHEALTH_DB"'
+  - '"unified contact", "RHSC and Marketo contact", "sales and marketing contact join"'
+  - '"contacts missing from Marketo", "contacts only in Salesforce", "contacts only in Marketo"'
+  - '"email sync gap", "RHSC email vs Marketo email"'
+  - '"PeopleAI engagement level" / "Outreach actively sequenced" **on contacts** (contact-health / RHSC contact context)'
+- name: basevsincremental
+  database: basevsincremental_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: BaseVsIncremental is the aggregate data product that splits sales **ACV targets and actuals** into **baseline**
+    (expected run-rate / recurring portion) versus **incremental** (growth above baseline — new logos, expansion, upside).
+    It powers Account Performance and Planning dashboards with sales-group, global sales-group, product, and partner grains,
+    combining targets, capped/uncapped closed-won, o
+  route_when:
+  - Queries about **baseline vs incremental**, **baseline ACV**, **incremental ACV**, **baseline target**, **incremental target**,
+    **remaining baseline target**, **capped closed won**, Account Performance **BVI** metrics, planning baseline/incremental
+    by sales group or partner, haircut/established-bucket baseline construction, or explicit mentions of `basevsincremental`
+    / `basevsincremental_db` / **BaseVsIncremental**.
+  do_not_route:
+  - Deal-level bookings / ARR / ACV / open opportunity lists** without baseline-vs-incremental framing → Use **Bookingsmaster**
+  - Sales targets, quotas, quarterization, seller quota** (raw planning targets, not BVI split) → Use **SalesPlanning**
+  - Renewal pipeline / renewal opportunity stages / NVR** (raw renewals) → Use **Renewals** (restated renewals planning →
+    **SalesPlanning**)
+  - MJ / Upside forecast tags, waterfall, ASP** → Use **Forecasting**
+  - Recognized / GL revenue** → Use **RevenueMaster**
+  - PeopleAI account plans / whitespace / scorecards** → Use **AccountPlanning**
+  - Partner program enrollment / tiering / vetting** → Use **PartnerPrograms** / **PartnerTiering** / **PartnerVettingOnboarding**
+  primary_use_cases:
+  - '"baseline vs incremental", "baseline versus incremental", "BVI"'
+  - '"baseline target", "incremental target", "remaining baseline", "remaining incremental"'
+  - '"baseline closed won", "incremental closed won", "capped baseline", "capped incremental"'
+  - '"baseline pipeline", "incremental pipeline" (in sales-group / Account Performance context)'
+  - '"baseline renewals available", "incremental renewals available"'
+- name: fpna
+  database: fpna_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: 'FPNA (Financial Planning & Analysis) provides specialized finance analytics for:'
+  route_when:
+  - Queries about **CAPEX**, **capital expenditure**, **fixed assets**, **depreciation**, **asset net book value**, **Services
+    P&L**, **Services recommender / SRCM**, account-level services pipeline for recommender, SRCM recognized revenue / TAM
+    for recommender, **AP invoice chatbot**, **AP invoice holds** (chatbot), **Journal Lines Dashboard / JLD**, or **FPNA
+    Fivecast** when FPNA context is explicit.
+  do_not_route:
+  - Corporate OpEx / IT spend / OneStream corporate expense planning / GL sub-ledger enterprise expense → Use **ExpenseMaster**
+  - General source-to-pay purchasing analytics (enterprise PR/PO/invoice/receipt) → Use **ExpenseMaster**
+  - General bookings / ARR / ACV deal pipeline (non-SRCM recommender) → Use **Bookingsmaster**
+  - Enterprise recognized / GL revenue (non-SRCM, non-Services P&L) → Use **RevenueMaster**
+  - Pipeline coverage, waterfall, ASP, MJ tags, general statistical forecast / fivecast without FPNA context → Use **Forecasting**
+  - Employee / org structure → Use **RoverPeople**
+  - Project time / project accounting → Use **ProjectAccounting**
+  - Accounts receivable / collections → Use **AccountsReceivable**
+  primary_use_cases:
+  - CAPEX / FA keywords:** "CAPEX", "capex actuals", "capital expense", "capital expenditure", "fixed assets", "depreciation",
+    "net book value", "asset number", "FA inquiry", "capex forecast", "capex fa merged"
+  - Services P&L keywords:** "Services P&L", "services pnl", "services expense plan", "services revenue plan" (FP&A services
+    finance)
+  - Services Recommender / SRCM keywords:** "services recommender", "SRCM", "srcm pipeline", "srcm recognized revenue", "fleet
+    focus", "RHEL install count" (recommender), "srcm TAM"
+  - AP chatbot keywords:** "AP invoice chatbot", "invoice hold chatbot", FPNA AP invoice status by PO/invoice in chatbot context
+  - JLD keywords:** "journal lines dashboard", "JLD", "FPNA journal lines"
+- name: experienceops
+  database: experienceops_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: '**Schemas:** `accountrelationship_marts`, `case_marts`'
+  route_when:
+  - Queries about ExperienceOps, `experienceops_db`, support case status/severity/product analytics (aggregate, not per-SSO
+    persona), open/closed case counts, time to close / time to resolution metrics on cases, cases by account or EBS account
+    number, TAM-handled cases, customer escalation flags on cases, external tracker issues tied to support cases, KCS solutions
+    linked or proposed on cases, account relationship hub, account contacts (entitled/active/org admin), account entitlements
+    and assets, TAM or TRM account members, Salesforce account team members, CEE leads tied to account/contact/case, account-level
+    NPS score on the Salesforce account.
+  do_not_route:
+  - Support case **descriptions, comments, or crit-sit escalation narratives** → Use **CaseSensitive**
+  - Per-user **customer persona / SSO-keyed 360** (recent cases per user, web journey) → Use **IntelligenceEngine**
+  - Seller/partner **PitchBuilder** territory support signals bundled with renewals/PLG → Use **PitchBuilder**
+  - Customer satisfaction **survey scores, CSAT/CES, survey verbatim** → Use **CXAHub**
+  - Bookings, ARR, ACV, pipeline, opportunities → Use **Bookingsmaster** / **Forecasting**
+  - SKU-level subscription catalog entitlements → Use **IntelligentAccess**
+  - Software engineering tickets/epics/sprints → Use **JIRA**
+  - Employee org chart / workforce → Use **RoverPeople**
+  primary_use_cases:
+  - Support case **descriptions, comments, or crit-sit escalation narratives** → Use **CaseSensitive**
+  - Per-user **customer persona / SSO-keyed 360** (recent cases per user, web journey) → Use **IntelligenceEngine**
+  - Seller/partner **PitchBuilder** territory support signals bundled with renewals/PLG → Use **PitchBuilder**
+  - Customer satisfaction **survey scores, CSAT/CES, survey verbatim** → Use **CXAHub**
+  - Bookings, ARR, ACV, pipeline, opportunities → Use **Bookingsmaster** / **Forecasting**
+  key_tables:
+  - accountrelationship_marts
+  - case_marts
+- name: financeconsolidation
+  database: financeconsolidation_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: Aggregate data product for **cashflow-style profit and margin reporting** across consolidated **revenue and
+    expense** at **calendar month** grain. Specializes in company-level **gross profit**, **Profit Con** (profitability contribution),
+    and related margins on both mixed local/reporting currency and Red Hat current-year plan-rate bases — without re-joining
+    source systems in every query.
+  route_when:
+  - Queries about finance consolidation, consolidated profitability, Profit Con, company month-level gross profit / profit
+    margin across revenue **and** spend together, consolidated revenue+expense+margin in one view, calendar-month finance
+    metrics from financeconsolidation, or “company P&L metrics by month” when the user wants the **consolidated mart** (not
+    line-level GL or RevStream detail).
+  do_not_route:
+  - Transactional / recognized **revenue detail**, geo/customer revenue, RevStream lines → Use **RevenueMaster**
+  - Bookings, ARR, ACV, pipeline, opportunities** → Use **Bookingsmaster**
+  - Cost center / entity **expense detail**, budgets vs actuals at OneStream line grain, GL journals, ITPF/TBM, Cloudability,
+    Source to Pay → Use **ExpenseMaster**
+  - Cost center ownership / FAM → Use **fammatrix**
+  - True cash-flow statement (operating/investing/financing) → Not available
+  - Headcount / org → Use **RoverPeople**
+  primary_use_cases:
+  - Consolidation / product name:** "finance consolidation", "financeconsolidation", "consolidated profitability", "consolidated
+    P&L metrics", "consolidated revenue"
+  - Profit Con / contribution:** "Profit Con", "profitability contribution", "profit contribution margin"
+  - Joined revenue+expense margins:** "gross profit and expense by month", "company operating profitability by month" (offer
+    Profit Con — true PTI/operating margin not available), "revenue vs spend vs margin consolidated"
+  - Month-level revenue mix in the consolidated mart:** "subscription versus consumption and services revenue by month" /
+    "subscription vs consumption services" when asking for **company month rollups** (not RevStream transaction grain) → **financeconsolidation**
+    (mart has pre-built mix columns)
+  - Plan-rate company totals:** "plan-rate consolidated revenue and expense", "CY plan rate profit metrics" (when asking for
+    the consolidated product, not RevenueMaster-only)
+- name: hcmfinops
+  database: hcmfinops_db
+  schema: marts
+  maturity: ai_experimental
+  category: aggregate
+  description: ''
+  route_when:
+  - Queries that mention **HCM FinOps**, **FinOps cost centers 148 / 732 / 735**, FinOps cloud/SaaS/PaaS/IaaS **GL** spend
+    for those cost centers, or normalized Amazon/Google/IBM spend **explicitly in the HCM FinOps / FinOps CC context**.
+  do_not_route:
+  - Company-wide or generic "AWS spend", "cloud spend", "hyperscaler spend" without FinOps/HCM FinOps CC framing → Use **ExpenseMaster**
+  - Cloudability cloud accounts / hyperscaler charge actuals → Use **ExpenseMaster**
+  - IT forecast, ITPF, TBM, application TCO, PO impact → Use **ExpenseMaster**
+  - Full GL / journal / sub-ledger / corporate expenses / budgets / P&L → Use **ExpenseMaster**
+  - Source to Pay (PO/invoice/receipts) → Use **ExpenseMaster**
+  - Employee, headcount, org chart, HCM people / workforce → Use **RoverPeople** (or **fammatrix** for cost-center ownership)
+  - External/market IT budgets on accounts → Use **GTM** or **HG Insights**
+  primary_use_cases:
+  - '"HCM FinOps", "hcmfinops", "FinOps cost center 148/732/735"'
+  - '"FinOps cloud spend", "FinOps SaaS spend", "FinOps PaaS/IaaS GL" (with FinOps / HCM FinOps framing)'
+  - '"cloud GL spend for cost center 148/732/735", "Amazon spend in FinOps cost centers"'
+  - Monthly FinOps cloud opex / vendor mix for those three cost centers
+  key_tables:
+  - GENERALLEDGER_MARTS
+- name: cxahub
+  database: cxahub_db
+  schema: marts
+  maturity: ai_experimental
+  category: unstructured
+  description: '**Schemas:** `MARTS`, `EOA_MARTS` **Detailed guidance:** `aggregate/cxahub/README.md`'
+  route_when:
+  - Queries about NPS, CSAT, CES, customer satisfaction surveys, Net Promoter Score, customer feedback, survey responses,
+    adoption maturity, adoption scores, Evidence of Adoption, EoA, product adoption level, OpenShift adoption score, RHOAI
+    adoption, virtualization adoption, customer experience metrics.
+  do_not_route:
+  - Revenue, bookings, ARR, ACV → Use **Bookingsmaster** or **RevenueMaster**
+  - Product telemetry / usage data (system-level) → Use **Grokket** or **Telesense**
+  - Account intelligence, intent signals, competitive footprint → Use **GTM**
+  - Customer support tickets or issue tracking → Use **JIRA**
+  - Product catalog or product attributes → Use **Official Product List**
+  primary_use_cases:
+  - 'Customer experience: "NPS", "CSAT", "CES", "Net Promoter Score", "customer satisfaction", "survey", "customer feedback",
+    "verbatim", "customer sentiment"'
+  - 'Surveys: "survey response", "survey trend", "response rate", "promoter", "detractor", "likely to recommend"'
+  - 'Adoption: "adoption score", "adoption maturity", "Evidence of Adoption", "EoA", "adoption category", "adoption level"'
+  - 'Products (adoption context): "OCP adoption", "OpenShift adoption", "RHOAI adoption", "OpenShift AI adoption", "virtualization
+    adoption", "Virt adoption"'
+  - 'CXAHub: "CXA Hub", "CXAHUB", "cxahub"'
+  key_tables:
+  - EOA_MARTS
+- name: incentivemanagement
+  database: incentivemanagement_db
+  schema: MARTS
+  maturity: ai_experimental
+  category: unstructured
+  description: '**Detailed guidance:** `aggregate/incentivemanagement/README.md`'
+  route_when:
+  - Queries about the **ICM feed** or **Varicent feed**, **DT bookings / DT opportunity / DT partner info** extracts, whether
+    a **deal is incentive-eligible** or **was excluded from ICM**, **what the incentive feed looked like as of a date**, **partner
+    attribution or credit rows on incentive-eligible deals**, **EVF sell-with approval** on those deals, **entitlement crossing**
+    or **fiscal-boundary close-date adjustment**, **transaction numbers carrying a fiscal-year suffix**, or **additional /
+    incremental ARR on Q4 deals slipping into January or February**.
+  do_not_route:
+  - Commission payouts, plan rates, payee credit, compensation plan structures, territory credit mapping, manager approvals,
+    seller attainment, or past-fiscal-year quotas** → Use **SI Execution** (`siexecution_db`). This product has no seller
+    or attainment concept at all
+  - Current fiscal-year seller quotas, quota coverage or gap; sales targets and target vs actual** → Use **Sales Planning**
+    (`salesplanning_db`)
+  - Official bookings, ARR, ACV, pipeline reporting, or "how much did we sell"** → Use **Bookingsmaster** (`bookingsmaster_db`).
+    This feed deliberately excludes large volumes of transactions, so its amounts never tie to reported bookings
+  - Partner rebates, loyalty programmes, transaction journal staging, reward credentialing** → Use **Partner Programs** (`partnerprograms_db`);
+    **partner tier models or tier movement** → **Partner Tiering** (`partnertiering_db`)
+  - Recognized or GL revenue** → Use **RevenueMaster** (`revenuemaster_db`); **renewal potential, pipeline or rates** → **Renewals**
+    (`renewals_db`)
+  - Forecast analytics, pipeline coverage, velocity or waterfall movement** → Use **Forecasting** (`forecasting_db`)
+  - Sales hierarchy, global sales group or account segmentation master data** → Use **Sales Hierarchy** (`saleshierarchy_db`)
+  - Discount or MSRP analysis** → **Discounting** (`discounting_db`); **hybrid committed spend analytics** → **HCS** (`hcs_db`);
+    **employee or HR data** → **RoverPeople** (`roverpeople_db`)
+  primary_use_cases:
+  - Commission payouts, plan rates, payee credit, compensation plan structures, territory credit mapping, manager approvals,
+    seller attainment, or past-fiscal-year quotas** → Use **SI Execution** (`siexecution_db`). This product has no seller
+    or attainment concept at all
+  - Current fiscal-year seller quotas, quota coverage or gap; sales targets and target vs actual** → Use **Sales Planning**
+    (`salesplanning_db`)
+  - Official bookings, ARR, ACV, pipeline reporting, or "how much did we sell"** → Use **Bookingsmaster** (`bookingsmaster_db`).
+    This feed deliberately excludes large volumes of transactions, so its amounts never tie to reported bookings
+  - Partner rebates, loyalty programmes, transaction journal staging, reward credentialing** → Use **Partner Programs** (`partnerprograms_db`);
+    **partner tier models or tier movement** → **Partner Tiering** (`partnertiering_db`)
+  - Recognized or GL revenue** → Use **RevenueMaster** (`revenuemaster_db`); **renewal potential, pipeline or rates** → **Renewals**
+    (`renewals_db`)
+  key_tables:
+  - partylens_marts
+  - party_lens_dim_v1
+  - orders_marts
+  - gbd_marts
+  - ITXENDPOINT_MARTS
+  - EOA_MARTS
+  - harbor_marts
+  - rhai_marts
