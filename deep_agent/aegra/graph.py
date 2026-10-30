@@ -122,6 +122,7 @@ def _graph_fingerprint(
     mcp_names: list[str] | None = None,
     resource_uris: list[str] | None = None,
     location: str | None = None,
+    subagent_key: str = "",
 ) -> str:
     """Stable fingerprint for graph cache keying."""
     hitl_flag = (
@@ -135,8 +136,31 @@ def _graph_fingerprint(
     raw = (
         f"{model_name}\0{system_prompt}\0{','.join(sorted(tool_names))}"
         f"\0{hitl_flag}\0{model_flag}\0{mcp_flag}\0{resources_flag}"
+        f"\0{subagent_key}"
     )
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _subagent_cache_key(configs: dict[str, Any]) -> str:
+    """Name, type, and async address for every configured subagent.
+
+    A change here must miss the graph cache. The slash note reads these
+    files on each message, so the cached graph has to be the same set.
+    """
+    parts: list[str] = []
+    for name in sorted(configs):
+        cfg = configs[name] if isinstance(configs[name], dict) else {}
+        parts.append(
+            "|".join(
+                [
+                    str(name),
+                    str(cfg.get("type") or "default"),
+                    str(cfg.get("graph_id") or ""),
+                    str(cfg.get("url") or ""),
+                ]
+            )
+        )
+    return ";".join(parts)
 
 
 async def _ensure_startup() -> None:  # noqa: E402
@@ -468,6 +492,7 @@ async def agent(runtime: ServerRuntime) -> Any:
         mcp_names=mcp_server_names or None,
         resource_uris=orchestrator_cfg.get("resources") or None,
         location=orch_location,
+        subagent_key=_subagent_cache_key(agent_config.get_all_subagent_configs()),
     )
     now = time.time()
     graph_ttl = float(agent_config.get_cache_config().graph.ttl)

@@ -151,6 +151,120 @@ def build_user_identity_middleware() -> Any | None:
     return UserIdentityMiddleware()
 
 
+def _latest_human_content(messages: list[Any] | None) -> Any:
+    """Return ``content`` from the most recent human message, or ``None``."""
+    if not messages:
+        return None
+    try:
+        from langchain_core.messages import HumanMessage
+    except ImportError:
+        HumanMessage = None
+
+    for msg in reversed(messages):
+        if isinstance(msg, dict):
+            kind = msg.get("type") or msg.get("role")
+            if kind in ("human", "user"):
+                return msg.get("content")
+            continue
+        if HumanMessage is not None and isinstance(msg, HumanMessage):
+            return msg.content
+        if getattr(msg, "type", None) in ("human", "user"):
+            return getattr(msg, "content", None)
+    return None
+
+
+def _is_human_message(msg: Any) -> bool:
+    """True for a human chat message, including dicts from checkpoint state."""
+    if isinstance(msg, dict):
+        kind = msg.get("type") or msg.get("role")
+        return kind in ("human", "user")
+    try:
+        from langchain_core.messages import HumanMessage
+    except ImportError:
+        HumanMessage = None
+    if HumanMessage is not None and isinstance(msg, HumanMessage):
+        return True
+    return getattr(msg, "type", None) in ("human", "user")
+
+
+def _invocation_messages(request: Any) -> list[Any] | None:
+    """Messages for this model call: the request list, or the run state if that is empty."""
+    messages = getattr(request, "messages", None)
+    if isinstance(messages, list) and messages:
+        return messages
+    state = getattr(request, "state", None)
+    if isinstance(state, dict):
+        state_messages = state.get("messages")
+        if isinstance(state_messages, list) and state_messages:
+            return state_messages
+    return None
+
+
+def build_requested_subagents_middleware() -> Any | None:
+    """Build middleware that injects a ``/name`` delegation hint into the system prompt.
+
+    Reads the latest human message and the pod-local subagent catalog at
+    invocation time, so a cached graph still picks up the correct request
+    per turn. Orchestrator-only — do not register on subagents.
+    """
+    try:
+        from langchain.agents.middleware.types import (
+            AgentMiddleware,
+            ModelRequest,
+            ModelResponse,
+        )
+    except ImportError:
+        return None
+
+    class RequestedSubagentsMiddleware(AgentMiddleware):
+        def _inject_requested_subagents(
+            self, request: ModelRequest[Any]
+        ) -> ModelRequest[Any]:
+            from deepagents.middleware.subagents import append_to_system_message
+
+            from deep_agent.src.agent.config import agent_config
+            from deep_agent.src.infrastructure.requested_subagents import (
+                find_requested_subagents,
+                invocation_block,
+            )
+
+            messages = _invocation_messages(request)
+            if not messages:
+                return request
+            last = messages[-1]
+            if not _is_human_message(last):
+                return request
+            content = _latest_human_content([last])
+            if content is None:
+                return request
+
+            catalog = agent_config.get_all_subagent_configs()
+            names = find_requested_subagents(content, catalog)
+            block = invocation_block(content, catalog)
+            if not block:
+                return request
+
+            logger.info(
+                "RequestedSubagentsMiddleware: injecting %s",
+                names,
+            )
+            return request.override(
+                system_message=append_to_system_message(request.system_message, block),
+            )
+
+        def wrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return handler(self._inject_requested_subagents(request))
+
+        async def awrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return await handler(self._inject_requested_subagents(request))
+
+    return RequestedSubagentsMiddleware()
+
+
 def build_current_datetime_middleware() -> Any | None:
     """Build middleware that injects the current date and time (UTC) into the system prompt."""
     try:
@@ -448,6 +562,10 @@ def build_middleware_list(
     identity_mw = build_user_identity_middleware()
     if identity_mw is not None:
         middlewares.append(identity_mw)
+
+    requested_mw = build_requested_subagents_middleware()
+    if requested_mw is not None:
+        middlewares.append(requested_mw)
 
     datetime_mw = build_current_datetime_middleware()
     if datetime_mw is not None:

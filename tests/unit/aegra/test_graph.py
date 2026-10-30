@@ -823,6 +823,36 @@ class TestGraphHelpers:
         assert fp_resources != fp_mcps
         assert fp_resources_order == fp_resources_order_rev
 
+    def test_graph_fingerprint_includes_subagent_key(self):
+        """A different subagent set must miss the graph cache."""
+        from deep_agent.aegra.graph import _graph_fingerprint, _subagent_cache_key
+
+        base = dict(model_name="model", system_prompt="prompt", tool_names=["t"])
+        analyst = {"analyst": {"type": "compiled"}}
+        publisher = {"analyst": {"type": "compiled"}, "publisher": {"type": "default"}}
+        async_runner = {
+            "analyst": {"type": "compiled"},
+            "publisher": {"type": "async", "url": "http://runner", "graph_id": "g1"},
+        }
+        fp_none = _graph_fingerprint(**base)
+        fp_analyst = _graph_fingerprint(
+            **base, subagent_key=_subagent_cache_key(analyst)
+        )
+        fp_publisher = _graph_fingerprint(
+            **base, subagent_key=_subagent_cache_key(publisher)
+        )
+        fp_async = _graph_fingerprint(
+            **base, subagent_key=_subagent_cache_key(async_runner)
+        )
+        fp_async_again = _graph_fingerprint(
+            **base, subagent_key=_subagent_cache_key(async_runner)
+        )
+
+        assert fp_none != fp_analyst
+        assert fp_analyst != fp_publisher
+        assert fp_publisher != fp_async
+        assert fp_async == fp_async_again
+
     def test_invalidate_graph_cache_clears_caches(self):
         """invalidate_graph_cache empties both the graph and timestamp caches."""
         import time

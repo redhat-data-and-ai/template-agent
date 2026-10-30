@@ -14,6 +14,7 @@ from deep_agent.src.infrastructure.middleware import (
     build_current_datetime_middleware,
     build_excluded_middleware,
     build_middleware_list,
+    build_requested_subagents_middleware,
     build_user_identity_middleware,
     get_current_datetime,
     resolve_memory_param,
@@ -45,12 +46,13 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
-        # GeminiSafetyLogMiddleware + UserIdentityMiddleware + CurrentDatetimeMiddleware + ImageSanitizeMiddleware always included
-        assert len(result) == 4
+        # GeminiSafetyLog + UserIdentity + RequestedSubagents + CurrentDatetime + ImageSanitize
+        assert len(result) == 5
         assert type(result[0]).__name__ == "GeminiSafetyLogMiddleware"
         assert type(result[1]).__name__ == "UserIdentityMiddleware"
-        assert type(result[2]).__name__ == "CurrentDatetimeMiddleware"
-        assert type(result[3]).__name__ == "ImageSanitizeMiddleware"
+        assert type(result[2]).__name__ == "RequestedSubagentsMiddleware"
+        assert type(result[3]).__name__ == "CurrentDatetimeMiddleware"
+        assert type(result[4]).__name__ == "ImageSanitizeMiddleware"
 
     def test_includes_summarization_tool_when_enabled(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
@@ -79,8 +81,9 @@ class TestBuildMiddlewareList:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
             build_sum.assert_not_called()
-        # Default guardrails (model/tool limits + model retry) + safety + identity + datetime + image sanitize.
-        assert len(result) == 7
+        # Default guardrails (model/tool limits + model retry) + safety + identity
+        # + requested subagents + datetime + image sanitize.
+        assert len(result) == 8
 
     def test_includes_extra_middleware(self):
         resolved = ResolvedMiddlewareConfig(
@@ -94,7 +97,7 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert len(result) == 8
+        assert len(result) == 9
         assert any(isinstance(m, _DummyMiddleware) for m in result)
 
 
@@ -394,6 +397,156 @@ class TestSetUserInfo:
         info = _current_user_info.get()
         assert info["user_id"] == "u1"
         assert info["display_name"] == "AB"
+
+
+class TestRequestedSubagentsMiddleware:
+    """Test build_requested_subagents_middleware and its injection logic."""
+
+    def test_returns_middleware_instance(self):
+        mw = build_requested_subagents_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        assert type(mw).__name__ == "RequestedSubagentsMiddleware"
+
+    def test_injects_block_when_message_names_subagent(self):
+        mw = build_requested_subagents_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        from langchain_core.messages import HumanMessage
+
+        request = MagicMock()
+        request.system_message = MagicMock()
+        request.messages = [HumanMessage(content="/Analyst calculate BMI")]
+        catalog = {"analyst": {"description": "BMI"}, "publisher": {}}
+        with (
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_all_subagent_configs",
+                return_value=catalog,
+            ),
+            patch(
+                "deepagents.middleware.subagents.append_to_system_message"
+            ) as mock_append,
+        ):
+            appended_msg = MagicMock()
+            mock_append.return_value = appended_msg
+            result = mw._inject_requested_subagents(request)
+        mock_append.assert_called_once()
+        block_arg = mock_append.call_args[0][1]
+        assert "<invoked-subagents>" in block_arg
+        assert "the task tool" in block_arg
+        assert "analyst" in block_arg
+        request.override.assert_called_once_with(system_message=appended_msg)
+        assert result is request.override.return_value
+
+    def test_does_not_inject_after_tool_result(self):
+        mw = build_requested_subagents_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        request = MagicMock()
+        request.messages = [
+            HumanMessage(content="/analyst 180cm"),
+            AIMessage(content="", tool_calls=[{"name": "task", "args": {}, "id": "1"}]),
+            ToolMessage(content="bmi 22", tool_call_id="1"),
+        ]
+        with (
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_all_subagent_configs",
+                return_value={"analyst": {}},
+            ),
+            patch(
+                "deepagents.middleware.subagents.append_to_system_message"
+            ) as mock_append,
+        ):
+            result = mw._inject_requested_subagents(request)
+        mock_append.assert_not_called()
+        assert result is request
+
+    def test_injects_from_state_when_request_messages_empty(self):
+        mw = build_requested_subagents_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+
+        request = MagicMock()
+        request.system_message = MagicMock()
+        request.messages = []
+        request.state = {
+            "messages": [
+                {"type": "human", "content": "older"},
+                {"type": "ai", "content": "ok"},
+                {"role": "user", "content": "/analyst 180cm"},
+            ]
+        }
+        catalog = {"analyst": {"description": "BMI", "type": "compiled"}}
+        with (
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_all_subagent_configs",
+                return_value=catalog,
+            ),
+            patch(
+                "deepagents.middleware.subagents.append_to_system_message"
+            ) as mock_append,
+        ):
+            mock_append.return_value = MagicMock()
+            mw._inject_requested_subagents(request)
+        mock_append.assert_called_once()
+        block_arg = mock_append.call_args[0][1]
+        assert "<invoked-subagents>" in block_arg
+        assert "analyst" in block_arg
+
+    def test_request_messages_win_over_state(self):
+        mw = build_requested_subagents_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        from langchain_core.messages import HumanMessage
+
+        request = MagicMock()
+        request.messages = [HumanMessage(content="hello")]
+        request.state = {"messages": [{"type": "human", "content": "/analyst"}]}
+        with (
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_all_subagent_configs",
+                return_value={"analyst": {}},
+            ),
+            patch(
+                "deepagents.middleware.subagents.append_to_system_message"
+            ) as mock_append,
+        ):
+            result = mw._inject_requested_subagents(request)
+        mock_append.assert_not_called()
+        assert result is request
+
+    def test_no_inject_when_no_match(self):
+        mw = build_requested_subagents_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        from langchain_core.messages import HumanMessage
+
+        request = MagicMock()
+        request.messages = [HumanMessage(content="hello with no slash")]
+        with (
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_all_subagent_configs",
+                return_value={"analyst": {}},
+            ),
+            patch(
+                "deepagents.middleware.subagents.append_to_system_message"
+            ) as mock_append,
+        ):
+            result = mw._inject_requested_subagents(request)
+        mock_append.assert_not_called()
+        request.override.assert_not_called()
+        assert result is request
+
+    def test_wrap_model_call_delegates(self):
+        mw = build_requested_subagents_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        handler = MagicMock()
+        request = MagicMock()
+        mw.wrap_model_call(request, handler)
+        handler.assert_called_once()
 
 
 class TestUserIdentityMiddleware:
