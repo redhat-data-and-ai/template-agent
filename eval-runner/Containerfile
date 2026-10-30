@@ -9,7 +9,7 @@ RUN dnf install -y git && dnf clean all
 RUN pip install --no-cache-dir --upgrade pip
 
 RUN pip install --no-cache-dir \
-    "lightspeed-evaluation @ git+https://github.com/lightspeed-core/lightspeed-evaluation.git@v0.8.0" \
+    "lightspeed-evaluation @ git+https://github.com/lightspeed-core/lightspeed-evaluation.git@d6194d57b1af8cfb6749fe4bad1f8156d3e9694c" \
     fastapi \
     "uvicorn[standard]" \
     httpx \

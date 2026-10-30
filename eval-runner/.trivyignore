@@ -10,12 +10,3 @@
 # imports it and never opens fsspec reference documents, so the attack vector
 # is not exposed. Revisit when lightspeed-evaluation bumps its datasets pin.
 CVE-2026-104851
-
-# GHSA-g5ff-637f-6q2m: LiteLLM internal_user_viewer arbitrary local file read
-# via vertex_ai_credentials (HIGH). Fixed in litellm 1.95.0, but
-# lightspeed-evaluation v0.8.0 pins litellm>=1.84.0,<=1.89.3 so the fixed
-# release cannot be installed. Eval-runner does not expose LiteLLM's
-# internal_user_viewer / admin credential-upload APIs — it only uses the
-# library as a model client through lightspeed-evaluation. Revisit when
-# lightspeed-evaluation raises its litellm upper bound.
-GHSA-g5ff-637f-6q2m
