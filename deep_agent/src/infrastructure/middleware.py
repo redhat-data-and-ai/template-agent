@@ -152,26 +152,33 @@ def build_user_identity_middleware() -> Any | None:
     return UserIdentityMiddleware()
 
 
-def requested_subagent_name(cfg: Any, known_names: Any) -> str | None:
-    """Return the run's subagent name when it matches a configured subagent."""
+def requested_subagent_names(cfg: Any, known_names: Any) -> list[str]:
+    """Return the run's subagent names that match configured subagents."""
     if not isinstance(cfg, dict):
-        return None
+        return []
     configurable = cfg.get("configurable")
     if not isinstance(configurable, dict):
-        return None
-    raw = configurable.get("requested_subagent")
-    if not isinstance(raw, str):
-        return None
-    cleaned = _sanitize_identity_value(raw)
-    if not cleaned or not _SUBAGENT_NAME_RE.fullmatch(cleaned):
-        return None
-    if cleaned not in known_names:
-        return None
-    return cleaned
+        return []
+    raw = configurable.get("requested_subagents")
+    if not isinstance(raw, list):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        cleaned = _sanitize_identity_value(item)
+        if not cleaned or not _SUBAGENT_NAME_RE.fullmatch(cleaned):
+            continue
+        if cleaned not in known_names or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        names.append(cleaned)
+    return names
 
 
 def build_requested_subagent_middleware() -> Any | None:
-    """Tell the orchestrator to delegate this turn to the subagent the user named.
+    """Tell the orchestrator to delegate this turn to the subagents the user named.
 
     Reads the active run config at model-call time. The graph factory's
     ``ServerRuntime`` does not carry that config. Subagent graphs do not
@@ -198,23 +205,29 @@ def build_requested_subagent_middleware() -> Any | None:
                 return request
             configurable = cfg.get("configurable") if isinstance(cfg, dict) else None
             raw = (
-                configurable.get("requested_subagent")
+                configurable.get("requested_subagents")
                 if isinstance(configurable, dict)
                 else None
             )
-            if not isinstance(raw, str) or not raw.strip():
+            if not isinstance(raw, list) or not raw:
                 return request
             from deep_agent.src.agent.config import agent_config
 
-            name = requested_subagent_name(cfg, agent_config.get_all_subagent_configs())
-            if not name:
+            names = requested_subagent_names(
+                cfg, agent_config.get_all_subagent_configs()
+            )
+            if not names:
                 return request
             from deepagents.middleware.subagents import append_to_system_message
 
+            tagged = ", ".join(f"/{name}" for name in names)
+            types = ", ".join(f'"{name}"' for name in names)
             block = (
                 "<requested-subagent>\n"
-                f"The user invoked /{name}. On this turn, call the task tool "
-                f'with subagent_type "{name}" and return that subagent\'s result.\n'
+                f"The user invoked {tagged}. On this turn, before you answer, "
+                "call the task tool once for each of these subagent_type values "
+                f"({types}). Choose parallel or one after another only for the "
+                "order of those calls, then return their results.\n"
                 "</requested-subagent>"
             )
             return request.override(

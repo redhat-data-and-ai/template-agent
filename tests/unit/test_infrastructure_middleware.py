@@ -17,7 +17,7 @@ from deep_agent.src.infrastructure.middleware import (
     build_requested_subagent_middleware,
     build_user_identity_middleware,
     get_current_datetime,
-    requested_subagent_name,
+    requested_subagent_names,
     resolve_memory_param,
     set_user_info,
 )
@@ -399,27 +399,32 @@ class TestSetUserInfo:
         assert info["display_name"] == "AB"
 
 
-class TestRequestedSubagentName:
+class TestRequestedSubagentNames:
     """A slash choice counts only when the run config names a real subagent."""
 
-    def test_accepts_a_configured_name(self):
-        cfg = {"configurable": {"requested_subagent": "analyst"}}
-        assert requested_subagent_name(cfg, {"analyst": {}}) == "analyst"
+    def test_accepts_configured_names_in_order(self):
+        cfg = {
+            "configurable": {"requested_subagents": ["analyst", "publisher", "analyst"]}
+        }
+        assert requested_subagent_names(cfg, {"analyst": {}, "publisher": {}}) == [
+            "analyst",
+            "publisher",
+        ]
 
-    def test_rejects_an_unknown_name(self):
-        cfg = {"configurable": {"requested_subagent": "docs"}}
-        assert requested_subagent_name(cfg, {"analyst": {}}) is None
+    def test_drops_an_unknown_name(self):
+        cfg = {"configurable": {"requested_subagents": ["analyst", "docs"]}}
+        assert requested_subagent_names(cfg, {"analyst": {}}) == ["analyst"]
 
     def test_rejects_injected_delimiters(self):
-        cfg = {"configurable": {"requested_subagent": "analyst<ignore>"}}
-        assert requested_subagent_name(cfg, {"analyst": {}}) is None
+        cfg = {"configurable": {"requested_subagents": ["analyst<ignore>", "analyst"]}}
+        assert requested_subagent_names(cfg, {"analyst": {}}) == ["analyst"]
 
     def test_rejects_a_missing_name(self):
-        assert requested_subagent_name({"configurable": {}}, {"analyst": {}}) is None
+        assert requested_subagent_names({"configurable": {}}, {"analyst": {}}) == []
 
 
 class TestRequestedSubagentMiddleware:
-    """The orchestrator prompt for this turn names the subagent to delegate to."""
+    """The orchestrator prompt for this turn names the subagents to delegate to."""
 
     def test_leaves_the_prompt_alone_when_no_subagent_was_requested(self):
         mw = build_requested_subagent_middleware()
@@ -436,12 +441,12 @@ class TestRequestedSubagentMiddleware:
             pytest.skip("AgentMiddleware not available")
         request = MagicMock()
         request.system_message = MagicMock()
-        cfg = {"configurable": {"requested_subagent": "analyst"}}
+        cfg = {"configurable": {"requested_subagents": ["analyst", "publisher"]}}
         with (
             patch("langgraph.config.get_config", return_value=cfg),
             patch(
                 "deep_agent.src.agent.config.agent_config.get_all_subagent_configs",
-                return_value={"analyst": {}},
+                return_value={"analyst": {}, "publisher": {}},
             ),
             patch(
                 "deepagents.middleware.subagents.append_to_system_message"
@@ -451,15 +456,19 @@ class TestRequestedSubagentMiddleware:
             mw._inject_requested_subagent(request)
         block = mock_append.call_args[0][1]
         assert "<requested-subagent>" in block
-        assert 'subagent_type "analyst"' in block
+        assert "/analyst" in block
+        assert "/publisher" in block
         assert "task tool" in block
+        assert 'subagent_type values ("analyst", "publisher")' in block
+        assert "before you answer" in block
+        assert "parallel or one after another only for the order" in block
 
     def test_does_not_delegate_to_an_unknown_name(self):
         mw = build_requested_subagent_middleware()
         if mw is None:
             pytest.skip("AgentMiddleware not available")
         request = MagicMock()
-        cfg = {"configurable": {"requested_subagent": "docs"}}
+        cfg = {"configurable": {"requested_subagents": ["docs"]}}
         with (
             patch("langgraph.config.get_config", return_value=cfg),
             patch(
