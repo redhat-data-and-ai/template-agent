@@ -24,6 +24,7 @@ logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 _current_user_info: contextvars.ContextVar[dict[str, str] | None] = (
     contextvars.ContextVar("_current_user_info", default=None)
 )
+_SUBAGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 _DELIMITER_RE = re.compile(r"[<>\[\]]")
@@ -149,6 +150,88 @@ def build_user_identity_middleware() -> Any | None:
             return await handler(self._inject_identity(request))
 
     return UserIdentityMiddleware()
+
+
+def requested_subagent_name(cfg: Any, known_names: Any) -> str | None:
+    """Return the run's subagent name when it matches a configured subagent."""
+    if not isinstance(cfg, dict):
+        return None
+    configurable = cfg.get("configurable")
+    if not isinstance(configurable, dict):
+        return None
+    raw = configurable.get("requested_subagent")
+    if not isinstance(raw, str):
+        return None
+    cleaned = _sanitize_identity_value(raw)
+    if not cleaned or not _SUBAGENT_NAME_RE.fullmatch(cleaned):
+        return None
+    if cleaned not in known_names:
+        return None
+    return cleaned
+
+
+def build_requested_subagent_middleware() -> Any | None:
+    """Tell the orchestrator to delegate this turn to the subagent the user named.
+
+    Reads the active run config at model-call time. The graph factory's
+    ``ServerRuntime`` does not carry that config. Subagent graphs do not
+    include this middleware.
+    """
+    try:
+        from langchain.agents.middleware.types import (
+            AgentMiddleware,
+            ModelRequest,
+            ModelResponse,
+        )
+    except ImportError:
+        return None
+
+    class RequestedSubagentMiddleware(AgentMiddleware):
+        def _inject_requested_subagent(
+            self, request: ModelRequest[Any]
+        ) -> ModelRequest[Any]:
+            try:
+                from langgraph.config import get_config
+
+                cfg = get_config() or {}
+            except Exception:
+                return request
+            configurable = cfg.get("configurable") if isinstance(cfg, dict) else None
+            raw = (
+                configurable.get("requested_subagent")
+                if isinstance(configurable, dict)
+                else None
+            )
+            if not isinstance(raw, str) or not raw.strip():
+                return request
+            from deep_agent.src.agent.config import agent_config
+
+            name = requested_subagent_name(cfg, agent_config.get_all_subagent_configs())
+            if not name:
+                return request
+            from deepagents.middleware.subagents import append_to_system_message
+
+            block = (
+                "<requested-subagent>\n"
+                f"The user invoked /{name}. On this turn, call the task tool "
+                f'with subagent_type "{name}" and return that subagent\'s result.\n'
+                "</requested-subagent>"
+            )
+            return request.override(
+                system_message=append_to_system_message(request.system_message, block),
+            )
+
+        def wrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return handler(self._inject_requested_subagent(request))
+
+        async def awrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return await handler(self._inject_requested_subagent(request))
+
+    return RequestedSubagentMiddleware()
 
 
 def build_current_datetime_middleware() -> Any | None:
@@ -448,6 +531,10 @@ def build_middleware_list(
     identity_mw = build_user_identity_middleware()
     if identity_mw is not None:
         middlewares.append(identity_mw)
+
+    requested_mw = build_requested_subagent_middleware()
+    if requested_mw is not None:
+        middlewares.append(requested_mw)
 
     datetime_mw = build_current_datetime_middleware()
     if datetime_mw is not None:

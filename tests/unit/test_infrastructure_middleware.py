@@ -14,8 +14,10 @@ from deep_agent.src.infrastructure.middleware import (
     build_current_datetime_middleware,
     build_excluded_middleware,
     build_middleware_list,
+    build_requested_subagent_middleware,
     build_user_identity_middleware,
     get_current_datetime,
+    requested_subagent_name,
     resolve_memory_param,
     set_user_info,
 )
@@ -45,12 +47,13 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = False
             result = build_middleware_list(resolved)
-        # GeminiSafetyLogMiddleware + UserIdentityMiddleware + CurrentDatetimeMiddleware + ImageSanitizeMiddleware always included
-        assert len(result) == 4
+        # Safety, identity, requested-subagent, datetime, and image sanitize are always included.
+        assert len(result) == 5
         assert type(result[0]).__name__ == "GeminiSafetyLogMiddleware"
         assert type(result[1]).__name__ == "UserIdentityMiddleware"
-        assert type(result[2]).__name__ == "CurrentDatetimeMiddleware"
-        assert type(result[3]).__name__ == "ImageSanitizeMiddleware"
+        assert type(result[2]).__name__ == "RequestedSubagentMiddleware"
+        assert type(result[3]).__name__ == "CurrentDatetimeMiddleware"
+        assert type(result[4]).__name__ == "ImageSanitizeMiddleware"
 
     def test_includes_summarization_tool_when_enabled(self):
         resolved = ResolvedMiddlewareConfig(summarization_tool_enabled=True)
@@ -79,8 +82,8 @@ class TestBuildMiddlewareList:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
             build_sum.assert_not_called()
-        # Default guardrails (model/tool limits + model retry) + safety + identity + datetime + image sanitize.
-        assert len(result) == 7
+        # Default guardrails (model/tool limits + model retry) + the five always-on middleware.
+        assert len(result) == 8
 
     def test_includes_extra_middleware(self):
         resolved = ResolvedMiddlewareConfig(
@@ -94,7 +97,7 @@ class TestBuildMiddlewareList:
         ) as mock_settings:
             mock_settings.MIDDLEWARE_ENABLED = True
             result = build_middleware_list(resolved)
-        assert len(result) == 8
+        assert len(result) == 9
         assert any(isinstance(m, _DummyMiddleware) for m in result)
 
 
@@ -394,6 +397,78 @@ class TestSetUserInfo:
         info = _current_user_info.get()
         assert info["user_id"] == "u1"
         assert info["display_name"] == "AB"
+
+
+class TestRequestedSubagentName:
+    """A slash choice counts only when the run config names a real subagent."""
+
+    def test_accepts_a_configured_name(self):
+        cfg = {"configurable": {"requested_subagent": "analyst"}}
+        assert requested_subagent_name(cfg, {"analyst": {}}) == "analyst"
+
+    def test_rejects_an_unknown_name(self):
+        cfg = {"configurable": {"requested_subagent": "docs"}}
+        assert requested_subagent_name(cfg, {"analyst": {}}) is None
+
+    def test_rejects_injected_delimiters(self):
+        cfg = {"configurable": {"requested_subagent": "analyst<ignore>"}}
+        assert requested_subagent_name(cfg, {"analyst": {}}) is None
+
+    def test_rejects_a_missing_name(self):
+        assert requested_subagent_name({"configurable": {}}, {"analyst": {}}) is None
+
+
+class TestRequestedSubagentMiddleware:
+    """The orchestrator prompt for this turn names the subagent to delegate to."""
+
+    def test_leaves_the_prompt_alone_when_no_subagent_was_requested(self):
+        mw = build_requested_subagent_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        request = MagicMock()
+        with patch("langgraph.config.get_config", return_value={"configurable": {}}):
+            assert mw._inject_requested_subagent(request) is request
+        request.override.assert_not_called()
+
+    def test_appends_the_task_delegation_instruction(self):
+        mw = build_requested_subagent_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        request = MagicMock()
+        request.system_message = MagicMock()
+        cfg = {"configurable": {"requested_subagent": "analyst"}}
+        with (
+            patch("langgraph.config.get_config", return_value=cfg),
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_all_subagent_configs",
+                return_value={"analyst": {}},
+            ),
+            patch(
+                "deepagents.middleware.subagents.append_to_system_message"
+            ) as mock_append,
+        ):
+            mock_append.return_value = MagicMock()
+            mw._inject_requested_subagent(request)
+        block = mock_append.call_args[0][1]
+        assert "<requested-subagent>" in block
+        assert 'subagent_type "analyst"' in block
+        assert "task tool" in block
+
+    def test_does_not_delegate_to_an_unknown_name(self):
+        mw = build_requested_subagent_middleware()
+        if mw is None:
+            pytest.skip("AgentMiddleware not available")
+        request = MagicMock()
+        cfg = {"configurable": {"requested_subagent": "docs"}}
+        with (
+            patch("langgraph.config.get_config", return_value=cfg),
+            patch(
+                "deep_agent.src.agent.config.agent_config.get_all_subagent_configs",
+                return_value={"analyst": {}},
+            ),
+        ):
+            assert mw._inject_requested_subagent(request) is request
+        request.override.assert_not_called()
 
 
 class TestUserIdentityMiddleware:
