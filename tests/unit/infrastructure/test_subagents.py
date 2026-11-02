@@ -40,6 +40,26 @@ def _no_current_datetime_middleware():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _no_tool_access_middleware():
+    """Keep SubAgent call assertions about the subject under test.
+
+    Subagents always get the global excluded_tools middleware; that coverage is
+    asserted in tests/unit/test_tool_access.py.
+    """
+    with (
+        patch(
+            "deep_agent.src.infrastructure.subagents.build_tool_access_middleware",
+            return_value=None,
+        ),
+        patch(
+            "deep_agent.src.infrastructure.subagents.build_restricted_filesystem_middleware",
+            return_value=None,
+        ),
+    ):
+        yield
+
+
 class TestLoadSubagents:
     """Tests for load_subagents function."""
 
