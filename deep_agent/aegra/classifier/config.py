@@ -1,10 +1,10 @@
 """Configuration and file loading for the DVA classifier.
 
 All config files are loaded from the classifier config directory:
-  config/agent/classifier/routing_guide.txt
+  config/agent/classifier/routing_guide.md
   config/agent/classifier/classify_config.json
   config/agent/classifier/product_tables.json
-  config/agent/classifier/unified_prompt.txt
+  config/agent/classifier/unified_prompt.md
 
 Environment variables:
   CLASSIFIER_CONFIG_DIR  - Override path to classifier config directory
@@ -39,25 +39,25 @@ MAAS_MAX_TOKENS = int(os.environ.get("MAAS_MAX_TOKENS", "8192"))
 
 @lru_cache(maxsize=1)
 def load_routing_guide() -> str:
-    """Load the routing guide system prompt from routing_guide.txt."""
-    path = _CONFIG_DIR / "routing_guide.txt"
+    """Load the routing guide system prompt from routing_guide.md."""
+    path = _CONFIG_DIR / "routing_guide.md"
     if not path.exists():
-        logger.warning("routing_guide.txt not found at %s", path)
+        logger.warning("routing_guide.md not found at %s", path)
         return ""
     content = path.read_text(encoding="utf-8")
-    logger.info("Loaded routing_guide.txt (%d chars)", len(content))
+    logger.info("Loaded routing_guide.md (%d chars)", len(content))
     return content
 
 
 @lru_cache(maxsize=1)
 def load_unified_prompt() -> str:
-    """Load the unified task suffix from unified_prompt.txt."""
-    path = _CONFIG_DIR / "unified_prompt.txt"
+    """Load the unified task suffix from unified_prompt.md."""
+    path = _CONFIG_DIR / "unified_prompt.md"
     if not path.exists():
-        logger.warning("unified_prompt.txt not found at %s", path)
+        logger.warning("unified_prompt.md not found at %s", path)
         return ""
     content = path.read_text(encoding="utf-8")
-    logger.info("Loaded unified_prompt.txt (%d chars)", len(content))
+    logger.info("Loaded unified_prompt.md (%d chars)", len(content))
     return content
 
 
