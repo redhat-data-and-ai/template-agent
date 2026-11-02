@@ -25,7 +25,10 @@ dependencies = [
     "python-dotenv==1.2.2",
     "langchain-google-genai==4.4.2",
     "langchain-google-vertexai==3.2.4",
-    "langchain-openai>=0.3.0",
+    # Pinned: ExtraContentChatOpenAI overrides private ChatOpenAI methods to
+    # relay Gemini 3 thought_signature. See deep_agent/src/agent/openai_compat.py
+    # and the upgrade tripwire in tests/unit/agent/test_openai_compat.py.
+    "langchain-openai==1.7.2",
     "langchain-mcp-adapters==0.3.2",
     "mcp>=1.28.1,<2",
     "langfuse>=4.9.0",
