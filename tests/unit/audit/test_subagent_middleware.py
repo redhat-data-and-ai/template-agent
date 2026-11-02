@@ -25,6 +25,25 @@ class TestSubagentMiddleware:
         ):
             yield
 
+    @pytest.fixture(autouse=True)
+    def _no_tool_access_middleware(self):
+        """Keep these tests about audit/OPA composition.
+
+        Subagents always get the global excluded_tools middleware; that coverage
+        is asserted in tests/unit/test_tool_access.py.
+        """
+        with (
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_tool_access_middleware",
+                return_value=None,
+            ),
+            patch(
+                "deep_agent.src.infrastructure.subagents.build_restricted_filesystem_middleware",
+                return_value=None,
+            ),
+        ):
+            yield
+
     def test_includes_audit_when_enabled(self):
         tool = MagicMock()
         tool.name = "mcp_search"

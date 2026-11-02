@@ -166,6 +166,25 @@ class TestResolveMiddleware:
         resolved = resolve_middleware(config, "model", overrides)
         assert resolved.extra_middleware == ["module_a:ClassA", "module_b:ClassB"]
 
+    def test_excluded_tools_override_merged(self):
+        config = MiddlewareFileConfig(
+            defaults=MiddlewareDefaults(excluded_tools=["delete"])
+        )
+        overrides = {"excluded_tools": ["write_file"]}
+        resolved = resolve_middleware(config, "model", overrides)
+        assert resolved.blocked_tools == frozenset({"delete", "write_file"})
+
+    def test_scalar_excluded_tools_override_is_rejected(self):
+        """A scalar override must fail loudly, not be silently dropped.
+
+        ``excluded_tools`` is a safety floor. Ignoring a malformed override
+        leaves the tool the author meant to block fully registered, so the
+        misconfiguration has to surface instead of passing silently.
+        """
+        config = MiddlewareFileConfig()
+        with pytest.raises(TypeError, match="excluded_tools"):
+            resolve_middleware(config, "model", {"excluded_tools": "delete"})
+
     def test_global_disabled_respected(self):
         config = MiddlewareFileConfig(
             defaults=MiddlewareDefaults(
