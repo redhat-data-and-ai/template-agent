@@ -10,6 +10,7 @@ from langchain_core.messages import (
     HumanMessage,
     ToolMessage,
 )
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_openai import ChatOpenAI
 
 from deep_agent.src.agent.llm import _create_vllm_model
@@ -357,3 +358,144 @@ class TestLangchainOpenAIUpgradeTripwire:
 
     def test_use_responses_api_helper_still_exists(self):
         assert hasattr(ChatOpenAI, "_use_responses_api")
+
+
+class TestMalformedPayloadsAreSurvived:
+    """Every guard branch in the relay, exercised.
+
+    This module parses third-party payloads whose shape it does not control,
+    and its stated contract is that a vendor quirk must never become a crash.
+    Each case below drives one defensive branch with a payload the gateway
+    could plausibly emit; all of them must return rather than raise.
+    """
+
+    def _llm(self):
+        return ExtraContentChatOpenAI(
+            model="gemini-3.5-flash", api_key="test", base_url="http://x/v1"
+        )
+
+    # --- _extra_content_by_tool_call_id -----------------------------------
+
+    @pytest.mark.parametrize("entry", [None, "not-a-dict", 42, ["nested"]])
+    def test_non_dict_tool_call_entry_is_skipped(self, entry):
+        assert _extra_content_by_tool_call_id([entry]) == {}
+
+    def test_good_entry_survives_alongside_a_malformed_one(self):
+        tool_calls = [None, {"id": "call_1", EXTRA_CONTENT_KEY: SIG}]
+        assert _extra_content_by_tool_call_id(tool_calls) == {"call_1": [SIG]}
+
+    # --- _create_chat_result ----------------------------------------------
+
+    def test_choice_without_message_dict_is_skipped(self):
+        """super() parsed the response, but our view of the choice is malformed.
+
+        super() is stubbed because langchain_openai raises on these shapes
+        before our code runs; the branch under test only exists for payloads
+        that get past it.
+        """
+        llm = self._llm()
+        good = ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content="hi"))]
+        )
+        response = {"choices": [{"index": 0, "message": None}]}
+        with patch.object(ChatOpenAI, "_create_chat_result", return_value=good):
+            result = llm._create_chat_result(response)
+        assert EXTRA_CONTENT_KEY not in result.generations[0].message.additional_kwargs
+
+    def test_non_dict_choice_is_skipped(self):
+        """The zip guard: super() produced a generation, the choice is junk."""
+        llm = self._llm()
+        good = ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content="hi"))]
+        )
+        with patch.object(ChatOpenAI, "_create_chat_result", return_value=good):
+            result = llm._create_chat_result({"choices": ["not-a-dict"]})
+        assert EXTRA_CONTENT_KEY not in result.generations[0].message.additional_kwargs
+
+    # --- _convert_chunk_to_generation_chunk --------------------------------
+
+    def test_none_generation_chunk_from_super_is_passed_through(self):
+        llm = self._llm()
+        with patch.object(
+            ChatOpenAI, "_convert_chunk_to_generation_chunk", return_value=None
+        ):
+            assert (
+                llm._convert_chunk_to_generation_chunk({}, AIMessageChunk, None) is None
+            )
+
+    @pytest.mark.parametrize(
+        ("chunk", "case"),
+        [
+            ({"choices": [{"delta": "not-a-dict", "index": 0}]}, "non-dict delta"),
+            ({"choices": ["not-a-dict"]}, "non-dict first choice"),
+            ({"choices": []}, "empty choices"),
+            ({}, "no choices key"),
+        ],
+    )
+    def test_malformed_chunk_returns_super_result_untouched(self, chunk, case):
+        """super() is stubbed for the same reason as above."""
+        llm = self._llm()
+        good = ChatGenerationChunk(message=AIMessageChunk(content="hi"))
+        with patch.object(
+            ChatOpenAI, "_convert_chunk_to_generation_chunk", return_value=good
+        ):
+            gen = llm._convert_chunk_to_generation_chunk(chunk, AIMessageChunk, None)
+        assert EXTRA_CONTENT_KEY not in gen.message.additional_kwargs, case
+
+    # --- _get_request_payload ---------------------------------------------
+
+    def test_responses_api_payload_is_left_alone(self):
+        """The Responses API shape has no "messages"; the relay must not touch it."""
+        llm = self._llm()
+        messages = [HumanMessage(content="hi")]
+        with patch.object(ChatOpenAI, "_use_responses_api", return_value=True):
+            payload = llm._get_request_payload(messages)
+        assert "input" in payload or "messages" not in payload
+
+    def test_payload_without_messages_list_is_returned_unchanged(self):
+        llm = self._llm()
+        sentinel = {"not_messages": True}
+        with patch.object(ChatOpenAI, "_get_request_payload", return_value=sentinel):
+            assert llm._get_request_payload([HumanMessage(content="hi")]) is sentinel
+
+    def test_non_dict_tool_call_in_payload_is_skipped(self):
+        llm = self._llm()
+        ai = _ai_with_signature({"call_1": SIG})
+        built = {
+            "messages": [
+                {"role": "assistant", "tool_calls": ["not-a-dict", {"id": "call_1"}]}
+            ]
+        }
+        with patch.object(ChatOpenAI, "_get_request_payload", return_value=built):
+            payload = llm._get_request_payload([ai])
+        tool_calls = payload["messages"][0]["tool_calls"]
+        assert tool_calls[0] == "not-a-dict"
+        assert tool_calls[1][EXTRA_CONTENT_KEY] == SIG
+
+    def test_tool_call_with_non_string_id_is_skipped(self):
+        llm = self._llm()
+        ai = _ai_with_signature({"call_1": SIG})
+        built = {
+            "messages": [
+                {"role": "assistant", "tool_calls": [{"id": None}, {"id": "call_1"}]}
+            ]
+        }
+        with patch.object(ChatOpenAI, "_get_request_payload", return_value=built):
+            payload = llm._get_request_payload([ai])
+        tool_calls = payload["messages"][0]["tool_calls"]
+        assert EXTRA_CONTENT_KEY not in tool_calls[0]
+        assert tool_calls[1][EXTRA_CONTENT_KEY] == SIG
+
+    def test_non_assistant_message_is_skipped(self):
+        llm = self._llm()
+        ai = _ai_with_signature({"call_1": SIG})
+        built = {
+            "messages": [
+                {"role": "user", "tool_calls": [{"id": "call_1"}]},
+                {"role": "assistant", "tool_calls": [{"id": "call_1"}]},
+            ]
+        }
+        with patch.object(ChatOpenAI, "_get_request_payload", return_value=built):
+            payload = llm._get_request_payload([ai])
+        assert EXTRA_CONTENT_KEY not in payload["messages"][0]["tool_calls"][0]
+        assert payload["messages"][1]["tool_calls"][0][EXTRA_CONTENT_KEY] == SIG

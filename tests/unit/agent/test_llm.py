@@ -121,3 +121,113 @@ class TestCreateModel:
             with patch("deep_agent.src.agent.llm.ChatAnthropicVertex"):
                 for model_name in CLAUDE_MODELS:
                     create_model(model_name)
+
+
+# Patch target note: _create_vllm_model imports ExtraContentChatOpenAI from
+# openai_compat inside the function body, so these patch it where it is
+# defined. Patching langchain_openai.ChatOpenAI does NOT intercept it — the
+# wrapper is a subclass that is already bound by the time the call happens.
+_WRAPPER = "deep_agent.src.agent.openai_compat.ExtraContentChatOpenAI"
+
+
+class TestCreateVllmModel:
+    """Tests for the vLLM/OpenAI-compatible model creation path."""
+
+    @staticmethod
+    def _settings():
+        mock_settings = MagicMock()
+        mock_settings.VLLM_BASE_URL = "http://localhost:8000/v1"
+        mock_settings.VLLM_API_KEY = "test-key"
+        return mock_settings
+
+    def test_create_vllm_model_success(self):
+        """The wrapper is constructed with the resolved endpoint settings."""
+        mock_instance = MagicMock()
+
+        with (
+            patch("deep_agent.src.agent.llm.settings", self._settings()),
+            patch(_WRAPPER, return_value=mock_instance) as mock_wrapper,
+        ):
+            from deep_agent.src.agent.llm import _create_vllm_model
+
+            result = _create_vllm_model("custom-model", 0.5, 4096)
+
+            mock_wrapper.assert_called_once_with(
+                model="custom-model",
+                base_url="http://localhost:8000/v1",
+                api_key="test-key",
+                temperature=0.5,
+                max_tokens=4096,
+                max_retries=2,
+                streaming=True,
+            )
+            assert result == mock_instance
+
+    def test_openai_compatible_path_uses_the_wrapper_not_plain_chatopenai(self):
+        """Guards the reason this module exists.
+
+        Falling back to a bare ChatOpenAI would drop the Gemini 3
+        thought_signature and break every multi-turn tool call, while every
+        other assertion here still passed. Assert the concrete type.
+        """
+        from deep_agent.src.agent.openai_compat import ExtraContentChatOpenAI
+
+        with patch("deep_agent.src.agent.llm.settings", self._settings()):
+            from deep_agent.src.agent.llm import _create_vllm_model
+
+            model = _create_vllm_model("gemini-3.5-flash", 0.0, 2048)
+
+        assert isinstance(model, ExtraContentChatOpenAI)
+
+    def test_create_vllm_model_import_error(self):
+        """A missing wrapper module surfaces as LLMError, not ImportError."""
+        with patch("deep_agent.src.agent.llm.settings", self._settings()):
+            import builtins
+
+            real_import = builtins.__import__
+
+            def mock_import(name, *args, **kwargs):
+                if name == "deep_agent.src.agent.openai_compat":
+                    raise ImportError("No module named 'langchain_openai'")
+                return real_import(name, *args, **kwargs)
+
+            with patch("builtins.__import__", side_effect=mock_import):
+                from deep_agent.src.agent.llm import _create_vllm_model
+
+                with pytest.raises(LLMError, match="langchain-openai is required"):
+                    _create_vllm_model("custom-model", 0.5, 4096)
+
+    def test_create_vllm_model_general_exception(self):
+        """Construction failures are wrapped in LLMError with the cause kept."""
+        with (
+            patch("deep_agent.src.agent.llm.settings", self._settings()),
+            patch(_WRAPPER, side_effect=RuntimeError("connection refused")),
+        ):
+            from deep_agent.src.agent.llm import _create_vllm_model
+
+            with pytest.raises(LLMError, match="connection refused"):
+                _create_vllm_model("custom-model", 0.5, 4096)
+
+    def test_missing_base_url_raises_value_error(self):
+        """Without VLLM_BASE_URL an unknown model is a config error, not a call."""
+        mock_settings = MagicMock()
+        mock_settings.VLLM_BASE_URL = ""
+
+        with patch("deep_agent.src.agent.llm.settings", mock_settings):
+            from deep_agent.src.agent.llm import _create_vllm_model
+
+            with pytest.raises(ValueError, match="not a known Vertex AI model"):
+                _create_vllm_model("custom-model", 0.5, 4096)
+
+    def test_create_model_routes_to_vllm(self):
+        """create_model sends unknown model names down the compatible path."""
+        with (
+            patch("deep_agent.src.agent.llm.settings", self._settings()),
+            patch(_WRAPPER) as mock_wrapper,
+        ):
+            create_model("custom-model", temperature=0.3, max_output_tokens=2048)
+
+            mock_wrapper.assert_called_once()
+            call_kwargs = mock_wrapper.call_args[1]
+            assert call_kwargs["model"] == "custom-model"
+            assert call_kwargs["base_url"] == "http://localhost:8000/v1"
