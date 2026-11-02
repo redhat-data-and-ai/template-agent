@@ -606,15 +606,14 @@ def build_middleware_list(
 ) -> list[Any]:
     """Build a list of middleware instances from resolved config.
 
-    Only instantiates middleware that deepagents does NOT auto-include.
-    The auto-included middleware (SubAgentMiddleware, SummarizationMiddleware,
-    PatchToolCallsMiddleware, FilesystemMiddleware, TodoListMiddleware) are
-    handled by create_deep_agent() itself.
+    Overrides built-in summarization with the configured engine and optionally
+    exposes that engine through the manual compaction tool. Other core
+    middleware is handled by create_deep_agent() itself.
 
     Args:
         resolved: Fully resolved middleware configuration for this agent.
-        model: Chat model instance for SummarizationToolMiddleware.
-        backend: Backend instance for SummarizationToolMiddleware.
+        model: Chat model instance for summarization.
+        backend: Backend instance for history offloading.
         mcp_tool_names: MCP tool names for platform audit classification.
 
     Returns:
@@ -657,6 +656,12 @@ def build_middleware_list(
         build_restricted_filesystem_middleware(backend, resolved.blocked_tools),
     )
 
+    # Automatic compaction at threshold override
+    summarization = _build_summarization_middleware(
+        model=model, backend=backend, threshold=resolved.compaction_threshold
+    )
+    _append_if_built(middlewares, summarization)
+
     if not settings.MIDDLEWARE_ENABLED:
         logger.info("Middleware disabled via MIDDLEWARE_ENABLED=false")
         _append_tool_access_last(middlewares, resolved)
@@ -672,7 +677,7 @@ def build_middleware_list(
     if resolved.summarization_tool_enabled:
         _append_if_built(
             middlewares,
-            _build_summarization_tool_middleware(model=model, backend=backend),
+            _build_summarization_tool_middleware(summarization=summarization),
         )
 
     _append_guardrails(middlewares, resolved)
@@ -956,26 +961,60 @@ def _build_pii_middleware(config: Any) -> list[Any]:
         return []
 
 
+def _build_summarization_middleware(
+    *,
+    model: Any | None,
+    backend: Any | None,
+    threshold: float,
+) -> Any | None:
+    """Configure automatic compaction and history offloading."""
+    if model is None or backend is None:
+        return None
+
+    from deepagents.middleware.summarization import (
+        SummarizationMiddleware,
+        compute_summarization_defaults,
+    )
+
+    defaults = compute_summarization_defaults(model)
+    trigger = defaults["trigger"]
+    if trigger[0] == "fraction":
+        trigger = ("fraction", threshold)
+
+    return SummarizationMiddleware(
+        model=model,
+        backend=backend,
+        trigger=trigger,
+        keep=defaults["keep"],
+        trim_tokens_to_summarize=None,
+        truncate_args_settings=defaults["truncate_args_settings"],
+    )
+
+
 def _build_summarization_tool_middleware(
     *,
-    model: Any | None = None,
-    backend: Any | None = None,
+    summarization: Any | None,
 ) -> Any | None:
-    """Build SummarizationToolMiddleware instance.
+    """Expose manual compaction using the automatic engine and its settings.
 
-    This gives the agent a tool to proactively trigger summarization
-    at opportune moments (e.g., between tasks) rather than only at
-    fixed token thresholds.
+    The model can invoke the tool in response to conversational requests;
+    the library retains its normal minimum-usage gate.
     """
-    if model is None or backend is None:
-        logger.warning("Summarization tool requires model and backend; skipping")
+    if summarization is None:
+        logger.warning("Summarization tool requires a summarization engine; skipping")
         return None
     try:
-        from deepagents.middleware.summarization import (
-            create_summarization_tool_middleware,
-        )
+        from deepagents.middleware.summarization import SummarizationToolMiddleware
 
-        return create_summarization_tool_middleware(model, backend)
+        return SummarizationToolMiddleware(
+            summarization,
+            system_prompt=(
+                "When the user asks to compact the conversation, compress the "
+                "chat history, or free up context, call compact_conversation. "
+                "Report the tool's result accurately, including when there is "
+                "nothing to compact or compaction fails."
+            ),
+        )
     except ImportError:
         logger.debug(
             "SummarizationToolMiddleware not available in this deepagents version"

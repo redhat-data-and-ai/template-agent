@@ -1,18 +1,13 @@
 """Unit tests for middleware configuration resolution."""
 
-from pathlib import Path
-from unittest.mock import patch
-
 import pytest
+from pydantic import ValidationError
 
 from deep_agent.src.agent.config.middleware import (
     MemoryConfig,
     MiddlewareDefaults,
     MiddlewareFileConfig,
-    PatchToolCallsConfig,
     ProfileConfig,
-    ResolvedMiddlewareConfig,
-    SkillsConfig,
     SummarizationToolConfig,
     load_middleware_config,
     resolve_middleware,
@@ -89,6 +84,42 @@ profiles:
 
 class TestResolveMiddleware:
     """Test the resolution logic: defaults → profile → overrides."""
+
+    def test_compaction_default(self):
+        """Default the automatic compaction trigger to 85% of input capacity."""
+        resolved = resolve_middleware(MiddlewareFileConfig(), "model")
+        assert resolved.compaction_threshold == 0.85
+
+    def test_compaction_yaml_default_and_agent_override(self, tmp_path):
+        """Per-agent overrides take precedence over the YAML middleware default."""
+        path = tmp_path / "middleware.yaml"
+        path.write_text("defaults:\n  compaction_threshold: 0.80\n")
+        config = load_middleware_config(path)
+        assert resolve_middleware(config, "model").compaction_threshold == 0.80
+        assert (
+            resolve_middleware(
+                config, "model", {"compaction_threshold": 0.60}
+            ).compaction_threshold
+            == 0.60
+        )
+
+    @pytest.mark.parametrize("threshold", [0.50, 0.90])
+    def test_compaction_bounds(self, threshold):
+        """Accept both supported threshold boundaries."""
+        resolved = resolve_middleware(
+            MiddlewareFileConfig(), "model", {"compaction_threshold": threshold}
+        )
+        assert resolved.compaction_threshold == threshold
+
+    @pytest.mark.parametrize("threshold", [0.49, 0.91, None, "invalid", float("nan")])
+    def test_compaction_rejects_invalid_values(self, threshold):
+        """Reject out-of-range and malformed global or per-agent thresholds."""
+        with pytest.raises(ValidationError):
+            MiddlewareDefaults(compaction_threshold=threshold)
+        with pytest.raises(ValidationError):
+            resolve_middleware(
+                MiddlewareFileConfig(), "model", {"compaction_threshold": threshold}
+            )
 
     def test_all_defaults_no_profile_no_overrides(self):
         config = MiddlewareFileConfig()

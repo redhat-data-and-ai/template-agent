@@ -135,6 +135,9 @@ middleware:
     - delete   # destructive and unrecoverable — users have deleted packaged
                # files by accident. Memory deletion is unaffected: it goes
                # through DELETE /memories, not this tool.
+  # Automatically compact at this fraction of the model's context window.
+  # Range: 0.50–0.90; keeps 10% of the context window as recent history.
+  compaction_threshold: 0.85
   summarization_tool:
     enabled: true
   memory:
