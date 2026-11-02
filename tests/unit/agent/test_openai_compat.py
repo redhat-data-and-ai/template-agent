@@ -172,11 +172,20 @@ class TestGetRequestPayloadReplay:
         assert by_id == {"call_1": SIG, "call_2": other}
 
     def test_stashed_id_absent_from_payload_is_ignored(self):
+        """A stale stash entry must neither be sent nor bleed into a live call.
+
+        The stale signature is deliberately distinct from ``call_1``'s: with
+        both set to the same blob, a replay that matched by position instead
+        of by id would attach the stale entry to ``call_1`` and still satisfy
+        an id-only assertion.
+        """
+        stale = {"google": {"thought_signature": "stale999"}}
         ai = _ai_with_signature({"call_1": SIG})
-        ai.additional_kwargs[EXTRA_CONTENT_KEY]["call_stale"] = [SIG]
+        ai.additional_kwargs[EXTRA_CONTENT_KEY]["call_stale"] = [stale]
         payload = self._llm()._get_request_payload(self._conversation(ai))
         assistant = next(m for m in payload["messages"] if m["role"] == "assistant")
-        assert [tc["id"] for tc in assistant["tool_calls"]] == ["call_1"]
+        by_id = {tc["id"]: tc.get("extra_content") for tc in assistant["tool_calls"]}
+        assert by_id == {"call_1": SIG}
 
     def test_payload_unchanged_when_no_signature_stashed(self):
         messages = [HumanMessage(content="hi")]
