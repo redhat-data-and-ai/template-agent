@@ -615,3 +615,55 @@ class TestReadOnlyFilesystemBackend:
             assert isinstance(resp, FileUploadResponse)
             assert resp.error is not None
             assert "not permitted" in resp.error
+
+    def test_delete_is_rejected_and_leaves_the_file_on_disk(self, tmp_path):
+        """A read-only route must refuse deletes.
+
+        delete was not overridden here, so the parent's real implementation
+        ran and removed a file from /skills/ — a route configured read-only.
+        """
+        from deep_agent.src.infrastructure.backend import ReadOnlyFilesystemBackend
+
+        victim = tmp_path / "victim.md"
+        victim.write_text("content")
+        backend = ReadOnlyFilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+
+        result = backend.delete("/victim.md")
+        assert result.error is not None
+        assert "not permitted" in result.error
+        assert victim.exists(), "read-only backend deleted a real file"
+
+    async def test_async_delete_is_rejected_too(self, tmp_path):
+        """adelete delegates to delete, so the override must cover it."""
+        from deep_agent.src.infrastructure.backend import ReadOnlyFilesystemBackend
+
+        victim = tmp_path / "victim.md"
+        victim.write_text("content")
+        backend = ReadOnlyFilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
+
+        result = await backend.adelete("/victim.md")
+        assert result.error is not None
+        assert "not permitted" in result.error
+        assert victim.exists()
+
+    def test_every_mutating_method_is_overridden(self, tmp_path):
+        """Guard against a future deepagents version adding a mutating method.
+
+        One that is missed is not read-only: the parent implementation runs
+        and the route silently accepts the mutation.
+        """
+        from deepagents.backends.filesystem import FilesystemBackend
+
+        from deep_agent.src.infrastructure.backend import ReadOnlyFilesystemBackend
+
+        mutating = {"write", "edit", "delete", "upload_files"}
+        parent_methods = {m for m in mutating if hasattr(FilesystemBackend, m)}
+        overridden = {
+            m
+            for m in parent_methods
+            if getattr(ReadOnlyFilesystemBackend, m)
+            is not getattr(FilesystemBackend, m)
+        }
+        assert parent_methods == overridden, (
+            f"not overridden, so still mutating: {sorted(parent_methods - overridden)}"
+        )

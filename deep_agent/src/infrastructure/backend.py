@@ -30,7 +30,12 @@ from typing import Any
 
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.filesystem import FilesystemBackend
-from deepagents.backends.protocol import EditResult, FileUploadResponse, WriteResult
+from deepagents.backends.protocol import (
+    DeleteResult,
+    EditResult,
+    FileUploadResponse,
+    WriteResult,
+)
 
 from deep_agent.src.agent.config import agent_config
 from deep_agent.src.settings import settings
@@ -85,11 +90,22 @@ def _make_store_backend(runtime: Any, namespace: Any) -> Any:
 
 
 class ReadOnlyFilesystemBackend(FilesystemBackend):
-    """FilesystemBackend that rejects all write operations."""
+    """FilesystemBackend that rejects all write operations.
+
+    Every mutating method of the parent must be overridden here. One that is
+    missed is not read-only: the parent's real implementation runs and the
+    route silently accepts the mutation. The async variants inherit these,
+    since ``awrite``/``aedit``/``adelete`` delegate to the sync methods via
+    ``asyncio.to_thread``.
+    """
 
     def write(self, file_path: str, content: str) -> WriteResult:
         """Reject write operations."""
         return WriteResult(error="Read-only backend: writes not permitted")
+
+    def delete(self, file_path: str) -> DeleteResult:
+        """Reject delete operations."""
+        return DeleteResult(error="Read-only backend: deletes not permitted")
 
     def edit(
         self,

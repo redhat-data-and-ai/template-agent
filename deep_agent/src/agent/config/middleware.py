@@ -145,6 +145,7 @@ class MiddlewareDefaults(BaseModel):
     model_retry: ModelRetryConfig = Field(default_factory=ModelRetryConfig)
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
+    excluded_tools: list[str] = Field(default_factory=list)
     extra: list[str] = Field(default_factory=list)
 
 
@@ -179,8 +180,14 @@ class ResolvedMiddlewareConfig(BaseModel):
     model_retry: ModelRetryConfig = Field(default_factory=ModelRetryConfig)
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig)
     tool_retry: ToolRetryConfig = Field(default_factory=ToolRetryConfig)
+    excluded_tools: list[str] = Field(default_factory=list)
     extra_middleware: list[str] = Field(default_factory=list)
     excluded_middleware: list[str] = Field(default_factory=list)
+
+    @property
+    def blocked_tools(self) -> frozenset[str]:
+        """Tool names the agent may not use, from ``middleware.excluded_tools``."""
+        return frozenset(self.excluded_tools)
 
 
 def load_middleware_config(config_path: Path) -> MiddlewareFileConfig:
@@ -261,6 +268,23 @@ def resolve_middleware(
     elif isinstance(overrides.get("human_approval"), bool):
         human_approval = HumanApprovalConfig(enabled=overrides["human_approval"])
 
+    # An agent may exclude more tools, but never fewer — the global list is a
+    # floor, so an override cannot re-enable something excluded here.
+    excluded_tools = list(defaults.excluded_tools)
+    if "excluded_tools" in overrides:
+        agent_excluded = overrides["excluded_tools"]
+        # Reject rather than ignore: a scalar like ``excluded_tools: delete``
+        # would otherwise be dropped silently and leave the tool the author
+        # meant to block fully registered.
+        if not isinstance(agent_excluded, list):
+            raise TypeError(
+                "middleware.excluded_tools must be a list of tool names, got "
+                f"{type(agent_excluded).__name__}"
+            )
+        excluded_tools.extend(
+            name for name in agent_excluded if name not in excluded_tools
+        )
+
     return ResolvedMiddlewareConfig(
         compaction_threshold=overrides.get(
             "compaction_threshold", defaults.compaction_threshold
@@ -276,6 +300,7 @@ def resolve_middleware(
         model_retry=defaults.model_retry,
         model_fallback=defaults.model_fallback,
         tool_retry=defaults.tool_retry,
+        excluded_tools=excluded_tools,
         extra_middleware=extra,
         excluded_middleware=profile.excluded_middleware,
     )
