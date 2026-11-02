@@ -271,9 +271,18 @@ def resolve_middleware(
     # An agent may exclude more tools, but never fewer — the global list is a
     # floor, so an override cannot re-enable something excluded here.
     excluded_tools = list(defaults.excluded_tools)
-    if isinstance(overrides.get("excluded_tools"), list):
+    if "excluded_tools" in overrides:
+        agent_excluded = overrides["excluded_tools"]
+        # Reject rather than ignore: a scalar like ``excluded_tools: delete``
+        # would otherwise be dropped silently and leave the tool the author
+        # meant to block fully registered.
+        if not isinstance(agent_excluded, list):
+            raise TypeError(
+                "middleware.excluded_tools must be a list of tool names, got "
+                f"{type(agent_excluded).__name__}"
+            )
         excluded_tools.extend(
-            name for name in overrides["excluded_tools"] if name not in excluded_tools
+            name for name in agent_excluded if name not in excluded_tools
         )
 
     return ResolvedMiddlewareConfig(
