@@ -115,6 +115,14 @@ class Settings(BaseSettings):
     # ── Model ─────────────────────────────────────────────────────────
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
     CLAUDE_LOCATION: str = Field(default="us-east5")
+    AGENT_THINKING_LEVEL: str = Field(
+        default="high",
+        description="Thinking level for Gemini models (minimal, low, medium, high)",
+    )
+    AGENT_INCLUDE_THOUGHTS: bool = Field(
+        default=True,
+        description="Whether to include thinking traces in agent responses",
+    )
 
     # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────
     SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
