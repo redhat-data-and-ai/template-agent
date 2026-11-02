@@ -394,9 +394,7 @@ class TestMalformedPayloadsAreSurvived:
         that get past it.
         """
         llm = self._llm()
-        good = ChatResult(
-            generations=[ChatGeneration(message=AIMessage(content="hi"))]
-        )
+        good = ChatResult(generations=[ChatGeneration(message=AIMessage(content="hi"))])
         response = {"choices": [{"index": 0, "message": None}]}
         with patch.object(ChatOpenAI, "_create_chat_result", return_value=good):
             result = llm._create_chat_result(response)
@@ -405,9 +403,7 @@ class TestMalformedPayloadsAreSurvived:
     def test_non_dict_choice_is_skipped(self):
         """The zip guard: super() produced a generation, the choice is junk."""
         llm = self._llm()
-        good = ChatResult(
-            generations=[ChatGeneration(message=AIMessage(content="hi"))]
-        )
+        good = ChatResult(generations=[ChatGeneration(message=AIMessage(content="hi"))])
         with patch.object(ChatOpenAI, "_create_chat_result", return_value=good):
             result = llm._create_chat_result({"choices": ["not-a-dict"]})
         assert EXTRA_CONTENT_KEY not in result.generations[0].message.additional_kwargs
