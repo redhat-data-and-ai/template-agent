@@ -305,9 +305,9 @@ async def agent(runtime: ServerRuntime) -> Any:
     tool_names = orchestrator_cfg.get("tools")
     mcp_server_names = orchestrator_cfg.get("mcps", [])
 
-    # DVA 2.0: Classification is injected into the human message by the BFF
-    # (as a <classification> block), not into the system prompt. The graph
-    # factory has no access to per-run config (runtime.config is None in Aegra).
+    # DVA 2.0: Classification is injected into the human message by the
+    # ClassifierRunnable wrapper (see bottom of this function). It calls MaaS
+    # (DiffusionGemma) and prepends a <classification> block to the user query.
     # PROMPT.md instructs the agent on how to parse and use the classification block.
 
     # Resolve the personalization user ID to match what the BFF proxy
@@ -626,6 +626,17 @@ async def agent(runtime: ServerRuntime) -> Any:
 
         compiled = PIIAwareRunnable(compiled)
         logger.info("graph_pii_enabled: wrapped with PIIAwareRunnable")
+
+    # DVA 2.0 classifier: classify the user query before the agent sees it.
+    # The classifier calls MaaS (DiffusionGemma) and injects a <classification>
+    # block into the human message. PROMPT.md instructs the agent to use it.
+    from deep_agent.aegra.classifier.config import MAAS_API_KEY
+
+    if MAAS_API_KEY:
+        from deep_agent.aegra.classifier.runnable import ClassifierRunnable
+
+        compiled = ClassifierRunnable(compiled)
+        logger.info("graph_classifier_enabled: wrapped with ClassifierRunnable")
 
     if guardian_active:
         from deep_agent.aegra.safety import SafetyAwareRunnable

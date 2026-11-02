@@ -1,0 +1,2254 @@
+{
+  "accountsreceivable": [
+    {
+      "name": "ADJUSTMENT_APPROVAL_AUTHORITY_REPORT_CURRENT_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    },
+    {
+      "name": "BAW_PAST_DUE_INVOICES_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    },
+    {
+      "name": "COLLECTIONS_REPORT_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    },
+    {
+      "name": "CUSTOMER_CREDIT_PROFILE_CHANGES_REPORT_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    },
+    {
+      "name": "CUSTOMER_CREDIT_PROFILE_REPORT_CURRENT_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    },
+    {
+      "name": "EMEA_INVOICE_AND_CM_VOLUME_REPORT_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    },
+    {
+      "name": "IBM_INTERCO_BILLING_REVIEW_REPORT_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    },
+    {
+      "name": "MONTHLY_BILLING_CONTROL_EXERCISE_REPORT_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    },
+    {
+      "name": "ORDERS_BY_ITEM_REVENUE_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    },
+    {
+      "name": "SAP_NEW_CONTRACT_V1",
+      "schema": "MARTS",
+      "description": "Table in accountsreceivable"
+    }
+  ],
+  "adoptionanalytics": [
+    {
+      "name": "FACT_AIF_METRICS",
+      "schema": "AIF_MARTS",
+      "description": "Table in adoptionanalytics"
+    },
+    {
+      "name": "MART_AIF_RESOURCE_ACTIVITY",
+      "schema": "AIF_MARTS",
+      "description": "Table in adoptionanalytics"
+    },
+    {
+      "name": "MART_AIF_USER_ACTIVITY",
+      "schema": "AIF_MARTS",
+      "description": "Table in adoptionanalytics"
+    }
+  ],
+  "aiusage": [
+    {
+      "name": "AI_USAGE",
+      "schema": "MARTS",
+      "description": "Table in aiusage"
+    }
+  ],
+  "applicationsimplification": [
+    {
+      "name": "APPLICATION_DATA_ENRICHED",
+      "schema": "MARTS",
+      "description": "Table in applicationsimplification"
+    },
+    {
+      "name": "APPLICATION_SIMPLIFICATION_KPIS",
+      "schema": "MARTS",
+      "description": "Table in applicationsimplification"
+    },
+    {
+      "name": "APPLICATION_SIMPLIFICATION_SUMMARY_BY_PRIMARY_OWNING_ORGANIZATION",
+      "schema": "MARTS",
+      "description": "Table in applicationsimplification"
+    },
+    {
+      "name": "APPLICATION_SIMPLIFICATION_VENDOR_TO_APPLICATION_MAPPING_FALLOUT",
+      "schema": "MARTS",
+      "description": "Table in applicationsimplification"
+    },
+    {
+      "name": "APPLICATION_SIMPLIFICATION_VENDOR_TO_APPLICATION_MAPPING_FALLOUT_SUMMARY",
+      "schema": "MARTS",
+      "description": "Table in applicationsimplification"
+    },
+    {
+      "name": "APPLICATION_SPEND_SUMMARY",
+      "schema": "MARTS",
+      "description": "Table in applicationsimplification"
+    },
+    {
+      "name": "APPLICATION_VENDOR_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in applicationsimplification"
+    },
+    {
+      "name": "OPPORTUNITY_TRACKER",
+      "schema": "MARTS",
+      "description": "Table in applicationsimplification"
+    },
+    {
+      "name": "VENDOR_SPEND_SUMMARY",
+      "schema": "MARTS",
+      "description": "Table in applicationsimplification"
+    }
+  ],
+  "aren": [
+    {
+      "name": "AREN_PREDICTIONS",
+      "schema": "MARTS",
+      "description": "Table in aren"
+    },
+    {
+      "name": "AREN_PREDICTIONS_STG",
+      "schema": "STAGING",
+      "description": "Table in aren"
+    }
+  ],
+  "basevsincremental": [
+    {
+      "name": "CORE_GLOBAL_BVI_MANAGEMENT_SG_GSG",
+      "schema": "MARTS",
+      "description": "Table in basevsincremental"
+    },
+    {
+      "name": "CORE_GLOBAL_BVI_MANAGEMENT_SG_PRODUCT",
+      "schema": "MARTS",
+      "description": "Table in basevsincremental"
+    },
+    {
+      "name": "CORE_GLOBAL_OPP_PRODUCT_METADATA",
+      "schema": "MARTS",
+      "description": "Table in basevsincremental"
+    },
+    {
+      "name": "HISTORICAL_BASELINE_PARTNER_LEVEL",
+      "schema": "MARTS",
+      "description": "Table in basevsincremental"
+    },
+    {
+      "name": "HISTORICAL_BASELINE_SG_LEVEL",
+      "schema": "MARTS",
+      "description": "Table in basevsincremental"
+    },
+    {
+      "name": "PIPELINE_TRANSACTIONS_ACV",
+      "schema": "MARTS",
+      "description": "Table in basevsincremental"
+    },
+    {
+      "name": "PLANNING_BASELINE_PARTNER_LEVEL",
+      "schema": "MARTS",
+      "description": "Table in basevsincremental"
+    },
+    {
+      "name": "PLANNING_BASELINE_SG_LEVEL",
+      "schema": "MARTS",
+      "description": "Table in basevsincremental"
+    }
+  ],
+  "bookingsmaster": [
+    {
+      "name": "EOQ_TRANSACTION_ACV_SNAPSHOT",
+      "schema": "MARTS",
+      "description": "Table in bookingsmaster"
+    },
+    {
+      "name": "EOQ_TRANSACTION_ARR_SNAPSHOT",
+      "schema": "MARTS",
+      "description": "Table in bookingsmaster"
+    },
+    {
+      "name": "PIPELINE_TRANSACTIONS_ACV",
+      "schema": "MARTS",
+      "description": "Table in bookingsmaster"
+    },
+    {
+      "name": "PIPELINE_TRANSACTIONS_ACV_SNAPSHOT",
+      "schema": "MARTS",
+      "description": "Table in bookingsmaster"
+    },
+    {
+      "name": "PIPELINE_TRANSACTIONS_ARR",
+      "schema": "MARTS",
+      "description": "Table in bookingsmaster"
+    },
+    {
+      "name": "TERRITORY",
+      "schema": "MARTS",
+      "description": "Table in bookingsmaster"
+    },
+    {
+      "name": "TRANSACTION_ACCOUNT",
+      "schema": "MARTS",
+      "description": "Table in bookingsmaster"
+    }
+  ],
+  "bringyourownsubscription": [
+    {
+      "name": "OPENSHIFT_BYOS",
+      "schema": "MARTS",
+      "description": "Table in bringyourownsubscription"
+    },
+    {
+      "name": "RHEL_BYOS",
+      "schema": "MARTS",
+      "description": "Table in bringyourownsubscription"
+    }
+  ],
+  "casesensitive": [
+    {
+      "name": "CASEESCALATIONS",
+      "schema": "CASEESCALATION_MARTS",
+      "description": "Table in casesensitive"
+    },
+    {
+      "name": "CASEINTERACTIONS",
+      "schema": "CASECUSTOMERSENSITIVE_MARTS",
+      "description": "Table in casesensitive"
+    }
+  ],
+  "certinia": [
+    {
+      "name": "CONSULTING_606_REALLOCATION_BY_ARRANGEMENT",
+      "schema": "MARTS",
+      "description": "Table in certinia"
+    },
+    {
+      "name": "CONSULTING_FORECASTING",
+      "schema": "MARTS",
+      "description": "Table in certinia"
+    },
+    {
+      "name": "DAILY_RATES",
+      "schema": "MARTS",
+      "description": "Table in certinia"
+    },
+    {
+      "name": "PLAN_RATES_EUR",
+      "schema": "MARTS",
+      "description": "Table in certinia"
+    },
+    {
+      "name": "PRE_VS_POST_606",
+      "schema": "MARTS",
+      "description": "Table in certinia"
+    },
+    {
+      "name": "TRAINING_606_REALLOCATION_BY_ARRANGEMENT",
+      "schema": "MARTS",
+      "description": "Table in certinia"
+    }
+  ],
+  "cloudmarketplace": [
+    {
+      "name": "AWS_CONSOLIDATED_OFFER_DISBURSEMENT",
+      "schema": "MARTS",
+      "description": "Table in cloudmarketplace"
+    },
+    {
+      "name": "DISBURSEMENT_CONSOLIDATED",
+      "schema": "MARTS",
+      "description": "Table in cloudmarketplace"
+    },
+    {
+      "name": "HPE_ORDER_CUSTOMER_ENRICHED",
+      "schema": "MARTS",
+      "description": "Table in cloudmarketplace"
+    }
+  ],
+  "contacthealth": [
+    {
+      "name": "CONTACT_HEALTH",
+      "schema": "MARTS",
+      "description": "Table in contacthealth"
+    }
+  ],
+  "customer": [
+    {
+      "name": "CUSTOMER_SUMMARY_UNPIVOTED",
+      "schema": "MARTS",
+      "description": "Table in customer"
+    }
+  ],
+  "cxahub": [
+    {
+      "name": "CUSTOMER_SURVEYS",
+      "schema": "MARTS",
+      "description": "Table in cxahub"
+    },
+    {
+      "name": "CUSTOMER_SURVEYS_RESPONSE_PIVOT",
+      "schema": "MARTS",
+      "description": "Table in cxahub"
+    },
+    {
+      "name": "CUSTOMER_SURVEYS_RESPONSE_PIVOT_CONSULTING_SERVICES",
+      "schema": "MARTS",
+      "description": "Table in cxahub"
+    },
+    {
+      "name": "CUSTOMER_SURVEYS_RESPONSE_PIVOT_SUPPORT_CES",
+      "schema": "MARTS",
+      "description": "Table in cxahub"
+    },
+    {
+      "name": "CUSTOMER_SURVEYS_RESPONSE_PIVOT_TAM_SERVICES",
+      "schema": "MARTS",
+      "description": "Table in cxahub"
+    },
+    {
+      "name": "CXA_FEEDBACK_INSIGHTS",
+      "schema": "MARTS",
+      "description": "Table in cxahub"
+    },
+    {
+      "name": "DISTRIBUTION_CONTACT_ENGAGEMENT",
+      "schema": "MARTS",
+      "description": "Table in cxahub"
+    }
+  ],
+  "digitalrenewals": [
+    {
+      "name": "INTERCOM_COMPANIES",
+      "schema": "INTERCOM_MARTS",
+      "description": "Table in digitalrenewals"
+    },
+    {
+      "name": "INTERCOM_CONTACTS",
+      "schema": "INTERCOM_MARTS",
+      "description": "Table in digitalrenewals"
+    },
+    {
+      "name": "INTERCOM_CONTACT_COMPANIES",
+      "schema": "INTERCOM_MARTS",
+      "description": "Table in digitalrenewals"
+    },
+    {
+      "name": "INTERCOM_EVENTS",
+      "schema": "INTERCOM_MARTS",
+      "description": "Table in digitalrenewals"
+    },
+    {
+      "name": "INTERCOM_EVENTS_DETAIL",
+      "schema": "INTERCOM_MARTS",
+      "description": "Table in digitalrenewals"
+    }
+  ],
+  "discounting": [
+    {
+      "name": "LOCKED_AND_CURRENT_PIPELINE_DISCOUNTS",
+      "schema": "MARTS",
+      "description": "Table in discounting"
+    }
+  ],
+  "expensemaster": [
+    {
+      "name": "APP_SPEND_BY_TOWER_MONTHLY",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "CLOUDABILITY_COST_INFO",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "GL_SUB_LEDGER_AGGREGATE",
+      "schema": "RHAI_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "INVOICES",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "INVOICE_PAYMENT_INFO",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "ITPF_CONTRACT_FORECAST_W_DELEGATION",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "ITPF_FORECAST_DAILY_CURRENT",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "ITPF_LABOR_FORECAST_DAILY",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "ONESTREAM_FINANCIAL_AGGREGATE",
+      "schema": "RHAI_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "ONESTREAM_HEADCOUNT_AGGREGATE",
+      "schema": "RHAI_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "PURCHASE_REQUISITION_W_ORDERS",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "RECEIVING_INFO",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    },
+    {
+      "name": "SERVICE_COST_BY_TOWER_MONTHLY",
+      "schema": "RESTRICTED_MARTS",
+      "description": "Table in expensemaster"
+    }
+  ],
+  "experienceops": [
+    {
+      "name": "SUPPORTCASEINSIGHTS",
+      "schema": "MARTS",
+      "description": "Table in experienceops"
+    }
+  ],
+  "financeconsolidation": [
+    {
+      "name": "FINANCIAL_METRICS_BY_MONTH",
+      "schema": "MARTS",
+      "description": "Table in financeconsolidation"
+    }
+  ],
+  "financialkpis": [
+    {
+      "name": "ACV_ACTUALS_MONTHLY",
+      "schema": "MARTS",
+      "description": "Table in financialkpis"
+    },
+    {
+      "name": "ACV_FORECAST_YOY",
+      "schema": "MARTS",
+      "description": "Table in financialkpis"
+    },
+    {
+      "name": "ACV_PIPELINE_SUMMARY",
+      "schema": "MARTS",
+      "description": "Table in financialkpis"
+    }
+  ],
+  "fpna": [
+    {
+      "name": "CAPEX_ACTUALS",
+      "schema": "MARTS",
+      "description": "Table in fpna"
+    }
+  ],
+  "grokket": [
+    {
+      "name": "FLEET_FOCUS_MART",
+      "schema": "MARTS",
+      "description": "Table in grokket"
+    },
+    {
+      "name": "PROD_GROKKET_MASKED",
+      "schema": "MARTS",
+      "description": "Table in grokket"
+    }
+  ],
+  "gtm": [
+    {
+      "name": "CONTACTS",
+      "schema": "MARTS",
+      "description": "Table in gtm"
+    },
+    {
+      "name": "CORE_GLOBAL_RENEWAL_POTENTIAL",
+      "schema": "MARTS",
+      "description": "Table in gtm"
+    },
+    {
+      "name": "GTM_3P_INTENT",
+      "schema": "MARTS",
+      "description": "Table in gtm"
+    },
+    {
+      "name": "GTM_3P_INTENT_CLUSTER_SUMMARY",
+      "schema": "MARTS",
+      "description": "Table in gtm"
+    },
+    {
+      "name": "GTM_ACCOUNT",
+      "schema": "MARTS",
+      "description": "Table in gtm"
+    },
+    {
+      "name": "GTM_HG_INSIGHTS",
+      "schema": "MARTS",
+      "description": "Table in gtm"
+    },
+    {
+      "name": "PIPELINE_TRANSACTIONS_ARR",
+      "schema": "MARTS",
+      "description": "Table in gtm"
+    },
+    {
+      "name": "REVENUE_POTENTIAL_ACCOUNT_LEVEL",
+      "schema": "MARTS",
+      "description": "Table in gtm"
+    }
+  ],
+  "harborintelligence": [
+    {
+      "name": "OLM_FINAL_DATA",
+      "schema": "MARTS",
+      "description": "Table in harborintelligence"
+    },
+    {
+      "name": "SKU_INSIGHT",
+      "schema": "MARTS",
+      "description": "Table in harborintelligence"
+    }
+  ],
+  "hcmfinops": [
+    {
+      "name": "GL_HCM_CLOUD_COSTS",
+      "schema": "STAGING",
+      "description": "Table in hcmfinops"
+    },
+    {
+      "name": "MARTS",
+      "schema": "MARTS",
+      "description": "Table in hcmfinops"
+    },
+    {
+      "name": "STAGING",
+      "schema": "STAGING",
+      "description": "Table in hcmfinops"
+    }
+  ],
+  "hcs": [
+    {
+      "name": "HCS_COMMITMENT",
+      "schema": "MARTS",
+      "description": "Table in hcs"
+    },
+    {
+      "name": "HCS_COMMITMENT_DRAWDOWN_KEY_RECONCILIATION",
+      "schema": "MARTS",
+      "description": "Table in hcs"
+    },
+    {
+      "name": "HCS_DRAWDOWN",
+      "schema": "MARTS",
+      "description": "Table in hcs"
+    }
+  ],
+  "incentivemanagement": [
+    {
+      "name": "DTBOOKINGS_ADDITIONAL_ARR_DETAILED",
+      "schema": "MARTS",
+      "description": "Table in incentivemanagement"
+    },
+    {
+      "name": "ICM_DTBOOKINGS",
+      "schema": "MARTS",
+      "description": "Table in incentivemanagement"
+    },
+    {
+      "name": "ICM_DTBOOKINGS_SNAPSHOT",
+      "schema": "MARTS",
+      "description": "Table in incentivemanagement"
+    },
+    {
+      "name": "ICM_DTOPPORTUNITY",
+      "schema": "MARTS",
+      "description": "Table in incentivemanagement"
+    },
+    {
+      "name": "ICM_DTOPPORTUNITY_SNAPSHOT",
+      "schema": "MARTS",
+      "description": "Table in incentivemanagement"
+    },
+    {
+      "name": "ICM_DTPARTNERINFO",
+      "schema": "MARTS",
+      "description": "Table in incentivemanagement"
+    },
+    {
+      "name": "ICM_DTPARTNERINFO_SNAPSHOT",
+      "schema": "MARTS",
+      "description": "Table in incentivemanagement"
+    }
+  ],
+  "informationtechnology": [
+    {
+      "name": "ASSET_DATA",
+      "schema": "ITXENDPOINT_MARTS",
+      "description": "Table in informationtechnology"
+    },
+    {
+      "name": "ASSET_DATA_WITH_HIERARCHY",
+      "schema": "ITXENDPOINT_MARTS",
+      "description": "Table in informationtechnology"
+    },
+    {
+      "name": "MANAGED_DEVICE_DATA",
+      "schema": "ITXENDPOINT_MARTS",
+      "description": "Table in informationtechnology"
+    },
+    {
+      "name": "MANAGED_DEVICE_DATA_WITH_HIERARCHY",
+      "schema": "ITXENDPOINT_MARTS",
+      "description": "Table in informationtechnology"
+    }
+  ],
+  "inorbit": [
+    {
+      "name": "ALERTING_CANDIDATES",
+      "schema": "MARTS",
+      "description": "Table in inorbit"
+    },
+    {
+      "name": "ASTRO_DAG_RUNS",
+      "schema": "MARTS",
+      "description": "Table in inorbit"
+    },
+    {
+      "name": "DATA_PRODUCTS",
+      "schema": "MARTS",
+      "description": "Table in inorbit"
+    },
+    {
+      "name": "DATA_QUALITY",
+      "schema": "MARTS",
+      "description": "Table in inorbit"
+    },
+    {
+      "name": "DP_LINEAGE",
+      "schema": "MARTS",
+      "description": "Table in inorbit"
+    },
+    {
+      "name": "HEALTH_SCORE_SNAPSHOT",
+      "schema": "MARTS",
+      "description": "Table in inorbit"
+    },
+    {
+      "name": "HEALTH_STATUS",
+      "schema": "MARTS",
+      "description": "Table in inorbit"
+    },
+    {
+      "name": "PIPELINE_STATUS",
+      "schema": "MARTS",
+      "description": "Table in inorbit"
+    }
+  ],
+  "intelligenceengine": [
+    {
+      "name": "ENTITLEMENT_BY_CASE",
+      "schema": "MARTS",
+      "description": "Table in intelligenceengine"
+    },
+    {
+      "name": "PERSONA_ACCOUNT_TEAM_BY_SSO",
+      "schema": "MARTS",
+      "description": "Table in intelligenceengine"
+    },
+    {
+      "name": "PERSONA_BY_SSO",
+      "schema": "MARTS",
+      "description": "Table in intelligenceengine"
+    },
+    {
+      "name": "PERSONA_CASE_SUMMARY_STAT_BY_SSO",
+      "schema": "MARTS",
+      "description": "Table in intelligenceengine"
+    },
+    {
+      "name": "PERSONA_FOOTPRINT",
+      "schema": "MARTS",
+      "description": "Table in intelligenceengine"
+    },
+    {
+      "name": "PERSONA_RECENT_CASES_BY_SSO",
+      "schema": "MARTS",
+      "description": "Table in intelligenceengine"
+    },
+    {
+      "name": "PERSONA_RECENT_ESCALATIONS_BY_SSO",
+      "schema": "MARTS",
+      "description": "Table in intelligenceengine"
+    },
+    {
+      "name": "PERSONA__DIAG_SSO_PIPELINE_COUNTS",
+      "schema": "MARTS",
+      "description": "Table in intelligenceengine"
+    },
+    {
+      "name": "WEB_USER_SUB_PREFERRED_USERNAME",
+      "schema": "MARTS",
+      "description": "Table in intelligenceengine"
+    }
+  ],
+  "journey": [
+    {
+      "name": "ACCOUNT_DETAILS",
+      "schema": "MARTS",
+      "description": "Table in journey"
+    },
+    {
+      "name": "AI_USER_EVENTS",
+      "schema": "MARTS",
+      "description": "Table in journey"
+    },
+    {
+      "name": "JOURNEY_UNIONED",
+      "schema": "MARTS",
+      "description": "Table in journey"
+    },
+    {
+      "name": "OPENSHIFT_VIRT_USER_EVENTS",
+      "schema": "MARTS",
+      "description": "Table in journey"
+    },
+    {
+      "name": "OUE_ENTITLEMENT_DAILY_AGG",
+      "schema": "MARTS",
+      "description": "Table in journey"
+    },
+    {
+      "name": "RECOMMENDATIONS_ANALYSIS",
+      "schema": "MARTS",
+      "description": "Table in journey"
+    }
+  ],
+  "lightspeedopenshift": [
+    {
+      "name": "ATTACHMENTS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "CLUSTERS_WITH_OLS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "CLUSTERS_WITH_OLS_PERIODS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "CONFIG_STATUS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "CONVERSATIONS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "FEEDBACKS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "OLS_TELEMETRY",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "OPERATOR_INSTALLS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "OPERATOR_INSTALLS_CLUSTERS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "RAG_CHUNKS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "TOOL_CALLS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    },
+    {
+      "name": "TRANSCRIPTS",
+      "schema": "MARTS",
+      "description": "Table in lightspeedopenshift"
+    }
+  ],
+  "marketingperformancemodels": [
+    {
+      "name": "MT_MARKETO_EMAILS_REPORTING",
+      "schema": "MARTS",
+      "description": "Table in marketingperformancemodels"
+    }
+  ],
+  "marketingtouchedinput": [
+    {
+      "name": "MKT_BUILD_PROSPECTS",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_BUILD_TACTICS",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_BUILD_TACTICS_BRIDGE",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_CMDT_RH_CAMPAIGN",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_CXA_ACCOUNTS",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_CXA_OPP_CONTACT_GROUP",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_DATORAMA",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_ELOQUA_CONTACT_INQRS",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_MARKETO_CONTACTS",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_SFDC_CAMPAIGN_MEMBER",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_SFDC_OCR",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_SFDC_OPPORTUNITY",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    },
+    {
+      "name": "MKT_SFL_OPPORTUNITY",
+      "schema": "MARTS",
+      "description": "Table in marketingtouchedinput"
+    }
+  ],
+  "offeringperformanceanalytics": [
+    {
+      "name": "ASP_ENTITLEMENTS",
+      "schema": "MARTS",
+      "description": "Table in offeringperformanceanalytics"
+    },
+    {
+      "name": "ASP_SUMMARY",
+      "schema": "MARTS",
+      "description": "Table in offeringperformanceanalytics"
+    },
+    {
+      "name": "PRODUCT_COHORT_ANALYSIS",
+      "schema": "MARTS",
+      "description": "Table in offeringperformanceanalytics"
+    }
+  ],
+  "openshift": [
+    {
+      "name": "ALERTS_DAILY",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "CLUSTERS",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "CLUSTERS_DAILY",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "CLUSTER_NETWORKS_DAILY",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "CLUSTER_RESOURCES_DAILY",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "FAILING_OPERATOR_CONDITIONS_DAILY",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "NODES_DAILY",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "RULEHITS_ALL",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "RULEHITS_DAILY",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "RULES",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    },
+    {
+      "name": "RULES_DAILY",
+      "schema": "MARTS",
+      "description": "Table in openshift"
+    }
+  ],
+  "partnerprograms": [
+    {
+      "name": "CERTIFICATIONS_STAGE_TJ",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "CLAIMS_STAGE_TJ",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "CLAIMS_STAGE_TJ_ERRORS",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "EVF_STAGE_TJ",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "LOYALTY_STAGE_TJ",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "LOYALTY_STAGE_TJ_ERRORS",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "PARTNER_TRAINING",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "PAY_TO",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "PTP_STAGE_TJ",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "PTP_STAGE_TJ_ERRORS",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    },
+    {
+      "name": "REBATES_STAGE_TJ",
+      "schema": "MARTS",
+      "description": "Table in partnerprograms"
+    }
+  ],
+  "partnertiering": [
+    {
+      "name": "PARTNER_TIERING_HISTORICAL",
+      "schema": "MARTS",
+      "description": "Table in partnertiering"
+    },
+    {
+      "name": "PARTNER_TIERING_POINTS",
+      "schema": "MARTS",
+      "description": "Table in partnertiering"
+    }
+  ],
+  "partnervettingonboarding": [
+    {
+      "name": "ANTI_CORRUPTION",
+      "schema": "MARTS",
+      "description": "Table in partnervettingonboarding"
+    },
+    {
+      "name": "PARTNER_ONBOARDING",
+      "schema": "MARTS",
+      "description": "Table in partnervettingonboarding"
+    },
+    {
+      "name": "PARTNER_VETTING",
+      "schema": "MARTS",
+      "description": "Table in partnervettingonboarding"
+    }
+  ],
+  "pitchbuilder": [
+    {
+      "name": "DIM_RHSC_EBS_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_ACCOUNT_FOCUS_VENDOR_INSIGHTS",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_ADOBE_RH_DASH_PORTAL",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_ERRATA_DOWNLOADS",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_PARTNER_ACCOUNT_SUMMARY_LATEST",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_PARTNER_PERFORMANCE",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_PARTNER_PIPELINE",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_PRODUCT_TRIAL_INSTALLATIONS",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_RENEWAL_SUBSCRIPTION_LINE",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_SELLER_BOOKINGS_WALK",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_SELLER_RENEWAL_OPPORTUNITY",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_SELLER_USER_CONTEXT",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    },
+    {
+      "name": "PB_SUPPORT_DATA",
+      "schema": "MARTS",
+      "description": "Table in pitchbuilder"
+    }
+  ],
+  "projectaccounting": [
+    {
+      "name": "EBS_PROJECT_BACKLOG",
+      "schema": "MARTS",
+      "description": "Table in projectaccounting"
+    },
+    {
+      "name": "EBS_REGIONAL_CLAWBACK_REPORT",
+      "schema": "MARTS",
+      "description": "Table in projectaccounting"
+    },
+    {
+      "name": "SERVICES_PROJECT_BACKLOG_REVSTREAM",
+      "schema": "MARTS",
+      "description": "Table in projectaccounting"
+    },
+    {
+      "name": "SERVICES_PROJECT_BURN_EXPENDITURE",
+      "schema": "MARTS",
+      "description": "Table in projectaccounting"
+    },
+    {
+      "name": "SERVICES_PROJECT_BURN_RECOGNIZED",
+      "schema": "MARTS",
+      "description": "Table in projectaccounting"
+    },
+    {
+      "name": "SERVICES_PROJECT_BURN_TIMECARD",
+      "schema": "MARTS",
+      "description": "Table in projectaccounting"
+    }
+  ],
+  "releasecompliance": [
+    {
+      "name": "RELEASE_CHANGE_MANAGEMENT",
+      "schema": "MARTS",
+      "description": "Table in releasecompliance"
+    }
+  ],
+  "renewals": [
+    {
+      "name": "BLT_ACCOUNT_SALES_GROUP_MAPPING_HCS_EVENT_TYPE",
+      "schema": "MARTS",
+      "description": "Table in renewals"
+    },
+    {
+      "name": "CORE_GLOBAL_RENEWAL_POTENTIAL",
+      "schema": "MARTS",
+      "description": "Table in renewals"
+    },
+    {
+      "name": "RENEWAL_POTENTIAL_AGGREGATED",
+      "schema": "MARTS",
+      "description": "Table in renewals"
+    },
+    {
+      "name": "RENEWAL_POTENTIAL_AGGREGATED_GEO_SPLIT",
+      "schema": "MARTS",
+      "description": "Table in renewals"
+    },
+    {
+      "name": "SKU_CURRENT",
+      "schema": "MARTS",
+      "description": "Table in renewals"
+    }
+  ],
+  "revenuemaster": [
+    {
+      "name": "GO_TO_MARKET_REVENUE",
+      "schema": "MARTS",
+      "description": "Table in revenuemaster"
+    },
+    {
+      "name": "REVENUE_BY_OFFERING",
+      "schema": "MARTS",
+      "description": "Table in revenuemaster"
+    },
+    {
+      "name": "REVENUE_EXTERNAL",
+      "schema": "MARTS",
+      "description": "Table in revenuemaster"
+    },
+    {
+      "name": "REVENUE_FOUNDATION",
+      "schema": "MARTS",
+      "description": "Table in revenuemaster"
+    },
+    {
+      "name": "REVENUE_FOUNDATION_FPA_ADJUSTMENTS",
+      "schema": "MARTS",
+      "description": "Table in revenuemaster"
+    },
+    {
+      "name": "REVENUE_FOUNDATION_SNAPSHOT",
+      "schema": "MARTS",
+      "description": "Table in revenuemaster"
+    }
+  ],
+  "rhscdataanalysis": [
+    {
+      "name": "BU_GUIDANCE_CASES",
+      "schema": "MARTS",
+      "description": "Table in rhscdataanalysis"
+    },
+    {
+      "name": "RHSC_QUOTES",
+      "schema": "MARTS",
+      "description": "Table in rhscdataanalysis"
+    }
+  ],
+  "rosettastone": [
+    {
+      "name": "MDM_RHSC_EBS_ENHANCED_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in rosettastone"
+    }
+  ],
+  "rpmrex": [
+    {
+      "name": "ASSOCIATION_RULES",
+      "schema": "MARTS",
+      "description": "Table in rpmrex"
+    },
+    {
+      "name": "ITEM_STATS",
+      "schema": "MARTS",
+      "description": "Table in rpmrex"
+    },
+    {
+      "name": "KNOWN_DEPENDENCIES",
+      "schema": "MARTS",
+      "description": "Table in rpmrex"
+    },
+    {
+      "name": "LASTRUNTIME",
+      "schema": "MARTS",
+      "description": "Table in rpmrex"
+    },
+    {
+      "name": "RECOMMENDATIONS",
+      "schema": "MARTS",
+      "description": "Table in rpmrex"
+    },
+    {
+      "name": "RHEL10_ASSOCIATION_RULES",
+      "schema": "MARTS",
+      "description": "Table in rpmrex"
+    },
+    {
+      "name": "RHEL8_ASSOCIATION_RULES",
+      "schema": "MARTS",
+      "description": "Table in rpmrex"
+    },
+    {
+      "name": "RHEL9_ASSOCIATION_RULES",
+      "schema": "MARTS",
+      "description": "Table in rpmrex"
+    }
+  ],
+  "salesplanning": [
+    {
+      "name": "MEASUREMENT_TARGET_DETAIL",
+      "schema": "QUOTA_MARTS",
+      "description": "Table in salesplanning"
+    },
+    {
+      "name": "QUARTERLY_TARGET_DETAIL_CURR",
+      "schema": "QUARTERIZATION_MARTS",
+      "description": "Table in salesplanning"
+    },
+    {
+      "name": "SELLER_COVERAGE_DETAIL",
+      "schema": "QUOTA_MARTS",
+      "description": "Table in salesplanning"
+    },
+    {
+      "name": "SELLER_QUOTA_DETAIL",
+      "schema": "QUOTA_MARTS",
+      "description": "Table in salesplanning"
+    },
+    {
+      "name": "SELLER_STACKING_DETAIL",
+      "schema": "QUOTA_MARTS",
+      "description": "Table in salesplanning"
+    }
+  ],
+  "telesense": [
+    {
+      "name": "MDM_RHSC_EBS_ENHANCED_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in telesense"
+    }
+  ],
+  "workforcemapping": [
+    {
+      "name": "IT_WORK_ITEM_QUARTERLY",
+      "schema": "MARTS",
+      "description": "Table in workforcemapping"
+    }
+  ],
+  "acvplusconsumptionforecast": [
+    {
+      "name": "EXECUTION_COMPONENT",
+      "schema": "MARTS",
+      "description": "Table in acvplusconsumptionforecast"
+    },
+    {
+      "name": "EXECUTION_GEO",
+      "schema": "MARTS",
+      "description": "Table in acvplusconsumptionforecast"
+    },
+    {
+      "name": "RISK_COMPONENT",
+      "schema": "MARTS",
+      "description": "Table in acvplusconsumptionforecast"
+    },
+    {
+      "name": "RISK_GEO",
+      "schema": "MARTS",
+      "description": "Table in acvplusconsumptionforecast"
+    }
+  ],
+  "adobe": [
+    {
+      "name": "ACCOUNT_MDM_PARTY",
+      "schema": "MARTS",
+      "description": "Table in adobe"
+    },
+    {
+      "name": "ADOBE_MRKTNG",
+      "schema": "MARTS",
+      "description": "Table in adobe"
+    },
+    {
+      "name": "ADOBE_RH_DASH_LAB",
+      "schema": "MARTS",
+      "description": "Table in adobe"
+    },
+    {
+      "name": "ADOBE_RH_DASH_PORTAL",
+      "schema": "MARTS",
+      "description": "Table in adobe"
+    },
+    {
+      "name": "EVENT_LOOKUP",
+      "schema": "MARTS",
+      "description": "Table in adobe"
+    },
+    {
+      "name": "MDM_RHSC_EBS_ENHANCED_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in adobe"
+    }
+  ],
+  "allocadia": [
+    {
+      "name": "BUDGET_TABLEAU",
+      "schema": "MARTS",
+      "description": "Table in allocadia"
+    },
+    {
+      "name": "GTM_TABLEAU",
+      "schema": "MARTS",
+      "description": "Table in allocadia"
+    },
+    {
+      "name": "LINE_ITEM",
+      "schema": "MARTS",
+      "description": "Table in allocadia"
+    },
+    {
+      "name": "PLAN_TABLEAU",
+      "schema": "MARTS",
+      "description": "Table in allocadia"
+    }
+  ],
+  "apptio": [
+    {
+      "name": "ITPF_CONTRACT_FORECAST_W_DELEGATION",
+      "schema": "MARTS",
+      "description": "Table in apptio"
+    },
+    {
+      "name": "ITPF_FORECAST_DAILY_CURRENT",
+      "schema": "MARTS",
+      "description": "Table in apptio"
+    },
+    {
+      "name": "ITPF_LABOR_FORECAST_DAILY",
+      "schema": "MARTS",
+      "description": "Table in apptio"
+    }
+  ],
+  "certification": [
+    {
+      "name": "CERT_ENGINE_RESULT",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "CERT_EXAM",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "CERT_EXAMINEE",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "CERT_ISSUED",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "CERT_SESSION_EXAMINEE",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "CERT_TYPE",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "COURSE",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "RPT_EBOOK",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "RPT_EBOOK_ACCESS",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "RPT_EBOOK_ACTIVITY",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    },
+    {
+      "name": "RPT_USER_ENROLLMENT",
+      "schema": "MARTS",
+      "description": "Table in certification"
+    }
+  ],
+  "ciam": [
+    {
+      "name": "LB_LEGAL_ENTITY",
+      "schema": "MARTS",
+      "description": "Table in ciam"
+    },
+    {
+      "name": "LB_USER",
+      "schema": "MARTS",
+      "description": "Table in ciam"
+    }
+  ],
+  "cloudoscope": [
+    {
+      "name": "CUSTOMER_JOURNEY_ANALYSIS",
+      "schema": "MARTS",
+      "description": "Table in cloudoscope"
+    },
+    {
+      "name": "REVENUE_CONSOLIDATED",
+      "schema": "MARTS",
+      "description": "Table in cloudoscope"
+    },
+    {
+      "name": "TRANSACTION_MASTER",
+      "schema": "MARTS",
+      "description": "Table in cloudoscope"
+    }
+  ],
+  "concur": [
+    {
+      "name": "DETAILED_EXCEPTION_REPORTING",
+      "schema": "MARTS",
+      "description": "Table in concur"
+    },
+    {
+      "name": "GLOBAL_AGING_PROCESS_REPORT",
+      "schema": "MARTS",
+      "description": "Table in concur"
+    },
+    {
+      "name": "WORKFLOW_CYCLE_TIMES_DETAILS",
+      "schema": "MARTS",
+      "description": "Table in concur"
+    }
+  ],
+  "confluence": [
+    {
+      "name": "CONTENT",
+      "schema": "MARTS",
+      "description": "Table in confluence"
+    },
+    {
+      "name": "CONTENT_PERM",
+      "schema": "MARTS",
+      "description": "Table in confluence"
+    },
+    {
+      "name": "PUBLIC_CONTENT",
+      "schema": "MARTS",
+      "description": "Table in confluence"
+    },
+    {
+      "name": "SPACES",
+      "schema": "MARTS",
+      "description": "Table in confluence"
+    }
+  ],
+  "costar": [
+    {
+      "name": "COSTAR_ACCOUNTING",
+      "schema": "MARTS",
+      "description": "Table in costar"
+    },
+    {
+      "name": "COSTAR_BUILDING_DETAILS",
+      "schema": "MARTS",
+      "description": "Table in costar"
+    },
+    {
+      "name": "COSTAR_RELEASE_DETAILS",
+      "schema": "MARTS",
+      "description": "Table in costar"
+    }
+  ],
+  "customerreference": [
+    {
+      "name": "CUSTOMER_VALUE_STORIES",
+      "schema": "MARTS",
+      "description": "Table in customerreference"
+    }
+  ],
+  "enterpriseshared": [
+    {
+      "name": "DM_DATE_D",
+      "schema": "MARTS",
+      "description": "Table in enterpriseshared"
+    },
+    {
+      "name": "ENTERPRISE_PLAN_RATE",
+      "schema": "MARTS",
+      "description": "Table in enterpriseshared"
+    },
+    {
+      "name": "INDUSTRY_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in enterpriseshared"
+    },
+    {
+      "name": "MDM_APAC_MISSING",
+      "schema": "MARTS",
+      "description": "Table in enterpriseshared"
+    },
+    {
+      "name": "MDM_EMEA",
+      "schema": "MARTS",
+      "description": "Table in enterpriseshared"
+    },
+    {
+      "name": "MDM_NA_LATAM",
+      "schema": "MARTS",
+      "description": "Table in enterpriseshared"
+    },
+    {
+      "name": "TERRITORY_BACKFILL_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in enterpriseshared"
+    },
+    {
+      "name": "TERRITORY_MAP_NON_CRM_BKNGS_NEW",
+      "schema": "MARTS",
+      "description": "Table in enterpriseshared"
+    }
+  ],
+  "fammatrix": [
+    {
+      "name": "CONSOLIDATEDLIST",
+      "schema": "MARTS",
+      "description": "Table in fammatrix"
+    },
+    {
+      "name": "ROVER_PEOPLE_CURR",
+      "schema": "RHAI_MARTS",
+      "description": "Table in fammatrix"
+    }
+  ],
+  "hginsights": [
+    {
+      "name": "INSTALLS",
+      "schema": "MARTS",
+      "description": "Table in hginsights"
+    },
+    {
+      "name": "RELATIVESPEND",
+      "schema": "MARTS",
+      "description": "Table in hginsights"
+    },
+    {
+      "name": "SPEND",
+      "schema": "MARTS",
+      "description": "Table in hginsights"
+    }
+  ],
+  "interestedparties": [
+    {
+      "name": "CUSTOMER_SURVEYS",
+      "schema": "MARTS",
+      "description": "Table in interestedparties"
+    },
+    {
+      "name": "FCT_CURRENT_CUSTOMER_LINKS",
+      "schema": "MARTS",
+      "description": "Table in interestedparties"
+    },
+    {
+      "name": "FCT_CUSTOMER_LINKS",
+      "schema": "MARTS",
+      "description": "Table in interestedparties"
+    },
+    {
+      "name": "FCT_LINK_TRANSACTIONS",
+      "schema": "MARTS",
+      "description": "Table in interestedparties"
+    },
+    {
+      "name": "GTM_SALES_HIERARCHY_MDM_DETAIL",
+      "schema": "MARTS",
+      "description": "Table in interestedparties"
+    },
+    {
+      "name": "MDM_RHSC_EBS_ENHANCED_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in interestedparties"
+    }
+  ],
+  "marketo": [
+    {
+      "name": "ACTIVITIES",
+      "schema": "MARTS",
+      "description": "Table in marketo"
+    },
+    {
+      "name": "ACTIVITY_CLICK_EMAIL",
+      "schema": "STAGING",
+      "description": "Table in marketo"
+    },
+    {
+      "name": "ACTIVITY_OPEN_EMAIL",
+      "schema": "STAGING",
+      "description": "Table in marketo"
+    },
+    {
+      "name": "ACTIVITY_SEND_EMAIL",
+      "schema": "STAGING",
+      "description": "Table in marketo"
+    },
+    {
+      "name": "CAMPAIGN_RESPONSE",
+      "schema": "MARTS",
+      "description": "Table in marketo"
+    },
+    {
+      "name": "CONTACTS",
+      "schema": "MARTS",
+      "description": "Table in marketo"
+    }
+  ],
+  "mdfe2open": [
+    {
+      "name": "ACCRUAL",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    },
+    {
+      "name": "ADJUSTMENT",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    },
+    {
+      "name": "BALANCES",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    },
+    {
+      "name": "CLAIM",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    },
+    {
+      "name": "CURRENCY",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    },
+    {
+      "name": "PA",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    },
+    {
+      "name": "PARTNER",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    },
+    {
+      "name": "PAYMENT",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    },
+    {
+      "name": "PAYMENT_DETAIL",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    },
+    {
+      "name": "USER",
+      "schema": "MARTS",
+      "description": "Table in mdfe2open"
+    }
+  ],
+  "modelscorp": [
+    {
+      "name": "FCT_DAILY_USAGE",
+      "schema": "MARTS",
+      "description": "Table in modelscorp"
+    }
+  ],
+  "offeringlifecyclemgmt": [
+    {
+      "name": "OLM_FINAL_DATA",
+      "schema": "MARTS",
+      "description": "Table in offeringlifecyclemgmt"
+    }
+  ],
+  "officialproductlist": [
+    {
+      "name": "PRODUCT_DETAILS",
+      "schema": "MARTS",
+      "description": "Table in officialproductlist"
+    }
+  ],
+  "onestream": [
+    {
+      "name": "ONSTRM_ACTUAL_DATA_MART",
+      "schema": "MARTS",
+      "description": "Table in onestream"
+    },
+    {
+      "name": "ONSTRM_MTDT_ACCOUNT",
+      "schema": "MARTS",
+      "description": "Table in onestream"
+    },
+    {
+      "name": "ONSTRM_MTDT_COST_CENTER",
+      "schema": "MARTS",
+      "description": "Table in onestream"
+    },
+    {
+      "name": "ONSTRM_MTDT_ENTITY",
+      "schema": "MARTS",
+      "description": "Table in onestream"
+    },
+    {
+      "name": "ONSTRM_PLAN_DATA_MART",
+      "schema": "MARTS",
+      "description": "Table in onestream"
+    }
+  ],
+  "productpages": [
+    {
+      "name": "AI_DIM_BASE_DEPENDENCY",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_BASE_ENTITYKIND",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_BASE_PHASE",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_CES_CESAGGREGATEDPRODUCTSCORES",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_ENTITY",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_JIRA_ENTITYJIRAISSUE",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_JIRA_JIRAISSUE",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_OPL_ENTITYOPLPRODUCT",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_OPL_PRODUCT",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_PEOPLE_ASSIGNMENT",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_PEOPLE_FUNCTION",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_SCHEDULES_MILESTONE",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_SCHEDULES_MILESTONETASK",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_SCHEDULES_SCHEDULE",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_SCHEDULES_SCHEDULEREVISION",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "AI_DIM_SCHEDULES_TASK",
+      "schema": "RHAI_MARTS",
+      "description": "Table in productpages"
+    },
+    {
+      "name": "DIM_ENTITY",
+      "schema": "MARTS",
+      "description": "Table in productpages"
+    }
+  ],
+  "profoundnetworks": [
+    {
+      "name": "PN_DARE_DBI",
+      "schema": "MARTS",
+      "description": "Table in profoundnetworks"
+    }
+  ],
+  "rde": [
+    {
+      "name": "MRT_HCS_RDE_MONTHLY_V1",
+      "schema": "MARTS",
+      "description": "Table in rde"
+    }
+  ],
+  "releaseautomation": [
+    {
+      "name": "COMPONENT_REPOSITORY",
+      "schema": "MARTS",
+      "description": "Table in releaseautomation"
+    },
+    {
+      "name": "JIRA_VERSION_ISSUE_RELEASED",
+      "schema": "MARTS",
+      "description": "Table in releaseautomation"
+    },
+    {
+      "name": "JIRA_VERSION_METADATA",
+      "schema": "MARTS",
+      "description": "Table in releaseautomation"
+    }
+  ],
+  "roverpeople": [
+    {
+      "name": "ROVER_ALIGNMENT_CURR",
+      "schema": "RHAI_MARTS",
+      "description": "Table in roverpeople"
+    },
+    {
+      "name": "ROVER_PEOPLE_CURR",
+      "schema": "RHAI_MARTS",
+      "description": "Table in roverpeople"
+    }
+  ],
+  "saleshierarchy": [
+    {
+      "name": "GTM_PLANNING_SALES_HIERARCHY_MDM_DETAIL",
+      "schema": "MARTS",
+      "description": "Table in saleshierarchy"
+    },
+    {
+      "name": "GTM_SALES_HIERARCHY_MDM_DETAIL",
+      "schema": "MARTS",
+      "description": "Table in saleshierarchy"
+    }
+  ],
+  "siexecution": [
+    {
+      "name": "ANAPLAN_CREDIT_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in siexecution"
+    },
+    {
+      "name": "ANAPLAN_QUOTA_MAPPING",
+      "schema": "MARTS",
+      "description": "Table in siexecution"
+    }
+  ],
+  "srcdatagovernance": [
+    {
+      "name": "IBM_ENTERPRISE_DATA_STANDARDS",
+      "schema": "MARTS",
+      "description": "Table in srcdatagovernance"
+    },
+    {
+      "name": "INDUSTRY_HIERARCHY",
+      "schema": "MARTS",
+      "description": "Table in srcdatagovernance"
+    },
+    {
+      "name": "SIC_REFERENCE",
+      "schema": "MARTS",
+      "description": "Table in srcdatagovernance"
+    }
+  ],
+  "tableauusage": [
+    {
+      "name": "ACCESS_CONTENT",
+      "schema": "MARTS",
+      "description": "Table in tableauusage"
+    },
+    {
+      "name": "DATA_SOURCE",
+      "schema": "MARTS",
+      "description": "Table in tableauusage"
+    },
+    {
+      "name": "EXTRACT_REFRESH_TASK",
+      "schema": "MARTS",
+      "description": "Table in tableauusage"
+    },
+    {
+      "name": "PROJECT",
+      "schema": "MARTS",
+      "description": "Table in tableauusage"
+    },
+    {
+      "name": "TABLEAU_TSUSEREVENTS",
+      "schema": "MARTS",
+      "description": "Table in tableauusage"
+    },
+    {
+      "name": "USERS",
+      "schema": "MARTS",
+      "description": "Table in tableauusage"
+    },
+    {
+      "name": "WORKBOOK",
+      "schema": "MARTS",
+      "description": "Table in tableauusage"
+    }
+  ],
+  "agenthealth": [
+    {
+      "name": "DATAVERSEAGENT_MARTS",
+      "schema": "MARTS",
+      "description": "Table in agenthealth"
+    }
+  ],
+  "forecasting": [
+    {
+      "name": "ABV_CRMA_FIVECAST_FORECAST_DAILY",
+      "schema": "MARTS",
+      "description": "Table in forecasting"
+    },
+    {
+      "name": "ABV_GLOBAL_HISTORICAL_BOOKINGS_LITE_CRMA",
+      "schema": "MARTS",
+      "description": "Table in forecasting"
+    },
+    {
+      "name": "ABV_GLOBAL_PIPELINE_SNAPSHOT_LITE_CRMA",
+      "schema": "MARTS",
+      "description": "Table in forecasting"
+    },
+    {
+      "name": "BLT_OPPORTUNITY_FORECAST_TAG",
+      "schema": "MARTS",
+      "description": "Table in forecasting"
+    },
+    {
+      "name": "CORE_GLOBAL_TARGET",
+      "schema": "MARTS",
+      "description": "Table in forecasting"
+    },
+    {
+      "name": "FORECASTING_COMPREHENSIVE_PIPELINE",
+      "schema": "MARTS",
+      "description": "Table in forecasting"
+    },
+    {
+      "name": "PIPELINE_TRENDS_ACV",
+      "schema": "MARTS",
+      "description": "Table in forecasting"
+    },
+    {
+      "name": "WATERFALL_MOVEMENT_ACV",
+      "schema": "MARTS",
+      "description": "Table in forecasting"
+    }
+  ],
+  "intelligentaccess": [
+    {
+      "name": "CIAM",
+      "schema": "MARTS",
+      "description": "Table in intelligentaccess"
+    },
+    {
+      "name": "DISTINCTION",
+      "schema": "MARTS",
+      "description": "Table in intelligentaccess"
+    },
+    {
+      "name": "EXCLUDE",
+      "schema": "MARTS",
+      "description": "Table in intelligentaccess"
+    },
+    {
+      "name": "INCLUDE",
+      "schema": "MARTS",
+      "description": "Table in intelligentaccess"
+    },
+    {
+      "name": "INTELLIGENTACCESS",
+      "schema": "MARTS",
+      "description": "Table in intelligentaccess"
+    },
+    {
+      "name": "MSRP",
+      "schema": "MARTS",
+      "description": "Table in intelligentaccess"
+    },
+    {
+      "name": "NEVER",
+      "schema": "MARTS",
+      "description": "Table in intelligentaccess"
+    },
+    {
+      "name": "RHEL",
+      "schema": "MARTS",
+      "description": "Table in intelligentaccess"
+    }
+  ],
+  "jira": [
+    {
+      "name": "ISSUES",
+      "schema": "MARTS",
+      "description": "Issue tracking (issues, tasks, bugs, epics)"
+    },
+    {
+      "name": "PROJECTS",
+      "schema": "MARTS",
+      "description": "Project metadata and configurations"
+    },
+    {
+      "name": "SPRINTS",
+      "schema": "MARTS",
+      "description": "Sprint data with dates, status, and assignments"
+    },
+    {
+      "name": "COMPONENTS",
+      "schema": "MARTS",
+      "description": "Components, versions, and fix versions"
+    }
+  ],
+  "learningaggregate": [
+    {
+      "name": "IS_CENTER_CHARGED",
+      "schema": "MARTS",
+      "description": "Table in learningaggregate"
+    },
+    {
+      "name": "RHSC",
+      "schema": "MARTS",
+      "description": "Table in learningaggregate"
+    },
+    {
+      "name": "SISALS",
+      "schema": "MARTS",
+      "description": "Table in learningaggregate"
+    },
+    {
+      "name": "TOLE",
+      "schema": "MARTS",
+      "description": "Table in learningaggregate"
+    }
+  ],
+  "learningsources": [
+    {
+      "name": "LEARNING_COMPLETIONS",
+      "schema": "MARTS",
+      "description": "Course and learning path completions"
+    },
+    {
+      "name": "LEARNING_ENROLLMENTS",
+      "schema": "MARTS",
+      "description": "Course enrollments and status"
+    },
+    {
+      "name": "IDENTITY_MAPPING",
+      "schema": "MARTS",
+      "description": "Seertech to PRM identity mapping"
+    }
+  ],
+  "mdmparty": [
+    {
+      "name": "PARTY_LENS_DIM_V1",
+      "schema": "PARTYLENS_MARTS",
+      "description": "Party profile and hierarchy (golden record)"
+    },
+    {
+      "name": "PARTY_LENS_PARTY_ROLE_V1",
+      "schema": "PARTYLENS_MARTS",
+      "description": "Customer/Partner roles (title case: 'Customer', 'Partner')"
+    },
+    {
+      "name": "PARTY_LENS_ADDRESS_V1",
+      "schema": "PARTYLENS_MARTS",
+      "description": "Party addresses and firmographics"
+    },
+    {
+      "name": "PARTY_LENS_ALIAS_V1",
+      "schema": "PARTYLENS_MARTS",
+      "description": "Party name aliases"
+    },
+    {
+      "name": "PARTY_LENS_ALTERNATE_V1",
+      "schema": "PARTYLENS_MARTS",
+      "description": "Alternate identifiers (IBM Site ID etc)"
+    },
+    {
+      "name": "MDM_PARTY_LENS_RELATION_FLATTENED_V1",
+      "schema": "PARTYLENS_MARTS",
+      "description": "DUNS hierarchy (parent, domestic ultimate, global ultimate)"
+    },
+    {
+      "name": "MDM_PARTY_LENS_MERGED_BUSINESSID_V1",
+      "schema": "PARTYLENS_MARTS",
+      "description": "Merge state and business ID mapping"
+    },
+    {
+      "name": "PARTY_LENS_INTERCOMPANY_V1",
+      "schema": "PARTYLENS_MARTS",
+      "description": "Intercompany relationships"
+    }
+  ],
+  "mdmproduct": [
+    {
+      "name": "PRODUCT_DIM",
+      "schema": "MARTS",
+      "description": "Product master dimension (golden record for all offerings/SKUs)"
+    },
+    {
+      "name": "OFFERING_DIM",
+      "schema": "MARTS",
+      "description": "Offering definitions and classifications"
+    },
+    {
+      "name": "SKU_HIERARCHY",
+      "schema": "MARTS",
+      "description": "Parent/child SKU hierarchy and pricing tiers"
+    }
+  ],
+  "orderanalytics": [
+    {
+      "name": "ORDER_ANALYTICS",
+      "schema": "MARTS",
+      "description": "Order analytics by deal size, region, product"
+    },
+    {
+      "name": "ORDER_LINE",
+      "schema": "MARTS",
+      "description": "Order line item details"
+    }
+  ],
+  "orders": [
+    {
+      "name": "ORDERS_MARTS",
+      "schema": "MARTS",
+      "description": "Table in orders"
+    }
+  ],
+  "sfsaleslegacy": [
+    {
+      "name": "OPPORTUNITY",
+      "schema": "MARTS",
+      "description": "Salesforce opportunities"
+    },
+    {
+      "name": "ACCOUNT",
+      "schema": "MARTS",
+      "description": "Salesforce accounts"
+    },
+    {
+      "name": "OPPORTUNITY_LINE_ITEM",
+      "schema": "MARTS",
+      "description": "Opportunity line items"
+    }
+  ]
+}
