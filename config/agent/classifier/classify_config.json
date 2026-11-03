@@ -1,0 +1,220 @@
+{
+  "version": "3.0.0",
+  "description": "Config-driven NER + decomposition + intent classification. All rules here, zero hardcoded logic in Python.",
+
+  "intent_classes": [
+    "data-query",
+    "unstructured",
+    "catalog",
+    "chart",
+    "direct-response"
+  ],
+
+  "entity_types": {
+    "person": {
+      "description": "Employee or executive names",
+      "examples": ["Imran Khan", "Jennifer Meyers", "Nirav Kumar", "Matt Hicks"],
+      "routes_to": "roverpeople"
+    },
+    "rh_product": {
+      "description": "Red Hat commercial products",
+      "examples": ["RHEL", "OpenShift", "Ansible", "AAP", "ROSA", "ARO", "OSD", "Lightspeed"],
+      "note": "These are product NAMES, not data products. Routing depends on context (revenue vs telemetry vs bookings)"
+    },
+    "dv_product": {
+      "description": "Dataverse data product names",
+      "examples": ["bookingsmaster", "roverpeople", "revenuemaster", "forecasting", "openshift"],
+      "note": "Direct routing to this data product"
+    },
+    "metric": {
+      "description": "Business metrics and KPIs",
+      "examples": ["revenue", "ARR", "ACV", "TCV", "bookings", "headcount", "pipeline", "NPS", "CSAT", "ASP", "discount %"],
+      "routing_rules": {
+        "revenue": "revenuemaster",
+        "bookings|ARR|ACV|TCV|deals": "bookingsmaster",
+        "pipeline|coverage|velocity|waterfall|fivecast": "forecasting",
+        "expense|GL|PO|invoice": "expensemaster",
+        "headcount|employee count|FTE": "roverpeople",
+        "NPS|CSAT|CES|survey": "cxahub",
+        "ASP|price per unit": "offeringperformanceanalytics",
+        "discount|MSRP": "discounting"
+      }
+    },
+    "time_period": {
+      "description": "Fiscal/calendar time references",
+      "examples": ["Q1", "Q3 FY25", "CY26", "last quarter", "YTD", "H1", "FY24", "this year", "Jan-Mar 2025"],
+      "note": "Appended to sub-query for context. Fiscal year: Feb-Jan (Q1=Mar-May, Q2=Jun-Aug, Q3=Sep-Nov, Q4=Dec-Feb)"
+    },
+    "geography": {
+      "description": "Regions, countries, geos",
+      "examples": ["NA", "EMEA", "APAC", "LATAM", "US", "UK", "Germany", "Japan", "ANZ", "India"],
+      "note": "Appended as filter context to sub-query"
+    },
+    "organization": {
+      "description": "Org units, teams, cost centers, sales groups, departments",
+      "examples": ["GSG", "cost center 148", "Services", "Consulting", "TAM team", "CSM", "sales group"],
+      "note": "Context for filtering structured queries"
+    },
+    "account": {
+      "description": "Customer or company names",
+      "examples": ["IBM", "Microsoft", "Goldman Sachs", "Deutsche Bank", "Toyota"],
+      "routes_to": "gtm or bookingsmaster depending on context"
+    },
+    "document": {
+      "description": "Document or report names that exist in Pathfinder",
+      "examples": [
+        "AI governance policy", "earnings call", "strategy on a slide",
+        "OLM framework FAQ", "spring plan", "company objectives",
+        "market insights compendium", "P&L review", "FCF outlook",
+        "offering brief", "business architecture readiness",
+        "legal FAQ", "open source guidance", "onboarding guide"
+      ],
+      "routes_to": "unstructured (Pathfinder)"
+    },
+    "sku": {
+      "description": "SKU identifiers, offering IDs",
+      "examples": ["MCT4316", "RS00099", "MW02592"],
+      "routes_to": "mdmproduct or offeringlifecyclemgmt"
+    }
+  },
+
+  "decomposition_rules": {
+    "description": "When to split vs keep as one query",
+    "split_when": [
+      "Query has DISTINCT topics requiring DIFFERENT data products or skills",
+      "Query asks about BOTH structured data AND documents",
+      "Query mentions entities from DIFFERENT domains (e.g., people + finance)",
+      "Query uses conjunctions like 'and also', 'plus', 'additionally' between unrelated topics"
+    ],
+    "keep_together_when": [
+      "All entities relate to the SAME data product",
+      "Query is a comparison within one domain (RHEL vs OpenShift bookings -> both bookingsmaster)",
+      "Entities are filters on the same query (Q3 + APAC + RHEL -> one query with filters)",
+      "Follow-up context about the same topic (who is X and what team -> roverpeople)"
+    ]
+  },
+
+  "unstructured_documents": {
+    "description": "108 documents in Pathfinder knowledge base",
+    "categories": {
+      "earnings_calls": {
+        "pattern": "Q[1-4] 20[0-9]{2} earnings",
+        "keywords": ["earnings call", "earnings transcript", "CEO said", "CFO said", "investor call"],
+        "doc_count": 24,
+        "coverage": "Q4 2019 through Q4 2025"
+      },
+      "finance_teams": {
+        "keywords": ["finance team overview", "knowledge source template", "internal service",
+                     "revenue finance", "GTM finance", "FP&A onboarding", "corp consolidations",
+                     "HCS finance", "IT spend finance", "P&GE spend", "sales spend", "mkt spend",
+                     "product finance", "services finance", "corp spend", "finance transformation"],
+        "doc_count": 15
+      },
+      "strategy_planning": {
+        "keywords": ["company objectives", "KPIs", "spring plan", "fall plan", "market insights",
+                     "incremental investments", "addressable opportunity", "planning document",
+                     "strategy on a slide", "CY25 planning", "CY26 planning"],
+        "doc_count": 10
+      },
+      "ai_governance": {
+        "keywords": ["AI governance", "AI policy", "AI generated content", "guidelines on AI",
+                     "open source guidance", "AI pathfinders", "briefing document"],
+        "doc_count": 4
+      },
+      "corporate_development": {
+        "keywords": ["corporate development", "M&A", "acquisition history", "corporate dev strategy",
+                     "corporate dev process", "corporate dev team"],
+        "doc_count": 4
+      },
+      "product_lifecycle": {
+        "keywords": ["OLM framework", "offering lifecycle", "offering brief", "product P&L",
+                     "P&L review", "context guide", "product analytics"],
+        "doc_count": 5
+      },
+      "people_profiles": {
+        "keywords": ["Jennifer Meyers", "Jason Hall", "Courtney Sorrells", "Cintia Shimamoto",
+                     "Matt Gredvig", "Shawn Lewis", "Suman Menon", "Valesca Lascala",
+                     "who is", "what does", "team under"],
+        "doc_count": 10,
+        "note": "If query is 'who is X' and X is an executive in Pathfinder, route to unstructured"
+      },
+      "business_architecture": {
+        "keywords": ["business architecture", "idea to offering", "value stream",
+                     "SPO business continuity", "SPO planning"],
+        "doc_count": 4
+      },
+      "financial_reports": {
+        "keywords": ["P&L review", "FCF outlook", "pipeline insights", "top 50 customers",
+                     "revenue mix", "financial performance", "investor presentation",
+                     "Bank of America conference", "Morgan Stanley conference", "UBS conference",
+                     "Jefferies conference", "RBC conference"],
+        "doc_count": 20
+      },
+      "legal": {
+        "keywords": ["legal FAQ", "RHEL source code", "public source code", "legal guidance"],
+        "doc_count": 1
+      },
+      "events": {
+        "keywords": ["CY26 events", "event calendar"],
+        "doc_count": 1
+      }
+    }
+  },
+
+  "structured_products": {
+    "description": "All 74 structured data products by domain for entity-to-product resolution",
+    "finance": [
+      "bookingsmaster", "revenuemaster", "financialkpis", "forecasting",
+      "expensemaster", "discounting", "accountsreceivable", "fpna",
+      "financeconsolidation", "projectaccounting", "acvplusconsumptionforecast",
+      "basevsincremental", "hcmfinops", "apptio"
+    ],
+    "sales": [
+      "salesplanning", "siexecution", "incentivemanagement", "saleshierarchy",
+      "renewals", "sfsaleslegacy", "hcs", "rhscdataanalysis"
+    ],
+    "customer": [
+      "mdmparty", "rosettastone", "gtm", "customer", "intelligentaccess",
+      "intelligenceengine", "contacthealth", "customerreference",
+      "cxahub", "pitchbuilder", "interestedparties"
+    ],
+    "telemetry": [
+      "grokket", "telesense", "openshift", "lightspeedopenshift",
+      "modelscorp", "rpmrex"
+    ],
+    "marketing": [
+      "adobe", "marketingtouchedinput", "marketingperformancemodels",
+      "digitalrenewals"
+    ],
+    "products_sku": [
+      "officialproductlist", "mdmproduct", "offeringlifecyclemgmt",
+      "offeringperformanceanalytics", "harborintelligence", "productpages"
+    ],
+    "support": ["experienceops", "casesensitive", "xemeasures"],
+    "learning": ["learningsources", "learningaggregate"],
+    "partners": ["partnerprograms", "partnertiering", "partnervettingonboarding"],
+    "orders": ["orders", "orderanalytics", "cloudmarketplace"],
+    "people": ["roverpeople", "fammatrix"],
+    "journey": ["journey", "adoptionanalytics", "aren"],
+    "it_ops": [
+      "jira", "informationtechnology", "workforcemapping",
+      "releasecompliance", "applicationsimplification", "inorbit"
+    ],
+    "other": [
+      "bringyourownsubscription", "srcdatagovernance", "aiusage",
+      "agenthealth", "hginsights", "dataversehelp"
+    ]
+  },
+
+  "fallback": {
+    "default_intent": { "intent": "data-query", "confidence": 0.50 },
+    "direct_response_signals": [
+      "hello", "hi", "hey", "thanks", "thank you", "bye", "goodbye",
+      "what can you do", "help me", "who are you"
+    ],
+    "platform_keywords": [
+      "how to use dataverse", "how to request access", "dataverse help",
+      "test connection", "ping", "health check"
+    ]
+  }
+}
