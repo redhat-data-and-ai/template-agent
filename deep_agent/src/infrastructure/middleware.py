@@ -24,6 +24,7 @@ logger = get_python_logger(log_level=settings.PYTHON_LOG_LEVEL)
 _current_user_info: contextvars.ContextVar[dict[str, str] | None] = (
     contextvars.ContextVar("_current_user_info", default=None)
 )
+_SUBAGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 _DELIMITER_RE = re.compile(r"[<>\[\]]")
@@ -149,6 +150,101 @@ def build_user_identity_middleware() -> Any | None:
             return await handler(self._inject_identity(request))
 
     return UserIdentityMiddleware()
+
+
+def requested_subagent_names(cfg: Any, known_names: Any) -> list[str]:
+    """Return the run's subagent names that match configured subagents."""
+    if not isinstance(cfg, dict):
+        return []
+    configurable = cfg.get("configurable")
+    if not isinstance(configurable, dict):
+        return []
+    raw = configurable.get("requested_subagents")
+    if not isinstance(raw, list):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        cleaned = _sanitize_identity_value(item)
+        if not cleaned or not _SUBAGENT_NAME_RE.fullmatch(cleaned):
+            continue
+        if cleaned not in known_names or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        names.append(cleaned)
+    return names
+
+
+def build_requested_subagent_middleware() -> Any | None:
+    """Tell the orchestrator to delegate this turn to the subagents the user named.
+
+    Reads the active run config at model-call time. The graph factory's
+    ``ServerRuntime`` does not carry that config. Subagent graphs do not
+    include this middleware.
+    """
+    try:
+        from langchain.agents.middleware.types import (
+            AgentMiddleware,
+            ModelRequest,
+            ModelResponse,
+        )
+    except ImportError:
+        return None
+
+    class RequestedSubagentMiddleware(AgentMiddleware):
+        def _inject_requested_subagent(
+            self, request: ModelRequest[Any]
+        ) -> ModelRequest[Any]:
+            try:
+                from langgraph.config import get_config
+
+                cfg = get_config() or {}
+            except Exception:
+                return request
+            configurable = cfg.get("configurable") if isinstance(cfg, dict) else None
+            raw = (
+                configurable.get("requested_subagents")
+                if isinstance(configurable, dict)
+                else None
+            )
+            if not isinstance(raw, list) or not raw:
+                return request
+            from deep_agent.src.agent.config import agent_config
+
+            names = requested_subagent_names(
+                cfg, agent_config.get_all_subagent_configs()
+            )
+            if not names:
+                return request
+            from deepagents.middleware.subagents import append_to_system_message
+
+            tagged = ", ".join(f"/{name}" for name in names)
+            types = ", ".join(f'"{name}"' for name in names)
+            block = (
+                "<requested-subagent>\n"
+                f"The user invoked {tagged}. On this turn, before you answer, "
+                "call the task tool once for each of these subagent_type values "
+                f"({types}). Choose parallel or one after another only for the "
+                "order of those calls, then return their results.\n"
+                "</requested-subagent>"
+            )
+            return request.override(
+                system_message=append_to_system_message(request.system_message, block),
+            )
+
+        def wrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return handler(self._inject_requested_subagent(request))
+
+        async def awrap_model_call(
+            self, request: ModelRequest[Any], handler: Any
+        ) -> ModelResponse[Any]:
+            return await handler(self._inject_requested_subagent(request))
+
+    return RequestedSubagentMiddleware()
 
 
 def build_current_datetime_middleware() -> Any | None:
@@ -448,6 +544,10 @@ def build_middleware_list(
     identity_mw = build_user_identity_middleware()
     if identity_mw is not None:
         middlewares.append(identity_mw)
+
+    requested_mw = build_requested_subagent_middleware()
+    if requested_mw is not None:
+        middlewares.append(requested_mw)
 
     datetime_mw = build_current_datetime_middleware()
     if datetime_mw is not None:
