@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from deep_agent.src.agent.ask_user import ask_user
+from deep_agent.src.agent.clarify import clarify
 from deep_agent.src.agent.config.model import ModelSpec, Provider
 from deep_agent.src.capability.tool_proxy import CapabilityToolProxy
 from deep_agent.src.exceptions import SubAgentError
@@ -135,7 +135,7 @@ class TestLoadSubagents:
                 model=mock_model,
                 description="Test analyst",
                 system_prompt="Test prompt",
-                tools=[ask_user],
+                tools=[clarify],
             )
 
     def test_load_subagent_with_tools(self):
@@ -203,7 +203,7 @@ class TestLoadSubagents:
             assert [t.name for t in built_tools] == [
                 "calculate_bmi",
                 "search_web",
-                "ask_user",
+                "clarify",
             ]
             assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
             assert mock_sa.call_args.kwargs["name"] == "analyst"
@@ -258,7 +258,7 @@ class TestLoadSubagents:
                 description="Analyst",
                 system_prompt="Prompt",
                 skills=["/skills/bmi-report"],
-                tools=[ask_user],
+                tools=[clarify],
             )
 
     def test_load_multiple_subagents(self):
@@ -354,7 +354,7 @@ class TestLoadSubagents:
                 model=mock_model,
                 description="Analyst",
                 system_prompt="Prompt",
-                tools=[ask_user],
+                tools=[clarify],
             )
 
     def test_load_subagent_uses_empty_description_when_missing(self):
@@ -402,7 +402,7 @@ class TestLoadSubagents:
                 model=mock_model,
                 description="",
                 system_prompt="Prompt",
-                tools=[ask_user],
+                tools=[clarify],
             )
 
 
@@ -1007,7 +1007,7 @@ class TestGuardianActivationGate:
         wrap_call_args = mock_wrap.call_args.args[0]
         assert [t.name for t in wrap_call_args] == [mock_tool.name]
         assert all(isinstance(t, CapabilityToolProxy) for t in wrap_call_args)
-        assert mock_sa_cls.call_args.kwargs["tools"] == [mock_tool, ask_user]
+        assert mock_sa_cls.call_args.kwargs["tools"] == [mock_tool, clarify]
 
     def test_default_subagent_skips_wrapping_when_config_disabled(self):
         """enabled=False + GUARDIAN_API_BASE set → wrap_tools not called."""
@@ -1365,7 +1365,7 @@ class TestMcpResourceToolsOnSubagents:
         assert [t.name for t in built_tools] == [
             mock_tool.name,
             resource_tool.name,
-            "ask_user",
+            "clarify",
         ]
         assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
         _no_mcp_resource_tools.assert_called_once_with(
@@ -1480,7 +1480,7 @@ class TestMcpResourceToolsOnSubagents:
             load_subagents(tools=[mock_tool])
 
         built_tools = mock_sa.call_args.kwargs["tools"]
-        assert [t.name for t in built_tools] == [mock_tool.name, "ask_user"]
+        assert [t.name for t in built_tools] == [mock_tool.name, "clarify"]
         assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
         _no_mcp_resource_tools.assert_called_once_with(
             server_names=None, allowed_uris=None
@@ -1600,7 +1600,7 @@ class TestMcpResourceToolsOnSubagents:
         assert [t.name for t in built_tools] == [
             mock_tool.name,
             resource_tool.name,
-            "ask_user",
+            "clarify",
         ]
         assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
         _no_mcp_resource_tools.assert_called_once_with(

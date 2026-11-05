@@ -317,7 +317,7 @@ class TestAgentFactory:
         built_tools = mock_create.call_args.kwargs["tools"]
         # Tools are wrapped by CapabilityToolProxy; compare by name and
         # confirm the enforcement wrapper is present.
-        assert [t.name for t in built_tools] == [mock_tool.name, "ask_user"]
+        assert [t.name for t in built_tools] == [mock_tool.name, "clarify"]
         assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
         mock_get_mcp.assert_awaited_once_with(
             sso_token=None, server_names=["dataverse-mcp-prod1"], user_id=None
@@ -418,7 +418,7 @@ class TestAgentFactory:
         assert _unwrap_compiled(result) is mock_compiled
         built_tools = mock_create.call_args.kwargs["tools"]
         built_names = [t.name for t in built_tools]
-        assert built_names == [allowed_tool.name, "ask_user"]
+        assert built_names == [allowed_tool.name, "clarify"]
         assert other_tool.name not in built_names
         assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
 
@@ -1072,7 +1072,7 @@ class TestGraphCacheHit:
 
         assert _unwrap_compiled(result) is mock_compiled
         names = [t.name for t in mock_create.call_args.kwargs["tools"]]
-        assert names == [LIST_TOOL, TEMPLATES_TOOL, READ_TOOL, "ask_user"]
+        assert names == [LIST_TOOL, TEMPLATES_TOOL, READ_TOOL, "clarify"]
         mw_names = mock_mw.call_args.kwargs["mcp_tool_names"]
         assert {LIST_TOOL, TEMPLATES_TOOL, READ_TOOL} <= set(mw_names)
         mock_subs.assert_called_once()

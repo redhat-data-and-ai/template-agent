@@ -123,7 +123,7 @@ middleware:
     exclude:
       - write_todos         # internal task tracking — no user approval needed
       - compact_conversation  # internal memory management — no user approval needed
-      - ask_user            # clarifying question — the question card is the pause
+      - clarify             # clarifying question — the question card is the pause
   summarization_tool:
     enabled: true
   memory:

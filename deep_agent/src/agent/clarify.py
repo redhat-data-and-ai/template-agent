@@ -12,9 +12,7 @@ from langchain_core.tools import StructuredTool
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
-_EMPTY_QUESTION = (
-    "No question was asked. Call ask_user again with a non-empty question."
-)
+_EMPTY_QUESTION = "No question was asked. Call clarify again with a non-empty question."
 _NO_ANSWER = "The user did not provide an answer."
 _NON_INTERACTIVE = "No preference. Continue with the most reasonable choice."
 
@@ -23,19 +21,20 @@ _DESCRIPTION = """Asks the user one question and waits until they answer.
 Use this when you need a fact from the user that you cannot infer.
 Put a string in options only when it is a complete answer.
 If the user must supply the value, omit options.
-The user may pick an option or type their own words.
-If the answer still does not contain the fact, call ask_user again.
+The user may tick any number of suggested answers and may also type their own words.
+The reply is one string.
+If the answer still does not contain the fact, call clarify again.
 Do not ask that question in your reply.
 Ask one question at a time. Do not call any other tool in the same step."""
 
 
-class AskUserInput(BaseModel):
-    """Arguments for the ask_user tool."""
+class ClarifyInput(BaseModel):
+    """Arguments for the clarify tool."""
 
     question: str = Field(description="The one question to ask the user.")
     options: list[str] | None = Field(
         default=None,
-        description="Suggested answers. The user may pick one or type their own.",
+        description="Suggested answers. The user may tick any number and may also type their own words.",
     )
 
 
@@ -77,16 +76,16 @@ def _ask(question: str, options: list[str] | None = None) -> str:
     return answer.strip()
 
 
-ask_user = StructuredTool(
-    name="ask_user",
+clarify = StructuredTool(
+    name="clarify",
     description=_DESCRIPTION,
     func=_ask,
-    args_schema=AskUserInput,
+    args_schema=ClarifyInput,
 )
 
 
-def attach_ask_user(tools: list[Any]) -> list[Any]:
-    """Return tools plus ask_user, unless that tool is already present."""
-    if any(getattr(tool, "name", None) == "ask_user" for tool in tools):
+def attach_clarify(tools: list[Any]) -> list[Any]:
+    """Return tools plus clarify, unless that tool is already present."""
+    if any(getattr(tool, "name", None) == "clarify" for tool in tools):
         return list(tools)
-    return [*tools, ask_user]
+    return [*tools, clarify]

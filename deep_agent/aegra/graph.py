@@ -515,9 +515,9 @@ async def agent(runtime: ServerRuntime) -> Any:
 
     # After the guardian wrap: that wrapper catches every exception, and the
     # question pause is raised as an exception.
-    from deep_agent.src.agent.ask_user import attach_ask_user
+    from deep_agent.src.agent.clarify import attach_clarify
 
-    tools = attach_ask_user(tools)
+    tools = attach_clarify(tools)
 
     create_kwargs: dict[str, Any] = {
         "name": agent_name,
