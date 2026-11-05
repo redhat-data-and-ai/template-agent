@@ -7,6 +7,9 @@ packages = ["deep_agent"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "deep_agent/src/memory/memory_instructions.j2" = "deep_agent/src/memory/memory_instructions.j2"
+"deep_agent/aegra/classifier/data/logic.yaml" = "deep_agent/aegra/classifier/data/logic.yaml"
+"deep_agent/aegra/classifier/data/product_catalog.yaml" = "deep_agent/aegra/classifier/data/product_catalog.yaml"
+"deep_agent/aegra/classifier/data/product_tables.yaml" = "deep_agent/aegra/classifier/data/product_tables.yaml"
 
 [tool.hatch.metadata]
 allow-direct-references = true

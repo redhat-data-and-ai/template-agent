@@ -317,7 +317,7 @@ async def classify_query(query: str) -> ClassifyResult:
     """Classify a user query via DiffusionGemma on MaaS.
 
     The API key is read from MAAS_API_KEY at call time. Rules and the product
-    catalog come from config/agent/data/classification/*.yaml.
+    catalog come from deep_agent/aegra/classifier/data/*.yaml.
 
     Returns a ClassifyResult. The agent answer is streamed by the graph after
     this returns; this function does not hold those tokens.
