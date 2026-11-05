@@ -15,7 +15,7 @@ def _use_dirs(
     monkeypatch: pytest.MonkeyPatch, data: Path, classification: Path
 ) -> None:
     monkeypatch.setattr(tool, "_DATA_DIR", data)
-    monkeypatch.setattr(tool, "_CLASSIFICATION_DIR", classification)
+    monkeypatch.setattr(tool, "classification_dir", lambda: classification)
 
 
 def test_prefers_classification_then_data_root(

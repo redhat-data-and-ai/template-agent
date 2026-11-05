@@ -1,4 +1,4 @@
-"""Config data reader - lets the agent read files from config/agent/data/.
+"""Config data reader - lets the agent read bundled classifier data.
 
 Provides sandboxed read-only access to static data files bundled with the
 agent (product catalog, table metadata, etc.) without depending on the
@@ -12,20 +12,20 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from deep_agent.aegra.classifier.config import classification_dir
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
 _CONFIG_DIR = Path(os.environ.get("CONFIG_PATH", "config/agent"))
 _DATA_DIR = _CONFIG_DIR / "data"
-_CLASSIFICATION_DIR = _DATA_DIR / "classification"
 
 _MAX_SIZE_BYTES = 512_000  # 500 KB safety limit
 
 
 def _resolve_data_file(filename: str) -> Path | None:
-    """Find a data file in classification/ first, then the data root."""
-    for directory in (_CLASSIFICATION_DIR, _DATA_DIR):
+    """Find a data file in the classifier package first, then the data root."""
+    for directory in (classification_dir(), _DATA_DIR):
         candidate = directory / filename
         if candidate.is_file():
             return candidate
@@ -35,7 +35,7 @@ def _resolve_data_file(filename: str) -> Path | None:
 def _list_data_files() -> list[str]:
     """Names the tool can serve, without walking outside the data tree."""
     names: set[str] = set()
-    for directory in (_DATA_DIR, _CLASSIFICATION_DIR):
+    for directory in (_DATA_DIR, classification_dir()):
         if not directory.is_dir():
             continue
         names.update(path.name for path in directory.iterdir() if path.is_file())
@@ -47,13 +47,13 @@ def read_config_data(filename: str) -> str:
     """Read a data file bundled with the agent configuration.
 
     Use this tool to access static reference data such as the product catalog
-    or table metadata. Files live in the agent's config/agent/data/ directory.
+    or table metadata. Catalog, tables, and logic live in
+    deep_agent/aegra/classifier/data/.
 
     Available files:
     - product_catalog.yaml: data products, domains, and routing notes.
     - product_tables.yaml: tables for each product.
     - logic.yaml: intent classes, fallbacks, and classifier prompts.
-      Catalog, tables, and logic live in config/agent/data/classification/.
 
     Args:
         filename: Name of the file to read (e.g. "product_catalog.yaml").

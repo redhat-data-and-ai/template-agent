@@ -632,8 +632,7 @@ async def test_runnable_skips_injects_and_delegates() -> None:
                 stream_mode=["messages"],
             )
         ]
-    assert chunks[1] == "s"
-    assert "already present" in chunks[0][1][0].content[0]["text"]
+    assert chunks == ["s"]
 
     class _Empty:
         sub_queries: list = []

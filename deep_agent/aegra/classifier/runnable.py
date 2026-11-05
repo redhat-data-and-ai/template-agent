@@ -84,7 +84,7 @@ def _thought_chunk(text: str, stream_mode: Any) -> Any:
     """Shape the thought the way Aegra turns messages into thoughts."""
     message = AIMessage(
         id=f"classification-{uuid.uuid4().hex}",
-        content=[{"type": "text", "text": text, "thought": True}],
+        content=[{"type": "text", "text": f"{text}\n\n", "thought": True}],
     )
     payload = (message, {"langgraph_node": "classifier"})
     if isinstance(stream_mode, str):
@@ -119,18 +119,11 @@ class ClassifierRunnable:
             inner = self._runnable.with_config(**kwargs)
         return ClassifierRunnable(inner)
 
-    async def _classify_and_inject(self, input_data: Any) -> tuple[Any, str]:
-        """Classify the user text and return the enriched input plus the thought."""
+    async def _classify_and_inject(self, input_data: Any) -> tuple[Any, str | None]:
+        """Classify a new question. Continuations return no thought."""
         human_text = _extract_human_text(input_data)
-        if not human_text:
-            thought = _skipped_thought("no user text on this turn")
-            logger.info("%s", thought)
-            return input_data, thought
-
-        if "<classification>" in human_text:
-            thought = _skipped_thought("classification block already present")
-            logger.info("%s", thought)
-            return input_data, thought
+        if not human_text or "<classification>" in human_text:
+            return input_data, None
 
         try:
             result = await classify_query(human_text)
@@ -160,7 +153,8 @@ class ClassifierRunnable:
         Later chunks are yielded immediately and are not buffered.
         """
         enriched, thought = await self._classify_and_inject(input)
-        yield _thought_chunk(thought, kwargs.get("stream_mode"))
+        if thought:
+            yield _thought_chunk(thought, kwargs.get("stream_mode"))
         async for chunk in self._runnable.astream(enriched, config, **kwargs):
             yield chunk
 
@@ -169,6 +163,7 @@ class ClassifierRunnable:
     ) -> Any:
         """Same as astream, for the events API the UI stream uses."""
         enriched, thought = await self._classify_and_inject(input)
-        yield _thought_chunk(thought, kwargs.get("stream_mode"))
+        if thought:
+            yield _thought_chunk(thought, kwargs.get("stream_mode"))
         async for event in self._runnable.astream_events(enriched, config, **kwargs):
             yield event

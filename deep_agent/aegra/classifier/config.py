@@ -1,9 +1,9 @@
 """Load classifier YAML and read the MaaS key from the environment.
 
-Files (all YAML):
-  config/agent/data/classification/product_catalog.yaml
-  config/agent/data/classification/product_tables.yaml
-  config/agent/data/classification/logic.yaml
+Files (all YAML), shipped beside this module so a config mount cannot drop them:
+  deep_agent/aegra/classifier/data/product_catalog.yaml
+  deep_agent/aegra/classifier/data/product_tables.yaml
+  deep_agent/aegra/classifier/data/logic.yaml
 
 Environment variables, read on each call:
   MAAS_API_KEY            - MaaS Enterprise API key (required for the LLM path)
@@ -27,8 +27,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_PACKAGE_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_DIR = _PACKAGE_ROOT / "config" / "agent" / "data" / "classification"
+_DEFAULT_DIR = Path(__file__).resolve().parent / "data"
 
 
 @dataclass(frozen=True)
