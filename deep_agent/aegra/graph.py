@@ -574,6 +574,13 @@ async def agent(runtime: ServerRuntime) -> Any:
         compiled = PIIAwareRunnable(compiled)
         logger.info("graph_pii_enabled: wrapped with PIIAwareRunnable")
 
+    # classify_query() reads MAAS_API_KEY when the run starts. A missing key
+    # falls back inside that function, so the wrapper is always installed.
+    from deep_agent.aegra.classifier.runnable import ClassifierRunnable
+
+    compiled = ClassifierRunnable(compiled)
+    logger.info("graph_classifier_enabled: wrapped with ClassifierRunnable")
+
     if guardian_active:
         from deep_agent.aegra.safety import SafetyAwareRunnable
 
