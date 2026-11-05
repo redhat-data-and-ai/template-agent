@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from deep_agent.src.agent.repetition import detect_repetition_loop
 from deep_agent.src.guardrails import (
     TOOL_SAFETY_REFUSAL as _TOOL_SAFETY_REFUSAL,
 )
@@ -18,6 +19,7 @@ from deep_agent.src.guardrails import (
     InputContentSafetyError,
     ToolContentSafetyError,
 )
+from deep_agent.src.settings import settings
 from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
@@ -25,15 +27,26 @@ logger = get_python_logger()
 _INPUT_SAFETY_REFUSAL = "I can't help with that request due to content safety policy."
 
 
+def _message_text(content: Any) -> str:
+    """Extract plain text from an AIMessage content field.
+
+    Handles both str and Gemini's list-of-parts format
+    (e.g. ``[{"type": "text", "text": "..."}]``).
+    """
+    if isinstance(content, list):
+        return "".join(
+            c.get("text", "") if isinstance(c, dict) else str(c) for c in content
+        )
+    return str(content) if content else ""
+
+
 def safety_refusal(exc: BaseException) -> str | None:
     """Walk the exception chain and return the appropriate refusal message.
 
-    ModelRetryMiddleware raises a fresh exception with the original class name
-    embedded in the message string but NOT in __cause__/__context__ (it collects
-    exceptions across retries and raises after the loop, so the raise is outside
-    any except block).  We therefore check both the exception type and the message
-    text at each step.
-    Returns None if no safety-related error is found anywhere in the chain.
+    Checks both exception type and string representation at each step since
+    ModelRetryMiddleware wraps originals in a fresh exception with the class
+    name only in the message string (not in __cause__/__context__).
+    Returns None if no safety-related error is found.
     """
     seen: set[int] = set()
     current: BaseException | None = exc
@@ -44,8 +57,8 @@ def safety_refusal(exc: BaseException) -> str | None:
             return _INPUT_SAFETY_REFUSAL
         if isinstance(current, ContentSafetyError):
             return _INPUT_SAFETY_REFUSAL
-        # ModelRetryMiddleware raises a wrapper whose message contains the
-        # original class name — check the string representation as a fallback.
+        # ModelRetryMiddleware embeds the original class name in the wrapper
+        # message — check string representation as a fallback.
         msg = str(current)
         if "ToolContentSafetyError" in msg:
             return _TOOL_SAFETY_REFUSAL
@@ -69,20 +82,17 @@ def _build_merged_config(config: Any) -> tuple[dict, dict]:
 
 
 class SafetyAwareRunnable:
-    """Proxy over any async runnable that converts ContentSafetyError to a refusal message.
+    """Proxy that converts ContentSafetyError to a refusal message.
 
-    Used to wrap both the orchestrator's compiled graph (_SafetyAwareGraph alias)
-    and CompiledSubAgent runnables so that safety errors raised anywhere inside
-    the runnable — including in skills — produce a consistent user-facing message
-    instead of crashing or being stringified by deepagents.
+    Wraps both the orchestrator graph and CompiledSubAgent runnables so
+    safety errors raised anywhere — including in skills — produce a
+    consistent user-facing message instead of crashing.
 
-    Tool-result safety is handled upstream by GuardianToolProxy, which replaces
-    unsafe results with a safe placeholder before they enter LangGraph state.
-    This runnable only needs to handle input safety errors (from on_chat_model_start
-    via ModelRetryMiddleware).
+    Tool-result safety is handled upstream by GuardianToolProxy.
+    This runnable handles input safety errors (via ModelRetryMiddleware).
 
-    outermost=True  (orchestrator graph): catches all safety exceptions.
-    outermost=False (inner subagent runnables): re-raises so the outermost catches it.
+    outermost=True  (orchestrator): catches all safety exceptions.
+    outermost=False (inner subagent): re-raises so the outermost catches it.
     """
 
     def __init__(self, runnable: Any, *, outermost: bool = False) -> None:
@@ -118,11 +128,8 @@ class SafetyAwareRunnable:
         try:
             merged_config, safety_ctx = _build_merged_config(config)
             result = await self._runnable.ainvoke(input, merged_config, **kwargs)
-            # Override LLM output with consistent refusal if any tool was safety-blocked.
-            # Run at every level (not just outermost) so that inner SafetyAwareRunnables
-            # (e.g. analyst subagent, outermost=False) also override their final AIMessage.
-            # This puts _TOOL_SAFETY_REFUSAL into the task tool's return value, which the
-            # orchestrator's on_tool_end sentinel check can then detect.
+            # Override with consistent refusal if any tool was safety-blocked.
+            # Runs at every level so inner SafetyAwareRunnables also override.
             from langchain_core.messages import AIMessage, ToolMessage
 
             msgs = list(result.get("messages", []) if isinstance(result, dict) else [])
@@ -139,6 +146,30 @@ class SafetyAwareRunnable:
                     **(result if isinstance(result, dict) else {}),
                     "messages": msgs,
                 }
+            elif settings.REPETITION_LOOP_DETECTION_ENABLED:
+                # Truncate degenerate repetition loops (same refusal sentence
+                # dozens of times) before re-entering conversation state.
+                # Runs at every level — same rationale as the tool-block above.
+                for i in range(len(msgs) - 1, -1, -1):
+                    if isinstance(msgs[i], AIMessage):
+                        text = _message_text(msgs[i].content)
+                        is_loop, truncated = detect_repetition_loop(text)
+                        if is_loop:
+                            logger.warning(
+                                "Repetition loop detected in final message; "
+                                "truncating (original_chars=%d, truncated_chars=%d)",
+                                len(text),
+                                len(truncated),
+                            )
+                            # model_copy preserves tool_calls, response_metadata,
+                            # usage_metadata, structured content, and the message's
+                            # existing id — only `content` is replaced.
+                            msgs[i] = msgs[i].model_copy(update={"content": truncated})
+                            result = {
+                                **(result if isinstance(result, dict) else {}),
+                                "messages": msgs,
+                            }
+                        break
             return result
         except Exception as exc:
             if not self._outermost:
@@ -168,17 +199,25 @@ class SafetyAwareRunnable:
     async def astream_events(
         self, input: Any, config: Any = None, **kwargs: Any
     ) -> Any:
-        """Stream events, suppressing buffered AI output when a safety block is detected."""
+        """Stream events, suppressing AI output when a safety block or repetition loop is detected."""
         logger.debug(
             "safety_aware_runnable astream_events called outermost=%s", self._outermost
         )
         try:
             merged_config, safety_ctx = _build_merged_config(config)
-            # Buffer AI output chunks so we can replace them with the refusal if blocked.
-            # Non-AI events (tool calls, tool results, metadata) stream through immediately.
+            # Buffer AI chunks; non-AI events stream through immediately.
             ai_chunks: list[Any] = []
             tool_blocked_via_sentinel = False
             active_tool_calls = 0  # tracks in-flight tools at this graph level
+            # Accumulated text of the current AI response, used to detect
+            # repetition loops early and break before consuming unbounded
+            # tokens. Scoped per model invocation (keyed by run_id) so
+            # unrelated LLM calls can't dilute detection or combine into
+            # a false positive.
+            repetition_text = ""
+            repetition_run_id: Any = None
+            repetition_loop_hit = False
+            repetition_truncated_text = ""
             async for event in self._runnable.astream_events(
                 input, merged_config, **kwargs
             ):
@@ -193,20 +232,38 @@ class SafetyAwareRunnable:
                     if _TOOL_SAFETY_REFUSAL in str(output):
                         tool_blocked_via_sentinel = True
                     yield event
-                    # Break only when every tool in this batch has finished AND one was
-                    # blocked. Other parallel tools run to completion first; the break
-                    # fires between the last on_tool_end and the orchestrator's next LLM
-                    # call, so no retry is ever dispatched.
+                    # Break after last tool in batch finishes when blocked.
                     if tool_blocked_via_sentinel and active_tool_calls == 0:
                         break
                     continue
 
                 if self._outermost and event_type == "on_chat_model_stream":
                     ai_chunks.append(event)
+                    if settings.REPETITION_LOOP_DETECTION_ENABLED:
+                        run_id = event.get("run_id")
+                        if run_id != repetition_run_id:
+                            repetition_run_id = run_id
+                            repetition_text = ""
+                        chunk_obj = event.get("data", {}).get("chunk")
+                        repetition_text += _message_text(
+                            getattr(chunk_obj, "content", "")
+                        )
+                        is_loop, truncated = detect_repetition_loop(repetition_text)
+                        if is_loop:
+                            repetition_loop_hit = True
+                            repetition_truncated_text = truncated
+                            logger.warning(
+                                "Repetition loop detected mid-stream; breaking "
+                                "generation early (buffered_chars=%d, "
+                                "truncated_chars=%d)",
+                                len(repetition_text),
+                                len(truncated),
+                            )
+                            break
                 else:
                     yield event
 
-            # Emit either the consistent refusal or the buffered LLM chunks.
+            # Emit refusal, truncated loop content, or buffered chunks (priority order).
             if self._outermost and (safety_ctx["blocked"] or tool_blocked_via_sentinel):
                 from langchain_core.messages import AIMessage
 
@@ -214,6 +271,14 @@ class SafetyAwareRunnable:
                     "event": "on_chat_model_stream",
                     "name": "guardian_refusal",
                     "data": {"chunk": AIMessage(content=_TOOL_SAFETY_REFUSAL)},
+                }
+            elif self._outermost and repetition_loop_hit:
+                from langchain_core.messages import AIMessage
+
+                yield {
+                    "event": "on_chat_model_stream",
+                    "name": "repetition_loop_truncated",
+                    "data": {"chunk": AIMessage(content=repetition_truncated_text)},
                 }
             else:
                 # Pass buffered AI chunks through unchanged.
