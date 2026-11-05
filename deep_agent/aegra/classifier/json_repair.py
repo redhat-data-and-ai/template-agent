@@ -55,10 +55,18 @@ def repair_truncated_json(text: str) -> str | None:
 
     last_quote = text.rfind('"')
     if last_quote > 0 and in_string:
-        text = text[:last_quote + 1]
+        text = text[: last_quote + 1]
 
     trimmed = text.rstrip(", \n\t")
     return trimmed + "".join(reversed(stack))
+
+
+def _parsed_json(text: str) -> dict | list | None:
+    """Return a dict or list, or None when the text is not that JSON type."""
+    parsed = json.loads(text)
+    if isinstance(parsed, (dict, list)):
+        return parsed
+    return None
 
 
 def safe_parse_json(text: str) -> dict | list | None:
@@ -66,27 +74,27 @@ def safe_parse_json(text: str) -> dict | list | None:
     cleaned = strip_code_fences(text)
 
     try:
-        return json.loads(cleaned)
+        return _parsed_json(cleaned)
     except json.JSONDecodeError:
         pass
 
     fixed = fix_missing_outer_brace(cleaned)
     try:
-        return json.loads(fixed)
+        return _parsed_json(fixed)
     except json.JSONDecodeError:
         pass
 
     repaired = repair_truncated_json(fixed)
     if repaired:
         try:
-            return json.loads(repaired)
+            return _parsed_json(repaired)
         except json.JSONDecodeError:
             pass
 
     repaired_raw = repair_truncated_json(fix_missing_outer_brace(text))
     if repaired_raw:
         try:
-            return json.loads(repaired_raw)
+            return _parsed_json(repaired_raw)
         except json.JSONDecodeError:
             pass
 

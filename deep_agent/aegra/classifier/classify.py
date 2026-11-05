@@ -33,14 +33,19 @@ logger = logging.getLogger(__name__)
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class IntentResult:
+    """One intent label and its confidence."""
+
     intent_class: str
     confidence: float = 0.0
 
 
 @dataclass
 class TableInfo:
+    """A table attached to a classified data product."""
+
     name: str
     schema: str = "MARTS"
     description: str = ""
@@ -48,12 +53,16 @@ class TableInfo:
 
 @dataclass
 class Entity:
+    """A named entity extracted from the user query."""
+
     text: str
     type: str
 
 
 @dataclass
 class SubQuery:
+    """One part of a user query after decomposition."""
+
     query: str
     intents: list[IntentResult] = field(default_factory=list)
     product: str | None = None
@@ -65,6 +74,8 @@ class SubQuery:
 
 @dataclass
 class RouteInfo:
+    """Product selected for the primary sub-query."""
+
     success: bool = True
     decision: str = "clear_winner"
     selected_product: str | None = None
@@ -73,6 +84,8 @@ class RouteInfo:
 
 @dataclass
 class ClassifyResult:
+    """Full classification for one user query."""
+
     entities: list[Entity] = field(default_factory=list)
     sub_queries: list[SubQuery] = field(default_factory=list)
     is_compound: bool = False
@@ -107,12 +120,17 @@ class ClassifyResult:
 # Table lookup
 # ---------------------------------------------------------------------------
 
+
 def _lookup_tables(product_name: str) -> list[TableInfo]:
     """Look up tables for a product by normalized name."""
     tables = load_product_tables()
     normalized = product_name.lower().replace(" ", "").replace("_", "").replace("-", "")
     return [
-        TableInfo(name=t["name"], schema=t.get("schema", "MARTS"), description=t.get("description", ""))
+        TableInfo(
+            name=t["name"],
+            schema=t.get("schema", "MARTS"),
+            description=t.get("description", ""),
+        )
         for t in tables.get(normalized, [])
     ]
 
@@ -120,6 +138,7 @@ def _lookup_tables(product_name: str) -> list[TableInfo]:
 # ---------------------------------------------------------------------------
 # Fallback classification (keyword-based)
 # ---------------------------------------------------------------------------
+
 
 def _fallback_classify(query: str) -> ClassifyResult:
     """Keyword-based fallback when the LLM call fails."""
@@ -139,13 +158,23 @@ def _fallback_classify(query: str) -> ClassifyResult:
             break
 
     if not intents:
-        default = fallback.get("default_intent", {"intent": "data-query", "confidence": 0.5})
-        intents.append(IntentResult(intent_class=default["intent"], confidence=default["confidence"]))
+        default = fallback.get(
+            "default_intent", {"intent": "data-query", "confidence": 0.5}
+        )
+        intents.append(
+            IntentResult(
+                intent_class=default["intent"], confidence=default["confidence"]
+            )
+        )
 
     intents.sort(key=lambda i: i.confidence, reverse=True)
 
     return ClassifyResult(
-        sub_queries=[SubQuery(query=query, intents=intents, reasoning="Fallback: LLM unavailable")],
+        sub_queries=[
+            SubQuery(
+                query=query, intents=intents, reasoning="Fallback: LLM unavailable"
+            )
+        ],
         is_compound=False,
         intents=intents,
         reasoning="Fallback classification (LLM call failed)",
@@ -156,7 +185,10 @@ def _fallback_classify(query: str) -> ClassifyResult:
 # LLM response parsing
 # ---------------------------------------------------------------------------
 
-def _parse_unified_response(raw: str, original_query: str) -> tuple[list[Entity], list[SubQuery]]:
+
+def _parse_unified_response(
+    raw: str, original_query: str
+) -> tuple[list[Entity], list[SubQuery]]:
     """Parse the unified LLM response into entities and sub-queries with tables."""
     parsed = safe_parse_json(raw)
     if parsed is None or not isinstance(parsed, dict):
@@ -166,7 +198,9 @@ def _parse_unified_response(raw: str, original_query: str) -> tuple[list[Entity]
     entities = [
         Entity(text=e["text"].strip(), type=e["type"].strip().lower())
         for e in raw_entities
-        if isinstance(e, dict) and e.get("text", "").strip() and e.get("type", "").strip().lower() in entity_types()
+        if isinstance(e, dict)
+        and e.get("text", "").strip()
+        and e.get("type", "").strip().lower() in entity_types()
     ]
 
     raw_subs = parsed.get("sub_queries", [])
@@ -182,22 +216,26 @@ def _parse_unified_response(raw: str, original_query: str) -> tuple[list[Entity]
             valid = ["data-query"]
 
         confidence = min(1.0, max(0.0, float(raw_sq.get("confidence", 0)) / 100))
-        intent_results = [IntentResult(intent_class=ic, confidence=confidence) for ic in valid]
+        intent_results = [
+            IntentResult(intent_class=ic, confidence=confidence) for ic in valid
+        ]
 
         product = raw_sq.get("product")
         tables: list[TableInfo] = []
         if product and any(i.intent_class == "data-query" for i in intent_results):
             tables = _lookup_tables(product)
 
-        sub_queries.append(SubQuery(
-            query=query_text,
-            intents=intent_results,
-            product=product,
-            confidence=confidence,
-            tables_list=tables,
-            entities=raw_sq.get("entities", []),
-            reasoning=raw_sq.get("reasoning", ""),
-        ))
+        sub_queries.append(
+            SubQuery(
+                query=query_text,
+                intents=intent_results,
+                product=product,
+                confidence=confidence,
+                tables_list=tables,
+                entities=raw_sq.get("entities", []),
+                reasoning=raw_sq.get("reasoning", ""),
+            )
+        )
 
     return entities, sub_queries
 

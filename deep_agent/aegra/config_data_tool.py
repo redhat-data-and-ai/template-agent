@@ -66,7 +66,9 @@ def read_config_data(filename: str) -> str:
     safe_name = Path(filename).name
     if safe_name != filename:
         logger.warning("Path traversal blocked: %r -> %r", filename, safe_name)
-        return f"Error: Only filenames are accepted, not paths. Use '{safe_name}' instead."
+        return (
+            f"Error: Only filenames are accepted, not paths. Use '{safe_name}' instead."
+        )
 
     target = _resolve_data_file(safe_name)
 

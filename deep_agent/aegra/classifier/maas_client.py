@@ -50,6 +50,7 @@ def consume_sse_line(line: str, content: list[str], reasoning: list[str]) -> boo
 
 
 def _join_stream(content: list[str], reasoning: list[str]) -> str:
+    """Prefer streamed content, and use reasoning when content is empty."""
     text = "".join(content).strip()
     if text:
         return text

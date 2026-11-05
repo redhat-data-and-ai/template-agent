@@ -64,15 +64,19 @@ class ClassifierRunnable:
     """
 
     def __init__(self, runnable: Any) -> None:
+        """Wrap the compiled graph."""
         self._runnable = runnable
 
     def __getattr__(self, name: str) -> Any:
+        """Delegate unknown attributes to the wrapped graph."""
         return getattr(self._runnable, name)
 
     def copy(self, **kwargs: Any) -> "ClassifierRunnable":
+        """Copy the inner graph and keep the classifier wrapper."""
         return ClassifierRunnable(self._runnable.copy(**kwargs))
 
     def with_config(self, config: Any = None, **kwargs: Any) -> "ClassifierRunnable":
+        """Re-wrap after with_config so the classifier is not stripped."""
         if config is not None:
             inner = self._runnable.with_config(config, **kwargs)
         else:
@@ -105,6 +109,7 @@ class ClassifierRunnable:
         return input_data
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        """Classify, then invoke the inner graph."""
         enriched = await self._classify_and_inject(input)
         return await self._runnable.ainvoke(enriched, config, **kwargs)
 
@@ -119,7 +124,9 @@ class ClassifierRunnable:
         async for chunk in self._runnable.astream(enriched, config, **kwargs):
             yield chunk
 
-    async def astream_events(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+    async def astream_events(
+        self, input: Any, config: Any = None, **kwargs: Any
+    ) -> Any:
         """Same as astream, for the events API the UI stream uses."""
         enriched = await self._classify_and_inject(input)
         async for event in self._runnable.astream_events(enriched, config, **kwargs):
