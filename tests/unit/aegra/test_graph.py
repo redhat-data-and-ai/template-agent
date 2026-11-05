@@ -13,6 +13,15 @@ if "langgraph_sdk.runtime" not in sys.modules:
     sys.modules["langgraph_sdk.runtime"] = _runtime_mock
 
 
+def _unwrap_compiled(result: object) -> object:
+    """Return the graph inside the classifier wrapper."""
+    from deep_agent.aegra.classifier.runnable import ClassifierRunnable
+
+    if isinstance(result, ClassifierRunnable):
+        return result._runnable
+    return result
+
+
 def _reset_graph_state() -> None:
     """Clear the graph module's cache dicts so tests start from scratch."""
     from deep_agent.aegra import graph
@@ -28,12 +37,12 @@ class TestAgentFactory:
     patches must target the actual module where each symbol lives.
 
     The autouse fixture below disables Guardian and PII wrapping so
-    every test can assert ``result is mock_compiled`` directly.
+    every test can unwrap the classifier and assert the inner graph.
     """
 
     @pytest.fixture(autouse=True)
     def _no_guardian_wrapping(self):
-        """Disable Guardian and PII so tests can assert on raw compiled graph."""
+        """Disable Guardian and PII so tests can assert on the inner graph."""
         mock_settings = MagicMock()
         mock_settings.GUARDIAN_API_BASE = ""
         mock_settings.LIFECYCLE_PERSISTENCE_ENABLED = False
@@ -127,7 +136,7 @@ class TestAgentFactory:
             from deep_agent.aegra.graph import agent
 
             result = await agent(mock_runtime)
-            assert result is mock_compiled
+            assert _unwrap_compiled(result) is mock_compiled
 
     @pytest.mark.asyncio
     async def test_builds_agent_with_sso_token(self):
@@ -215,7 +224,7 @@ class TestAgentFactory:
             from deep_agent.aegra.graph import agent
 
             result = await agent(mock_runtime)
-            assert result is mock_compiled
+            assert _unwrap_compiled(result) is mock_compiled
             mock_refresh.assert_awaited_once_with(
                 "test_access_token", "test_refresh_token", user_id=None
             )
@@ -304,7 +313,7 @@ class TestAgentFactory:
 
             result = await agent(mock_runtime)
 
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         built_tools = mock_create.call_args.kwargs["tools"]
         # Tools are wrapped by CapabilityToolProxy; compare by name and
         # confirm the enforcement wrapper is present.
@@ -406,7 +415,7 @@ class TestAgentFactory:
 
             result = await agent(mock_runtime)
 
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         built_tools = mock_create.call_args.kwargs["tools"]
         built_names = [t.name for t in built_tools]
         assert built_names == [allowed_tool.name, "clarify"]
@@ -498,7 +507,7 @@ class TestAgentFactory:
 
             result = await agent(mock_runtime)
 
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         system_prompt_used = mock_create.call_args.kwargs["system_prompt"]
         assert "Capability Restrictions" in system_prompt_used
         assert "don't have access" in system_prompt_used
@@ -585,7 +594,7 @@ class TestAgentFactory:
 
             result = await agent(mock_runtime)
 
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         system_prompt_used = mock_create.call_args.kwargs["system_prompt"]
         assert "Capability Restrictions" not in system_prompt_used
 
@@ -672,7 +681,7 @@ class TestAgentFactory:
 
             result = await agent(mock_runtime)
 
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         call_kwargs = mock_create.call_args.kwargs
         assert "interrupt_on" in call_kwargs, (
             "interrupt_on was not passed to create_deep_agent"
@@ -767,7 +776,7 @@ class TestAgentFactory:
 
             result = await agent(mock_runtime)
 
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         call_kwargs = mock_create.call_args.kwargs
         assert "interrupt_on" not in call_kwargs, (
             "interrupt_on must not be passed when HITL is disabled"
@@ -1061,7 +1070,7 @@ class TestGraphCacheHit:
             mock_subs,
         ) = await self._build_agent(mock_config)
 
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         names = [t.name for t in mock_create.call_args.kwargs["tools"]]
         assert names == [LIST_TOOL, TEMPLATES_TOOL, READ_TOOL, "clarify"]
         mw_names = mock_mw.call_args.kwargs["mcp_tool_names"]
@@ -1092,7 +1101,7 @@ class TestGraphCacheHit:
             mock_subs,
         ) = await self._build_agent(mock_config)
 
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         built_names = [t.name for t in mock_create.call_args.kwargs["tools"]]
         # Resource tools must NOT appear.
         from deep_agent.aegra.mcp_resource_tools import (
@@ -1275,7 +1284,12 @@ class TestGuardianActivationGate:
             result = await agent(mock_runtime)
 
         mock_wrap.assert_called_once()
-        mock_safety_cls.assert_called_once_with(mock_compiled, outermost=True)
+        from deep_agent.aegra.classifier.runnable import ClassifierRunnable
+
+        wrapped = mock_safety_cls.call_args.args[0]
+        assert isinstance(wrapped, ClassifierRunnable)
+        assert wrapped._runnable is mock_compiled
+        assert mock_safety_cls.call_args.kwargs == {"outermost": True}
         assert result is mock_safety
         system_prompt_used = mock_create.call_args.kwargs["system_prompt"]
         assert "STOP ALL WORK" in system_prompt_used
@@ -1314,7 +1328,7 @@ class TestGuardianActivationGate:
 
         mock_wrap.assert_not_called()
         mock_safety_cls.assert_not_called()
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         system_prompt_used = mock_create.call_args.kwargs["system_prompt"]
         assert "STOP ALL WORK" not in system_prompt_used
 
@@ -1352,6 +1366,6 @@ class TestGuardianActivationGate:
 
         mock_wrap.assert_not_called()
         mock_safety_cls.assert_not_called()
-        assert result is mock_compiled
+        assert _unwrap_compiled(result) is mock_compiled
         system_prompt_used = mock_create.call_args.kwargs["system_prompt"]
         assert "STOP ALL WORK" not in system_prompt_used
