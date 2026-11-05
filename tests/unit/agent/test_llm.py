@@ -39,6 +39,40 @@ class TestCreateModel:
                     include_thoughts=True,
                 )
 
+    def test_gemini_25_flash_does_not_get_a_thinking_level(self):
+        """Gemini 2.5 rejects thinking_level. Thoughts still use include_thoughts."""
+        mock_creds = MagicMock()
+
+        with patch(
+            "deep_agent.src.agent.llm.get_service_account_credentials"
+        ) as mock_get_creds:
+            mock_get_creds.return_value = (mock_creds, "test-project")
+
+            with patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI") as mock_chat:
+                create_model("gemini-2.5-flash", temperature=0.5)
+                kwargs = mock_chat.call_args.kwargs
+                assert kwargs["model"] == "gemini-2.5-flash"
+                assert kwargs["include_thoughts"] is True
+                assert "thinking_level" not in kwargs
+
+    def test_gemini_3_gets_the_configured_thinking_level(self):
+        """Gemini 3 receives the configured thinking level and thought flag."""
+        mock_creds = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_THINKING_LEVEL", "low"),
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", False),
+        ):
+            mock_get_creds.return_value = (mock_creds, "test-project")
+            create_model("gemini-3.1-pro-preview", temperature=0.0)
+            kwargs = mock_chat.call_args.kwargs
+            assert kwargs["thinking_level"] == "low"
+            assert kwargs["include_thoughts"] is False
+
     def test_create_claude_model(self):
         """Test creating Claude model."""
         mock_creds = MagicMock()

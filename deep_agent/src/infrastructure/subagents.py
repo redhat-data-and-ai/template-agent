@@ -490,9 +490,9 @@ def _build_default_subagent(
 
         resolved_tools = wrap_tools(resolved_tools)
 
-    from deep_agent.src.agent.ask_user import attach_ask_user
+    from deep_agent.src.agent.clarify import attach_clarify
 
-    resolved_tools = attach_ask_user(resolved_tools)
+    resolved_tools = attach_clarify(resolved_tools)
 
     subagent_params: dict[str, Any] = {
         "name": name,
@@ -555,9 +555,9 @@ def _build_compiled_subagent(
 
         resolved_tools = wrap_tools(resolved_tools)
 
-    from deep_agent.src.agent.ask_user import attach_ask_user
+    from deep_agent.src.agent.clarify import attach_clarify
 
-    resolved_tools = attach_ask_user(resolved_tools)
+    resolved_tools = attach_clarify(resolved_tools)
 
     create_kwargs = {
         "name": name,

@@ -38,7 +38,6 @@ GEMINI_MODELS: list[str] = [
 ]
 
 _THINKING_CAPABLE_MODELS: set[str] = {
-    "gemini-2.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3.5-flash",
     "gemini-3.8-flash",
