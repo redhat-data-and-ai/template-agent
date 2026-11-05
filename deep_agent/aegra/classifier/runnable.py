@@ -11,9 +11,10 @@ so the classifier output is also subject to content safety checks.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from deep_agent.aegra.classifier.classify import classify_query
 
@@ -56,6 +57,41 @@ def _inject_classification(input_data: dict, block: str) -> dict:
     return {**input_data, "messages": messages}
 
 
+def _skipped_thought(reason: str) -> str:
+    """Thought text when classification does not produce a route."""
+    return "\n".join(
+        [
+            "**Intent classification**",
+            "Source: skipped",
+            f"Why: {reason}",
+            "The agent is continuing without a new product route.",
+        ]
+    )
+
+
+def _thought_text(result: Any) -> str:
+    """Use the classifier record when it can describe itself."""
+    writer = getattr(result, "to_thought", None)
+    if not callable(writer):
+        return _skipped_thought("classifier returned no thought record")
+    text = writer()
+    if isinstance(text, str) and text.strip():
+        return text
+    return _skipped_thought("classifier returned an empty thought")
+
+
+def _thought_chunk(text: str, stream_mode: Any) -> Any:
+    """Shape the thought the way Aegra turns messages into thoughts."""
+    message = AIMessage(
+        id=f"classification-{uuid.uuid4().hex}",
+        content=[{"type": "text", "text": text, "thought": True}],
+    )
+    payload = (message, {"langgraph_node": "classifier"})
+    if isinstance(stream_mode, str):
+        return payload
+    return ("messages", payload)
+
+
 class ClassifierRunnable:
     """Proxy that classifies the user query before forwarding to the inner graph.
 
@@ -83,44 +119,48 @@ class ClassifierRunnable:
             inner = self._runnable.with_config(**kwargs)
         return ClassifierRunnable(inner)
 
-    async def _classify_and_inject(self, input_data: Any) -> Any:
-        """Run classification and inject the block into the input."""
+    async def _classify_and_inject(self, input_data: Any) -> tuple[Any, str]:
+        """Classify the user text and return the enriched input plus the thought."""
         human_text = _extract_human_text(input_data)
         if not human_text:
-            return input_data
+            thought = _skipped_thought("no user text on this turn")
+            logger.info("%s", thought)
+            return input_data, thought
 
         if "<classification>" in human_text:
-            logger.debug("Classification block already present, skipping")
-            return input_data
+            thought = _skipped_thought("classification block already present")
+            logger.info("%s", thought)
+            return input_data, thought
 
         try:
             result = await classify_query(human_text)
-            block = result.to_classification_block()
-            if block:
-                logger.info(
-                    "Classification injected: %d sub_queries, intents=%s",
-                    len(result.sub_queries),
-                    [i.intent_class for i in result.intents],
-                )
-                return _inject_classification(input_data, block)
-        except Exception:
-            logger.warning("Classification failed, proceeding without", exc_info=True)
+        except Exception as exc:
+            thought = _skipped_thought(f"classification raised {exc}")
+            logger.warning("%s", thought, exc_info=True)
+            return input_data, thought
 
-        return input_data
+        thought = _thought_text(result)
+        block = ""
+        if hasattr(result, "to_classification_block"):
+            block = result.to_classification_block()
+        if block:
+            return _inject_classification(input_data, block), thought
+        return input_data, thought
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
         """Classify, then invoke the inner graph."""
-        enriched = await self._classify_and_inject(input)
+        enriched, _thought = await self._classify_and_inject(input)
         return await self._runnable.ainvoke(enriched, config, **kwargs)
 
     async def astream(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        """Classify, then forward each agent chunk as it arrives.
+        """Classify, emit the thought, then forward each agent chunk.
 
-        Classification finishes before the first answer token because the
-        model needs the product and tables. After that, chunks are yielded
-        immediately and are not collected into a buffer.
+        The thought is yielded before the first answer token. Classification
+        has to finish first because the model needs the product and tables.
+        Later chunks are yielded immediately and are not buffered.
         """
-        enriched = await self._classify_and_inject(input)
+        enriched, thought = await self._classify_and_inject(input)
+        yield _thought_chunk(thought, kwargs.get("stream_mode"))
         async for chunk in self._runnable.astream(enriched, config, **kwargs):
             yield chunk
 
@@ -128,6 +168,7 @@ class ClassifierRunnable:
         self, input: Any, config: Any = None, **kwargs: Any
     ) -> Any:
         """Same as astream, for the events API the UI stream uses."""
-        enriched = await self._classify_and_inject(input)
+        enriched, thought = await self._classify_and_inject(input)
+        yield _thought_chunk(thought, kwargs.get("stream_mode"))
         async for event in self._runnable.astream_events(enriched, config, **kwargs):
             yield event

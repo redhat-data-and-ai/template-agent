@@ -51,6 +51,10 @@ def test_classify_query_without_key_uses_yaml_fallback(
     result = asyncio.run(classify_query("hello there"))
     assert result.intents[0].intent_class == "direct-response"
     assert "<classification>" in result.to_classification_block()
+    thought = result.to_thought()
+    assert "Source: fallback" in thought
+    assert "MAAS_API_KEY is not set" in thought
+    assert "direct-response" in thought
 
 
 def test_consume_sse_line_joins_content_and_stops_on_done() -> None:
@@ -80,6 +84,9 @@ async def test_runnable_streams_answer_chunks_without_buffering() -> None:
         def to_classification_block(self) -> str:
             return "<classification>\n  intent: data-query\n</classification>"
 
+        def to_thought(self) -> str:
+            return "**Intent classification**\nSource: model\nIntents: data-query"
+
     async def _fake_classify(_query: str) -> _Result:
         return _Result()
 
@@ -91,11 +98,18 @@ async def test_runnable_streams_answer_chunks_without_buffering() -> None:
         new=_fake_classify,
     ):
         async for chunk in wrapper.astream(
-            {"messages": [{"role": "human", "content": "bookings"}]}
+            {"messages": [{"role": "human", "content": "bookings"}]},
+            stream_mode=["messages", "updates"],
         ):
             chunks.append(chunk)
 
-    assert [chunk["text"] for chunk in chunks] == ["Hel", "lo"]
+    mode, payload = chunks[0]
+    message, meta = payload
+    assert mode == "messages"
+    assert meta["langgraph_node"] == "classifier"
+    assert message.content[0]["thought"] is True
+    assert "Intents: data-query" in message.content[0]["text"]
+    assert [chunk["text"] for chunk in chunks[1:]] == ["Hel", "lo"]
     injected = inner.seen["messages"][-1]["content"]
     assert injected.startswith("<classification>")
     assert injected.endswith("bookings")
@@ -263,6 +277,10 @@ async def test_classify_query_uses_model_json(monkeypatch: pytest.MonkeyPatch) -
     assert result.routing is not None
     assert result.routing.decision == "clear_winner"
     assert result.routing.selected_product == "Bookings Master"
+    thought = result.to_thought()
+    assert "Source: model" in thought
+    assert "Bookings Master" in thought
+    assert "EOQ_TRANSACTION_ACV_SNAPSHOT" in thought
     assert {item.intent_class for item in result.intents} == {
         "data-query",
         "unstructured",
@@ -610,10 +628,12 @@ async def test_runnable_skips_injects_and_delegates() -> None:
         chunks = [
             chunk
             async for chunk in wrapper.astream(
-                {"messages": [HumanMessage(content="<classification>\n\nalready")]}
+                {"messages": [HumanMessage(content="<classification>\n\nalready")]},
+                stream_mode=["messages"],
             )
         ]
-    assert chunks == ["s"]
+    assert chunks[1] == "s"
+    assert "already present" in chunks[0][1][0].content[0]["text"]
 
     class _Empty:
         sub_queries: list = []
@@ -631,9 +651,11 @@ async def test_runnable_skips_injects_and_delegates() -> None:
             async for event in wrapper.astream_events(
                 {"messages": [{"role": "human", "content": "q"}]},
                 config={"c": 1},
+                stream_mode=["messages"],
             )
         ]
-    assert events == ["e"]
+    assert events[1] == "e"
+    assert "Intent classification" in events[0][1][0].content[0]["text"]
     assert inner.event_args["messages"][-1]["content"] == "q"
 
     async def _boom(_query: str) -> None:

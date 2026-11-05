@@ -93,6 +93,56 @@ class ClassifyResult:
     routing: RouteInfo | None = None
     tables_list: list[TableInfo] = field(default_factory=list)
     reasoning: str = ""
+    source: str = "model"
+    fallback_reason: str = ""
+    latency_ms: float = 0.0
+
+    def to_thought(self) -> str:
+        """Return the classification record shown in the thought process."""
+        intent_text = (
+            ", ".join(
+                f"{item.intent_class} ({item.confidence:.2f})" for item in self.intents
+            )
+            or "none"
+        )
+        entity_text = (
+            ", ".join(f"{entity.text} ({entity.type})" for entity in self.entities)
+            or "none"
+        )
+        table_text = (
+            ", ".join(f"{table.name} ({table.schema})" for table in self.tables_list)
+            or "none"
+        )
+        decision = self.routing.decision if self.routing else "no product selected"
+        product = "none"
+        if self.routing and self.routing.selected_product:
+            product = self.routing.selected_product
+        lines = [
+            "**Intent classification**",
+            f"Source: {self.source}",
+            f"Why: {self.fallback_reason or self.reasoning or 'model result'}",
+            f"Latency: {self.latency_ms:.0f} ms",
+            f"Decision: {decision}",
+            f"Product: {product}",
+            f"Intents: {intent_text}",
+            f"Entities: {entity_text}",
+            f"Tables: {table_text}",
+            f"Sub-queries: {len(self.sub_queries)}",
+            f"Compound: {'yes' if self.is_compound else 'no'}",
+        ]
+        for index, part in enumerate(self.sub_queries, start=1):
+            part_intents = (
+                ", ".join(item.intent_class for item in part.intents) or "unknown"
+            )
+            part_tables = ", ".join(table.name for table in part.tables_list) or "none"
+            lines.append(
+                f"{index}. {part.query} | intent {part_intents} | "
+                f"product {part.product or 'none'} | "
+                f"confidence {part.confidence:.2f} | tables {part_tables}"
+            )
+            if part.reasoning:
+                lines.append(f"   note: {part.reasoning}")
+        return "\n".join(lines)
 
     def to_classification_block(self) -> str:
         """Build a <classification> text block for injecting into the human message."""
@@ -140,7 +190,14 @@ def _lookup_tables(product_name: str) -> list[TableInfo]:
 # ---------------------------------------------------------------------------
 
 
-def _fallback_classify(query: str) -> ClassifyResult:
+def _log_classification(result: ClassifyResult) -> None:
+    """Write the same record the UI shows as a thought."""
+    logger.info("%s", result.to_thought())
+
+
+def _fallback_classify(
+    query: str, reason: str, latency_ms: float = 0.0
+) -> ClassifyResult:
     """Keyword-based fallback when the LLM call fails."""
     config = load_logic()
     lower = query.lower()
@@ -169,16 +226,19 @@ def _fallback_classify(query: str) -> ClassifyResult:
 
     intents.sort(key=lambda i: i.confidence, reverse=True)
 
-    return ClassifyResult(
+    result = ClassifyResult(
         sub_queries=[
-            SubQuery(
-                query=query, intents=intents, reasoning="Fallback: LLM unavailable"
-            )
+            SubQuery(query=query, intents=intents, reasoning=f"Fallback: {reason}")
         ],
         is_compound=False,
         intents=intents,
-        reasoning="Fallback classification (LLM call failed)",
+        reasoning=f"Fallback: {reason}",
+        source="fallback",
+        fallback_reason=reason,
+        latency_ms=latency_ms,
     )
+    _log_classification(result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -264,11 +324,10 @@ async def classify_query(query: str) -> ClassifyResult:
     """
     text = (query or "").strip()
     if not text:
-        return _fallback_classify(text)
+        return _fallback_classify(text, "query was empty")
 
     if not get_maas_settings().api_key:
-        logger.warning("MAAS_API_KEY not set, using fallback classification")
-        return _fallback_classify(text)
+        return _fallback_classify(text, "MAAS_API_KEY is not set")
 
     start = time.perf_counter()
 
@@ -276,16 +335,15 @@ async def classify_query(query: str) -> ClassifyResult:
         content = await _call_maas(text)
     except Exception as exc:
         latency = (time.perf_counter() - start) * 1000
-        logger.warning("MaaS call failed (%.0fms): %s", latency, exc)
-        return _fallback_classify(text)
+        return _fallback_classify(text, f"MaaS call failed: {exc}", latency)
 
+    latency = (time.perf_counter() - start) * 1000
     if not content:
-        return _fallback_classify(text)
+        return _fallback_classify(text, "MaaS returned no text", latency)
 
     entities, sub_queries = _parse_unified_response(content, text)
     if not sub_queries:
-        logger.warning("Parse returned no sub_queries, falling back")
-        return _fallback_classify(text)
+        return _fallback_classify(text, "model JSON had no sub-queries", latency)
 
     is_compound = len(sub_queries) > 1
     primary = sub_queries[0]
@@ -307,17 +365,7 @@ async def classify_query(query: str) -> ClassifyResult:
             reasoning=primary.reasoning,
         )
 
-    latency = (time.perf_counter() - start) * 1000
-    logger.info(
-        "classify_query: %d entities, %d sub_queries, intents=%s, products=%s, %.0fms",
-        len(entities),
-        len(sub_queries),
-        [i.intent_class for i in all_intents],
-        [sq.product for sq in sub_queries if sq.product],
-        latency,
-    )
-
-    return ClassifyResult(
+    result = ClassifyResult(
         entities=entities,
         sub_queries=sub_queries,
         is_compound=is_compound,
@@ -325,4 +373,8 @@ async def classify_query(query: str) -> ClassifyResult:
         routing=routing,
         tables_list=primary.tables_list,
         reasoning=primary.reasoning,
+        source="model",
+        latency_ms=latency,
     )
+    _log_classification(result)
+    return result
