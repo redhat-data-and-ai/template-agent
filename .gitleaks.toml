@@ -13,4 +13,5 @@ paths = [
 description = "Test fixtures with mock credentials (not real secrets)"
 paths = [
   '''^tests/''',
+  '''^guardrails/tests/''',
 ]
