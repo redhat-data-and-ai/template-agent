@@ -1,0 +1,743 @@
+version: 3.0.0
+description: Config-driven NER + decomposition + intent classification. All rules here, zero hardcoded logic in Python.
+intent_classes:
+- data-query
+- unstructured
+- catalog
+- chart
+- direct-response
+entity_types:
+  person:
+    description: Employee or executive names
+    examples:
+    - Imran Khan
+    - Jennifer Meyers
+    - Nirav Kumar
+    - Matt Hicks
+    routes_to: roverpeople
+  rh_product:
+    description: Red Hat commercial products
+    examples:
+    - RHEL
+    - OpenShift
+    - Ansible
+    - AAP
+    - ROSA
+    - ARO
+    - OSD
+    - Lightspeed
+    note: These are product NAMES, not data products. Routing depends on context (revenue vs telemetry vs bookings)
+  dv_product:
+    description: Dataverse data product names
+    examples:
+    - bookingsmaster
+    - roverpeople
+    - revenuemaster
+    - forecasting
+    - openshift
+    note: Direct routing to this data product
+  metric:
+    description: Business metrics and KPIs
+    examples:
+    - revenue
+    - ARR
+    - ACV
+    - TCV
+    - bookings
+    - headcount
+    - pipeline
+    - NPS
+    - CSAT
+    - ASP
+    - discount %
+    routing_rules:
+      revenue: revenuemaster
+      bookings|ARR|ACV|TCV|deals: bookingsmaster
+      pipeline|coverage|velocity|waterfall|fivecast: forecasting
+      expense|GL|PO|invoice: expensemaster
+      headcount|employee count|FTE: roverpeople
+      NPS|CSAT|CES|survey: cxahub
+      ASP|price per unit: offeringperformanceanalytics
+      discount|MSRP: discounting
+  time_period:
+    description: Fiscal/calendar time references
+    examples:
+    - Q1
+    - Q3 FY25
+    - CY26
+    - last quarter
+    - YTD
+    - H1
+    - FY24
+    - this year
+    - Jan-Mar 2025
+    note: 'Appended to sub-query for context. Fiscal year: Feb-Jan (Q1=Mar-May, Q2=Jun-Aug, Q3=Sep-Nov, Q4=Dec-Feb)'
+  geography:
+    description: Regions, countries, geos
+    examples:
+    - NA
+    - EMEA
+    - APAC
+    - LATAM
+    - US
+    - UK
+    - Germany
+    - Japan
+    - ANZ
+    - India
+    note: Appended as filter context to sub-query
+  organization:
+    description: Org units, teams, cost centers, sales groups, departments
+    examples:
+    - GSG
+    - cost center 148
+    - Services
+    - Consulting
+    - TAM team
+    - CSM
+    - sales group
+    note: Context for filtering structured queries
+  account:
+    description: Customer or company names
+    examples:
+    - IBM
+    - Microsoft
+    - Goldman Sachs
+    - Deutsche Bank
+    - Toyota
+    routes_to: gtm or bookingsmaster depending on context
+  document:
+    description: Document or report names that exist in Pathfinder
+    examples:
+    - AI governance policy
+    - earnings call
+    - strategy on a slide
+    - OLM framework FAQ
+    - spring plan
+    - company objectives
+    - market insights compendium
+    - P&L review
+    - FCF outlook
+    - offering brief
+    - business architecture readiness
+    - legal FAQ
+    - open source guidance
+    - onboarding guide
+    routes_to: unstructured (Pathfinder)
+  sku:
+    description: SKU identifiers, offering IDs
+    examples:
+    - MCT4316
+    - RS00099
+    - MW02592
+    routes_to: mdmproduct or offeringlifecyclemgmt
+decomposition_rules:
+  description: When to split vs keep as one query
+  split_when:
+  - Query has DISTINCT topics requiring DIFFERENT data products or skills
+  - Query asks about BOTH structured data AND documents
+  - Query mentions entities from DIFFERENT domains (e.g., people + finance)
+  - Query uses conjunctions like 'and also', 'plus', 'additionally' between unrelated topics
+  keep_together_when:
+  - All entities relate to the SAME data product
+  - Query is a comparison within one domain (RHEL vs OpenShift bookings -> both bookingsmaster)
+  - Entities are filters on the same query (Q3 + APAC + RHEL -> one query with filters)
+  - Follow-up context about the same topic (who is X and what team -> roverpeople)
+unstructured_documents:
+  description: 108 documents in Pathfinder knowledge base
+  categories:
+    earnings_calls:
+      pattern: Q[1-4] 20[0-9]{2} earnings
+      keywords:
+      - earnings call
+      - earnings transcript
+      - CEO said
+      - CFO said
+      - investor call
+      doc_count: 24
+      coverage: Q4 2019 through Q4 2025
+    finance_teams:
+      keywords:
+      - finance team overview
+      - knowledge source template
+      - internal service
+      - revenue finance
+      - GTM finance
+      - FP&A onboarding
+      - corp consolidations
+      - HCS finance
+      - IT spend finance
+      - P&GE spend
+      - sales spend
+      - mkt spend
+      - product finance
+      - services finance
+      - corp spend
+      - finance transformation
+      doc_count: 15
+    strategy_planning:
+      keywords:
+      - company objectives
+      - KPIs
+      - spring plan
+      - fall plan
+      - market insights
+      - incremental investments
+      - addressable opportunity
+      - planning document
+      - strategy on a slide
+      - CY25 planning
+      - CY26 planning
+      doc_count: 10
+    ai_governance:
+      keywords:
+      - AI governance
+      - AI policy
+      - AI generated content
+      - guidelines on AI
+      - open source guidance
+      - AI pathfinders
+      - briefing document
+      doc_count: 4
+    corporate_development:
+      keywords:
+      - corporate development
+      - M&A
+      - acquisition history
+      - corporate dev strategy
+      - corporate dev process
+      - corporate dev team
+      doc_count: 4
+    product_lifecycle:
+      keywords:
+      - OLM framework
+      - offering lifecycle
+      - offering brief
+      - product P&L
+      - P&L review
+      - context guide
+      - product analytics
+      doc_count: 5
+    people_profiles:
+      keywords:
+      - Jennifer Meyers
+      - Jason Hall
+      - Courtney Sorrells
+      - Cintia Shimamoto
+      - Matt Gredvig
+      - Shawn Lewis
+      - Suman Menon
+      - Valesca Lascala
+      - who is
+      - what does
+      - team under
+      doc_count: 10
+      note: If query is 'who is X' and X is an executive in Pathfinder, route to unstructured
+    business_architecture:
+      keywords:
+      - business architecture
+      - idea to offering
+      - value stream
+      - SPO business continuity
+      - SPO planning
+      doc_count: 4
+    financial_reports:
+      keywords:
+      - P&L review
+      - FCF outlook
+      - pipeline insights
+      - top 50 customers
+      - revenue mix
+      - financial performance
+      - investor presentation
+      - Bank of America conference
+      - Morgan Stanley conference
+      - UBS conference
+      - Jefferies conference
+      - RBC conference
+      doc_count: 20
+    legal:
+      keywords:
+      - legal FAQ
+      - RHEL source code
+      - public source code
+      - legal guidance
+      doc_count: 1
+    events:
+      keywords:
+      - CY26 events
+      - event calendar
+      doc_count: 1
+structured_products:
+  description: All 74 structured data products by domain for entity-to-product resolution
+  finance:
+  - bookingsmaster
+  - revenuemaster
+  - financialkpis
+  - forecasting
+  - expensemaster
+  - discounting
+  - accountsreceivable
+  - fpna
+  - financeconsolidation
+  - projectaccounting
+  - acvplusconsumptionforecast
+  - basevsincremental
+  - hcmfinops
+  - apptio
+  sales:
+  - salesplanning
+  - siexecution
+  - incentivemanagement
+  - saleshierarchy
+  - renewals
+  - sfsaleslegacy
+  - hcs
+  - rhscdataanalysis
+  customer:
+  - mdmparty
+  - rosettastone
+  - gtm
+  - customer
+  - intelligentaccess
+  - intelligenceengine
+  - contacthealth
+  - customerreference
+  - cxahub
+  - pitchbuilder
+  - interestedparties
+  telemetry:
+  - grokket
+  - telesense
+  - openshift
+  - lightspeedopenshift
+  - modelscorp
+  - rpmrex
+  marketing:
+  - adobe
+  - marketingtouchedinput
+  - marketingperformancemodels
+  - digitalrenewals
+  products_sku:
+  - officialproductlist
+  - mdmproduct
+  - offeringlifecyclemgmt
+  - offeringperformanceanalytics
+  - harborintelligence
+  - productpages
+  support:
+  - experienceops
+  - casesensitive
+  - xemeasures
+  learning:
+  - learningsources
+  - learningaggregate
+  partners:
+  - partnerprograms
+  - partnertiering
+  - partnervettingonboarding
+  orders:
+  - orders
+  - orderanalytics
+  - cloudmarketplace
+  people:
+  - roverpeople
+  - fammatrix
+  journey:
+  - journey
+  - adoptionanalytics
+  - aren
+  it_ops:
+  - jira
+  - informationtechnology
+  - workforcemapping
+  - releasecompliance
+  - applicationsimplification
+  - inorbit
+  other:
+  - bringyourownsubscription
+  - srcdatagovernance
+  - aiusage
+  - agenthealth
+  - hginsights
+  - dataversehelp
+fallback:
+  default_intent:
+    intent: data-query
+    confidence: 0.5
+  direct_response_signals:
+  - hello
+  - hi
+  - hey
+  - thanks
+  - thank you
+  - bye
+  - goodbye
+  - what can you do
+  - help me
+  - who are you
+  platform_keywords:
+  - how to use dataverse
+  - how to request access
+  - dataverse help
+  - test connection
+  - ping
+  - health check
+prompts:
+  routing_guide: |
+    You are a data product classifier for Red Hat's Dataverse. Given a user query, output ONLY the product name. No explanation.
+
+    ## PRODUCTS BY DOMAIN
+
+    ### FINANCE (money Red Hat earns, spends, plans)
+    - bookingsmaster: Bookings/ARR/ACV/TCV/ACV+ deal transactions. DEFAULT for sales amounts.
+    - revenuemaster: Recognized/GL revenue (actual financial performance). Keyword "revenue" → HERE.
+    - financialkpis: OT/CLT deck summaries by Geo/Product/Segment. "OT deck", "CLT", "Budget and Execution" → HERE.
+    - forecasting: Pipeline coverage, velocity, waterfall, MJ tags, fivecast. Pipeline ANALYTICS → HERE.
+    - expensemaster: Internal RH expenses, GL, OneStream, ITPF/TBM, Cloudability cloud spend, PO/invoices.
+    - discounting: MSRP vs TCV/ACV discount percentages on deals.
+    - accountsreceivable: AR aging, collections, credit holds, past-due invoices.
+    - fpna: CAPEX, fixed assets, Services P&L, journal lines, AP chatbot.
+    - financeconsolidation: Calendar-month consolidated P&L (revenue+expense), gross profit margins.
+    - projectaccounting: PS project backlog, budget burn, consultant timecards, clawback.
+    - acvplusconsumptionforecast: ACV+ source-sheet planning values and diagnostics.
+    - basevsincremental: Baseline vs incremental (BVI) ACV target/actual splits.
+    - hcmfinops: Narrow FinOps GL spend for cost centers 148/732/735 only.
+    - apptio: Apptio TBM: IT cost allocation, tower/service cost, vendor spend, PO termination impact.
+
+    ### SALES (quotas, compensation, hierarchy, renewals, legacy CRM)
+    - salesplanning: Current-year sales targets and seller quota assignments.
+    - siexecution: Sales compensation plans, territory credit mapping, PAST-year quotas, payees (Varicent/Anaplan).
+    - incentivemanagement: ICM deal feed to Varicent (eligible deals, partner attribution). No people/payouts.
+    - saleshierarchy: Sales org hierarchy: GSG→SG, territory mapping, account segment/flags.
+    - renewals: Renewal pipeline analytics: renewal ACV, close rates, NVR.
+    - sfsaleslegacy: FROZEN legacy Salesforce CRM. ONLY when user says "legacy"/"sfsaleslegacy"/mentions GENERAL_MARTS.
+    - hcs: HCS/ECS committed spend: commitment vs drawdown reconciliation.
+    - rhscdataanalysis: RHSC quote NAT-T discount compliance, BU Guidance cases.
+
+    ### CUSTOMER/ACCOUNT (who the customer is, their profile, lifecycle)
+    - mdmparty: Party master data: names, addresses, D&B/DUNS hierarchy, roles, identifiers.
+    - rosettastone: EBS-to-RHSC account ID mapping table.
+    - gtm: Unified RHSC account intelligence (~200K accounts): firmographics, intent, competitive tech, revenue potential.
+    - customer: Customer lifecycle classification: New/Expanding/Contracting/Lost quarter-over-quarter.
+    - intelligentaccess: Subscription entitlements, SKU line detail, contract-to-order.
+    - intelligenceengine: Per-SSO persona 360: recent cases, web journey, account team (TAM/CSM).
+    - contacthealth: RHSC vs Marketo contact sync gaps, marketable/bounce flags, email deliverability.
+    - customerreference: Customer references, case studies, value stories, logo approvals.
+    - cxahub: NPS/CSAT/CES surveys, Evidence of Adoption maturity scores.
+    - pitchbuilder: Seller/partner intelligence: renewal risk, bookings walk, PLG signals, vendor insights.
+    - interestedparties: Customer relationship links (affected_by/interested_in), link counts, link creators.
+
+    ### TELEMETRY (what's running on customer systems)
+    - grokket: System-level RHEL telemetry: fleet version mix, footprint, workload/fingerprints. NO account dimension.
+    - telesense: Account-level RHEL analytics: per-customer systems, socket counts, Lightspeed rules by account.
+    - openshift: OpenShift/OCP cluster fleet: versions, nodes, alerts, OCP Insights rules, ROSA/ARO/OSD.
+    - lightspeedopenshift: OpenShift Lightspeed (OLS) only: OLS installs, conversations, feedback, RAG, MCP.
+    - modelscorp: LLM-as-a-Service infra metrics: GPU KV cache, token throughput, models.corp consumers.
+    - rpmrex: RPM package co-occurrence and recommendations (package-to-package pairs).
+
+    ### MARKETING (campaigns, web, email performance)
+    - adobe: Hit-level Adobe Analytics web data (page views, sessions, eVars).
+    - marketingtouchedinput: Campaign responses, demand gen, Marketo/Eloqua, Datorama paid media, MDF, attribution.
+    - marketingperformancemodels: Email open/click/bounce, MT inquiries, engagement sufficiency, NBA scoring.
+    - digitalrenewals: Intercom digital renewal engagement: cohort contacts, lifecycle events, welcome window.
+
+    ### PRODUCTS/SKU (what Red Hat sells)
+    - officialproductlist: Corporate product catalog: aliases, components, portfolios, market lifecycle.
+    - mdmproduct: SKU master (Harbor): hierarchy, MSRP, list price, quoting tiers, BU attribution.
+    - offeringlifecyclemgmt: SKU lifecycle: leverage/inactivation signals, subscription coverage, ARR at SKU.
+    - offeringperformanceanalytics: ASP (average selling price), price per unit/core/socket, cohort retention.
+    - harborintelligence: SKU performance summary: top ARR, fast-growing SKUs, current vs previous period.
+    - productpages: Engineering release management: release phases, GA dates, milestones, Jira linkage.
+
+    ### SUPPORT (cases, escalations, operations)
+    - experienceops: Support case ops analytics (severity, time-to-close) + account relationship hubs.
+    - casesensitive: Case descriptions, comments, escalation narratives, crit-sit detail (restricted).
+    - xemeasures: Aggregate support case metrics, SLA compliance, case trends, CES.
+
+    ### LEARNING (courses, training)
+    - learningsources: Internal + partner learning catalogs, enrollments, completions, learning paths.
+    - learningaggregate: PTP partner user profiles, learning cross-charge, TechWolf skills exports.
+
+    ### PARTNERS (tiers, rewards, vetting)
+    - partnerprograms: TJ staging, rebates, claims, sell-with EVF, partner training/certifications.
+    - partnertiering: Partner tier analytics: current/projected tier, uptier readiness, loyalty points.
+    - partnervettingonboarding: Partner onboarding questionnaires, anti-corruption vetting, GAN compliance.
+
+    ### ORDERS (EBS, marketplace)
+    - orders: EBS ONT orders: headers, lines, holds, fulfillment.
+    - orderanalytics: GBD/Autobook/In Region reporting, Web orders, LMS orders.
+    - cloudmarketplace: Cloud marketplace disbursements: revenue from AWS/Azure/GCP/HPE marketplace sales.
+
+    ### PEOPLE/ORG (employees, org structure)
+    - roverpeople: Employee directory: profiles, manager hierarchy, cost centers, headcount.
+    - fammatrix: Cost center financial accountability: finance managers, FAM, budget owners, dept hierarchy.
+
+    ### JOURNEY/ADOPTION
+    - journey: Customer journey stages, lead lists, prospect strength, readiness scores, signals, recommendations, Account 360.
+    - adoptionanalytics: AI Factory platform adoption: DAU/WAU/MAU, builder/consumer segmentation.
+    - aren: ML prediction scores per account: renewal, cross-sell, growth likelihood.
+
+    ### IT/OPS
+    - jira: Jira issue tracking, sprints, story points, velocity, PI Planning.
+    - informationtechnology: Endpoint device inventory, managed device %, User Compliance.
+    - workforcemapping: IT work-item effort: ServiceNow+Jira tickets mapped to apps/cost centers.
+    - releasecompliance: Software release audit trail: commit-to-deploy traceability, change management.
+    - applicationsimplification: Application portfolio rationalization, retirement pipeline, vendor mapping.
+    - inorbit: Data product health scores, DAG status, freshness SLAs.
+
+    ### OTHER
+    - bringyourownsubscription: BYOS cloud subscription analytics.
+    - srcdatagovernance: Enterprise data standards (EDS codes), SIC codes, industry classification.
+    - aiusage: Cursor/Gemini employee AI tool adoption snapshots.
+    - agenthealth: Dataverse AI agent performance: Langfuse traces, LLM costs, tool invocations, latency.
+    - hginsights: HG Insights market data: company IT budgets, employee counts, tech installs across ALL companies.
+    - dataversehelp: Questions ABOUT the Dataverse platform itself. "list data products"/"available data products"/"what data products"/"how to request access" → HERE.
+
+    ## META/UTILITY QUERIES
+    "list data products"/"list available data products"/"what data products do I have access to" → dataversehelp.
+    "test connection"/"ping"/"health check"/"connection test" → dataversehelp.
+    "who am I"/"current user"/"my profile"/"my identity" → roverpeople.
+
+    ## RHEL BUSINESS QUERY ROUTING
+    Queries about "RHEL growth"/"RHEL business performance"/"RHEL metrics" are ambiguous across finance products. Apply these rules:
+    - "RHEL revenue" (the word revenue) → revenuemaster.
+    - "RHEL bookings"/"RHEL ACV"/"RHEL ARR"/"RHEL deals"/"RHEL SKU" → bookingsmaster.
+    - "RHEL subscriptions"/"RHEL subscription trend" → bookingsmaster (subscriptions = bookings context).
+    - "RHEL growth" (generic, no specific metric) → bookingsmaster (default for business growth).
+    - "RHEL pipeline"/"RHEL forecast" → forecasting.
+    - "RHEL marketing"/"RHEL campaign" → marketingtouchedinput.
+    - "RHEL business performance" (generic without specific metric) → bookingsmaster.
+
+    ## SALESFORCE QUERY ROUTING
+    - "Salesforce legacy"/"sfsaleslegacy"/"GENERAL_MARTS" → sfsaleslegacy.
+    - "Salesforce cases"/"support cases"/"case severity"/"time-to-close" → experienceops.
+    - "Salesforce case descriptions"/"case comments"/"escalation narrative" → casesensitive.
+    - "Salesforce CRM"/"Salesforce pipeline"/"Salesforce opportunities" (without "legacy") → bookingsmaster.
+    - "Salesforce quote"/"CPQ"/"quote version" → sfsaleslegacy (quotes live in legacy CRM).
+    - "Salesforce attachment"/"PO attachment" → sfsaleslegacy.
+
+    ## DISAMBIGUATION RULES (hardest pairs)
+
+    ### bookingsmaster vs revenuemaster
+    "revenue" in any form → revenuemaster. "bookings/ARR/ACV/pipeline/deals" → bookingsmaster.
+
+    ### bookingsmaster vs financialkpis
+    "OT deck"/"CLT"/"CLT view"/"Budget and Execution"/"Geo and Component ACV+" → financialkpis. Deal/account/transactional bookings → bookingsmaster.
+
+    ### bookingsmaster vs forecasting
+    Pipeline coverage/velocity/waterfall/MJ/fivecast → forecasting. General pipeline listing or deal amounts → bookingsmaster.
+
+    ### salesplanning vs siexecution
+    Current-year quotas/targets/plan → salesplanning. Past-year quotas, compensation, commission, credit mapping, payees → siexecution.
+
+    ### siexecution vs incentivemanagement
+    People side (payees, comp plans, credit mapping) → siexecution. Deal side (ICM feed, eligible deals, DT bookings) → incentivemanagement.
+
+    ### grokket vs telesense
+    System-level (fleet, no account) → grokket. Account-level (named customer, sockets by account) → telesense.
+
+    ### openshift vs grokket/telesense
+    OpenShift/OCP clusters → openshift. RHEL systems → grokket (system) or telesense (account).
+
+    ### lightspeedopenshift vs telesense/grokket
+    OpenShift Lightspeed/OLS/OLS operator → lightspeedopenshift. RHEL Insights Lightspeed/rules/RHSM → telesense/grokket.
+
+    ### gtm vs hginsights
+    RHSC account universe (account profile, competitive footprint for known accounts) → gtm. Market-wide company comparison (IT budgets between companies) → hginsights.
+
+    ### gtm vs bookingsmaster
+    Account intelligence (flags, intent, potential) → gtm. What accounts bought (transactions) → bookingsmaster.
+
+    ### expensemaster vs accountsreceivable
+    Expenses/AP/PO/vendor invoices → expensemaster. AR aging/collections/credit holds/past-due → accountsreceivable.
+
+    ### expensemaster vs projectaccounting
+    Corporate/IT expenses → expensemaster. PS project backlog/timecards/burn rate → projectaccounting.
+
+    ### expensemaster vs apptio
+    General invoice/PO/AP → expensemaster. Apptio TBM cost allocation/tower costs/spend drivers → apptio.
+
+    ### officialproductlist vs mdmproduct
+    Product catalog (aliases, components, portfolios) → officialproductlist. SKU master (hierarchy, MSRP, pricing) → mdmproduct.
+
+    ### officialproductlist vs productpages
+    Corporate catalog reference → officialproductlist. Engineering release management (dev schedules, milestones, GA dates) → productpages.
+
+    ### officialproductlist vs offeringlifecyclemgmt
+    Reference lifecycle → officialproductlist. SKU commercial health (leverage/inactivation/ARR at SKU) → offeringlifecyclemgmt.
+
+    ### marketingtouchedinput vs marketingperformancemodels
+    Campaign responses, Datorama paid media, MDF → marketingtouchedinput. Email open/click/bounce, MT inquiries, engagement sufficiency → marketingperformancemodels.
+
+    ### experienceops vs casesensitive
+    Aggregate case ops (severity counts, time-to-close) → experienceops. Case narrative content (descriptions, comments, escalation) → casesensitive.
+
+    ### experienceops vs xemeasures
+    Support operations workflows → experienceops. Aggregate support metrics, SLA compliance, case trends → xemeasures.
+
+    ### partnerprograms vs partnertiering
+    TJ staging, rebates, claims → partnerprograms. Tier analytics, uptier readiness → partnertiering.
+
+    ### renewals vs digitalrenewals
+    Renewal pipeline ACV/close rates → renewals. Intercom digital engagement/cohort contacts → digitalrenewals.
+
+    ### learningsources vs learningaggregate
+    Courses, enrollments, completions → learningsources. PTP user profiles, cross-charge, TechWolf → learningaggregate.
+
+    ### roverpeople vs fammatrix
+    Employee data (who works where) → roverpeople. Cost center financial accountability (who manages cost centers) → fammatrix.
+
+    ### orders vs orderanalytics
+    Full EBS ONT orders → orders. GBD/Autobook/Web/LMS reporting → orderanalytics.
+
+    ### customer vs bookingsmaster
+    Lifecycle classification (Expanding/Contracting/Lost) → customer. General ARR/ACV totals → bookingsmaster.
+
+    ### journey vs gtm
+    Journey stages, lead lists, readiness, signals, recommendations → journey. Account intelligence, firmographics, intent → gtm.
+
+    ### journey vs bookingsmaster
+    Journey/A360/lead/readiness context → journey. Plain "ACV for account X" → bookingsmaster.
+
+    ### journey vs openshift
+    "OpenShift signal"/"end of life signal"/"exposure by account"/"entitled vs consumed capacity"/"A360"/"readiness" → journey. Actual OCP cluster versions/nodes/alerts/operator data → openshift.
+
+    ### renewals vs forecasting
+    "renewal opportunities"/"renewal at par"/"renewal ACV"/"renewal close rate"/"NVR" → renewals (even if MJ toggle mentioned). Pipeline coverage/velocity/waterfall/fivecast (non-renewal) → forecasting.
+
+    ### productpages vs officialproductlist
+    "entity kind"/"releases under [product]"/"release phases"/"GA dates"/"milestones"/"Jira linkage" → productpages. Product catalog reference (aliases, components, portfolios) → officialproductlist.
+
+    ### fammatrix vs roverpeople
+    "departmental hierarchy"/"cost center financial accountability"/"FAM"/"budget owners"/"finance managers" → fammatrix. Employee profiles/manager chain/headcount → roverpeople.
+
+    ### orderanalytics vs orders
+    "royalty orders"/"GBD"/"Autobook"/"Web orders"/"LMS orders"/"In Region reporting" → orderanalytics. EBS ONT order headers/lines/holds/fulfillment → orders. Ambiguous "orders for account [ID]" → orders.
+
+    ### cloudmarketplace vs bookingsmaster
+    "marketplace disbursements"/"hyperscaler revenue"/"AWS/Azure/GCP marketplace" → cloudmarketplace. General "bookings"/"cloud products" without marketplace context → bookingsmaster.
+
+    ### releasecompliance vs productpages
+    "who approved"/"delivered by release"/"audit trail"/"change management"/"commit-to-deploy" → releasecompliance. "lifecycle phase"/"GA date"/"release phase"/"entity kind"/"milestones" → productpages.
+
+    ### experienceops keywords
+    Mentions "ExperienceOps" explicitly or "ExOps accounts" → experienceops even if asking about TAM/TRM/account team members.
+
+    ### siexecution vs salesplanning (refined)
+    Current-year quota targets/plan assignments → salesplanning. Territory credit mapping, reps covering territories, comp plans, past-year quotas, payees → siexecution. "Quotas for manager's team" without year context → salesplanning.
+
+    ### renewals vs forecasting (refined)
+    "renewal opportunities"/"renewal at par"/"MJ toggle" in renewal context → renewals. Non-renewal pipeline coverage/velocity/waterfall → forecasting. "Detailed opportunities for sales group with MJ toggle" → renewals.
+
+    ### expensemaster vs apptio (refined)
+    "top vendors by spend" with "forecast" or general vendor ranking → apptio if Apptio TBM context. General GL/PO/invoice → expensemaster.
+
+    ### mdmproduct vs officialproductlist
+    SKU hierarchy/MSRP/pricing → mdmproduct. Product catalog aliases/components/portfolios → officialproductlist. "Find products related to [technology]" → officialproductlist.
+
+    ### cxahub vs adoptionanalytics
+    "adoption score"/"NPS"/"CSAT"/"CES"/"Evidence of Adoption"/"survey" → cxahub. "DAU/WAU/MAU"/"builder vs consumer"/"AI Factory platform adoption" → adoptionanalytics.
+
+    ### hginsights vs gtm
+    "IT budgets across companies"/"external IT spend by industry"/"employee count comparisons"/"market-wide company data" → hginsights. RHSC account intelligence/firmographics/intent for KNOWN Red Hat accounts → gtm.
+
+    ### agenthealth vs intelligenceengine
+    Agent metrics, Langfuse, LLM costs → agenthealth. Customer persona, SSO profile → intelligenceengine.
+
+    ### mdmparty vs rosettastone
+    Party master (names, addresses, D&B) → mdmparty. EBS-to-RHSC ID mapping → rosettastone.
+  task: |
+    ## YOUR TASK: NER + DECOMPOSE + CLASSIFY + IDENTIFY
+
+    You are a UNIFIED query analyzer. Given a user query, do ALL of the following in ONE response:
+
+    ### Step 1: Named Entity Recognition
+
+    Extract ALL entities from the query:
+
+    | Entity Type | What to look for | Examples |
+    |-------------|-----------------|----------|
+    | person | Employee/executive names | "Imran Khan", "Jennifer Meyers" |
+    | rh_product | Red Hat commercial products | "RHEL", "OpenShift", "Ansible", "AAP" |
+    | dv_product | Dataverse data product names | "bookingsmaster", "roverpeople" |
+    | metric | Business KPIs and measures | "revenue", "ARR", "ACV", "headcount", "pipeline" |
+    | time_period | Fiscal/calendar time refs | "Q3", "FY25", "CY26", "last quarter", "YTD" |
+    | geography | Regions, countries | "NA", "EMEA", "APAC", "US", "Germany" |
+    | organization | Teams, cost centers, depts | "GSG", "cost center 148", "Consulting" |
+    | account | Customer/company names | "IBM", "Goldman Sachs", "Toyota" |
+    | document | Document or report names | "AI governance policy", "earnings call Q3 2024" |
+    | sku | SKU identifiers | "MCT4316", "RS00099" |
+
+    ### Step 2: Decompose
+
+    Split the query into independent sub-queries when it asks about DISTINCT topics.
+
+    **SPLIT** when:
+    - Topics need DIFFERENT data products ("bookings AND manager" -> 2 sub-queries)
+    - Mix of structured data AND documents ("revenue AND AI policy" -> 2 sub-queries)
+    - Entities from unrelated domains ("OpenShift clusters AND Q3 earnings call" -> 2 sub-queries)
+
+    **DO NOT SPLIT** when:
+    - Same data product ("manager AND cost center" -> 1 sub-query, both roverpeople)
+    - Comparison within one domain ("RHEL vs OpenShift bookings" -> 1 sub-query, bookingsmaster)
+    - Filters on same query ("Q3 + APAC + revenue" -> 1 sub-query with multiple entities)
+    - Cause-and-effect ("revenue AND why it dropped" -> 1 sub-query)
+
+    ### Step 3: Classify intents per sub-query
+
+    - **data-query**: Structured data from Snowflake. Numbers, metrics, lists, trends. DEFAULT.
+    - **unstructured**: Documents, PDFs, policies, earnings calls, team overviews, strategy docs.
+    - **catalog**: Discover what products/tables exist, metadata exploration.
+    - **chart**: Visualization request. Co-occurs with data-query.
+    - **direct-response**: Greeting, thanks, no tools needed.
+
+    Multi-label: a sub-query can have multiple intents (e.g., data-query + chart).
+
+    ### Step 4: Identify product per sub-query
+
+    For data-query intents, use the PRODUCTS BY DOMAIN and DISAMBIGUATION RULES above.
+    Attach the entity context (time, geo, org) so the agent can build proper filters.
+
+    ## Output Format
+
+    Respond with ONLY valid JSON, no markdown fences:
+    {
+        "entities": [
+            {"text": "RHEL", "type": "rh_product"},
+            {"text": "Q3 FY25", "type": "time_period"},
+            {"text": "APAC", "type": "geography"},
+            {"text": "AI governance policy", "type": "document"}
+        ],
+        "sub_queries": [
+            {
+                "query": "RHEL revenue in APAC for Q3 FY25",
+                "intents": ["data-query"],
+                "product": "revenuemaster",
+                "confidence": 95,
+                "entities": ["RHEL", "Q3 FY25", "APAC"],
+                "reasoning": "Revenue metric for RHEL product filtered by APAC region and Q3"
+            },
+            {
+                "query": "find the AI governance policy",
+                "intents": ["unstructured"],
+                "product": null,
+                "confidence": 0,
+                "entities": ["AI governance policy"],
+                "reasoning": "Document search in Pathfinder knowledge base"
+            }
+        ],
+        "is_compound": true
+    }
+
+    ## Key Rules
+
+    - entities array: ALL entities found in the query, regardless of sub-query assignment
+    - sub_queries[].entities: only the entities relevant to THAT sub-query
+    - product: null for non-data-query intents
+    - confidence: 0-100 for product routing certainty
+    - Each sub-query must be SELF-CONTAINED (include all needed context from the original)
+    - Preserve time/geo/org filters in sub-query text for the agent
+    - For "who is X" where X is an executive (Jennifer Meyers, Jason Hall, etc.) -> unstructured (Pathfinder has profiles)
+    - For "who is X" where X is a regular employee -> data-query (roverpeople has directory)
+    - "my manager" / "my cost center" -> data-query (roverpeople)
