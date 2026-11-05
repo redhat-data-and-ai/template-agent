@@ -39,7 +39,8 @@ autoscaling:
 # --- Health probes ---
 probes:
   liveness:
-    path: /health
+    # /live skips the Postgres/checkpointer/store checks that /health performs.
+    path: /live
     initialDelaySeconds: 30
     periodSeconds: 10
     timeoutSeconds: 5

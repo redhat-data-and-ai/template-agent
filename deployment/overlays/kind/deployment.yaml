@@ -99,9 +99,11 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 5
             failureThreshold: 30
+          # /live is the cheap liveness endpoint — no Postgres/checkpointer/store
+          # round-trips, unlike /health. Dependency failures belong to readiness.
           livenessProbe:
             httpGet:
-              path: /health
+              path: /live
               port: 5002
             initialDelaySeconds: 30
             periodSeconds: 10
