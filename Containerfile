@@ -54,6 +54,18 @@ ENV AGENT_PORT=5002
 ENV AEGRA_CONFIG=/app/aegra.json
 ENV CONFIG_PATH=/app/config/agent
 
+# Aegra logging defaults. These are set on the image rather than in
+# deployment/overlays/ because agent-engine patches the deployed pod spec with
+# `op: replace` on /spec/template/spec/containers/0/env — the overlay env block
+# is discarded, but image ENV survives for names absent from that list.
+# Per-agent `runtime.agent.env` frontmatter still overrides these.
+#   ENV_MODE=PRODUCTION       -> JSONRenderer instead of the ANSI ConsoleRenderer
+#                                used for LOCAL/DEVELOPMENT, so Sumo gets parseable JSON.
+#   LOG_EXCLUDE_PATHS         -> skip access logging for probe paths on 2xx/3xx.
+#                                4xx and 5xx are still logged.
+ENV ENV_MODE=PRODUCTION
+ENV LOG_EXCLUDE_PATHS=/health,/live,/ready
+
 EXPOSE 5002
 
 ENTRYPOINT ["/app/entrypoint.sh"]

@@ -194,9 +194,14 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 12
+          # /live is the cheap liveness endpoint — it returns 200 without
+          # touching Postgres, the checkpointer or the store. /health runs all
+          # three on every call, so using it here restarts a healthy pod over a
+          # transient backend blip and costs ~36 extra round-trips/pod/minute.
+          # Dependency failures belong to readiness, which still uses /health.
           livenessProbe:
             httpGet:
-              path: /health
+              path: /live
               port: 5002
             initialDelaySeconds: 30
             periodSeconds: 10

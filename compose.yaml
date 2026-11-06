@@ -106,6 +106,13 @@ services:
       - .env
     environment:
       - ENABLE_AUTH=true
+      # The image defaults to ENV_MODE=PRODUCTION (JSON logs for Sumo).
+      # Local dev keeps the colourised ConsoleRenderer unless overridden.
+      - ENV_MODE=${ENV_MODE:-LOCAL}
+      # `-` not `:-`: an explicitly empty LOG_EXCLUDE_PATHS in .env must reach
+      # the container, since that is how you re-enable probe logging to debug
+      # a failing probe. `:-` would silently reset it to the defaults.
+      - LOG_EXCLUDE_PATHS=${LOG_EXCLUDE_PATHS-/health,/live,/ready}
       - POSTGRES_HOST=pgvector
       - POSTGRES_PORT=5432
       - POSTGRES_DB=template_agent
