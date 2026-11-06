@@ -30,7 +30,7 @@ dependencies = [
     # and the upgrade tripwire in tests/unit/agent/test_openai_compat.py.
     "langchain-openai==1.7.2",
     "langchain-mcp-adapters==0.3.2",
-    "mcp>=1.28.1,<2",
+    "mcp>=1.28.1,<3",
     "langfuse>=4.9.0",
     "langgraph==1.2.14",
     "langgraph-checkpoint-postgres==3.1.2",
