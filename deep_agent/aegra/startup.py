@@ -426,10 +426,11 @@ def _setup_otel() -> str:
 
 
 def _setup_telemetry() -> str:
-    """Register PII middleware, Langfuse tracing, token budget, and Guardian."""
+    """Register PII middleware, Langfuse tracing, token budget, Guardian, and Phase 1."""
     try:
         from deep_agent.aegra.telemetry import (
             setup_guardian_guardrails,
+            setup_input_guardrail,
             setup_langfuse_tracing,
             setup_pii_middleware,
             setup_token_budget_tracking,
@@ -439,6 +440,7 @@ def _setup_telemetry() -> str:
         setup_langfuse_tracing()
         setup_token_budget_tracking()
         setup_guardian_guardrails()
+        setup_input_guardrail()
         return "ok"
     except Exception as exc:
         logger.warning("Telemetry setup failed: %s", exc)

@@ -118,8 +118,8 @@ strict_equality = true
 warn_return_any = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
+testpaths = ["tests", "guardrails/tests"]
+pythonpath = [".", "guardrails/src"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
