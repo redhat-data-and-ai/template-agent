@@ -6,10 +6,12 @@ management for the template agent service.
 """
 
 import time
+import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Callable
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -26,6 +28,31 @@ from template_agent.src.settings import settings
 from template_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Bind request_id and user_id to structlog context for log correlation."""
+
+    async def dispatch(self, request: Request, call_next: Callable):
+        request_id = (
+            request.headers.get("x-request-id")
+            or request.headers.get("x-trace-id")
+            or str(uuid.uuid4())
+        )
+        user_id = request.headers.get("x-user-id") or ""
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=request_id,
+            **({"user_id": user_id} if user_id else {}),
+        )
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
+            return response
+        except Exception:
+            raise
+        finally:
+            structlog.contextvars.clear_contextvars()
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -138,17 +165,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 # Create FastAPI application with lifespan management
 app = FastAPI(lifespan=lifespan)
 
-# Register request logging middleware first to capture all requests
+# Starlette LIFO: last registered = outermost (runs first on request).
+# RequestContextMiddleware must wrap CORSMiddleware so CORS preflights
+# also get X-Request-ID and structlog context.
 app.add_middleware(RequestLoggingMiddleware)
-
-# Configure CORS middleware for cross-origin requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+app.add_middleware(RequestContextMiddleware)
 
 # Configure application logger
 app.logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
