@@ -19,26 +19,26 @@ readme = "README.md"
 keywords = ["mcp", "template", "server"]
 requires-python = ">=3.12.2"
 dependencies = [
-    "deepagents==0.7.26",
-    "pydantic==2.13.4",
-    "pydantic-settings==2.15.0",
-    "python-dotenv==1.2.2",
+    "deepagents==0.7.32",
+    "pydantic==2.14.2",
+    "pydantic-settings==2.16.2",
+    "python-dotenv==1.2.4",
     "langchain-google-genai==4.4.2",
-    "langchain-google-vertexai==3.2.4",
+    "langchain-google-vertexai==3.2.5",
     # Pinned: ExtraContentChatOpenAI overrides private ChatOpenAI methods to
     # relay Gemini 3 thought_signature. See deep_agent/src/agent/openai_compat.py
     # and the upgrade tripwire in tests/unit/agent/test_openai_compat.py.
-    "langchain-openai==1.7.2",
+    "langchain-openai==1.7.3",
     "langchain-mcp-adapters==0.3.2",
     "mcp>=1.28.1,<2",
     "langfuse>=4.9.0",
-    "langgraph==1.2.14",
-    "langgraph-checkpoint-postgres==3.1.2",
+    "langgraph==1.2.18",
+    "langgraph-checkpoint-postgres==3.2.0",
     "langgraph-sdk>=0.1.51",
-    "aegra-api==0.10.8",
-    "aegra-cli==0.10.8",
-    "psycopg[binary,pool]==3.3.4",
-    "psycopg2-binary==2.9.12",
+    "aegra-api==0.11.0",
+    "aegra-cli==0.11.0",
+    "psycopg[binary,pool]==3.3.6",
+    "psycopg2-binary==2.9.13",
     "motor==3.7.1",
     "structlog==25.5.0",
     "pyyaml==6.0.3",
@@ -67,13 +67,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest==9.1.1",
-    "pytest-asyncio==1.4.0",
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1",
     "pytest-cov==6.2.1",
     "pytest-mock>=3.14.0",
-    "ruff==0.16.3",
+    "ruff==0.17.3",
     "mypy==1.16.1",
-    "pre-commit==4.6.2",
+    "pre-commit==4.7.0",
     "httpx==0.28.1",
 ]
 
