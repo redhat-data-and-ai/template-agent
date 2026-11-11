@@ -119,6 +119,7 @@ def run_shutdown_sync() -> None:
 
     for key, step in [
         ("inflight", _persist_inflight_runs),
+        ("sandboxes", _delete_sandboxes),
         ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse_sync),
         ("graph_cache", _clear_graph_cache),
@@ -204,6 +205,7 @@ async def run_shutdown() -> dict[str, str]:
     for key, step in [
         ("drain", _drain),
         ("inflight", _persist_inflight_runs),
+        ("sandboxes", _delete_sandboxes),
         ("otel", _shutdown_otel),
         ("langfuse", _shutdown_langfuse),
         ("graph_cache", _clear_graph_cache),
@@ -310,6 +312,23 @@ def _langfuse_shutdown_blocking(client: Any) -> None:
         client.shutdown()
     elif hasattr(client, "flush"):
         client.flush()
+
+
+def _delete_sandboxes() -> str:
+    """Delete every OpenShell sandbox this process created.
+
+    Each live conversation holds a pod. Without this a rolling restart
+    strands one per conversation, since nothing else reclaims them until
+    their idle TTL expires.
+    """
+    try:
+        from deep_agent.src.agent.openshell_backend import shutdown_all
+
+        shutdown_all()
+        return "ok"
+    except Exception as exc:
+        logger.warning("Sandbox teardown failed: %s", exc)
+        return f"error: {exc}"
 
 
 def _clear_graph_cache() -> str:
