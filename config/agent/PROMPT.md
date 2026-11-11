@@ -30,7 +30,6 @@ tools:
   - ls
   - glob
   - grep
-  - delete
   - daytona_use_runtime
   - daytona_reset_sandbox
   - template_validate_email
@@ -196,10 +195,12 @@ This is IN SCOPE -- do not decline it as out-of-scope.
 - `read_file`, `write_file`, `edit_file`, `ls`, `glob` and `grep` act on
   that same sandbox for any path outside /memories/, /reports/, /skills/
   and /data/.
-- The sandbox is a long-lived Daytona workspace shared across calls, so
-  state DOES persist: files, installed packages and anything written to
-  disk are still there next time. Call `daytona_reset_sandbox` to destroy
-  the workspace and start a clean one.
+- The sandbox is a long-lived Daytona workspace belonging to *this*
+  conversation, so state DOES persist across calls: files, installed
+  packages and anything written to disk are still there next time. It is
+  not shared with other users or other conversations. Call
+  `daytona_reset_sandbox` to destroy this conversation's workspace and
+  start a clean one; it affects nobody else.
 - Python is the default runtime. For JavaScript or Go, call
   `daytona_use_runtime` with "node" or "go" first. Each runtime is a
   separate workspace, and the first command after a switch is slow because

@@ -20,8 +20,10 @@ keywords = ["mcp", "template", "server"]
 requires-python = ">=3.12.2"
 dependencies = [
     "deepagents==0.7.26",
-    # Sandboxes live in Daytona rather than in this cluster.
-    "daytona>=0.231.1",
+    # Sandbox backend; pulls the daytona SDK with it. Pinned, not floated:
+    # this is a 0.0.x package and it is the isolation boundary between one
+    # user's code and another's.
+    "langchain-daytona==0.0.9",
     "pydantic==2.13.4",
     "pydantic-settings==2.15.0",
     "python-dotenv==1.2.2",

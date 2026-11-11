@@ -92,6 +92,103 @@ spec:
                   name: agent-secrets
                   key: LANGFUSE_BASE_URL
                   optional: true
+            - name: LANGFUSE_TRACING_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: LANGFUSE_TRACING_ENVIRONMENT
+                  optional: true
+            # --- Daytona code sandbox (optional; unset = disabled) ---
+            - name: DAYTONA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: DAYTONA_API_KEY
+                  optional: true
+            - name: DAYTONA_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_API_URL
+                  optional: true
+            - name: DAYTONA_TARGET
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_TARGET
+                  optional: true
+            - name: DAYTONA_RUNTIME
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_RUNTIME
+                  optional: true
+            - name: DAYTONA_CPU
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_CPU
+                  optional: true
+            - name: DAYTONA_MEMORY_GB
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_MEMORY_GB
+                  optional: true
+            - name: DAYTONA_DISK_GB
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_DISK_GB
+                  optional: true
+            - name: DAYTONA_AUTO_STOP_MINUTES
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_AUTO_STOP_MINUTES
+                  optional: true
+            - name: DAYTONA_AUTO_DELETE_MINUTES
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_AUTO_DELETE_MINUTES
+                  optional: true
+            - name: DAYTONA_IDLE_REAP_MINUTES
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_IDLE_REAP_MINUTES
+                  optional: true
+            - name: DAYTONA_MAX_SANDBOXES
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_MAX_SANDBOXES
+                  optional: true
+            - name: DAYTONA_DOMAIN_ALLOW_LIST
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_DOMAIN_ALLOW_LIST
+                  optional: true
+            - name: DAYTONA_NETWORK_BLOCK_ALL
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_NETWORK_BLOCK_ALL
+                  optional: true
+            - name: DAYTONA_ALLOW_ANONYMOUS_SESSION
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_ALLOW_ANONYMOUS_SESSION
+                  optional: true
+            - name: DAYTONA_LOG_COMMANDS
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: DAYTONA_LOG_COMMANDS
+                  optional: true
           startupProbe:
             httpGet:
               path: /health

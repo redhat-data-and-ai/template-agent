@@ -9,3 +9,57 @@ data:
 
   # Note: PostgreSQL and Redis environment variables are added by
   # optional components when postgres or redis components are included
+
+  # --- Observability ---
+  # Traces are separated by Langfuse PROJECT, not by this tag: each
+  # deployment points at its own project through the LANGFUSE_* keys in
+  # its own namespace's agent-secrets. This only distinguishes stages
+  # within one project (local vs deployed), and the OpenShift overlay
+  # patches it to "production".
+  LANGFUSE_TRACING_ENVIRONMENT: "development"
+
+  # --- Daytona code sandbox (optional) ---
+  #
+  # The sandbox runs OUTSIDE this cluster. Leaving DAYTONA_API_URL empty
+  # sends user files and model-authored shell commands to Daytona's SaaS
+  # control plane at https://app.daytona.io/api — a third party, outside
+  # whatever boundary this cluster sits in. Point it at a self-hosted
+  # control plane to keep that traffic internal, or accept the egress
+  # deliberately. Without DAYTONA_API_KEY in agent-secrets the sandbox
+  # tools report that they are not configured and the agent still runs.
+  DAYTONA_API_URL: ""
+  DAYTONA_TARGET: ""
+
+  # Starting runtime: python | node | go. Only python ships python3, so
+  # the file tools work there and only `execute` works in the others.
+  DAYTONA_RUNTIME: "python"
+
+  # Per-conversation resource caps. The sandbox runs shell the model
+  # wrote, so a fork loop or a runaway download is an ordinary failure
+  # mode, not an attack — and uncapped it is a bill.
+  DAYTONA_CPU: "1"
+  DAYTONA_MEMORY_GB: "2"
+  DAYTONA_DISK_GB: "5"
+
+  # Lifecycle. auto_stop only stops a sandbox and its disk keeps costing;
+  # auto_delete is what reclaims it. The reaper and the cap are this
+  # pod's own belt to that braces.
+  DAYTONA_AUTO_STOP_MINUTES: "30"
+  DAYTONA_AUTO_DELETE_MINUTES: "120"
+  DAYTONA_IDLE_REAP_MINUTES: "60"
+  DAYTONA_MAX_SANDBOXES: "50"
+
+  # Egress from the sandbox itself. Empty means it reaches the whole
+  # internet, which is what `pip install` needs. A comma-separated list
+  # closes it to those domains.
+  DAYTONA_DOMAIN_ALLOW_LIST: ""
+  DAYTONA_NETWORK_BLOCK_ALL: "false"
+
+  # Isolation safety stops. Sandboxes are keyed on the LangGraph thread
+  # id; allowing an anonymous session puts every caller that arrives
+  # without one in a SINGLE shared sandbox, so leave it false anywhere
+  # more than one person can reach the agent. Logging commands writes
+  # whatever the user pasted into the chat — credentials included — to
+  # the pod log.
+  DAYTONA_ALLOW_ANONYMOUS_SESSION: "false"
+  DAYTONA_LOG_COMMANDS: "false"

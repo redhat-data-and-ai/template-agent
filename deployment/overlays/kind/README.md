@@ -50,6 +50,45 @@ kubectl -n template-agent port-forward svc/agent 5002:5002
 kubectl -n template-agent port-forward svc/mcp-server 5001:5001
 ```
 
+## Secrets (Langfuse, Daytona)
+
+`deployment/base/secret.yaml` ships every credential key as an empty
+string and is **tracked in git** — never put a live key in it. Supply
+real values to a running cluster instead, so nothing secret is ever
+committed:
+
+```bash
+kubectl -n template-agent patch secret agent-secrets --type merge -p "$(cat <<EOF
+{"stringData": {
+  "LANGFUSE_PUBLIC_KEY": "$LANGFUSE_PUBLIC_KEY",
+  "LANGFUSE_SECRET_KEY": "$LANGFUSE_SECRET_KEY",
+  "LANGFUSE_BASE_URL":   "$LANGFUSE_BASE_URL",
+  "DAYTONA_API_KEY":     "$DAYTONA_API_KEY"
+}}
+EOF
+)"
+kubectl -n template-agent rollout restart deployment/agent
+```
+
+Export those four from your local `.env` first (`set -a; . .env; set +a`),
+which is gitignored and is where `make kind` already expects them.
+
+Both integrations are optional and fail soft. With no Langfuse keys the
+agent simply does not trace; with no `DAYTONA_API_KEY` the sandbox tools
+report that they are not configured and the agent still answers.
+
+Traces are separated by Langfuse **project**, one per deployment, not by
+environment tag: each namespace's `agent-secrets` carries the keypair for
+its own project, so `ta-daytona` and `ta-openshell` report to different
+projects and never mix. Creating the project and its keypair is a
+Langfuse-side step — project API keys cannot create projects, so a new
+preview needs its keypair made in the Langfuse UI (or with an
+organization-scoped key) before it can trace.
+
+`LANGFUSE_TRACING_ENVIRONMENT` is not a secret and is a *secondary* axis
+— it separates stages within one project (local vs deployed), not one
+deployment from another.
+
 ## Differences from OpenShift
 
 | Concern | Kind | OpenShift |
