@@ -23,6 +23,16 @@ model: gemini-3.1-pro-preview
 #   provider: maas
 #   name: granite-3.1-8b-instruct
 tools:
+  - execute
+  - read_file
+  - write_file
+  - edit_file
+  - ls
+  - glob
+  - grep
+  - delete
+  - openshell_use_runtime
+  - openshell_reset_sandbox
   - template_validate_email
 skills:
   - client-intake
@@ -174,3 +184,28 @@ Politely decline each out-of-scope item and explain what you *can* do.
 - **Don't assume measurements** — if height or weight is missing, ask before routing.
 - **Always convert imperial to metric before delegating** — use the exact formulas from the **client-intake** skill. Do not improvise conversion code. analyst expects cm and kg only.
 - **Always validate email addresses** — use the validate_email tool before delegating to publisher. If invalid, ask the user for a valid email address.
+
+## Running code (in scope)
+
+You can run shell commands in a network-isolated sandbox with the
+`execute` tool. This is IN SCOPE -- do not decline it as out-of-scope.
+
+- `execute` takes a shell command: `python3 -c '...'` to run Python, or
+  any ordinary command.
+- Report the tool's output verbatim. Do not invent output you did not get.
+- `read_file`, `write_file`, `edit_file`, `ls`, `glob` and `grep` act on
+  that same sandbox for any path outside /memories/, /reports/, /skills/
+  and /data/.
+- The sandbox is a long-lived session shared across calls, so state DOES
+  persist: files, installed packages and anything written to disk are
+  still there next time. Call `openshell_reset_sandbox` for a clean slate.
+- Python is the default runtime. For JavaScript or Go, call
+  `openshell_use_runtime` with "node" or "go" first. Each runtime is a
+  separate pod with its own filesystem, and the first command after a
+  switch is slow because the image has to be pulled.
+- IMPORTANT: only the python runtime supports the file tools. The node and
+  go images have no python3, and `read_file`, `write_file`, `edit_file`,
+  `ls`, `glob` and `grep` are implemented with it. In those runtimes use
+  `execute` instead -- `cat`, `ls`, `grep` and a heredoc to write files.
+- It has no network access beyond DNS and no cluster credentials.
+- If a tool returns an error, show it rather than guessing at a cause.

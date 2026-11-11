@@ -384,7 +384,9 @@ async def agent(runtime: ServerRuntime) -> Any:
     )
     mcp_tools = wrap_mcp_tools_for_auth(mcp_tools)
 
-    all_available_tools = list(mcp_tools)
+    from deep_agent.src.agent.openshell_backend import get_builtin_tools
+
+    all_available_tools = list(mcp_tools) + get_builtin_tools()
 
     from deep_agent.src.capability import (
         enforce_capability,
@@ -483,7 +485,9 @@ async def agent(runtime: ServerRuntime) -> Any:
     logger.warning("Graph cache MISS — full rebuild")
 
     subagents = load_subagents(tools=mcp_tools)
-    backend = get_configured_backend()
+    from deep_agent.src.agent.openshell_backend import wrap_backend
+
+    backend = wrap_backend(get_configured_backend())
 
     middleware = build_middleware_list(
         resolved_mw,
