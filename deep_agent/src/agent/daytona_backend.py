@@ -271,6 +271,50 @@ def _log(event: str, **fields: Any) -> None:
         pass
 
 
+def _trace_metadata(**extra: Any) -> None:
+    """Tag the enclosing tool span with where the command actually ran.
+
+    An `execute` span in Langfuse says a command ran; it does not say the
+    sandbox was Daytona rather than this cluster, which runtime served
+    it, or which sandbox it landed in. On a deployment where the OpenShell
+    and Daytona backends are both in play, that is the first thing anybody
+    reading a trace wants to know.
+
+    This runs inside the LangChain tool span -- `aexecute` reaches the
+    sync path through `asyncio.to_thread`, which copies the context, so
+    the OTel span the callback handler opened is still current. Best
+    effort: observability must never be the reason a command fails, and
+    outside a traced run there is no span to update at all.
+    """
+    # Resolved separately: a call with no session key is refused, and that
+    # is the one most worth labelling -- so losing the key must not cost
+    # the whole tag.
+    try:
+        key: str | None = session_key()
+    except Exception:  # noqa: BLE001 - unattributable call; tag it anyway
+        key = None
+    runtime = active_runtime(key) if key else None
+    session = _sessions.get(key) if key else None
+    box = session.sandboxes.get(runtime) if session and runtime else None
+
+    try:
+        from langfuse import get_client
+
+        get_client().update_current_span(
+            metadata={
+                "sandbox.provider": "daytona",
+                "sandbox.runtime": runtime,
+                "sandbox.image": RUNTIMES.get(runtime) if runtime else None,
+                "sandbox.session": key,
+                "sandbox.id": getattr(box, "id", None),
+                "sandbox.control_plane": API_URL or DAYTONA_SAAS_URL,
+                **extra,
+            }
+        )
+    except Exception:  # noqa: BLE001 - never fail a run for a trace tag
+        pass
+
+
 class DaytonaNotConfigured(RuntimeError):
     """Raised when no API key is set.
 
@@ -513,12 +557,15 @@ class DaytonaRuntimeSandbox(DaytonaSandbox):
         from deepagents.backends.protocol import ExecuteResponse
 
         try:
-            return super().execute(command, timeout=timeout)
+            response = super().execute(command, timeout=timeout)
         except (DaytonaNotConfigured, SessionUnavailable) as exc:
             _log("daytona_run_refused", reason=type(exc).__name__)
+            _trace_metadata(status=type(exc).__name__)
             return ExecuteResponse(
                 output=f"error: {exc}", exit_code=127, truncated=False
             )
+        _trace_metadata(status="ok", exit_code=response.exit_code)
+        return response
 
     def reset(self, runtime: str | None = None) -> str:
         """Delete this conversation's sandbox; the next command makes one.

@@ -369,3 +369,40 @@ class TestStartupWarnings:
             db._warn_on_startup_posture()
         events = [c.args[0] for c in log.warning.call_args_list]
         assert "daytona_command_logging_enabled" in events
+
+
+# -- trace metadata --------------------------------------------------------
+
+
+class TestTraceMetadata:
+    """The execute span should say the sandbox was Daytona."""
+
+    def test_execute_tags_the_span(self, backend):
+        with as_user("alice", "t-1"), patch(f"{MODULE}.get_client", create=True):
+            import langfuse
+
+            with patch.object(langfuse, "get_client") as gc:
+                backend.execute("echo hi")
+        md = gc.return_value.update_current_span.call_args.kwargs["metadata"]
+        assert md["sandbox.provider"] == "daytona"
+        assert md["sandbox.runtime"] == "python"
+        assert md["sandbox.session"] == "alice/t-1"
+        assert md["sandbox.id"] is not None
+        assert md["status"] == "ok"
+
+    def test_refused_call_is_tagged_too(self, backend):
+        import langfuse
+
+        with as_user("alice", None), patch.object(langfuse, "get_client") as gc:
+            backend.execute("echo hi")
+        md = gc.return_value.update_current_span.call_args.kwargs["metadata"]
+        assert md["sandbox.provider"] == "daytona"
+        assert md["status"] == "SessionUnavailable"
+
+    def test_tracing_failure_never_breaks_a_run(self, backend):
+        import langfuse
+
+        with as_user("alice", "t-1"), patch.object(langfuse, "get_client") as gc:
+            gc.side_effect = RuntimeError("langfuse is down")
+            r = backend.execute("echo hi")
+        assert r.exit_code == 0
