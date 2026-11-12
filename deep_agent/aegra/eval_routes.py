@@ -80,7 +80,7 @@ async def _require_developer(
 async def _check_mcp_auth(request: Request) -> list[dict]:
     """Pre-flight check: return list of MCP servers that need authentication.
 
-    Checks servers where enabled=true, auth=true, auth_mode in ("dcr", "oauth").
+    Checks servers where enabled=true, auth=true, auth_mode == "dcr".
     For each:
       A) checks Redis token exists
       B) does a lightweight ping to validate the token is still accepted
@@ -107,7 +107,7 @@ async def _check_mcp_auth(request: Request) -> list[dict]:
         for name, cfg in mcp_servers.items()
         if cfg.get("enabled", True)
         and cfg.get("auth", False)
-        and cfg.get("auth_mode", "") in ("dcr", "oauth")
+        and cfg.get("auth_mode", "") == "dcr"
     }
     log.info("mcp_auth_check: dcr_servers=%s", list(dcr_servers.keys()))
 
