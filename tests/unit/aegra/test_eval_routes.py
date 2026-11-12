@@ -1595,6 +1595,49 @@ class TestCheckMcpAuth:
             result = await er._check_mcp_auth(mock_request)
         assert result == []
 
+    async def test_oauth_servers_are_not_pre_flight_checked(self):
+        """OAuth servers are excluded from the pre-flight check intentionally.
+
+        OAuth has a dedicated auth/re-auth page (analogous to the SSO connect
+        page) where users authenticate before or independent of an eval run.
+        Blocking the eval here would duplicate that flow unnecessarily.
+        Only DCR servers need a Redis token check before the eval starts.
+        """
+        mock_request = MagicMock()
+        mock_request.headers = {"authorization": "Bearer tok"}
+        mock_store = AsyncMock()
+        mock_store.get_token = AsyncMock(return_value=None)
+        mock_config = MagicMock()
+        mock_config.get_mcp_servers.return_value = {
+            "mcp1": {
+                "enabled": True,
+                "auth": True,
+                "auth_mode": "oauth",
+                "url": "http://mcp1",
+            },
+        }
+        with (
+            patch("deep_agent.aegra.eval_routes._extract_sub", return_value="user1"),
+            patch(
+                "deep_agent.src.agent.config.agent_config",
+                mock_config,
+            ),
+            patch(
+                "deep_agent.src.settings.settings",
+                MagicMock(
+                    database_uri="postgresql://x",
+                    agent_deployment_id="agent1",
+                ),
+            ),
+            patch(
+                "deep_agent.aegra.mcp_token_store.McpTokenStore",
+                return_value=mock_store,
+            ),
+        ):
+            result = await er._check_mcp_auth(mock_request)
+        assert result == []
+        mock_store.get_token.assert_not_awaited()
+
     async def test_returns_missing_when_token_none(self):
         mock_request = MagicMock()
         mock_request.headers = {"authorization": "Bearer tok"}
@@ -1646,7 +1689,7 @@ class TestCheckMcpAuth:
             "mcp1": {
                 "enabled": True,
                 "auth": True,
-                "auth_mode": "oauth",
+                "auth_mode": "dcr",
                 "url": "http://mcp1",
             },
         }
