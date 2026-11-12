@@ -157,6 +157,27 @@ def _count_interrupted_tool_calls(events: list[tuple[str, Any]]) -> int:
     return 1
 
 
+def _auto_approval_responses(events: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Preserve every streamed interrupt ID and its own action count."""
+    responses: dict[str, Any] = {}
+    for event_type, data in events:
+        if event_type != "updates":
+            continue
+        for item in _unwrap_update_data(data).get("__interrupt__", []):
+            interrupt_id = item.get("id")
+            if not isinstance(interrupt_id, str) or not interrupt_id:
+                raise RuntimeError("Cannot auto-approve without interrupt IDs")
+            value = item.get("value")
+            actions = value.get("action_requests") if isinstance(value, dict) else None
+            count = len(actions) if isinstance(actions, list) else 1
+            responses[interrupt_id] = {
+                "decisions": [{"type": "approve"} for _ in range(count)]
+            }
+    if not responses:
+        raise RuntimeError("Cannot auto-approve without interrupt IDs")
+    return responses
+
+
 def _extract_interrupt_response(events: list[tuple[str, Any]]) -> str:
     """Extract the HITL interrupt description as the pre-approval response.
 
@@ -464,11 +485,10 @@ def _call_agent(  # pragma: no cover
     # Auto-approve HITL interrupts until the run completes.
     approvals = 0
     while interrupted and approvals < MAX_HITL_APPROVALS:
-        n_decisions = _count_interrupted_tool_calls(events)
         approvals += 1
         resume_body: dict[str, Any] = {
             "assistant_id": ASSISTANT_ID,
-            "command": {"resume": {"decisions": [{"type": "approve"}] * n_decisions}},
+            "command": {"resume": _auto_approval_responses(events)},
             "stream_mode": ["updates", "events"],
             "stream_subgraphs": True,
         }

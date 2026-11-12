@@ -301,3 +301,52 @@ def test_dependency_upgrade_requires_revalidation(monkeypatch):
     monkeypatch.setattr(interrupt_resume, "version", lambda _: "different-version")
     with pytest.raises(RuntimeError, match="Revalidate"):
         interrupt_resume.install_resume_guard()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "approved",
+        {"decisions": [{"type": "approve"}]},
+        None,
+        {},
+        {"not-an-interrupt-id": "approved"},
+    ],
+)
+async def test_single_pending_interrupt_still_requires_explicit_id(
+    checkpoint, response
+):
+    graph, config, ids, user, _, session = checkpoint
+    await graph.ainvoke(Command(resume={ids[0]: "approved"}), config)
+    with pytest.raises(HTTPException, match="Specify interrupt IDs") as error:
+        await validate_checkpoint_resume(session, "thread", request(response), user)
+    assert error.value.status_code == 400
+    session.scalar.assert_not_awaited()
+    session.flush.assert_not_awaited()
+    pending = [
+        i.id for task in (await graph.aget_state(config)).tasks for i in task.interrupts
+    ]
+    assert pending == [ids[1]]
+
+
+async def test_unkeyed_retry_cannot_follow_active_run_into_later_interrupt(
+    checkpoint, monkeypatch
+):
+    from deep_agent.aegra import interrupt_resume
+
+    graph, config, ids, user, thread, session = checkpoint
+    busy = SimpleNamespace(status="busy", metadata_json={"graph_id": "agent"})
+    session.scalar.side_effect = [busy, "run-A", thread, None]
+
+    async def finish_run_a(_interval):
+        await graph.ainvoke(Command(resume={ids[0]: "approved"}), config)
+
+    sleep = AsyncMock(side_effect=finish_run_a)
+    monkeypatch.setattr(interrupt_resume, "asyncio", SimpleNamespace(sleep=sleep))
+    with pytest.raises(HTTPException, match="Specify interrupt IDs") as error:
+        await validate_checkpoint_resume(
+            session, "thread", request({"decisions": [{"type": "approve"}]}), user
+        )
+    assert error.value.status_code == 400
+    sleep.assert_not_awaited()
+    session.scalar.assert_not_awaited()

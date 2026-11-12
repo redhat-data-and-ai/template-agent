@@ -2,7 +2,8 @@
 
 A failed resume can leave SQL thread status ``error`` while checkpoint
 interrupts remain. Validate before scheduling, and reconcile that specific case
-in the run-creation transaction. Remove when Aegra supplies this behavior.
+in the run-creation transaction. Every resume must be keyed by interrupt ID,
+including single-interrupt responses. Remove when Aegra supplies this behavior.
 """
 
 from __future__ import annotations
@@ -42,6 +43,20 @@ async def validate_checkpoint_resume(
 
     if not request.command or "resume" not in request.command:
         return
+
+    response = request.command["resume"]
+    # An unkeyed response has no stable target, even when only one interrupt
+    # is pending. Reject it before waiting: the run may reach a different
+    # interrupt while finalization settles, or before a retry arrives.
+    if not (
+        isinstance(response, dict)
+        and response
+        and all(
+            isinstance(key, str) and re.fullmatch(r"[0-9a-f]{32}", key)
+            for key in response
+        )
+    ):
+        raise HTTPException(400, "Specify interrupt IDs for every approval response")
 
     thread_stmt = (
         select(Thread)
@@ -94,28 +109,8 @@ async def validate_checkpoint_resume(
     if not pending:
         raise HTTPException(400, "Cannot resume: no pending checkpoint interrupts")
 
-    response = request.command["resume"]
-    # Recognize a stale ID map too, so it cannot fall through as an unkeyed
-    # response to a single interrupt. IDs in LangGraph 1.2 are 32 hex digits.
-    keyed = (
-        isinstance(response, dict)
-        and bool(response)
-        and all(
-            isinstance(key, str) and re.fullmatch(r"[0-9a-f]{32}", key)
-            for key in response
-        )
-    )
-    if keyed:
-        if not set(response).issubset(pending):
-            raise HTTPException(409, "Approval interrupt is no longer pending")
-    elif len(pending) > 1:
-        raise HTTPException(
-            400, "Specify interrupt IDs when resuming multiple pending interrupts"
-        )
-    elif thread.status != "interrupted":
-        raise HTTPException(
-            400, "Specify the pending interrupt ID to recover this thread"
-        )
+    if not set(response).issubset(pending):
+        raise HTTPException(409, "Approval interrupt is no longer pending")
 
     if thread.status not in ("interrupted", "error"):
         raise HTTPException(409, "Thread is not ready for an approval response")
