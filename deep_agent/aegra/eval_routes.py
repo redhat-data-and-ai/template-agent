@@ -1139,7 +1139,10 @@ async def _queue_eval_run(
 ) -> dict[str, Any]:
     auth_token = request.headers.get("authorization", "")
     sub = _extract_sub(request)
-    _write_eval_redis(sub or "", request.headers.get("x-refresh-token", ""))
+    refresh_token = request.headers.get(
+        "x-user-refresh-token", ""
+    ) or request.headers.get("x-refresh-token", "")
+    _write_eval_redis(sub or "", refresh_token)
     row_ts = record.get("created_at") if record else None
     eval_row_id: int | None = record.get("id") if record else None
 
