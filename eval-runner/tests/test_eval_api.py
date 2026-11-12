@@ -214,7 +214,10 @@ def test_get_system_yaml_missing_file_auto_generates(
     eval_api.EVAL_SYSTEM_CONFIG = tmp_path / "nonexistent.yaml"
     try:
         with (
-            patch("eval_api._read_prompt_model", return_value="gemini-2.5-pro"),
+            patch(
+                "eval_api._read_prompt_model_spec",
+                return_value=("gemini-2.5-pro", None),
+            ),
             patch("eval_api._detect_provider", return_value="vertex"),
         ):
             content = eval_api._get_system_yaml_content(judge_model=None)
@@ -573,3 +576,145 @@ def test_mcp_stub_returns_error(api_client: TestClient) -> None:
     resp = api_client.post("/mcp")
     assert resp.status_code == 200
     assert "error" in resp.json()
+
+
+class TestProviderResolution:
+    """Provider must follow the agent's resolution, not a name guess.
+
+    The runner cannot import the agent's resolver — it ships as its own
+    package with only src/ in the image — so it reads the same
+    models/*.yaml the agent resolves against and translates the name into
+    the evaluation framework's vocabulary.
+    """
+
+    def test_openai_compatible_model_does_not_fall_through_to_vertex(
+        self, tmp_path: Path
+    ) -> None:
+        """A Granite/Mistral model used to get a Vertex client and always fail."""
+        from eval_api import _detect_provider
+
+        assert _detect_provider("granite-3.3-8b-instruct") == "hosted_vllm"
+        assert _detect_provider("mistralai/Mistral-7B-Instruct") == "hosted_vllm"
+
+    def test_known_prefixes_are_unchanged(self) -> None:
+        from eval_api import _detect_provider
+
+        assert _detect_provider("gemini-2.5-pro") == "vertex"
+        assert _detect_provider("claude-sonnet-4-6") == "anthropic_vertex"
+        assert _detect_provider("gpt-4o") == "openai"
+
+    def test_declared_provider_is_translated_not_passed_through(
+        self, tmp_path: Path
+    ) -> None:
+        """models/*.yaml says vertex_ai; the framework only knows vertex."""
+        import eval_api
+
+        models = tmp_path / "models"
+        models.mkdir()
+        (models / "m.yaml").write_text(
+            "provider: vertex_ai\nmodel_id: some-tuned-model\n"
+        )
+        with patch.object(eval_api, "_agent_config_dir", str(tmp_path)):
+            assert eval_api._detect_provider("some-tuned-model") == "vertex"
+
+    def test_declaration_wins_over_name_inference(self, tmp_path: Path) -> None:
+        """A gemini-named model declared openai-compatible follows the file."""
+        import eval_api
+
+        models = tmp_path / "models"
+        models.mkdir()
+        (models / "m.yaml").write_text(
+            "provider: openai-compatibility\nmodel_id: gemini-via-gateway\n"
+        )
+        with patch.object(eval_api, "_agent_config_dir", str(tmp_path)):
+            assert eval_api._detect_provider("gemini-via-gateway") == "hosted_vllm"
+
+    def test_unreadable_models_dir_falls_back_to_inference(
+        self, tmp_path: Path
+    ) -> None:
+        """A config problem must not make provider resolution a hard failure."""
+        import eval_api
+
+        with patch.object(eval_api, "_agent_config_dir", str(tmp_path / "missing")):
+            assert eval_api._detect_provider("gemini-2.5-pro") == "vertex"
+
+
+class TestModelNameFromFrontmatter:
+    def test_bare_string_form(self) -> None:
+        from eval_api import _model_name
+
+        assert _model_name("granite-3.3-8b-instruct") == "granite-3.3-8b-instruct"
+
+    def test_object_form_used_to_pin_a_provider(self) -> None:
+        """str() on this mapping yielded "{'provider': ..., 'name': ...}"."""
+        from eval_api import _model_name
+
+        raw = {"provider": "openai-compatibility", "name": "granite-3.3-8b-instruct"}
+        assert _model_name(raw) == "granite-3.3-8b-instruct"
+
+    def test_unusable_values_yield_none(self) -> None:
+        from eval_api import _model_name
+
+        assert _model_name(None) is None
+        assert _model_name("   ") is None
+        assert _model_name({"provider": "openai"}) is None
+
+
+class TestGatewayServedGeminiInFrontmatter:
+    """A Gemini name says nothing about who serves it.
+
+    gemini-2.5-pro behind an OpenAI-compatible gateway matches the
+    `gemini-` prefix and would be sent to Vertex unless the pinned
+    provider is carried through rather than re-inferred from the name.
+    """
+
+    def _prompt(self, tmp_path: Path, body: str) -> Path:
+        (tmp_path / "PROMPT.md").write_text(f"---\n{body}\n---\nContent")
+        return tmp_path
+
+    def test_inline_provider_overrides_the_name_prefix(self, tmp_path: Path) -> None:
+        import eval_api
+
+        self._prompt(
+            tmp_path,
+            "model:\n  provider: openai-compatibility\n  name: gemini-2.5-pro",
+        )
+        with patch.object(eval_api, "_agent_config_dir", str(tmp_path)):
+            name, pinned = eval_api._read_prompt_model_spec()
+            assert name == "gemini-2.5-pro"
+            assert eval_api._detect_provider(name, pinned) == "hosted_vllm"
+
+    def test_bare_gemini_still_resolves_to_vertex(self, tmp_path: Path) -> None:
+        import eval_api
+
+        self._prompt(tmp_path, "model: gemini-2.5-pro")
+        with patch.object(eval_api, "_agent_config_dir", str(tmp_path)):
+            name, pinned = eval_api._read_prompt_model_spec()
+            assert name is not None
+            assert pinned is None
+            assert eval_api._detect_provider(name, pinned) == "vertex"
+
+    def test_models_yaml_declaration_also_wins(self, tmp_path: Path) -> None:
+        """The other place a gateway-served Gemini can be declared."""
+        import eval_api
+
+        models = tmp_path / "models"
+        models.mkdir()
+        (models / "g.yaml").write_text(
+            "provider: openai-compatibility\nmodel_id: gemini-2.5-pro\n"
+        )
+        with patch.object(eval_api, "_agent_config_dir", str(tmp_path)):
+            assert eval_api._detect_provider("gemini-2.5-pro") == "hosted_vllm"
+
+    def test_read_prompt_model_still_returns_just_the_name(
+        self, tmp_path: Path
+    ) -> None:
+        """Existing callers of the name-only helper are unaffected."""
+        import eval_api
+
+        self._prompt(
+            tmp_path,
+            "model:\n  provider: openai-compatibility\n  name: gemini-2.5-pro",
+        )
+        with patch.object(eval_api, "_agent_config_dir", str(tmp_path)):
+            assert eval_api._read_prompt_model() == "gemini-2.5-pro"

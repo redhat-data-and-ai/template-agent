@@ -1896,6 +1896,51 @@ class TestCollectAgentModels:
             result = er._collect_agent_models()
         assert result == []
 
+    def test_object_form_yields_the_model_name(self, tmp_path):
+        """The form used to pin a provider must not stringify to a dict.
+
+        str() on the mapping produced "{'provider': ..., 'name': ...}",
+        which was then offered on the eval page as a selectable model that
+        names nothing and resolves to nothing.
+        """
+        (tmp_path / "PROMPT.md").write_text(
+            "---\n"
+            "model:\n"
+            "  provider: openai-compatibility\n"
+            "  name: granite-3.3-8b-instruct\n"
+            "---\nContent"
+        )
+        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
+            result = er._collect_agent_models()
+        assert [m["model"] for m in result] == ["granite-3.3-8b-instruct"]
+
+    def test_object_and_bare_forms_of_one_model_deduplicate(self, tmp_path):
+        """Both spellings name the same model, so the page offers it once."""
+        (tmp_path / "PROMPT.md").write_text(
+            "---\nmodel: granite-3.3-8b-instruct\n---\nContent"
+        )
+        sub_dir = tmp_path / "subagents"
+        sub_dir.mkdir()
+        (sub_dir / "analyst.md").write_text(
+            "---\n"
+            "model:\n"
+            "  provider: openai-compatibility\n"
+            "  name: granite-3.3-8b-instruct\n"
+            "---\nContent"
+        )
+        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
+            result = er._collect_agent_models()
+        assert len(result) == 1
+
+    def test_unparseable_model_is_skipped_not_fatal(self, tmp_path):
+        (tmp_path / "PROMPT.md").write_text("---\nmodel: gpt-4\n---\nContent")
+        sub_dir = tmp_path / "subagents"
+        sub_dir.mkdir()
+        (sub_dir / "bad.md").write_text("---\nmodel:\n  provider: vertex\n---\nX")
+        with patch.dict("os.environ", {"CONFIG_PATH": str(tmp_path)}):
+            result = er._collect_agent_models()
+        assert [m["model"] for m in result] == ["gpt-4"]
+
 
 class TestGetEvalModels:
     async def test_returns_models(self):
