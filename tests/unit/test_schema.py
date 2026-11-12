@@ -95,6 +95,32 @@ class TestFeedbackRequest:
         )
         assert fb.kwargs["comment"] == "good"
 
+    def test_thumbs_up_allows_an_empty_comment(self):
+        fb = FeedbackRequest(trace_id="abc", name="thumbs-up", value=1.0)
+        assert fb.kwargs == {}
+
+    def test_thumbs_down_requires_a_comment(self):
+        with pytest.raises(ValidationError):
+            FeedbackRequest(trace_id="abc", name="thumbs-down", value=0.0)
+
+    def test_thumbs_down_rejects_a_blank_comment(self):
+        with pytest.raises(ValidationError):
+            FeedbackRequest(
+                trace_id="abc",
+                name="thumbs-down",
+                value=0.0,
+                kwargs={"comment": "   "},
+            )
+
+    def test_thumbs_down_keeps_a_trimmed_comment(self):
+        fb = FeedbackRequest(
+            trace_id="abc",
+            name="thumbs-down",
+            value=0.0,
+            kwargs={"comment": "  The table was wrong  "},
+        )
+        assert fb.kwargs["comment"] == "The table was wrong"
+
 
 class TestFeedbackResponse:
     def test_default_status(self):

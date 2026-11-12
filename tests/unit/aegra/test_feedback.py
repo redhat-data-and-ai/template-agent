@@ -59,6 +59,17 @@ class TestRecordFeedback:
             await record_feedback({})
 
     @pytest.mark.asyncio
+    async def test_thumbs_down_without_a_comment_is_rejected(self):
+        with pytest.raises(ValidationError):
+            await record_feedback(
+                {
+                    "trace_id": "abcd1234" * 4,
+                    "name": "thumbs-down",
+                    "value": 0.0,
+                }
+            )
+
+    @pytest.mark.asyncio
     async def test_gracefully_handles_score_failure(self):
         mock_client = MagicMock()
         mock_client.create_score.side_effect = RuntimeError("network")

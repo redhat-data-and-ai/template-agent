@@ -7,7 +7,7 @@ for the template agent service.
 
 from typing import Any, Literal, NotRequired
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing_extensions import TypedDict
 
 
@@ -163,6 +163,21 @@ class FeedbackRequest(BaseModel):
         default=None,
         description="User ID for persistence",
     )
+
+    @model_validator(mode="after")
+    def thumbs_down_requires_comment(self) -> "FeedbackRequest":
+        """A thumbs-down score has to say what went wrong."""
+        name = self.name.lower()
+        if "down" not in name and "negative" not in name:
+            return self
+        raw = self.kwargs.get("comment") if self.kwargs else None
+        text = raw.strip() if isinstance(raw, str) else ""
+        if not text:
+            raise ValueError(
+                "A comment is required when rating a response as not helpful"
+            )
+        self.kwargs["comment"] = text
+        return self
 
 
 class FeedbackResponse(BaseModel):
