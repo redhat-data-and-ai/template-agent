@@ -1,0 +1,211 @@
+"""Validate real checkpoint interrupts with isolated SQL I/O."""
+
+import operator
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from fastapi import HTTPException
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
+from typing_extensions import Annotated, TypedDict
+
+from deep_agent.aegra.interrupt_resume import validate_checkpoint_resume
+
+
+class State(TypedDict):
+    answers: Annotated[list, operator.add]
+
+
+@pytest.fixture
+async def checkpoint(monkeypatch):
+    from aegra_api.models import User
+    from aegra_api.services import langgraph_service
+
+    def a(state):
+        return {"answers": [("a", interrupt("Approve A"))]}
+
+    def b(state):
+        return {"answers": [("b", interrupt("Approve B"))]}
+
+    builder = StateGraph(State)
+    for name, node in (("a", a), ("b", b)):
+        builder.add_node(name, node)
+        builder.add_edge(START, name)
+        builder.add_edge(name, END)
+    graph = builder.compile(checkpointer=InMemorySaver())
+    user = User(identity="owner")
+    config = langgraph_service.create_thread_config("thread", user)
+    await graph.ainvoke({"answers": []}, config)
+    snapshot = await graph.aget_state(config)
+    ids = [i.id for task in snapshot.tasks for i in task.interrupts]
+
+    @asynccontextmanager
+    async def get_graph(*args, **kwargs):
+        yield graph
+
+    service = MagicMock()
+    service.get_graph = get_graph
+    monkeypatch.setattr(langgraph_service, "get_langgraph_service", lambda: service)
+    thread = SimpleNamespace(status="interrupted", metadata_json={"graph_id": "agent"})
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[thread, None]), flush=AsyncMock()
+    )
+    return graph, config, ids, user, thread, session
+
+
+def request(response):
+    return SimpleNamespace(
+        command={"resume": response}, checkpoint=None, checkpoint_id=None
+    )
+
+
+async def test_rejects_unkeyed_multiple_without_changing_thread(checkpoint):
+    graph, config, _, user, thread, session = checkpoint
+    with pytest.raises(HTTPException, match="Specify interrupt IDs") as error:
+        await validate_checkpoint_resume(session, "thread", request("approved"), user)
+    assert error.value.status_code == 400
+    assert thread.status == "interrupted"
+    assert len((await graph.aget_state(config)).tasks) == 2
+    session.flush.assert_not_awaited()
+
+
+async def test_keyed_partial_resume_preserves_other_interrupt(checkpoint):
+    graph, config, ids, user, thread, session = checkpoint
+    response = {ids[0]: "approved"}
+    await validate_checkpoint_resume(session, "thread", request(response), user)
+    await graph.ainvoke(Command(resume=response), config)
+    pending = [
+        i.id for t in (await graph.aget_state(config)).tasks for i in t.interrupts
+    ]
+    assert pending == [ids[1]]
+    session.scalar.side_effect = [thread, None]
+    await validate_checkpoint_resume(
+        session, "thread", request({ids[1]: "rejected"}), user
+    )
+    result = await graph.ainvoke(Command(resume={ids[1]: "rejected"}), config)
+    assert sorted(tuple(answer) for answer in result["answers"]) == [
+        ("a", "approved"),
+        ("b", "rejected"),
+    ]
+    assert not (await graph.aget_state(config)).tasks
+
+
+async def test_recovers_error_only_with_matching_checkpoint_ids(checkpoint):
+    graph, config, ids, user, thread, session = checkpoint
+    with pytest.raises(RuntimeError, match="multiple pending interrupts"):
+        await graph.ainvoke(Command(resume="approved"), config)
+    thread.status = "error"
+    response = {key: "approved" for key in ids}
+    await validate_checkpoint_resume(session, "thread", request(response), user)
+    assert thread.status == "interrupted"
+    session.flush.assert_awaited_once()
+    result = await graph.ainvoke(Command(resume=response), config)
+    assert len(result["answers"]) == 2
+    assert not (await graph.aget_state(config)).tasks
+
+
+async def test_rejects_stale_id_without_reconciling_error(checkpoint):
+    _, _, _, user, thread, session = checkpoint
+    thread.status = "error"
+    with pytest.raises(HTTPException) as error:
+        await validate_checkpoint_resume(
+            session, "thread", request({"f" * 32: "approved"}), user
+        )
+    assert error.value.status_code == 409
+    assert thread.status == "error"
+    session.flush.assert_not_awaited()
+
+
+async def test_rejects_active_run_and_locks_owned_thread(checkpoint):
+    _, _, ids, user, thread, session = checkpoint
+    session.scalar.side_effect = [thread, "running-run"]
+    with pytest.raises(HTTPException) as error:
+        await validate_checkpoint_resume(
+            session, "thread", request({ids[0]: "approved"}), user
+        )
+    assert error.value.status_code == 409
+    sql = str(session.scalar.call_args_list[0].args[0])
+    assert "FOR UPDATE" in sql
+    assert "user_id" in sql
+    session.flush.assert_not_awaited()
+
+
+async def test_rejects_missing_thread(checkpoint):
+    _, _, ids, user, _, session = checkpoint
+    session.scalar.side_effect = [None]
+    with pytest.raises(HTTPException) as error:
+        await validate_checkpoint_resume(
+            session, "thread", request({ids[0]: "approved"}), user
+        )
+    assert error.value.status_code == 404
+
+
+async def test_no_pending_interrupts_cannot_recover_error(checkpoint):
+    graph, config, ids, user, thread, session = checkpoint
+    await graph.ainvoke(Command(resume={key: "approved" for key in ids}), config)
+    thread.status = "error"
+    with pytest.raises(HTTPException, match="no pending checkpoint interrupts"):
+        await validate_checkpoint_resume(
+            session, "thread", request({ids[0]: "approved"}), user
+        )
+    assert thread.status == "error"
+
+
+async def test_non_resume_does_not_touch_database():
+    session = SimpleNamespace(scalar=AsyncMock())
+    await validate_checkpoint_resume(
+        session, "thread", SimpleNamespace(command=None), None
+    )
+    session.scalar.assert_not_awaited()
+
+
+async def test_adapter_wraps_existing_call_sites_and_rolls_back_rejected_requests(
+    monkeypatch,
+):
+    import sys
+
+    from aegra_api.services import run_preparation
+
+    from deep_agent.aegra import interrupt_resume
+
+    async def original(*args, **kwargs):
+        return "scheduled"
+
+    caller = SimpleNamespace(_prepare_run=original)
+    monkeypatch.setattr(run_preparation, "_prepare_run", original)
+    monkeypatch.setitem(sys.modules, "aegra_api.api.runs", caller)
+    monkeypatch.setattr(interrupt_resume, "version", lambda _: "0.10.8")
+    validation = AsyncMock()
+    monkeypatch.setattr(interrupt_resume, "validate_checkpoint_resume", validation)
+    interrupt_resume.install_resume_guard()
+    guarded = run_preparation._prepare_run
+    assert caller._prepare_run is guarded
+    interrupt_resume.install_resume_guard()
+    assert run_preparation._prepare_run is guarded
+    session = SimpleNamespace(rollback=AsyncMock())
+    assert (
+        await guarded(session, "thread", None, None, initial_status="pending")
+        == "scheduled"
+    )
+    session.rollback.assert_not_awaited()
+    validation.side_effect = HTTPException(409, "stale")
+    with pytest.raises(HTTPException):
+        await guarded(session, "thread", None, None, initial_status="pending")
+    session.rollback.assert_awaited_once()
+
+
+def test_dependency_upgrade_requires_revalidation(monkeypatch):
+    from aegra_api.services import run_preparation
+
+    from deep_agent.aegra import interrupt_resume
+
+    async def original(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(run_preparation, "_prepare_run", original)
+    monkeypatch.setattr(interrupt_resume, "version", lambda _: "different-version")
+    with pytest.raises(RuntimeError, match="Revalidate"):
+        interrupt_resume.install_resume_guard()

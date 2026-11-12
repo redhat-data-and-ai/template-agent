@@ -75,6 +75,10 @@ def _patch_aegra_persistence_if_inmemory() -> None:
 
 _patch_aegra_persistence_if_inmemory()
 
+from deep_agent.aegra.interrupt_resume import install_resume_guard  # noqa: E402
+
+install_resume_guard()
+
 from deep_agent.aegra.shutdown import register_atexit  # noqa: E402
 
 register_atexit()
