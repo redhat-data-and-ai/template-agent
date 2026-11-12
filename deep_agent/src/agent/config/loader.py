@@ -41,6 +41,7 @@ from .model import Provider, supported_provider_values
 from .opa import OpaFileConfig
 from .otel import OtelFileConfig
 from .parser import parse_frontmatter
+from .prompts import render_system_prompt
 from .providers import ProvidersFileConfig
 from .resolver import resolve_skill_paths, resolve_tools
 
@@ -460,6 +461,12 @@ class AgentConfig:
                     self._available_skills,
                     agent_name=config.get("name", "orchestrator"),
                 )
+
+            # Render Jinja2 placeholders in the prompt body (e.g.
+            # {{current_date}}) with runtime values; see prompts.py.
+            config["body"] = render_system_prompt(
+                config.get("body", ""), agent_name=agent_name
+            )
 
             return config
         except FileNotFoundError:
