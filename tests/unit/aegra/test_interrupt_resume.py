@@ -51,7 +51,9 @@ async def checkpoint(monkeypatch):
     monkeypatch.setattr(langgraph_service, "get_langgraph_service", lambda: service)
     thread = SimpleNamespace(status="interrupted", metadata_json={"graph_id": "agent"})
     session = SimpleNamespace(
-        scalar=AsyncMock(side_effect=[thread, None]), flush=AsyncMock()
+        scalar=AsyncMock(side_effect=[thread, None]),
+        flush=AsyncMock(),
+        rollback=AsyncMock(),
     )
     return graph, config, ids, user, thread, session
 
@@ -119,9 +121,13 @@ async def test_rejects_stale_id_without_reconciling_error(checkpoint):
     session.flush.assert_not_awaited()
 
 
-async def test_rejects_active_run_and_locks_owned_thread(checkpoint):
+async def test_rejects_active_run_and_locks_owned_thread(checkpoint, monkeypatch):
+    from deep_agent.aegra import interrupt_resume
+
     _, _, ids, user, thread, session = checkpoint
-    session.scalar.side_effect = [thread, "running-run"]
+    sleep = AsyncMock()
+    monkeypatch.setattr(interrupt_resume, "asyncio", SimpleNamespace(sleep=sleep))
+    session.scalar.side_effect = [thread, "running-run"] * 11
     with pytest.raises(HTTPException) as error:
         await validate_checkpoint_resume(
             session, "thread", request({ids[0]: "approved"}), user
@@ -130,6 +136,92 @@ async def test_rejects_active_run_and_locks_owned_thread(checkpoint):
     sql = str(session.scalar.call_args_list[0].args[0])
     assert "FOR UPDATE" in sql
     assert "user_id" in sql
+    assert sleep.await_count == 10
+    assert session.rollback.await_count == 11
+    session.flush.assert_not_awaited()
+
+
+async def test_waits_for_active_run_to_finalize_before_accepting(
+    checkpoint, monkeypatch
+):
+    from deep_agent.aegra import interrupt_resume
+
+    _, _, ids, user, thread, session = checkpoint
+    busy = SimpleNamespace(status="busy", metadata_json={"graph_id": "agent"})
+    session.scalar.side_effect = [busy, "finishing-run", thread, None]
+
+    async def settle(_interval):
+        # The executor must be able to acquire the row lock while we wait.
+        session.rollback.assert_awaited_once()
+
+    sleep = AsyncMock(side_effect=settle)
+    monkeypatch.setattr(interrupt_resume, "asyncio", SimpleNamespace(sleep=sleep))
+    await validate_checkpoint_resume(
+        session, "thread", request({ids[0]: "approved"}), user
+    )
+    sleep.assert_awaited_once_with(0.1)
+    assert session.scalar.await_count == 4
+    # Readiness is checked again under the scheduling transaction's row lock.
+    assert "FOR UPDATE" in str(session.scalar.call_args_list[2].args[0])
+    session.flush.assert_not_awaited()
+
+
+async def test_waits_for_busy_thread_even_without_visible_active_run(
+    checkpoint, monkeypatch
+):
+    from deep_agent.aegra import interrupt_resume
+
+    _, _, ids, user, thread, session = checkpoint
+    busy = SimpleNamespace(status="busy", metadata_json={"graph_id": "agent"})
+    session.scalar.side_effect = [busy, None, thread, None]
+    sleep = AsyncMock()
+    monkeypatch.setattr(interrupt_resume, "asyncio", SimpleNamespace(sleep=sleep))
+    await validate_checkpoint_resume(
+        session, "thread", request({ids[0]: "approved"}), user
+    )
+    sleep.assert_awaited_once_with(0.1)
+    session.rollback.assert_awaited_once()
+
+
+async def test_busy_thread_that_never_settles_is_rejected(checkpoint, monkeypatch):
+    from deep_agent.aegra import interrupt_resume
+
+    _, _, ids, user, thread, session = checkpoint
+    thread.status = "busy"
+    session.scalar.side_effect = [thread, None] * 11
+    sleep = AsyncMock()
+    monkeypatch.setattr(interrupt_resume, "asyncio", SimpleNamespace(sleep=sleep))
+    with pytest.raises(HTTPException, match="not ready") as error:
+        await validate_checkpoint_resume(
+            session, "thread", request({ids[0]: "approved"}), user
+        )
+    assert error.value.status_code == 409
+    assert sleep.await_count == 10
+    assert session.rollback.await_count == 11
+    session.flush.assert_not_awaited()
+
+
+async def test_interrupt_consumed_while_waiting_is_still_rejected(
+    checkpoint, monkeypatch
+):
+    from deep_agent.aegra import interrupt_resume
+
+    graph, config, ids, user, thread, session = checkpoint
+    busy = SimpleNamespace(status="busy", metadata_json={"graph_id": "agent"})
+    session.scalar.side_effect = [busy, "competing-run", thread, None]
+
+    async def competing_resume(_interval):
+        session.rollback.assert_awaited_once()
+        await graph.ainvoke(Command(resume={ids[0]: "approved"}), config)
+
+    sleep = AsyncMock(side_effect=competing_resume)
+    monkeypatch.setattr(interrupt_resume, "asyncio", SimpleNamespace(sleep=sleep))
+    with pytest.raises(HTTPException, match="no longer pending") as error:
+        await validate_checkpoint_resume(
+            session, "thread", request({ids[0]: "approved"}), user
+        )
+    assert error.value.status_code == 409
+    sleep.assert_awaited_once_with(0.1)
     session.flush.assert_not_awaited()
 
 
