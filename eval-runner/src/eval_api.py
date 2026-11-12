@@ -43,6 +43,47 @@ logging.getLogger("httpx").setLevel(logging.ERROR)
 logging.getLogger("httpcore").setLevel(logging.ERROR)
 log = logging.getLogger(__name__)
 
+# Path *prefixes* whose successful uvicorn access lines are dropped. Liveness
+# (15s) and readiness (5s) both hit /health, so probes alone were ~960 log
+# lines/hour — effectively all of this pod's output.
+#
+# Comma-separated prefixes, deliberately the same semantics as template-agent's
+# LOG_EXCLUDE_PATHS (aegra `logger_middleware.py` uses `path.startswith`). Both
+# services read the same repo-root `.env` (see eval-runner/compose.yaml), so one
+# variable must not mean two different things.
+LOG_EXCLUDE_PATHS: tuple[str, ...] = tuple(
+    p.strip()
+    for p in os.environ.get("LOG_EXCLUDE_PATHS", "/health,/metrics").split(",")
+    if p.strip()
+)
+
+
+class _ProbeAccessFilter(logging.Filter):
+    """Drop uvicorn access lines for successful requests to probe paths.
+
+    Matches by prefix, like aegra's ``logger_middleware``. 4xx and 5xx are
+    always kept — a failing probe must stay visible. Uvicorn logs access with
+    args ``(client_addr, method, path, http_version, status)``
+    (``uvicorn/protocols/http/h11_impl.py``); anything not matching that shape
+    is passed through untouched.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        path, status = args[2], args[4]
+        if not isinstance(path, str) or not isinstance(status, int):
+            return True
+        if status >= 400:
+            return True
+        path = path.split("?")[0]
+        return not any(path.startswith(prefix) for prefix in LOG_EXCLUDE_PATHS)
+
+
+if LOG_EXCLUDE_PATHS:
+    logging.getLogger("uvicorn.access").addFilter(_ProbeAccessFilter())
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 AGENT_URL = os.environ.get("AGENT_HOST", "http://localhost:5002")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -718,3 +719,124 @@ class TestGatewayServedGeminiInFrontmatter:
         )
         with patch.object(eval_api, "_agent_config_dir", str(tmp_path)):
             assert eval_api._read_prompt_model() == "gemini-2.5-pro"
+
+
+# ── _ProbeAccessFilter ────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _default_exclude_paths() -> Generator[None, None, None]:
+    """Pin LOG_EXCLUDE_PATHS to the code default for these tests.
+
+    The module reads it from the environment at import time, and eval-runner's
+    compose loads the repo-root `.env` — so a developer who sets
+    LOG_EXCLUDE_PATHS (including to empty, the documented way to re-enable
+    probe logging) would otherwise see these tests fail for no reason.
+    """
+    with patch.object(eval_api, "LOG_EXCLUDE_PATHS", ("/health", "/metrics")):
+        yield
+
+
+def _access_record(path: str, status: int) -> logging.LogRecord:
+    """Build a record shaped like uvicorn's access log call."""
+    return logging.LogRecord(
+        name="uvicorn.access",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg='%s - "%s %s HTTP/%s" %d',
+        args=("127.0.0.1:1", "GET", path, "1.1", status),
+        exc_info=None,
+    )
+
+
+@pytest.mark.parametrize("path", ["/health", "/metrics"])
+def test_probe_filter_drops_successful_probes(path: str) -> None:
+    """Probes at 2xx are ~960 lines/hour and carry no information."""
+    assert eval_api._ProbeAccessFilter().filter(_access_record(path, 200)) is False
+
+
+@pytest.mark.parametrize("status", [404, 500, 503])
+def test_probe_filter_keeps_failing_probes(status: int) -> None:
+    """A failing probe must stay visible — this is the point of the filter."""
+    assert (
+        eval_api._ProbeAccessFilter().filter(_access_record("/health", status)) is True
+    )
+
+
+def test_probe_filter_keeps_real_traffic() -> None:
+    assert (
+        eval_api._ProbeAccessFilter().filter(_access_record("/evals/run", 200)) is True
+    )
+
+
+def test_probe_filter_ignores_query_string() -> None:
+    assert (
+        eval_api._ProbeAccessFilter().filter(_access_record("/health?v=1", 200))
+        is False
+    )
+
+
+def test_probe_filter_passes_through_unexpected_record_shapes() -> None:
+    """Non-access records on the same logger must not be swallowed."""
+    rec = logging.LogRecord(
+        name="uvicorn.access",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="something else",
+        args=None,
+        exc_info=None,
+    )
+    assert eval_api._ProbeAccessFilter().filter(rec) is True
+
+
+def test_probe_filter_passes_through_non_string_path() -> None:
+    """Defensive: a record with the right arity but wrong types must not be dropped."""
+    rec = _access_record("/health", 200)
+    rec.args = ("127.0.0.1:1", "GET", None, "1.1", "200")
+    assert eval_api._ProbeAccessFilter().filter(rec) is True
+
+
+@pytest.mark.parametrize("path", ["/health/ready", "/healthz", "/metrics/raw"])
+def test_probe_filter_matches_by_prefix_like_aegra(path: str) -> None:
+    """Shared LOG_EXCLUDE_PATHS must mean the same thing here as in template-agent.
+
+    aegra's logger_middleware uses path.startswith(); eval-runner reads the same
+    repo-root .env, so exact matching would make one variable mean two things.
+    """
+    assert eval_api._ProbeAccessFilter().filter(_access_record(path, 200)) is False
+
+
+def test_probe_filter_prefix_match_still_keeps_failures() -> None:
+    assert (
+        eval_api._ProbeAccessFilter().filter(_access_record("/health/ready", 503))
+        is True
+    )
+
+
+def test_probe_filter_is_registered_on_uvicorn_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without this the filter exists but never runs.
+
+    Asserted as an invariant rather than a fact, because registration happens
+    at import under `if LOG_EXCLUDE_PATHS:` — a developer with the variable set
+    empty legitimately has no filter attached.
+    """
+    import importlib
+    import os
+
+    monkeypatch.setenv("LOG_EXCLUDE_PATHS", "/health,/metrics")
+    logging.getLogger("uvicorn.access").filters.clear()
+    importlib.reload(eval_api)
+    try:
+        assert eval_api.LOG_EXCLUDE_PATHS == ("/health", "/metrics")
+        assert any(
+            isinstance(f, eval_api._ProbeAccessFilter)
+            for f in logging.getLogger("uvicorn.access").filters
+        )
+    finally:
+        monkeypatch.delenv("LOG_EXCLUDE_PATHS", raising=False)
+        os.environ.pop("LOG_EXCLUDE_PATHS", None)
+        importlib.reload(eval_api)
