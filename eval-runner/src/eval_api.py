@@ -346,7 +346,73 @@ def _default_system_yaml(judge_model: str, provider: str) -> dict:
     }
 
 
-def _detect_provider(model: str) -> str:
+# The agent and the evaluation framework name providers differently: the
+# agent uses its own Provider enum, the framework uses LiteLLM's names. The
+# model-to-provider *decision* is reused from the agent's config; only the
+# spelling is translated here. An unmapped value passes through unchanged so
+# a provider added later is visibly wrong rather than silently rewritten.
+_AGENT_TO_EVAL_PROVIDER = {
+    "vertex": "vertex",
+    "vertex_ai": "vertex",
+    "vertex-ai": "vertex",
+    "openai": "openai",
+    "openai-compatibility": "hosted_vllm",
+    "anthropic_vertex": "anthropic_vertex",
+}
+
+
+def _declared_provider(model: str) -> str | None:
+    """Provider declared for this model in the agent's ``models/*.yaml``.
+
+    This is the same source of truth the agent resolves against. The runner
+    cannot import the agent's resolver -- it ships as its own package with
+    only ``src/`` in the image -- but it mounts the same config directory, so
+    it reads the declaration rather than guessing from the model name.
+
+    Any problem reading the config degrades to "no declaration" and lets the
+    caller fall through to name-based inference, exactly as the agent does.
+    """
+    models_dir = Path(_agent_config_dir) / "models"
+    if not models_dir.is_dir():
+        return None
+    try:
+        for path in sorted(models_dir.glob("*.y*ml")):
+            cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if not isinstance(cfg, dict):
+                continue
+            if cfg.get("model_id") == model or path.stem == model:
+                provider = cfg.get("provider")
+                return str(provider) if provider else None
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("Could not read declared provider for %s: %s", model, exc)
+    return None
+
+
+def _detect_provider(model: str, declared: str | None = None) -> str:
+    """Resolve a model's provider, mirroring the agent's resolution order.
+
+    0. ``declared`` -- a provider pinned beside the model in frontmatter
+    1. The provider declared alongside the model in ``models/*.yaml``
+    2. Known Gemini/Claude name prefixes -> vertex
+    3. GPT models -> openai
+    4. Everything else -> hosted_vllm (OpenAI-compatible)
+
+    Step 0 matters for a model whose name implies the wrong provider -- a
+    Gemini served through an OpenAI-compatible gateway would otherwise match
+    the ``gemini-`` prefix at step 2 and be sent to Vertex.
+
+    Step 4 is the important one and used to be ``vertex``: a model served
+    over an OpenAI-compatible endpoint (Granite, Mistral, anything from an
+    internal gateway) fell through to a Vertex client and every eval against
+    it failed. The agent has always defaulted the other way.
+
+    The returned name is the framework's, not the agent's -- see
+    ``_AGENT_TO_EVAL_PROVIDER``.
+    """
+    pinned = declared or _declared_provider(model)
+    if pinned:
+        return _AGENT_TO_EVAL_PROVIDER.get(pinned, pinned)
+
     m = model.lower()
     if any(m.startswith(p) for p in ("gemini-", "google/")):
         return "vertex"
@@ -354,11 +420,70 @@ def _detect_provider(model: str) -> str:
         return "anthropic_vertex"
     if any(m.startswith(p) for p in ("gpt-", "o1-", "o3-", "o4-")):
         return "openai"
-    return "vertex"
+    return "hosted_vllm"
 
 
-def _read_prompt_model() -> str:
-    """Read model: from PROMPT.md YAML frontmatter, defaulting to gemini-2.5-pro."""
+def _collect_configured_models() -> dict[str, str | None]:
+    """Return {model_name: pinned_provider} for all models in PROMPT.md and subagent .md files.
+
+    Used to validate that a DB-stored judge_model is still a known model in
+    the agent's config before trusting it over PROMPT.md. The provider is
+    preserved so _detect_provider can resolve correctly without losing the
+    pinned provider declared alongside the model name.
+    """
+    import re
+
+    models: dict[str, str | None] = {}
+    config_dir = Path(_agent_config_dir)
+
+    subagent_mds = (
+        sorted((config_dir / "subagents").glob("*.md"))
+        if (config_dir / "subagents").is_dir()
+        else []
+    )
+    for md_path in [config_dir / "PROMPT.md", *subagent_mds]:
+        if not md_path.exists():
+            continue
+        try:
+            content = md_path.read_text(encoding="utf-8")
+            m = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
+            if m:
+                fm = yaml.safe_load(m.group(1)) or {}
+                raw = fm.get("model")
+                name = _model_name(raw)
+                provider = raw.get("provider") if isinstance(raw, dict) else None
+                if name:
+                    models[name] = str(provider) if provider else None
+        except Exception:
+            pass
+    return models
+
+
+def _model_name(raw: object) -> str | None:
+    """Model name from a frontmatter ``model:``, in either accepted form.
+
+    A bare string is the name. The object form -- used to pin an explicit
+    provider -- carries it under ``name``; coercing that mapping with
+    ``str()`` yields ``"{'provider': ..., 'name': ...}"``, which names no
+    model and resolves to nothing downstream.
+    """
+    if isinstance(raw, str):
+        return raw.strip() or None
+    if isinstance(raw, dict):
+        name = raw.get("name")
+        return name.strip() if isinstance(name, str) and name.strip() else None
+    return None
+
+
+def _read_prompt_model_spec() -> tuple[str | None, str | None]:
+    """Model name and any provider pinned beside it in PROMPT.md frontmatter.
+
+    Returns (None, None) when PROMPT.md has no model declared so callers can
+    distinguish "no model configured" from the gemini-2.5-pro fallback.
+    The name alone is not enough to resolve the provider: ``gemini-2.5-pro``
+    served through an OpenAI-compatible gateway is indistinguishable by name
+    from one served by Vertex.
+    """
     import re
 
     prompt_md = Path(_agent_config_dir) / "PROMPT.md"
@@ -368,10 +493,19 @@ def _read_prompt_model() -> str:
             m = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
             if m:
                 fm = yaml.safe_load(m.group(1)) or {}
-                return str(fm.get("model", "gemini-2.5-pro"))
+                raw = fm.get("model")
+                name = _model_name(raw)
+                provider = raw.get("provider") if isinstance(raw, dict) else None
+                if name:
+                    return name, (str(provider) if provider else None)
         except Exception:
             pass
-    return "gemini-2.5-pro"
+    return None, None
+
+
+def _read_prompt_model() -> str:
+    """Read model: from PROMPT.md YAML frontmatter, defaulting to gemini-2.5-pro."""
+    return _read_prompt_model_spec()[0] or "gemini-2.5-pro"
 
 
 # Module-level Postgres config for _default_system_yaml
@@ -388,12 +522,32 @@ def _get_system_yaml_content(judge_model: str | None = None) -> str:
     """Return system.yaml content with postgres credentials filled from env vars.
 
     If system.yaml is missing on disk, auto-generates a default using:
-    1. judge_model passed in (fetched alongside dataset in one DB call)
-    2. model: field from PROMPT.md frontmatter
+    1. model: field from PROMPT.md frontmatter  (source of truth)
+    2. judge_model stored in Postgres           (fallback when PROMPT.md has none)
+    3. gemini-2.5-pro                           (last-resort default)
     """
     if not EVAL_SYSTEM_CONFIG.exists():
-        resolved_model = judge_model or _read_prompt_model()
-        provider = _detect_provider(resolved_model)
+        # Priority:
+        # 1. DB judge_model — but only when it matches a model declared in
+        #    PROMPT.md or a subagent config (guards against stale DB values
+        #    after the agent is reconfigured to a different model).
+        #    The pinned provider from that .md file is preserved so gemini-*
+        #    models served via openai-compatibility aren't misdetected as vertex.
+        # 2. PROMPT.md model — source of truth when DB is absent or stale.
+        # 3. gemini-2.5-pro — last-resort default.
+        configured = _collect_configured_models()
+        if judge_model and judge_model in configured:
+            resolved_model, pinned = judge_model, configured[judge_model]
+        else:
+            _spec_model, pinned = _read_prompt_model_spec()
+            resolved_model = _spec_model or "gemini-2.5-pro"
+            if judge_model and judge_model != resolved_model:
+                log.info(
+                    "DB judge_model %r is not a configured model — using PROMPT.md model %r",
+                    judge_model,
+                    resolved_model,
+                )
+        provider = _detect_provider(resolved_model, pinned)
         log.info(
             "system.yaml not found — generating default with provider=%s model=%s",
             provider,
@@ -447,6 +601,12 @@ def _run_eval_pattern_sync(
     """Blocking subprocess call — must be run in a thread pool, not the event loop."""
     runner = Path(__file__).parent / "run_eval.py"
     env = dict(os.environ)
+    # Accept VLLM_BASE_URL/VLLM_API_KEY as aliases for the lightspeed-eval
+    # framework's expected HOSTED_VLLM_API_BASE/HOSTED_VLLM_API_KEY names.
+    if "HOSTED_VLLM_API_BASE" not in env and env.get("VLLM_BASE_URL"):
+        env["HOSTED_VLLM_API_BASE"] = env["VLLM_BASE_URL"]
+    if "HOSTED_VLLM_API_KEY" not in env and env.get("VLLM_API_KEY"):
+        env["HOSTED_VLLM_API_KEY"] = env["VLLM_API_KEY"]
     if auth_token:
         env["AGENT_AUTH_TOKEN"] = auth_token  # user session token for MCP tool calls
     cmd = [

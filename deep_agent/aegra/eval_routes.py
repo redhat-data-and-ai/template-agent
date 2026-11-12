@@ -1522,6 +1522,12 @@ def _collect_agent_models() -> list[dict[str, Any]]:
     """Read model: from PROMPT.md + all subagent .md frontmatters.
 
     Returns a list of unique model entries: [{model, source, default}].
+
+    Frontmatter is normalised through the agent's own ``parse_model_config``
+    rather than coerced with ``str()``. The object form -- which is how a
+    model pins an explicit provider -- would otherwise stringify to
+    ``"{'provider': ..., 'name': ...}"`` and be offered as a selectable model
+    that resolves to nothing.
     """
     import re
 
@@ -1540,7 +1546,14 @@ def _collect_agent_models() -> list[dict[str, Any]]:
             if not m:
                 return
             fm = _yaml.safe_load(m.group(1)) or {}
-            model = str(fm.get("model", "")).strip()
+            raw = fm.get("model")
+            if not raw:
+                return
+            from deep_agent.src.agent.config.model import (
+                parse_model_config,  # noqa: PLC0415
+            )
+
+            model = parse_model_config(raw).name
             if model and model not in seen:
                 models.append({"model": model, "source": source, "default": default})
                 seen.add(model)

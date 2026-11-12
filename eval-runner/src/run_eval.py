@@ -748,6 +748,33 @@ def _populate_dataset(  # pragma: no cover
 # ── Lightspeed invocation ────────────────────────────────────────────────────
 
 
+_GOOGLE_PROVIDERS = {"vertex", "vertex_ai", "gemini"}
+
+
+def _system_uses_google_provider(system_yaml: Path) -> bool:
+    """Return True only when the system config's judge uses a Google/Vertex provider.
+
+    Avoids a false-positive warning when the judge is hosted_vllm or openai.
+    """
+    try:
+        import yaml as _yaml
+
+        cfg = _yaml.safe_load(system_yaml.read_text(encoding="utf-8")) or {}
+        for key in ("llm", "llm_pool"):
+            block = cfg.get(key) or {}
+            provider = str(block.get("provider", "")).lower().replace("-", "_")
+            if provider in _GOOGLE_PROVIDERS:
+                return True
+            for model_cfg in (block.get("models") or {}).values():
+                if isinstance(model_cfg, dict):
+                    p = str(model_cfg.get("provider", "")).lower().replace("-", "_")
+                    if p in _GOOGLE_PROVIDERS:
+                        return True
+    except Exception:
+        pass
+    return False
+
+
 def _find_lightspeed_cmd() -> list[str] | None:
     """Return the command to invoke lightspeed-eval, or None if not found."""
     import shutil  # noqa: PLC0415 — stdlib, no install needed
@@ -878,6 +905,7 @@ def main() -> None:
         not os.environ.get("GOOGLE_API_KEY")
         and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_CONTENT")
         and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        and _system_uses_google_provider(args.system)
     ):
         log.warning("no Google credentials found — scoring may fail")
 
