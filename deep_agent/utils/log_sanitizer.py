@@ -30,13 +30,15 @@ they are never legitimately loggable.
 
 Environment variables:
     LOG_SANITIZATION_ENABLED: enable/disable sanitization (default: true)
-    LOG_SANITIZATION_CUSTOM_PATTERNS: comma-separated extra regexes to redact
+    LOG_SANITIZATION_CUSTOM_PATTERNS: JSON array of extra regex strings to redact
+        (legacy comma-separated patterns remain supported for simple regexes)
     LOG_REDACT_USER_CONTENT: replace prompt/message/output values with a
         length-only placeholder (default: true)
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -45,6 +47,8 @@ import structlog
 from structlog.typing import EventDict, Processor, WrappedLogger
 
 REDACTED = "***REDACTED***"
+
+_CREDENTIAL_VALUE = r"""(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s"',}{*]+)"""
 
 # ---------------------------------------------------------------------------
 # Credential patterns
@@ -71,9 +75,7 @@ CREDENTIAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "***API_KEY***",
     ),
     (
-        re.compile(
-            r"(?i)(?:password|passwd|pwd)[\"']?\s*[:=]\s*[\"']?[^\s\"',}{]+[\"']?"
-        ),
+        re.compile(r"(?i)(?:password|passwd|pwd)[\"']?\s*[:=]\s*" + _CREDENTIAL_VALUE),
         "***PASSWORD***",
     ),
     (
@@ -83,6 +85,13 @@ CREDENTIAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         "***SECRET***",
     ),
     (re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}"), "***AWS_KEY***"),
+    (
+        re.compile(
+            r"(?i)\b(?:(?:access|refresh|id)[_-]?)?token[\"']?\s*[:=]\s*"
+            r"(?!(?:Bearer|Basic) \*\*\*TOKEN\*\*\*)" + _CREDENTIAL_VALUE
+        ),
+        "***TOKEN***",
+    ),
     (
         re.compile(r"(?i)(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}"),
         "***GITHUB_TOKEN***",
@@ -320,11 +329,23 @@ _default_sanitizer: LogSanitizer | None = None
 
 
 def parse_custom_patterns(raw: str) -> list[tuple[re.Pattern[str], str]]:
-    """Compile a comma-separated list of regexes, skipping invalid entries."""
+    """Compile JSON regex strings, or legacy comma-separated simple patterns.
+
+    JSON arrays preserve commas inside quantifiers and literal matches. Invalid
+    regex entries are ignored, as in the original comma-separated format.
+    """
     if not raw:
         return []
+    try:
+        entries = json.loads(raw)
+    except (ValueError, TypeError):
+        entries = raw.split(",")
+    if not isinstance(entries, list):
+        entries = raw.split(",")
     patterns: list[tuple[re.Pattern[str], str]] = []
-    for entry in raw.split(","):
+    for entry in entries:
+        if not isinstance(entry, str):
+            continue
         stripped = entry.strip()
         if not stripped:
             continue

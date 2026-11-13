@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     )
     LOG_SANITIZATION_CUSTOM_PATTERNS: str = Field(
         default="",
-        description="Comma-separated extra regexes to redact from log output",
+        description="JSON array of extra regexes; legacy comma-separated simple patterns supported",
     )
     LOG_REDACT_USER_CONTENT: bool = Field(
         default=True,

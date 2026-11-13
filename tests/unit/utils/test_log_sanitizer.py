@@ -75,6 +75,24 @@ class TestCredentialRedaction:
         result = LogSanitizer().sanitize_string("Bearer supersecrettokenvalue")
         assert "supersecrettokenvalue" not in result
 
+    @pytest.mark.parametrize(
+        "field", ["access_token", "refresh_token", "id_token", "token", "password"]
+    )
+    @pytest.mark.parametrize(
+        "value",
+        [
+            '"secret with spaces"',
+            "'secret with spaces'",
+            '"secret \\"quoted\\" suffix"',
+            "opaque-secret",
+        ],
+    )
+    def test_serialized_credentials_are_fully_redacted(self, field, value, no_scrubber):
+        result = LogSanitizer().sanitize_string(f'{{"{field}": {value}}}')
+        assert "secret" not in result
+        assert "spaces" not in result
+        assert "suffix" not in result
+
 
 class TestNonSensitivePassthrough:
     """Ordinary log content must be left byte-for-byte intact."""
@@ -158,8 +176,9 @@ class TestIdLikeKeys:
     def test_free_text_still_pii_scrubbed(self):
         scrubber = _pii_scrubber("email")
         with patch("deep_agent.src.pii.get_scrubber", return_value=scrubber):
-            result = LogSanitizer().sanitize_value({"message": "mail a@b.com now"})
-        assert "a@b.com" not in result["message"]
+            result = LogSanitizer().sanitize_value({"note": "mail a@b.com now"})
+        assert "a@b.com" not in result["note"]
+        assert result["note"].startswith("mail ")
 
     def test_credentials_still_redacted_under_id_key(self, no_scrubber):
         result = LogSanitizer().sanitize_value({"run_id": "Bearer abc123"})
@@ -255,6 +274,15 @@ class TestCustomPatterns:
     def test_custom_pattern_applied(self, no_scrubber):
         s = LogSanitizer(custom_patterns=parse_custom_patterns(r"INTERNAL-\d+"))
         assert s.sanitize_string("id INTERNAL-42") == f"id {REDACTED}"
+
+    def test_json_patterns_preserve_regex_commas(self, no_scrubber):
+        patterns = parse_custom_patterns('["ID-[0-9]{2,4}", "literal,comma"]')
+        sanitizer = LogSanitizer(custom_patterns=patterns)
+        assert len(patterns) == 2
+        assert (
+            sanitizer.sanitize_string("ID-123 literal,comma")
+            == f"{REDACTED} {REDACTED}"
+        )
 
     def test_custom_patterns_ignored_when_disabled(self):
         s = LogSanitizer(enabled=False, custom_patterns=parse_custom_patterns(r"X\d+"))
