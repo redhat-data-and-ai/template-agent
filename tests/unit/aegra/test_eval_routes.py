@@ -1202,7 +1202,15 @@ class TestEvalRun:
 
     async def test_run_with_hitl_auto_approve(self):
         pre_approval_state = {
-            "__interrupt__": [{"value": {}}],
+            "__interrupt__": [
+                {
+                    "id": "a" * 32,
+                    "value": {
+                        "action_requests": [{"name": "email"}, {"name": "audit"}]
+                    },
+                },
+                {"id": "b" * 32, "value": {"action_requests": [{"name": "notify"}]}},
+            ],
             "messages": [{"type": "ai", "content": "Awaiting your approval"}],
         }
         post_approval_state = {
@@ -1240,6 +1248,12 @@ class TestEvalRun:
         assert result.was_interrupted is True
         assert result.pre_approval_response == "Awaiting your approval"
         assert result.response == "Email sent successfully"
+
+        resume = client.post.call_args_list[2].kwargs["json"]["command"]["resume"]
+        assert resume == {
+            "a" * 32: {"decisions": [{"type": "approve"}, {"type": "approve"}]},
+            "b" * 32: {"decisions": [{"type": "approve"}]},
+        }
 
     async def test_run_uses_provided_conversation_id(self):
         run_state = {"messages": [{"type": "ai", "content": "ok", "tool_calls": []}]}
@@ -3008,3 +3022,22 @@ class TestEvalResultsTurnFetching:
 
         assert result["results_detail"]["turns"] == [{"result": "PASS"}]
         er._table_ensured = False
+
+
+@pytest.mark.parametrize(
+    "state", [{"__interrupt__": [{"value": {}}]}, {"__interrupt__": True}, {}]
+)
+def test_eval_auto_approval_requires_interrupt_ids(state):
+    with pytest.raises(RuntimeError, match="without interrupt IDs"):
+        er._auto_approval_responses(state)
+
+
+def test_eval_auto_approval_reads_task_interrupt_ids():
+    state = {
+        "tasks": [
+            {"interrupts": [{"id": "a" * 32, "value": {"action_requests": [{}, {}]}}]}
+        ]
+    }
+    assert er._auto_approval_responses(state) == {
+        "a" * 32: {"decisions": [{"type": "approve"}, {"type": "approve"}]}
+    }
