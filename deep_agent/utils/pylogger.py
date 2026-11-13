@@ -26,6 +26,11 @@ from typing import Any
 
 import structlog
 
+from deep_agent.utils.log_sanitizer import (
+    create_sanitize_processor,
+    install_log_sanitization,
+)
+
 # ---------------------------------------------------------------------------
 # Third-party logger noise suppression
 # ---------------------------------------------------------------------------
@@ -333,6 +338,7 @@ def get_python_logger(log_level: str = "INFO") -> structlog.BoundLogger:
                 structlog.processors.StackInfoRenderer(),
                 structlog.processors.format_exc_info,
                 structlog.processors.UnicodeDecoder(),
+                create_sanitize_processor(),
                 _get_renderer(),
             ],
             context_class=dict,
@@ -344,4 +350,5 @@ def get_python_logger(log_level: str = "INFO") -> structlog.BoundLogger:
         _LOGGING_CONFIGURED = True
 
     _configure_third_party_loggers(log_level)
+    install_log_sanitization()
     return structlog.get_logger()
