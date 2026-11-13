@@ -46,8 +46,7 @@ async def validate_checkpoint_resume(
 
     response = request.command["resume"]
     # An unkeyed response has no stable target, even when only one interrupt
-    # is pending. Reject it before waiting: the run may reach a different
-    # interrupt while finalization settles, or before a retry arrives.
+    # is pending. Reject it before waiting.
     if not (
         isinstance(response, dict)
         and response
@@ -79,14 +78,10 @@ async def validate_checkpoint_resume(
             raise HTTPException(404, f"Thread '{thread_id}' not found")
         active = await session.scalar(active_stmt)
         if not active and thread.status != "busy":
-            # Keep this lock through checkpoint validation and _prepare_run's
-            # scheduling commit, serializing competing approval requests.
             break
 
-        # Interrupt SSE can arrive before finalize_run commits. Never sleep
-        # holding its thread row lock: that would block the commit we need.
-        # Validation precedes preparation writes, so rollback safely releases
-        # the lock and renews the transaction snapshot for the next attempt.
+        # Interrupt SSE can arrive before finalize_run commits.
+        # Never sleep holding its thread row lock.
         await session.rollback()
         if attempt == _RESUME_SETTLE_ATTEMPTS:
             if active:
