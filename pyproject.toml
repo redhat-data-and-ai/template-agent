@@ -32,7 +32,7 @@ dependencies = [
     "langchain-mcp-adapters==0.3.2",
     "mcp>=1.28.1,<2",
     "langfuse>=4.9.0",
-    "langgraph==1.2.14",
+    "langgraph==1.2.16",
     "langgraph-checkpoint-postgres==3.1.2",
     "langgraph-sdk>=0.1.51",
     # interrupt_resume.py adapts this release; revalidate the adapter on upgrade.

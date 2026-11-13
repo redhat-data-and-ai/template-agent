@@ -64,6 +64,40 @@ def request(response):
     )
 
 
+@pytest.mark.parametrize("order", [("a", "b"), ("b", "a")])
+async def test_nested_parallel_approvals_do_not_repeat_completed_effects(order):
+    effects = []
+
+    def node(name):
+        def approve(state):
+            interrupt(f"Approve {name}")
+            effects.append(name)
+            return {"answers": [name]}
+
+        return approve
+
+    child = StateGraph(State)
+    for name in ("a", "b"):
+        child.add_node(name, node(name))
+        child.add_edge(START, name)
+        child.add_edge(name, END)
+    parent = StateGraph(State)
+    parent.add_node("child", child.compile())
+    parent.add_edge(START, "child")
+    parent.add_edge("child", END)
+    graph = parent.compile(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "nested-approvals"}}
+    await graph.ainvoke({"answers": []}, config)
+
+    for name in order:
+        snapshot = await graph.aget_state(config)
+        pending = next(i for i in snapshot.interrupts if i.value == f"Approve {name}")
+        await graph.ainvoke(Command(resume={pending.id: "approved"}), config)
+
+    assert effects == list(order)
+    assert not (await graph.aget_state(config)).interrupts
+
+
 async def test_rejects_unkeyed_multiple_without_changing_thread(checkpoint):
     graph, config, _, user, thread, session = checkpoint
     with pytest.raises(HTTPException, match="Specify interrupt IDs") as error:
