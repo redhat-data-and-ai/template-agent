@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 from fastapi import HTTPException
 
@@ -144,6 +145,38 @@ class TestMemoryUserId:
         ):
             await memory_user_id(request)
         assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_expired_token_returns_401(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer expired-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=jwt.ExpiredSignatureError("Token expired"),
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await memory_user_id(request)
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Token expired"
+
+    @pytest.mark.asyncio
+    async def test_malformed_token_returns_401(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer not-a-jwt"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=jwt.DecodeError("Not enough segments"),
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await memory_user_id(request)
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid token: Not enough segments"
 
 
 class TestCheckLdapRole:

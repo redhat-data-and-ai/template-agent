@@ -135,7 +135,14 @@ async def memory_user_id(request: Request) -> str:
             status_code=401, detail="Missing or invalid Authorization header"
         )
 
-    payload = await asyncio.to_thread(_decode_token, auth_header[7:])
+    import jwt
+
+    try:
+        payload = await asyncio.to_thread(_decode_token, auth_header[7:])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired") from None
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}") from None
     token_uid = str(
         payload.get("preferred_username") or payload.get("sub") or ""
     ).strip()
