@@ -178,6 +178,22 @@ class TestMemoryUserId:
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "Invalid token: Not enough segments"
 
+    @pytest.mark.asyncio
+    async def test_jwks_outage_returns_503(self):
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer valid-token"}
+        with (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=jwt.PyJWKClientConnectionError("Fail to fetch data"),
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await memory_user_id(request)
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail == "Unable to verify token"
+
 
 class TestCheckLdapRole:
     """Tests the Developer/Eval column from the behavior matrix."""
