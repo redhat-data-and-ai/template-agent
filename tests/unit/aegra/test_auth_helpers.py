@@ -176,7 +176,7 @@ class TestMemoryUserId:
         ):
             await memory_user_id(request)
         assert exc_info.value.status_code == 401
-        assert exc_info.value.detail == "Invalid token: Not enough segments"
+        assert exc_info.value.detail == "Invalid token"
 
     @pytest.mark.asyncio
     async def test_jwks_outage_returns_503(self):

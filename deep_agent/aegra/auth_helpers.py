@@ -143,8 +143,8 @@ async def memory_user_id(request: Request) -> str:
         raise HTTPException(status_code=401, detail="Token expired") from None
     except jwt.PyJWKClientConnectionError:
         raise HTTPException(status_code=503, detail="Unable to verify token") from None
-    except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}") from None
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token") from None
     token_uid = str(
         payload.get("preferred_username") or payload.get("sub") or ""
     ).strip()
