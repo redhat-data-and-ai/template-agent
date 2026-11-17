@@ -180,9 +180,7 @@ class TestMemoryUserId:
         assert exc_info.value.detail == "Invalid token"
         mock_logger.warning.assert_called_once_with(
             "consent_token_rejected",
-            reason="invalid",
-            error_type="DecodeError",
-            error="Not enough segments",
+            reason="DecodeError",
         )
 
     @pytest.mark.asyncio
