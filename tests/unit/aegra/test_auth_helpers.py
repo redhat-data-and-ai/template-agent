@@ -172,11 +172,18 @@ class TestMemoryUserId:
                 "deep_agent.aegra.auth._decode_token",
                 side_effect=jwt.DecodeError("Not enough segments"),
             ),
+            patch("deep_agent.aegra.auth_helpers.logger") as mock_logger,
             pytest.raises(HTTPException) as exc_info,
         ):
             await memory_user_id(request)
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "Invalid token"
+        mock_logger.warning.assert_called_once_with(
+            "consent_token_rejected",
+            reason="invalid",
+            error_type="DecodeError",
+            error="Not enough segments",
+        )
 
     @pytest.mark.asyncio
     async def test_jwks_outage_returns_503(self):
