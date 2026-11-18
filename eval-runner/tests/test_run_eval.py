@@ -1101,3 +1101,82 @@ def test_main_warns_without_google_credentials(
                         with pytest.raises(SystemExit):
                             run_eval.main()
     assert "no Google credentials found" in caplog.text
+
+
+def test_auto_approval_responses_preserves_ids_and_separate_action_counts() -> None:
+    events = [
+        (
+            "updates",
+            {
+                "__interrupt__": [
+                    {
+                        "id": "a" * 32,
+                        "value": {
+                            "action_requests": [{"name": "one"}, {"name": "two"}]
+                        },
+                    }
+                ]
+            },
+        ),
+        (
+            "updates",
+            [
+                ["subgraph"],
+                {
+                    "__interrupt__": [
+                        {
+                            "id": "b" * 32,
+                            "value": {"action_requests": [{"name": "three"}]},
+                        }
+                    ]
+                },
+            ],
+        ),
+    ]
+    assert run_eval._auto_approval_responses(events) == {
+        "a" * 32: {"decisions": [{"type": "approve"}, {"type": "approve"}]},
+        "b" * 32: {"decisions": [{"type": "approve"}]},
+    }
+
+
+@pytest.mark.parametrize(
+    "events", [[], [("updates", {"__interrupt__": [{"value": {}}]})]]
+)
+def test_auto_approval_responses_rejects_missing_ids(
+    events: list[tuple[str, Any]],
+) -> None:
+    with pytest.raises(RuntimeError, match="without interrupt IDs"):
+        run_eval._auto_approval_responses(events)
+
+
+def test_call_agent_sends_keyed_approvals_for_each_interrupt() -> None:
+    interrupts = [
+        (
+            "updates",
+            {
+                "__interrupt__": [
+                    {
+                        "id": "a" * 32,
+                        "value": {
+                            "action_requests": [{"name": "one"}, {"name": "two"}]
+                        },
+                    },
+                    {"id": "b" * 32, "value": {"action_requests": [{"name": "three"}]}},
+                ]
+            },
+        )
+    ]
+    completed = [
+        ("updates", {"agent": {"messages": [{"type": "ai", "content": "Done"}]}})
+    ]
+    with patch.object(
+        run_eval,
+        "_stream_one_request",
+        side_effect=[(interrupts, True), (completed, False)],
+    ) as stream:
+        result = run_eval._call_agent("http://agent", "Run tools", "thread", None, 10)
+    assert result["response"] == "Done"
+    assert stream.call_args_list[1].args[2]["command"]["resume"] == {
+        "a" * 32: {"decisions": [{"type": "approve"}, {"type": "approve"}]},
+        "b" * 32: {"decisions": [{"type": "approve"}]},
+    }
