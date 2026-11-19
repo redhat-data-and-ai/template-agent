@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -776,3 +777,40 @@ class TestRevokeConsent:
         assert resp.status_code == 200
         assert resp.json() == {"status": "revoked"}
         mock_repo.store_consent.assert_awaited_once_with("test-user", "revoked")
+
+
+class TestConsentExpiredJwt:
+    """An expired bearer token is a 401, not an uncaught decode error."""
+
+    @pytest.fixture
+    def consent_client(self, mock_repo, mock_store, mock_namespace, mock_cache):
+        return TestClient(app)
+
+    def _expired(self):
+        return (
+            patch("deep_agent.aegra.auth.ENABLE_AUTH", True),
+            patch(
+                "deep_agent.aegra.auth._decode_token",
+                side_effect=jwt.ExpiredSignatureError("Token expired"),
+            ),
+        )
+
+    def test_get_expired_jwt_returns_401(self, consent_client):
+        enable_auth, decode = self._expired()
+        with enable_auth, decode:
+            resp = consent_client.get(
+                "/personalization/consent",
+                headers={"Authorization": "Bearer expired"},
+            )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Token expired"
+
+    def test_post_expired_jwt_returns_401(self, consent_client):
+        enable_auth, decode = self._expired()
+        with enable_auth, decode:
+            resp = consent_client.post(
+                "/personalization/consent",
+                headers={"Authorization": "Bearer expired"},
+            )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Token expired"

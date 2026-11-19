@@ -501,6 +501,33 @@ def _messages_from_run(run_state: dict) -> list[dict]:
     return run_state.get("values", {}).get("messages", [])  # type: ignore[no-any-return]
 
 
+def _auto_approval_responses(run_state: dict[str, Any]) -> dict[str, Any]:
+    """Bind each eval decision batch to its interrupt instead of the thread."""
+    interrupts = run_state.get("__interrupt__") or run_state.get("values", {}).get(
+        "__interrupt__"
+    )
+    if not isinstance(interrupts, list):
+        interrupts = [
+            item
+            for task in run_state.get("tasks", [])
+            for item in task.get("interrupts", [])
+        ]
+    responses: dict[str, Any] = {}
+    for item in interrupts:
+        interrupt_id = item.get("id")
+        if not isinstance(interrupt_id, str) or not interrupt_id:
+            raise RuntimeError("Cannot auto-approve without interrupt IDs")
+        value = item.get("value")
+        actions = value.get("action_requests") if isinstance(value, dict) else None
+        count = len(actions) if isinstance(actions, list) else 1
+        responses[interrupt_id] = {
+            "decisions": [{"type": "approve"} for _ in range(count)]
+        }
+    if not responses:
+        raise RuntimeError("Cannot auto-approve without interrupt IDs")
+    return responses
+
+
 def _detect_interrupt(run_state: dict) -> bool:
     """Return True if the run state has a pending HITL interrupt."""
     if run_state.get("__interrupt__"):
@@ -597,7 +624,7 @@ async def eval_run(
                     log.info("Auto-approving HITL interrupt for thread %s", thread_id)
                     approve_body = {
                         "assistant_id": ASSISTANT_ID,
-                        "command": {"resume": {"decisions": [{"type": "approve"}]}},
+                        "command": {"resume": _auto_approval_responses(run_state)},
                     }
                     run_state = await _run_and_get_state(
                         client, thread_id, approve_body
