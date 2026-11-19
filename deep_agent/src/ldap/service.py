@@ -26,6 +26,7 @@ logger = get_python_logger()
 
 _ldap_conn: Any = None
 _bind_failed: bool = False
+_bind_failed_at: float = 0.0
 _ldap_lock = threading.Lock()
 _memory_cache: dict[str, tuple[bool, float]] = {}
 _MEMORY_CACHE_MAX_SIZE: int = 1024
@@ -33,6 +34,10 @@ _MEMORY_CACHE_MAX_SIZE: int = 1024
 _startup_warning_logged: bool = False
 
 _LDAP_FILTER_ESCAPE = re.compile(r"([\\*\(\)\x00])")
+
+_COOLDOWN_TRANSIENT: int = 3
+_COOLDOWN_INVALID_CREDENTIALS: int = 30
+_COOLDOWN_ACCOUNT_LOCKED: int = 60
 
 
 def _escape_ldap_filter(value: str) -> str:
@@ -47,9 +52,9 @@ def _derive_base_dn() -> str:
     return ldap_settings.derive_base_dn()
 
 
-def _ensure_bound() -> Any:
+def _ensure_bound(last_attempt: bool = True) -> Any:
     """Ensure an LDAP connection is bound. Returns the connection or None."""
-    global _ldap_conn, _bind_failed
+    global _ldap_conn, _bind_failed, _bind_failed_at
 
     if not ldap_settings.LDAP_URL:
         return None
@@ -61,43 +66,86 @@ def _ensure_bound() -> Any:
         )
         return None
 
+    if _bind_failed and time.monotonic() < _bind_failed_at:
+        return None
+
     if _ldap_conn is not None and not _bind_failed:
         if not getattr(_ldap_conn, "closed", False):
             return _ldap_conn
         _ldap_conn = None
 
-    try:
-        import ssl
+    import ssl
 
-        from ldap3 import Connection, Server, Tls
+    from ldap3 import Connection, Server, Tls
 
-        tls_validate = (
-            ssl.CERT_REQUIRED if ldap_settings.LDAP_TLS_VERIFY else ssl.CERT_NONE
-        )
-        tls = Tls(validate=tls_validate)
-        server = Server(
-            ldap_settings.LDAP_URL,
-            use_ssl=True,
-            tls=tls,
-            connect_timeout=10,
-        )
-        bind_dn = ldap_settings.get_bind_dn()
-        conn = Connection(
-            server,
-            user=bind_dn,
-            password=ldap_settings.LDAP_PASSWORD,
-            auto_bind=True,
-            read_only=True,
-        )
-        _ldap_conn = conn
-        _bind_failed = False
-        logger.info("LDAP bound successfully to %s", ldap_settings.LDAP_URL)
-        return conn
-    except Exception as exc:
-        logger.error("LDAP bind failed: %s", exc)
-        _bind_failed = True
-        _ldap_conn = None
-        return None
+    tls_validate = ssl.CERT_REQUIRED if ldap_settings.LDAP_TLS_VERIFY else ssl.CERT_NONE
+    tls = Tls(validate=tls_validate)
+    server = Server(
+        ldap_settings.LDAP_URL,
+        use_ssl=True,
+        tls=tls,
+        connect_timeout=10,
+    )
+    bind_dn = ldap_settings.get_bind_dn()
+    logger.info(
+        "LDAP attempting bind — url=%s group_search_base=%s",
+        ldap_settings.LDAP_URL,
+        ldap_settings.get_group_search_base(),
+    )
+
+    for bind_attempt in range(2):
+        try:
+            conn = Connection(
+                server,
+                user=bind_dn,
+                password=ldap_settings.LDAP_PASSWORD,
+                auto_bind=True,
+                read_only=True,
+            )
+            _ldap_conn = conn
+            _bind_failed = False
+            logger.info("LDAP bound successfully to %s", ldap_settings.LDAP_URL)
+            return conn
+        except Exception as exc:
+            exc_str = str(exc)
+            if "invalidCredentials" in exc_str:
+                cooldown = _COOLDOWN_INVALID_CREDENTIALS
+                reason = "invalid credentials"
+            elif "unwillingToPerform" in exc_str:
+                cooldown = _COOLDOWN_ACCOUNT_LOCKED
+                reason = "account locked"
+            else:
+                cooldown = _COOLDOWN_TRANSIENT
+                reason = "connection error"
+
+            is_auth_error = cooldown > 3
+            is_last_bind = bind_attempt == 1 or is_auth_error
+
+            if is_last_bind:
+                if last_attempt or is_auth_error:
+                    if cooldown == _COOLDOWN_TRANSIENT:
+                        logger.error(
+                            "LDAP bind failed: %s (retry in %ds)",
+                            reason,
+                            cooldown,
+                            exc_info=True,
+                        )
+                    else:
+                        logger.error(
+                            "LDAP bind failed: %s (retry in %ds)", reason, cooldown
+                        )
+                else:
+                    logger.warning("LDAP bind failed: %s — retrying", reason)
+                _bind_failed = True
+                _bind_failed_at = time.monotonic() + cooldown
+                _ldap_conn = None
+                return None
+
+            logger.warning(
+                "LDAP bind transient error on attempt 1 — retrying immediately"
+            )
+
+    return None
 
 
 def _cache_get(key: str) -> bool | None:
@@ -165,7 +213,7 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
         member_attrs = ["member", "uniqueMember", "memberUid"]
 
         for attempt in range(2):
-            conn = _ensure_bound()
+            conn = _ensure_bound(last_attempt=attempt == 1)
             if conn is None:
                 return False
 
@@ -198,6 +246,7 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
                     )
 
                 found = False
+                user_lower = user_id.lower()
                 for entry in conn.entries:
                     for attr in member_attrs:
                         values = getattr(entry, attr, None)
@@ -210,7 +259,6 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
                             raw_values = [raw_values]
                         for member_val in raw_values:
                             member_str = str(member_val).lower()
-                            user_lower = user_id.lower()
                             if (
                                 member_str == user_lower
                                 or member_str == f"uid={user_lower},ou=users,{base_dn}"
@@ -227,7 +275,9 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
                 return found
 
             except Exception as exc:
-                logger.error("LDAP search failed for group %s: %s", group_cn, exc)
+                logger.error(
+                    "LDAP search failed for group %s: %s", group_cn, type(exc).__name__
+                )
                 try:
                     conn.unbind()
                 except Exception:

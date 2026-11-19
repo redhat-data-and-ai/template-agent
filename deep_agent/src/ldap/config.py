@@ -4,10 +4,11 @@ Required when PROMPT.md has groups defined:
     LDAP_URL:               LDAP server URL (e.g. ldaps://ldap.example.com).
                             Base DN is derived from hostname automatically.
     LDAP_BASE_UID:          Service account uid for bind (e.g. svcacct).
-                            If it contains a comma, used as-is as bind DN.
     LDAP_PASSWORD:          Service account password.
 
 Optional (have sensible defaults):
+    LDAP_BIND_DN:           Full bind DN override (e.g. uid=svcacct,cn=users,cn=accounts,dc=ipa,dc=redhat,dc=com).
+                            If set, takes precedence over the DN derived from LDAP_BASE_UID.
     LDAP_GROUP_SEARCH_BASE: Override group search subtree.
                             Default: ou=adhoc,ou=managedGroups,<derived base DN>.
     LDAP_CACHE_TTL_SECONDS: Redis cache TTL for membership lookups (default: 300).
@@ -23,7 +24,8 @@ class LdapSettings(BaseSettings):
     """LDAP connection configuration loaded from environment."""
 
     LDAP_URL: str = Field(default="")
-    LDAP_BASE_UID: str = Field(default="")
+    LDAP_BASE_UID: str = Field(default="", repr=False)
+    LDAP_BIND_DN: str = Field(default="", repr=False)
     LDAP_PASSWORD: str = Field(default="", repr=False)
     LDAP_GROUP_SEARCH_BASE: str = Field(default="")
     LDAP_TLS_VERIFY: bool = Field(default=True)
@@ -43,11 +45,11 @@ class LdapSettings(BaseSettings):
             return ""
 
     def get_bind_dn(self) -> str:
-        """Construct the bind DN from LDAP_BASE_UID."""
+        """Construct the bind DN from LDAP_BIND_DN override or LDAP_BASE_UID."""
+        if self.LDAP_BIND_DN:
+            return self.LDAP_BIND_DN
         if not self.LDAP_BASE_UID:
             return ""
-        if "," in self.LDAP_BASE_UID:
-            return self.LDAP_BASE_UID
         base_dn = self.derive_base_dn()
         return f"uid={self.LDAP_BASE_UID},ou=users,{base_dn}"
 
