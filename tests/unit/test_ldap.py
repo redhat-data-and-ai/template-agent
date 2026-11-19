@@ -65,7 +65,9 @@ class TestGetBindDn:
         assert s.get_bind_dn() == _IPA_BIND_DN
 
     def test_derived_from_base_uid_when_no_override(self):
-        s = LdapSettings(LDAP_URL="ldaps://ldap.example.com", LDAP_BASE_UID="svc")
+        s = LdapSettings(
+            LDAP_URL="ldaps://ldap.example.com", LDAP_BASE_UID="svc", LDAP_BIND_DN=""
+        )
         assert s.get_bind_dn() == "uid=svc,ou=users,dc=example,dc=com"
 
     def test_empty_when_no_uid_and_no_override(self):
@@ -85,13 +87,13 @@ class TestGetGroupSearchBase:
         assert s.get_group_search_base() == _IPA_GROUP_BASE
 
     def test_default_derived_from_url(self):
-        s = LdapSettings(LDAP_URL="ldaps://ldap.example.com")
+        s = LdapSettings(LDAP_URL="ldaps://ldap.example.com", LDAP_GROUP_SEARCH_BASE="")
         assert (
             s.get_group_search_base() == "ou=adhoc,ou=managedGroups,dc=example,dc=com"
         )
 
     def test_empty_when_no_url(self):
-        s = LdapSettings(LDAP_URL="")
+        s = LdapSettings(LDAP_URL="", LDAP_GROUP_SEARCH_BASE="")
         assert s.get_group_search_base() == ""
 
 
