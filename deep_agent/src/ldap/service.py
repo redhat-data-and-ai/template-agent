@@ -47,6 +47,17 @@ def _escape_ldap_filter(value: str) -> str:
     )
 
 
+def _log_search_recovered(group_cn: str, attempt: int) -> None:
+    """Record that a retried search completed, so recovery is visible in logs."""
+    if attempt > 0:
+        logger.info(
+            "ldap_search_recovered: group=%s attempt=%d/2 — "
+            "membership lookup completed after reconnect",
+            group_cn,
+            attempt + 1,
+        )
+
+
 def _derive_base_dn() -> str:
     """Delegate to ldap_settings for the derived base DN."""
     return ldap_settings.derive_base_dn()
@@ -223,6 +234,13 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
                 if not search_ok:
                     result_code = conn.result.get("result", -1) if conn.result else -1
                     if result_code in _LDAP_NON_FATAL_RESULT_CODES:
+                        if result_code in _LDAP_CACHEABLE_RESULT_CODES:
+                            # Code 0 is conclusive — the search really did
+                            # complete, the group simply has no match — so a
+                            # retry that reaches here has genuinely recovered.
+                            # Codes 10/32/34 are inconclusive, and get no
+                            # recovery marker.
+                            _log_search_recovered(group_cn, attempt)
                         logger.warning(
                             "LDAP group '%s' not found (result code %d: %s) — "
                             "skipping, other groups unaffected",
@@ -263,22 +281,44 @@ def _is_user_in_group_sync(user_id: str, group_cn: str) -> bool:
                     if found:
                         break
 
+                # Only a clean completion counts as recovery. ldap3 returns
+                # True whenever the search finished with at least one entry,
+                # so a truncated result (e.g. sizeLimitExceeded, code 4) also
+                # lands here — entries present, result set incomplete.
+                result_code = conn.result.get("result", -1) if conn.result else -1
+                if result_code in _LDAP_CACHEABLE_RESULT_CODES:
+                    _log_search_recovered(group_cn, attempt)
                 _cache_set(cache_key, found)
                 return found
 
             except Exception as exc:
-                logger.error(
-                    "LDAP search failed for group %s: %s", group_cn, type(exc).__name__
-                )
                 try:
                     conn.unbind()
                 except Exception:
                     pass
                 _ldap_conn = None
                 _bind_failed = True
+
                 if attempt == 0:
-                    logger.info("Retrying LDAP search with fresh connection")
+                    logger.warning(
+                        "ldap_search_retry: group=%s attempt=1/2 error=%s — "
+                        "discarding session, retrying with a fresh bind",
+                        group_cn,
+                        type(exc).__name__,
+                    )
                     continue
+
+                # Keeps the original "<group>: <error>" shape so existing log
+                # queries and field extractions still match, but now only for
+                # failures that the reconnect did not fix. The attempt count is
+                # appended, not infixed, for that reason. Only the exception
+                # type is logged, matching the redaction upstream applied here.
+                logger.error(
+                    "ldap_search_exhausted: LDAP search failed for group "
+                    "%s: %s (after 2 attempts)",
+                    group_cn,
+                    type(exc).__name__,
+                )
                 return False
 
         return False
