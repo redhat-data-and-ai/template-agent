@@ -335,7 +335,7 @@ class TestIsUserInGroupSync:
         ldap3_mock = MagicMock()
         call_count = {"n": 0}
 
-        def ensure_side_effect():
+        def ensure_side_effect(**kwargs):
             call_count["n"] += 1
             if call_count["n"] == 1:
                 return stale_conn
@@ -462,7 +462,7 @@ class TestIsUserInGroupSync:
         ldap3_mock = MagicMock()
         call_count = {"n": 0}
 
-        def ensure_side_effect():
+        def ensure_side_effect(**kwargs):
             call_count["n"] += 1
             if call_count["n"] == 1:
                 return bad_conn

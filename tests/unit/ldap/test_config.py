@@ -70,7 +70,7 @@ class TestGetBindDn:
 
     def test_full_dn_passthrough(self):
         full_dn = "cn=admin,dc=example,dc=com"
-        s = LdapSettings(LDAP_URL="ldaps://ldap.example.com", LDAP_BASE_UID=full_dn)
+        s = LdapSettings(LDAP_URL="ldaps://ldap.example.com", LDAP_BIND_DN=full_dn)
         assert s.get_bind_dn() == full_dn
 
     def test_empty_uid(self):
