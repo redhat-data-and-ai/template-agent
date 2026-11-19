@@ -123,17 +123,9 @@ def _ensure_bound(last_attempt: bool = True) -> Any:
 
             if is_last_bind:
                 if last_attempt or is_auth_error:
-                    if cooldown == _COOLDOWN_TRANSIENT:
-                        logger.error(
-                            "LDAP bind failed: %s (retry in %ds)",
-                            reason,
-                            cooldown,
-                            exc_info=True,
-                        )
-                    else:
-                        logger.error(
-                            "LDAP bind failed: %s (retry in %ds)", reason, cooldown
-                        )
+                    logger.error(
+                        "LDAP bind failed: %s (retry in %ds)", reason, cooldown
+                    )
                 else:
                     logger.warning("LDAP bind failed: %s — retrying", reason)
                 _bind_failed = True

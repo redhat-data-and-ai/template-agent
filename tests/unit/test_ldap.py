@@ -202,21 +202,26 @@ class TestEnsureBound:
         ):
             result = svc._ensure_bound()
 
+        now = time.monotonic()
         assert result is None
         assert call_count == 2
         assert svc._bind_failed is True
-        assert svc._bind_failed_at <= time.monotonic() + 4
+        assert now + 2 < svc._bind_failed_at <= now + 4
 
     def test_cooldown_blocks_subsequent_calls(self, svc):
+        settings = _make_settings()
         with (
-            patch.object(svc, "ldap_settings", _make_settings()),
+            patch.object(svc, "ldap_settings", settings),
             patch(_LDAP3_CONN, side_effect=Exception("invalidCredentials")),
             patch(_LDAP3_SERVER),
             patch(_LDAP3_TLS),
         ):
             svc._ensure_bound()
 
-        with patch(_LDAP3_CONN) as mock_cls:
+        with (
+            patch.object(svc, "ldap_settings", settings),
+            patch(_LDAP3_CONN) as mock_cls,
+        ):
             svc._ensure_bound()
         mock_cls.assert_not_called()
 
