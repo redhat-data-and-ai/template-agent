@@ -39,7 +39,10 @@ def _logger() -> Any:
         import structlog
         from aegra_api.utils.setup_logging import setup_logging
 
+        from deep_agent.utils.log_sanitizer import install_log_sanitization
+
         setup_logging()
+        install_log_sanitization()
         _LOGGER = structlog.stdlib.get_logger("deep_agent.aegra.entrypoint")
     return _LOGGER
 
@@ -98,6 +101,10 @@ def start_server() -> None:
     """Start the HTTP API server."""
     import uvicorn
     from aegra_api.main import app
+
+    from deep_agent.utils.log_sanitizer import install_log_sanitization
+
+    install_log_sanitization()
 
     host = os.getenv("AGENT_HOST", "0.0.0.0")
     port = int(os.getenv("AGENT_PORT", "5002"))
