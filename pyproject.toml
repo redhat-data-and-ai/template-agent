@@ -38,6 +38,7 @@ dependencies = [
     # interrupt_resume.py wraps private Aegra APIs; revalidate the adapter before upgrading.
     "aegra-api==0.10.8",
     "aegra-cli==0.10.8",
+    "jinja2==3.1.6",
     "psycopg[binary,pool]==3.3.4",
     "psycopg2-binary==2.9.12",
     "motor==3.7.1",

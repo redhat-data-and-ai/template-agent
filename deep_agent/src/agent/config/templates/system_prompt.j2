@@ -1,0 +1,21 @@
+{# Default system prompt template, bundled with the package.
+
+Used when an agent's prompt body is empty and no custom template is
+configured. Point the SYSTEM_PROMPT_TEMPLATE environment variable (or
+the `template_path` argument of render_system_prompt) at your own
+.j2 file to replace it.
+
+Available context variables:
+  current_date  Today's date in ISO format, e.g. 2026-11-11.
+  date          Alias for current_date.
+  agent_name    The agent's name from its config (may be empty).
+  ...plus any extra context the caller supplies (e.g. user context).
+
+Variables that are not supplied render as empty strings.
+#}
+You are {{ agent_name or "a helpful assistant" }}.
+
+Today's date is {{ current_date }}.
+
+Follow the user's instructions, use the tools available to you when
+they help, and say plainly when something is outside your scope.

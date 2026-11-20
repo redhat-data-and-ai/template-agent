@@ -5,8 +5,9 @@ configurations) and injecting runtime values like {{current_date}} into the cont
 
 Why this exists:
     Agent configs are written in markdown with YAML frontmatter. This module
-    extracts the frontmatter metadata and body content, and replaces template
-    variables with runtime values.
+    extracts the frontmatter metadata and body content. Template variables
+    in the body (e.g. {{current_date}}) are replaced with runtime values
+    at load time by config.prompts.render_system_prompt.
 
 Functions:
     parse_frontmatter: Parse markdown file with YAML frontmatter
