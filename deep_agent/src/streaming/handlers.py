@@ -5,9 +5,12 @@ that process LangGraph streaming events and convert them into API-friendly forma
 Handles both token-level and update-level streaming modes.
 """
 
+from __future__ import annotations
+
+import json
 from typing import Any
 
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessageChunk
 from langgraph.types import Overwrite
 
 from deep_agent.src.adapters.langchain import (
@@ -31,24 +34,55 @@ from deep_agent.utils.pylogger import get_python_logger
 logger = get_python_logger(settings.PYTHON_LOG_LEVEL)
 
 
-def _convert_interrupts_to_messages(interrupts: list) -> list:
-    """Convert interrupt data to messages.
+def _normalize_interrupt_value(value: Any) -> Any:
+    """Normalize interrupt payloads for the SSE contract.
+
+    MCP auth interrupts pass a JSON string via ``interrupt(...)``. Parse that
+    into an object when possible so clients can branch on ``value.type`` without
+    an extra JSON.parse. Non-JSON strings and structured HITL dicts are returned
+    unchanged.
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                return value
+    return value
+
+
+def _convert_interrupts_to_events(
+    interrupts: list, ctx: StreamContext
+) -> list[dict[str, Any]]:
+    """Convert LangGraph interrupt objects to first-class SSE events.
 
     Args:
-        interrupts: List of interrupt objects.
+        interrupts: List of interrupt objects from ``__interrupt__`` updates.
+        ctx: Stream context with metadata.
 
     Returns:
-        List of AIMessage objects.
+        List of ``{"type": "interrupt", "content": {...}}`` events.
     """
-    messages = []
+    events: list[dict[str, Any]] = []
     for interrupt_data in interrupts:
-        content = (
-            interrupt_data.value
-            if hasattr(interrupt_data, "value")
-            else str(interrupt_data)
+        raw_value = (
+            interrupt_data.value if hasattr(interrupt_data, "value") else interrupt_data
         )
-        messages.append(AIMessage(content=content))
-    return messages
+        events.append(
+            {
+                "type": "interrupt",
+                "content": {
+                    "value": _normalize_interrupt_value(raw_value),
+                    "run_id": ctx.run_id,
+                    "trace_id": ctx.trace_id,
+                    "thread_id": ctx.thread_id,
+                    "session_id": ctx.session_id,
+                    "user_id": ctx.user_id,
+                },
+            }
+        )
+    return events
 
 
 def _convert_messages_to_events(
@@ -119,25 +153,16 @@ class UpdateEventHandler:
             ctx: Stream context with metadata.
 
         Returns:
-            List of formatted message events.
+            List of formatted message and interrupt events.
         """
-        messages = self._extract_and_deduplicate_messages(event)
-        return _convert_messages_to_events(messages, ctx)
-
-    def _extract_and_deduplicate_messages(self, event: dict[str, Any]) -> list:
-        """Extract and deduplicate messages from update event.
-
-        Args:
-            event: Update event dictionary.
-
-        Returns:
-            List of messages to process.
-        """
-        all_messages = []
+        interrupt_events: list[dict[str, Any]] = []
+        messages: list = []
 
         for node, updates in event.items():
             if node == "__interrupt__":
-                all_messages.extend(_convert_interrupts_to_messages(updates))
+                interrupt_events.extend(
+                    _convert_interrupts_to_events(updates or [], ctx)
+                )
                 continue
 
             updates = updates or {}
@@ -146,16 +171,14 @@ class UpdateEventHandler:
             update_messages = raw_messages.value if is_overwrite else raw_messages
 
             if is_overwrite:
-                # Filter to only unseen messages
                 update_messages = self.deduplicator.get_unseen_messages(update_messages)
             else:
-                # Mark all messages as seen for future deduplication
                 for msg in update_messages:
                     self.deduplicator.mark_seen(msg)
 
-            all_messages.extend(update_messages)
+            messages.extend(update_messages)
 
-        return all_messages
+        return interrupt_events + _convert_messages_to_events(messages, ctx)
 
 
 class TokenEventHandler:
