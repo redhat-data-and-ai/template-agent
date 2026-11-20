@@ -643,6 +643,52 @@ def setup_guardian_guardrails() -> None:
         logger.warning("Failed to register Guardian callback", exc_info=True)
 
 
+_input_guardrail_initialized = False
+
+
+def setup_input_guardrail() -> None:
+    """Register the Phase 1 input callback. No Guardian endpoint is required."""
+    global _input_guardrail_initialized  # noqa: PLW0603
+    if _input_guardrail_initialized:
+        return
+    _input_guardrail_initialized = True
+
+    from deep_agent.src.agent.config import agent_config
+    from deep_agent.src.guardrails.input_gate import init_input_gate
+
+    host_cfg = agent_config.get_input_guardrail_config()
+    if not host_cfg.enabled:
+        logger.info("Phase 1 input guardrail disabled in agent.yaml")
+        return
+
+    init_input_gate(host_cfg)
+    try:
+        from langchain_core.tracers.context import register_configure_hook
+
+        from deep_agent.src.guardrails.input_callback import InputGuardrailHandler
+
+        handler_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+            "input_guardrail_handler",
+            default=None,
+        )
+        os.environ.setdefault("INPUT_GUARDRAIL_ACTIVE", "true")
+        register_configure_hook(
+            handler_var,
+            True,
+            InputGuardrailHandler,
+            env_var="INPUT_GUARDRAIL_ACTIVE",
+        )
+        logger.info("Phase 1 input guardrail callback registered")
+    except ImportError:
+        logger.warning(
+            "langchain_core not available — Phase 1 input guardrail callback disabled"
+        )
+    except Exception:
+        logger.warning(
+            "Failed to register Phase 1 input guardrail callback", exc_info=True
+        )
+
+
 def get_langfuse_client() -> Any:
     """Return the Langfuse singleton client (v4), or None if unconfigured.
 

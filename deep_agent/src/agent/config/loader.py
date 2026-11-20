@@ -24,6 +24,7 @@ import yaml
 
 from deep_agent.src.exceptions import AppException, ErrorCodes
 from deep_agent.src.guardrails.config import GuardrailsConfig
+from deep_agent.src.guardrails.input_config import InputGuardrailHostConfig
 from deep_agent.src.settings import settings
 from deep_agent.src.token_budget.config import TokenBudgetConfig
 from deep_agent.utils.pylogger import get_python_logger
@@ -199,6 +200,7 @@ class AgentConfig:
     _otel_config: OtelFileConfig
     _token_budget_config: TokenBudgetConfig
     _guardrails_config: GuardrailsConfig
+    _input_guardrail_config: InputGuardrailHostConfig
     _pii_config: PIIConfig
     _model_configs: ModelConfigs
     _name: str
@@ -274,6 +276,36 @@ class AgentConfig:
                 "Failed to parse guardrail section — disabling guardrails: %s", e
             )
             return GuardrailsConfig(enabled=False)
+
+    def _load_input_guardrail_config(
+        self, section: dict | None
+    ) -> InputGuardrailHostConfig:
+        """Load the Phase 1 input gate from the ``input_guardrail`` section.
+
+        An absent or disabled section leaves the gate off. A section that
+        asks to be enabled but cannot be parsed stays enabled so the adapter
+        fails closed instead of skipping the check.
+        """
+        raw = section or {}
+        if not raw.get("enabled", False):
+            logger.info("Phase 1 input guardrail disabled in agent.yaml")
+            return InputGuardrailHostConfig(enabled=False)
+        try:
+            config = cast(
+                InputGuardrailHostConfig,
+                InputGuardrailHostConfig.model_validate(raw),
+            )
+            logger.info("Loaded Phase 1 input guardrail config from agent.yaml")
+            return config
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse input_guardrail section — failing closed: %s",
+                exc,
+            )
+            return InputGuardrailHostConfig(
+                enabled=True,
+                gate={"budgets": "invalid"},
+            )
 
     def _load_pii_config(self) -> PIIConfig:
         """Load PII configuration from runtime/pii.yaml.
@@ -367,6 +399,9 @@ class AgentConfig:
 
         # Load guardrails config from agent.yaml guardrail section
         self._guardrails_config = self._load_guardrails_config(raw.get("guardrail"))
+        self._input_guardrail_config = self._load_input_guardrail_config(
+            raw.get("input_guardrail")
+        )
 
         # Load PII config from pii.yaml (absent file = disabled)
         self._pii_config = self._load_pii_config()
@@ -985,6 +1020,15 @@ class AgentConfig:
         """
         self._ensure_loaded()
         return self._guardrails_config
+
+    def get_input_guardrail_config(self) -> InputGuardrailHostConfig:
+        """Get the Phase 1 input-gate configuration.
+
+        Returns:
+            The parsed host config. Disabled when the section is absent.
+        """
+        self._ensure_loaded()
+        return self._input_guardrail_config
 
     def get_pyproject_path(self) -> Path:
         """Get the skill sandbox pyproject.toml path.

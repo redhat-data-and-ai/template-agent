@@ -45,6 +45,7 @@ RUN pip install --no-cache-dir uv && \
 USER 65532
 
 COPY --chown=65532:root deep_agent /app/deep_agent
+COPY --chown=65532:root guardrails/src/agent_guardrails /app/agent_guardrails
 COPY --chown=65532:root aegra.json /app/aegra.json
 COPY --chown=65532:root entrypoint.sh /app/entrypoint.sh
 

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-guardrails"
+version = "0.1.0"
+description = "Host-agnostic Phase 1 input guardrails for tool-using agents."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2"]
+
+[project.optional-dependencies]
+presidio = ["presidio-analyzer"]
+models = ["transformers", "sentence-transformers"]
+
+[project.scripts]
+agent-guardrails-eval = "agent_guardrails.eval:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_guardrails"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
