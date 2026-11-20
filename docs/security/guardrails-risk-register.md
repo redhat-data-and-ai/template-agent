@@ -203,3 +203,71 @@ configured. Audit completeness relies entirely on the container log driver.
 **Required action:** Route stdout audit events (`event=platform.audit`) to a
 write-once audit store or forward to a SIEM. Add an alert for gaps in
 `trace_id` sequence or missing `llm_call` events in active threads.
+
+---
+
+### 8. Degenerate repetition loop / token exhaustion — Addressed
+**Threat:** Gemini can occasionally enter a degenerate autoregressive loop —
+most often when refusing a prompt (e.g. refusing to validate an unverifiable
+user claim) — and emit the exact same sentence/disclaimer 50-100+ times in a
+single completion, sometimes restarting the entire response block
+mid-generation. This wastes tokens/cost, degrades latency, and produces a
+broken user experience. Gemini has no `frequency_penalty`/`presence_penalty`
+knob (unlike OpenAI-style APIs), so this cannot be fixed via generation
+parameters alone.
+
+**Mitigation in place:** `detect_repetition_loop()`
+(`deep_agent/src/agent/repetition.py`) is a small, pure, dependency-free
+detector that inspects the tail of a (possibly still-growing) response for a
+short unit of text (default: >= `REPETITION_LOOP_MIN_UNIT_LEN` = 20 chars)
+repeated consecutively (default: >= `REPETITION_LOOP_MIN_REPEATS` = 4 times),
+and returns the text with the repeats collapsed to a single copy. It is wired
+into `SafetyAwareRunnable` (`deep_agent/aegra/safety.py`), the same proxy
+that already wraps every orchestrator/subagent call:
+
+- **`astream_events`** (outermost, the SSE production path): piggybacks on
+  the AI-chunk buffer that already exists there for safety-block detection —
+  no additional buffering or latency. Accumulates streamed text per model
+  invocation (keyed by `run_id`); as soon as a loop is detected, it **breaks
+  the underlying stream early** (same mechanism already used to stop a
+  safety-blocked tool retry loop) and emits a single truncated
+  `on_chat_model_stream` chunk instead of the buffered ones — stopping
+  further generation before it consumes unbounded tokens.
+- **`ainvoke`**: runs the detector on the final `AIMessage` (post-hoc, since
+  the full response has already been generated) at every nesting level —
+  same rationale as the existing tool-block override — so truncated content
+  never re-enters conversation state/context even for non-streaming callers.
+  Uses `model_copy(update={"content": ...})` so tool_calls, response
+  metadata, usage metadata, and the message's id survive the truncation.
+- **`astream`** (the `stream_mode="messages"` path): intentionally left
+  unmodified. An earlier version of this fix buffered chunks here to detect
+  loops, but that required withholding up to ~1600 chars before forwarding
+  anything, which broke incremental streaming for any response shorter than
+  the buffer — a UX regression worse than the rare bug it guarded against.
+  Removed in favor of relying on `astream_events` (the production path) and
+  `ainvoke` (context hygiene) for coverage with zero added latency.
+
+Gated by `REPETITION_LOOP_DETECTION_ENABLED` (default `true`); a warning log
+is emitted whenever a loop is truncated.
+
+**Residual gaps:**
+- `astream` does not detect repetition loops at all — a caller using only
+  that path would see a loop stream through untruncated to the client. It
+  is still cleaned from conversation state on the next turn via `ainvoke`.
+- `ainvoke`'s truncation is post-hoc — it prevents truncated garbage from
+  re-entering context/state and improves UX, but the tokens for the full
+  (looping) generation have already been billed by the provider by the time
+  `ainvoke` sees the result. Only the `astream_events` early-break path
+  actually saves generation cost.
+- Detection is exact-match and bounded to units <= 400 chars
+  (`_MAX_UNIT_LEN` in `repetition.py`); a loop built from a longer repeated
+  block, or one with minor per-repeat variation (e.g. trailing whitespace
+  differences), would not be caught.
+- This is best-effort/fail-safe, not fail-closed: if `detect_repetition_loop`
+  never trips (e.g. thresholds tuned too high for a given deployment), the
+  response streams through unmodified — same posture as every other
+  guardrail in this register.
+- The feature only activates when `SafetyAwareRunnable` wraps the graph,
+  which currently only happens when guardrails are enabled. This is a
+  pre-existing wiring decision (not introduced by this change); decoupling
+  it is out of scope here.
