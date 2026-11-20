@@ -308,7 +308,17 @@ class TestAgentFactory:
         built_tools = mock_create.call_args.kwargs["tools"]
         # Tools are wrapped by CapabilityToolProxy; compare by name and
         # confirm the enforcement wrapper is present.
-        assert [t.name for t in built_tools] == [mock_tool.name]
+        #
+        # The sandbox backend's own tools are registered alongside the MCP
+        # ones and are not part of the implicit grant, so they are
+        # subtracted rather than listed: what this asserts is that the
+        # declared server's tool is granted and no *other* MCP tool rides
+        # in with it.
+        from deep_agent.src.agent.daytona_backend import get_builtin_tools
+
+        builtin = {t.name for t in get_builtin_tools()}
+        granted = {t.name for t in built_tools} - builtin
+        assert granted == {mock_tool.name}
         assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
         mock_get_mcp.assert_awaited_once_with(
             sso_token=None, server_names=["dataverse-mcp-prod1"], user_id=None
