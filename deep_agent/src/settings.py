@@ -275,6 +275,71 @@ class Settings(BaseSettings):
         "Falls back to AGENT_PUBLIC_BASE_URL if not set.",
     )
 
+    # ── OpenShell code sandbox ────────────────────────────────────────
+    # Unset OPENSHELL_ENDPOINT disables the sandbox entirely: the agent
+    # keeps its checkpointed filesystem and simply offers no `execute`.
+    OPENSHELL_ENDPOINT: Optional[str] = Field(default=None)
+    OPENSHELL_WORKSPACE: str = Field(default="default")
+    OPENSHELL_CLIENT_ID: Optional[str] = Field(default=None)
+    OPENSHELL_CLIENT_SECRET: Optional[str] = Field(default=None)
+    OPENSHELL_ISSUER: Optional[str] = Field(default=None)
+    OPENSHELL_AUDIENCE: str = Field(default="openshell-cli")
+    # Space-separated OAuth scopes, when the issuer requires them.
+    OPENSHELL_SCOPES: Optional[str] = Field(default=None)
+    # Transport security for the gateway's gRPC channel. On by default and
+    # with no paths set, the OS trust store is used -- right for a gateway
+    # behind a public or cluster CA. The SDK itself refuses OAuth client
+    # credentials over a plaintext channel to a non-loopback endpoint,
+    # since the bearer would cross the network in the clear.
+    OPENSHELL_TLS_ENABLED: bool = Field(default=True)
+    OPENSHELL_TLS_CA_PATH: Optional[str] = Field(default=None)
+    OPENSHELL_TLS_CERT_PATH: Optional[str] = Field(default=None)
+    OPENSHELL_TLS_KEY_PATH: Optional[str] = Field(default=None)
+    # Skip certificate verification when fetching tokens from the OIDC
+    # issuer. Separate from the gateway channel above, and for a
+    # self-signed dev issuer only.
+    OPENSHELL_OIDC_INSECURE: bool = Field(default=False)
+    OPENSHELL_NAME: str = Field(default="template-agent")
+    OPENSHELL_RUNTIME: Literal["python", "node", "go"] = Field(default="python")
+    OPENSHELL_IMAGE_PYTHON: str = Field(
+        default="registry.access.redhat.com/hi/python:3.14-builder"
+    )
+    OPENSHELL_IMAGE_NODE: str = Field(
+        default="registry.access.redhat.com/hi/nodejs:22-builder"
+    )
+    OPENSHELL_IMAGE_GO: str = Field(
+        default="registry.access.redhat.com/hi/go:1.25.10-builder"
+    )
+    OPENSHELL_READY_TIMEOUT: float = Field(default=180.0, gt=0)
+    OPENSHELL_EXEC_TIMEOUT: int = Field(default=120, gt=0)
+    OPENSHELL_DELETE_TIMEOUT: float = Field(default=90.0, gt=0)
+    # One sandbox per (owner, runtime). "thread" gives every conversation
+    # its own filesystem; "user" shares one across a user's conversations,
+    # trading isolation for far fewer pods. Never shared across users.
+    OPENSHELL_SESSION_SCOPE: Literal["thread", "user"] = Field(default="thread")
+    # Allow a single process-wide sandbox when no caller identity can be
+    # resolved. Single-user local development only — in a served
+    # deployment this would hand every caller the same filesystem.
+    OPENSHELL_ALLOW_SHARED_SANDBOX: bool = Field(default=False)
+    OPENSHELL_SESSION_IDLE_TTL: int = Field(default=1800, gt=0)
+    OPENSHELL_MAX_SESSIONS: int = Field(default=50, ge=1)
+    OPENSHELL_REAPER_INTERVAL: float = Field(default=60.0, gt=0)
+    # Where FilesystemMiddleware offloads large tool results and evicted
+    # messages. Must stay off the sandbox: a reset would otherwise discard
+    # conversation history the model still needs to rehydrate.
+    SANDBOX_ARTIFACTS_ROOT: str = Field(default="/artifacts/")
+
+    @field_validator("SANDBOX_ARTIFACTS_ROOT")
+    @classmethod
+    def _artifacts_root_is_a_route(cls, v: str) -> str:
+        """Require both slashes: CompositeBackend matches routes by prefix."""
+        if not v.startswith("/") or not v.endswith("/") or v == "/":
+            raise ValueError(
+                "SANDBOX_ARTIFACTS_ROOT must be an absolute directory route "
+                f"like '/artifacts/', got {v!r}"
+            )
+        return v
+
     # ── Derived ───────────────────────────────────────────────────────
 
     @property
@@ -337,6 +402,18 @@ class Settings(BaseSettings):
         )
 
 
+def _is_loopback_endpoint(endpoint: str | None) -> bool:
+    """Whether a `host:port` gRPC endpoint points at this machine.
+
+    Mirrors the OpenShell SDK's own check, which is what decides whether a
+    plaintext channel is allowed to carry OAuth credentials.
+    """
+    if not endpoint:
+        return False
+    host = endpoint.rsplit(":", 1)[0].strip("[]") if ":" in endpoint else endpoint
+    return host in _DEV_PUBLIC_HOSTS or host == "localhost"
+
+
 def validate_config(settings: Settings) -> None:
     """Validate port range, log level, and production constraints."""
     if not (1024 <= settings.AGENT_PORT <= 65535):
@@ -361,8 +438,63 @@ def validate_config(settings: Settings) -> None:
                 ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
             )
 
+    # A half-configured gateway fails at the first tool call rather than at
+    # startup, so catch it here instead.
+    if settings.OPENSHELL_ENDPOINT:
+        missing = [
+            name
+            for name in (
+                "OPENSHELL_CLIENT_ID",
+                "OPENSHELL_CLIENT_SECRET",
+                "OPENSHELL_ISSUER",
+            )
+            if not getattr(settings, name)
+        ]
+        if missing:
+            raise AppException(
+                "OPENSHELL_ENDPOINT is set, so the sandbox needs a machine "
+                f"identity too; missing: {', '.join(missing)}",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
+        if bool(settings.OPENSHELL_TLS_CERT_PATH) != bool(
+            settings.OPENSHELL_TLS_KEY_PATH
+        ):
+            raise AppException(
+                "OPENSHELL_TLS_CERT_PATH and OPENSHELL_TLS_KEY_PATH must be "
+                "set together (client identity needs both halves)",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
+        # The SDK rejects this itself, but only at the first tool call, and
+        # by then the agent is serving traffic it cannot run code for.
+        if not settings.OPENSHELL_TLS_ENABLED and not _is_loopback_endpoint(
+            settings.OPENSHELL_ENDPOINT
+        ):
+            raise AppException(
+                "OPENSHELL_TLS_ENABLED=false is only allowed for a loopback "
+                f"gateway; {settings.OPENSHELL_ENDPOINT} would send the OAuth "
+                "bearer token over the network in cleartext",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
     # Production-specific validations
     if settings.is_production:
+        # A shared sandbox hands every caller the same filesystem.
+        if settings.OPENSHELL_ENDPOINT and settings.OPENSHELL_ALLOW_SHARED_SANDBOX:
+            raise AppException(
+                "OPENSHELL_ALLOW_SHARED_SANDBOX cannot be true in production: "
+                "unidentified callers would share one sandbox filesystem.",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
+        if settings.OPENSHELL_ENDPOINT and settings.OPENSHELL_OIDC_INSECURE:
+            raise AppException(
+                "OPENSHELL_OIDC_INSECURE cannot be true in production: the "
+                "client secret would be sent to an unverified token endpoint.",
+                ErrorCodes.CONFIGURATION_VALIDATION_ERROR,
+            )
+
         # Enforce auth in production
         if not settings.ENABLE_AUTH:
             raise AppException(

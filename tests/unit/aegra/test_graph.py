@@ -307,8 +307,11 @@ class TestAgentFactory:
         assert result is mock_compiled
         built_tools = mock_create.call_args.kwargs["tools"]
         # Tools are wrapped by CapabilityToolProxy; compare by name and
-        # confirm the enforcement wrapper is present.
-        assert [t.name for t in built_tools] == [mock_tool.name]
+        # confirm the enforcement wrapper is present. The sandbox builtins
+        # are always offered alongside the MCP tools.
+        assert [t.name for t in built_tools if not t.name.startswith("openshell_")] == [
+            mock_tool.name
+        ]
         assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
         mock_get_mcp.assert_awaited_once_with(
             sso_token=None, server_names=["dataverse-mcp-prod1"], user_id=None
