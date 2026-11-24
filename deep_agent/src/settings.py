@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
     CLAUDE_LOCATION: Optional[str] = Field(default=None)
     GEMINI_LOCATION: Optional[str] = Field(default=None)
+    AGENT_INCLUDE_THOUGHTS: bool = Field(
+        default=True,
+        description="Whether to include thinking traces in agent responses",
+    )
 
     # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────
     SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")
