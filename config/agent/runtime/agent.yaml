@@ -123,6 +123,7 @@ middleware:
     exclude:
       - write_todos         # internal task tracking — no user approval needed
       - compact_conversation  # internal memory management — no user approval needed
+      - clarify             # clarifying question — the question card is the pause
       - ls                  # read-only directory listing — no side effects
       - read_file           # read-only file read — no side effects
       - glob                # read-only filename pattern match — no side effects
