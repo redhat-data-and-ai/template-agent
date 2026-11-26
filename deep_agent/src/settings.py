@@ -117,8 +117,13 @@ class Settings(BaseSettings):
     CLAUDE_LOCATION: Optional[str] = Field(default=None)
     GEMINI_LOCATION: Optional[str] = Field(default=None)
     AGENT_INCLUDE_THOUGHTS: bool = Field(
-        default=True,
-        description="Whether to include thinking traces in agent responses",
+        default=False,
+        description=(
+            "Ask capable Vertex models for a thinking trace. Off unless set. "
+            "Claude then spends up to half of MAX_OUTPUT_TOKENS on thinking, "
+            "capped at 4096, so the visible answer can be shorter. "
+            "Gemini is asked for thoughts with no separate cap."
+        ),
     )
 
     # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────

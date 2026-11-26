@@ -20,25 +20,27 @@ class TestCreateModel:
         """Test creating Gemini model — no location settings ⇒ location=None."""
         mock_creds = MagicMock()
 
-        with patch(
-            "deep_agent.src.agent.llm.get_service_account_credentials"
-        ) as mock_get_creds:
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", True),
+        ):
             mock_get_creds.return_value = (mock_creds, "test-project")
-
-            with patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI") as mock_chat:
-                create_model("gemini-2.5-pro", temperature=0.5)
-                mock_chat.assert_called_once_with(
-                    model="gemini-2.5-pro",
-                    temperature=0.5,
-                    credentials=mock_creds,
-                    project="test-project",
-                    location=None,
-                    max_output_tokens=8192,
-                    max_retries=2,
-                    streaming=True,
-                    safety_settings=safety_settings,
-                    include_thoughts=True,
-                )
+            create_model("gemini-2.5-pro", temperature=0.5)
+            mock_chat.assert_called_once_with(
+                model="gemini-2.5-pro",
+                temperature=0.5,
+                credentials=mock_creds,
+                project="test-project",
+                location=None,
+                max_output_tokens=8192,
+                max_retries=2,
+                streaming=True,
+                safety_settings=safety_settings,
+                include_thoughts=True,
+            )
 
     def test_create_gemini_model_with_location(self):
         """Test that explicit location is passed to ChatGoogleGenerativeAI.
@@ -49,45 +51,49 @@ class TestCreateModel:
         """
         mock_creds = MagicMock()
 
-        with patch(
-            "deep_agent.src.agent.llm.get_service_account_credentials"
-        ) as mock_get_creds:
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", True),
+        ):
             mock_get_creds.return_value = (mock_creds, "test-project")
-
-            with patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI") as mock_chat:
-                create_model(
-                    "gemini-2.5-pro",
-                    temperature=0.5,
-                    location="europe-west1",
-                )
-                mock_chat.assert_called_once_with(
-                    model="gemini-2.5-pro",
-                    temperature=0.5,
-                    credentials=mock_creds,
-                    project="test-project",
-                    location="europe-west1",
-                    max_output_tokens=8192,
-                    max_retries=2,
-                    streaming=True,
-                    safety_settings=safety_settings,
-                    include_thoughts=True,
-                )
+            create_model(
+                "gemini-2.5-pro",
+                temperature=0.5,
+                location="europe-west1",
+            )
+            mock_chat.assert_called_once_with(
+                model="gemini-2.5-pro",
+                temperature=0.5,
+                credentials=mock_creds,
+                project="test-project",
+                location="europe-west1",
+                max_output_tokens=8192,
+                max_retries=2,
+                streaming=True,
+                safety_settings=safety_settings,
+                include_thoughts=True,
+            )
 
     def test_create_gemini_25_flash_does_not_get_a_thinking_level(self):
         """Gemini 2.5 rejects thinking_level. Thoughts still use include_thoughts."""
         mock_creds = MagicMock()
 
-        with patch(
-            "deep_agent.src.agent.llm.get_service_account_credentials"
-        ) as mock_get_creds:
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", True),
+        ):
             mock_get_creds.return_value = (mock_creds, "test-project")
-
-            with patch("deep_agent.src.agent.llm.ChatGoogleGenerativeAI") as mock_chat:
-                create_model("gemini-2.5-flash", temperature=0.5)
-                kwargs = mock_chat.call_args.kwargs
-                assert kwargs["model"] == "gemini-2.5-flash"
-                assert kwargs["include_thoughts"] is True
-                assert "thinking_level" not in kwargs
+            create_model("gemini-2.5-flash", temperature=0.5)
+            kwargs = mock_chat.call_args.kwargs
+            assert kwargs["model"] == "gemini-2.5-flash"
+            assert kwargs["include_thoughts"] is True
+            assert "thinking_level" not in kwargs
 
     def test_listed_gemini_model_includes_thoughts(self):
         """A listed Gemini model is asked for thoughts, without a thinking level."""
@@ -148,91 +154,99 @@ class TestCreateModel:
         """Test that explicit location overrides CLAUDE_LOCATION default for Claude."""
         mock_creds = MagicMock()
 
-        with patch(
-            "deep_agent.src.agent.llm.get_service_account_credentials"
-        ) as mock_get_creds:
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", True),
+        ):
             mock_get_creds.return_value = (mock_creds, "test-project")
-
-            with patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat:
-                create_model(
-                    "claude-sonnet-4",
-                    temperature=0.7,
-                    location="europe-west1",
-                )
-                mock_chat.assert_called_once_with(
-                    model="claude-sonnet-4",
-                    project="test-project",
-                    location="europe-west1",
-                    credentials=mock_creds,
-                    max_tokens=8192,
-                    max_retries=2,
-                    streaming=True,
-                    model_kwargs={
-                        "thinking": {"type": "enabled", "budget_tokens": 4096},
-                    },
-                )
+            create_model(
+                "claude-sonnet-4",
+                temperature=0.7,
+                location="europe-west1",
+            )
+            mock_chat.assert_called_once_with(
+                model="claude-sonnet-4",
+                project="test-project",
+                location="europe-west1",
+                credentials=mock_creds,
+                max_tokens=8192,
+                max_retries=2,
+                streaming=True,
+                model_kwargs={
+                    "thinking": {"type": "enabled", "budget_tokens": 4096},
+                },
+            )
 
     def test_create_claude_model(self):
         """Test creating Claude model — no location settings ⇒ falls back to us-east5."""
         mock_creds = MagicMock()
 
-        with patch(
-            "deep_agent.src.agent.llm.get_service_account_credentials"
-        ) as mock_get_creds:
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", True),
+        ):
             mock_get_creds.return_value = (mock_creds, "test-project")
-
-            with patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat:
-                create_model("claude-sonnet-4", temperature=0.7)
-                mock_chat.assert_called_once_with(
-                    model="claude-sonnet-4",
-                    project="test-project",
-                    location="us-east5",
-                    credentials=mock_creds,
-                    max_tokens=8192,
-                    max_retries=2,
-                    streaming=True,
-                    model_kwargs={
-                        "thinking": {"type": "enabled", "budget_tokens": 4096},
-                    },
-                )
+            create_model("claude-sonnet-4", temperature=0.7)
+            mock_chat.assert_called_once_with(
+                model="claude-sonnet-4",
+                project="test-project",
+                location="us-east5",
+                credentials=mock_creds,
+                max_tokens=8192,
+                max_retries=2,
+                streaming=True,
+                model_kwargs={
+                    "thinking": {"type": "enabled", "budget_tokens": 4096},
+                },
+            )
 
     def test_claude_thinking_budget_is_half_the_reply_limit(self):
         """A smaller reply limit keeps half for the answer, capped at 4096."""
         mock_creds = MagicMock()
 
-        with patch(
-            "deep_agent.src.agent.llm.get_service_account_credentials"
-        ) as mock_get_creds:
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", True),
+        ):
             mock_get_creds.return_value = (mock_creds, "test-project")
-
-            with patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat:
-                create_model("claude-sonnet-4", temperature=0.0, max_output_tokens=4096)
-                mock_chat.assert_called_once_with(
-                    model="claude-sonnet-4",
-                    project="test-project",
-                    location="us-east5",
-                    credentials=mock_creds,
-                    max_tokens=4096,
-                    max_retries=2,
-                    streaming=True,
-                    model_kwargs={
-                        "thinking": {"type": "enabled", "budget_tokens": 2048},
-                    },
-                )
+            create_model("claude-sonnet-4", temperature=0.0, max_output_tokens=4096)
+            mock_chat.assert_called_once_with(
+                model="claude-sonnet-4",
+                project="test-project",
+                location="us-east5",
+                credentials=mock_creds,
+                max_tokens=4096,
+                max_retries=2,
+                streaming=True,
+                model_kwargs={
+                    "thinking": {"type": "enabled", "budget_tokens": 2048},
+                },
+            )
 
     def test_claude_thinking_stays_off_when_half_the_limit_is_too_small(self):
         """Below 1024 tokens Claude rejects a thinking budget, so thinking is omitted."""
         mock_creds = MagicMock()
 
-        with patch(
-            "deep_agent.src.agent.llm.get_service_account_credentials"
-        ) as mock_get_creds:
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", True),
+        ):
             mock_get_creds.return_value = (mock_creds, "test-project")
-
-            with patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat:
-                create_model("claude-sonnet-4", temperature=0.0, max_output_tokens=512)
-                kwargs = mock_chat.call_args.kwargs
-                assert "thinking" not in kwargs["model_kwargs"]
+            create_model("claude-sonnet-4", temperature=0.0, max_output_tokens=512)
+            kwargs = mock_chat.call_args.kwargs
+            assert "thinking" not in kwargs["model_kwargs"]
 
     def test_claude_thinking_stays_off_when_the_flag_is_off(self):
         """The switch removes Claude's thinking object."""

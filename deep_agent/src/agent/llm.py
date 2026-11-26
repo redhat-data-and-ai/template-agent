@@ -133,6 +133,14 @@ def _create_vertex_model(
         thoughts_allowed = (
             settings.AGENT_INCLUDE_THOUGHTS and model_name in THINKING_CAPABLE_MODELS
         )
+        if (
+            settings.AGENT_INCLUDE_THOUGHTS
+            and model_name not in THINKING_CAPABLE_MODELS
+        ):
+            logger.warning(
+                "Thoughts are enabled but this model is not asked for them",
+                model=model_name,
+            )
 
         if is_claude:
             thinking_budget = min(4096, max_output_tokens // 2)
@@ -211,6 +219,11 @@ def _create_vllm_model(
             temperature=temperature,
             max_output_tokens=max_output_tokens,
         )
+        if settings.AGENT_INCLUDE_THOUGHTS:
+            logger.warning(
+                "Thoughts are enabled but this OpenAI-compatible backend does not receive them",
+                model=model_name,
+            )
 
         return ExtraContentChatOpenAI(
             model=model_name,
