@@ -1255,6 +1255,58 @@ class TestEvalRun:
             "b" * 32: {"decisions": [{"type": "approve"}]},
         }
 
+    async def test_run_answers_user_question_with_stand_in(self):
+        pre_approval_state = {
+            "__interrupt__": [
+                {
+                    "id": "c" * 32,
+                    "value": {
+                        "type": "user_question",
+                        "question": "Units?",
+                        "options": ["kg", "lbs"],
+                    },
+                }
+            ],
+            "messages": [{"type": "ai", "content": "Which units?"}],
+        }
+        post_approval_state = {
+            "messages": [{"type": "ai", "content": "Using kilograms."}],
+        }
+
+        thread_resp = MagicMock()
+        thread_resp.raise_for_status = MagicMock()
+        thread_resp.json = MagicMock(return_value={"thread_id": "t-question"})
+
+        pre_resp = MagicMock()
+        pre_resp.raise_for_status = MagicMock()
+        pre_resp.json = MagicMock(return_value=pre_approval_state)
+
+        post_resp = MagicMock()
+        post_resp.raise_for_status = MagicMock()
+        post_resp.json = MagicMock(return_value=post_approval_state)
+
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.post = AsyncMock(side_effect=[thread_resp, pre_resp, post_resp])
+
+        with patch(
+            "deep_agent.aegra.eval_routes.httpx.AsyncClient", return_value=client
+        ):
+            with patch(
+                "deep_agent.aegra.eval_routes._collect_subagent_tool_calls_via_remote_graph",
+                new=AsyncMock(return_value=[]),
+            ):
+                result = await er.eval_run(
+                    er.EvalRunRequest(query="How tall?", auto_approve=True)
+                )
+
+        assert result.response == "Using kilograms."
+        resume = client.post.call_args_list[2].kwargs["json"]["command"]["resume"]
+        assert resume == {
+            "c" * 32: "No preference. Continue with the most reasonable choice."
+        }
+
     async def test_run_uses_provided_conversation_id(self):
         run_state = {"messages": [{"type": "ai", "content": "ok", "tool_calls": []}]}
         client = _make_http_client(run_state)
@@ -3040,4 +3092,43 @@ def test_eval_auto_approval_reads_task_interrupt_ids():
     }
     assert er._auto_approval_responses(state) == {
         "a" * 32: {"decisions": [{"type": "approve"}, {"type": "approve"}]}
+    }
+
+
+def test_eval_auto_approval_answers_question_and_approves_tool():
+    state = {
+        "__interrupt__": [
+            {
+                "id": "a" * 32,
+                "value": {"type": "user_question", "question": "Units?"},
+            },
+            {
+                "id": "b" * 32,
+                "value": {"action_requests": [{"name": "email"}]},
+            },
+        ]
+    }
+    assert er._auto_approval_responses(state) == {
+        "a" * 32: "No preference. Continue with the most reasonable choice.",
+        "b" * 32: {"decisions": [{"type": "approve"}]},
+    }
+
+
+def test_eval_auto_approval_answers_question_stored_on_a_task():
+    state = {
+        "tasks": [
+            {
+                "interrupts": [
+                    {
+                        "id": "c" * 32,
+                        "value": json.dumps(
+                            {"type": "user_question", "question": "Units?"}
+                        ),
+                    }
+                ]
+            }
+        ]
+    }
+    assert er._auto_approval_responses(state) == {
+        "c" * 32: "No preference. Continue with the most reasonable choice."
     }

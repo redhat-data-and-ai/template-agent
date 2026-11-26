@@ -501,8 +501,25 @@ def _messages_from_run(run_state: dict) -> list[dict]:
     return run_state.get("values", {}).get("messages", [])  # type: ignore[no-any-return]
 
 
+_QUESTION_STAND_IN = "No preference. Continue with the most reasonable choice."
+
+
+def _interrupt_value(raw: Any) -> Any:
+    """Return a pause payload, parsing a JSON string when that is how it arrived."""
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    return raw
+
+
 def _auto_approval_responses(run_state: dict[str, Any]) -> dict[str, Any]:
-    """Bind each eval decision batch to its interrupt instead of the thread."""
+    """Bind each eval decision to its interrupt.
+
+    A clarifying question gets the stand-in sentence. Every other pause is
+    approved. Each interrupt id is decided on its own.
+    """
     interrupts = run_state.get("__interrupt__") or run_state.get("values", {}).get(
         "__interrupt__"
     )
@@ -517,7 +534,10 @@ def _auto_approval_responses(run_state: dict[str, Any]) -> dict[str, Any]:
         interrupt_id = item.get("id")
         if not isinstance(interrupt_id, str) or not interrupt_id:
             raise RuntimeError("Cannot auto-approve without interrupt IDs")
-        value = item.get("value")
+        value = _interrupt_value(item.get("value"))
+        if isinstance(value, dict) and value.get("type") == "user_question":
+            responses[interrupt_id] = _QUESTION_STAND_IN
+            continue
         actions = value.get("action_requests") if isinstance(value, dict) else None
         count = len(actions) if isinstance(actions, list) else 1
         responses[interrupt_id] = {
@@ -621,10 +641,16 @@ async def eval_run(
 
             if body.auto_approve:
                 for _ in range(MAX_HITL_APPROVALS):
-                    log.info("Auto-approving HITL interrupt for thread %s", thread_id)
+                    resume = _auto_approval_responses(run_state)
+                    if any(value == _QUESTION_STAND_IN for value in resume.values()):
+                        log.info("Answering user question for thread %s", thread_id)
+                    else:
+                        log.info(
+                            "Auto-approving HITL interrupt for thread %s", thread_id
+                        )
                     approve_body = {
                         "assistant_id": ASSISTANT_ID,
-                        "command": {"resume": _auto_approval_responses(run_state)},
+                        "command": {"resume": resume},
                     }
                     run_state = await _run_and_get_state(
                         client, thread_id, approve_body

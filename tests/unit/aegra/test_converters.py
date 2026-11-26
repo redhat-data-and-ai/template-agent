@@ -87,6 +87,19 @@ class TestExtractFinalResponse:
         }
         assert extract_final_response(state) == "Your BMI is 24.7"
 
+    def test_reads_text_blocks_and_skips_thinking(self):
+        state = {
+            "messages": [
+                AIMessage(
+                    content=[
+                        {"type": "thinking", "thinking": "plan the reply"},
+                        {"type": "text", "text": "Your BMI is 24.7"},
+                    ]
+                )
+            ]
+        }
+        assert extract_final_response(state) == "Your BMI is 24.7"
+
     def test_skips_empty_ai_messages(self):
         state = {
             "messages": [
