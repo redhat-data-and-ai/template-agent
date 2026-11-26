@@ -508,6 +508,10 @@ def _build_default_subagent(
 
         resolved_tools = wrap_tools(resolved_tools)
 
+    from deep_agent.src.agent.clarify import attach_clarify
+
+    resolved_tools = attach_clarify(resolved_tools)
+
     subagent_params: dict[str, Any] = {
         "name": name,
         "model": _resolve_subagent_model(agent_cfg),
@@ -568,6 +572,10 @@ def _build_compiled_subagent(
         from deep_agent.src.guardrails.tool_proxy import wrap_tools
 
         resolved_tools = wrap_tools(resolved_tools)
+
+    from deep_agent.src.agent.clarify import attach_clarify
+
+    resolved_tools = attach_clarify(resolved_tools)
 
     create_kwargs = {
         "name": name,

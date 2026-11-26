@@ -89,3 +89,43 @@ def test_agent_structure_returns_prompt_and_skill_details_without_auth_internals
     assert "body" in orchestrator
     assert "skill_paths" in subagents["analyst"]
     assert "oauth" in mcp_servers["search"]
+
+
+def test_subagent_catalog_returns_names_and_descriptions_only(monkeypatch) -> None:
+    """The slash menu gets a fresh name list, never prompts or tool config."""
+    subagents = {
+        "publisher": {
+            "name": "publisher",
+            "description": "Sends the\nfinished report.",
+            "body": "Full publisher prompt.",
+            "tools": ["template_send_email"],
+            "model": "gemini-2.5-pro",
+            "skills": ["email-formatter"],
+        },
+        "analyst": {
+            "name": "analyst",
+            "description": "  Calculates BMI.  ",
+            "body": "Full analyst prompt.",
+        },
+        "notes": {
+            "name": "notes",
+        },
+    }
+    monkeypatch.setattr(
+        http_app.agent_config,
+        "get_all_subagent_configs",
+        lambda: subagents,
+    )
+
+    response = TestClient(http_app.app).get("/config/subagents")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "subagents": [
+            {"name": "analyst", "description": "Calculates BMI."},
+            {"name": "notes", "description": ""},
+            {"name": "publisher", "description": "Sends the finished report."},
+        ]
+    }
+    assert subagents["publisher"]["body"] == "Full publisher prompt."

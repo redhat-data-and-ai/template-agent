@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deep_agent.src.agent.clarify import clarify
 from deep_agent.src.agent.config.model import ModelSpec, Provider
 from deep_agent.src.capability.tool_proxy import CapabilityToolProxy
 from deep_agent.src.exceptions import SubAgentError
@@ -154,6 +155,7 @@ class TestLoadSubagents:
                 model=mock_model,
                 description="Test analyst",
                 system_prompt="Test prompt",
+                tools=[clarify],
             )
 
     def test_load_subagent_with_tools(self):
@@ -218,8 +220,12 @@ class TestLoadSubagents:
             )
             # Tools are wrapped by CapabilityToolProxy; compare by name.
             built_tools = mock_sa.call_args.kwargs["tools"]
-            assert [t.name for t in built_tools] == ["calculate_bmi", "search_web"]
-            assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
+            assert [t.name for t in built_tools] == [
+                "calculate_bmi",
+                "search_web",
+                "clarify",
+            ]
+            assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
             assert mock_sa.call_args.kwargs["name"] == "analyst"
             assert mock_sa.call_args.kwargs["model"] == mock_model
             assert mock_sa.call_args.kwargs["description"] == "Analyst"
@@ -271,6 +277,7 @@ class TestLoadSubagents:
                 model=mock_model,
                 description="Analyst",
                 system_prompt="Prompt",
+                tools=[clarify],
                 skills=["/skills/bmi-report"],
             )
 
@@ -362,12 +369,12 @@ class TestLoadSubagents:
 
             assert result == [mock_subagent]
             mock_resolve_tools.assert_not_called()
-            # SubAgent should be called without tools parameter
             mock_sa.assert_called_once_with(
                 name="analyst",
                 model=mock_model,
                 description="Analyst",
                 system_prompt="Prompt",
+                tools=[clarify],
             )
 
     def test_load_subagent_uses_empty_description_when_missing(self):
@@ -415,6 +422,7 @@ class TestLoadSubagents:
                 model=mock_model,
                 description="",
                 system_prompt="Prompt",
+                tools=[clarify],
             )
 
 
@@ -1019,7 +1027,7 @@ class TestGuardianActivationGate:
         wrap_call_args = mock_wrap.call_args.args[0]
         assert [t.name for t in wrap_call_args] == [mock_tool.name]
         assert all(isinstance(t, CapabilityToolProxy) for t in wrap_call_args)
-        assert mock_sa_cls.call_args.kwargs["tools"] == [mock_tool]
+        assert mock_sa_cls.call_args.kwargs["tools"] == [mock_tool, clarify]
 
     def test_default_subagent_skips_wrapping_when_config_disabled(self):
         """enabled=False + GUARDIAN_API_BASE set → wrap_tools not called."""
@@ -1374,8 +1382,12 @@ class TestMcpResourceToolsOnSubagents:
             load_subagents(tools=[mock_tool])
 
         built_tools = mock_sa.call_args.kwargs["tools"]
-        assert [t.name for t in built_tools] == [mock_tool.name, resource_tool.name]
-        assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
+        assert [t.name for t in built_tools] == [
+            mock_tool.name,
+            resource_tool.name,
+            "clarify",
+        ]
+        assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
         _no_mcp_resource_tools.assert_called_once_with(
             server_names=None, allowed_uris=None
         )
@@ -1488,8 +1500,8 @@ class TestMcpResourceToolsOnSubagents:
             load_subagents(tools=[mock_tool])
 
         built_tools = mock_sa.call_args.kwargs["tools"]
-        assert [t.name for t in built_tools] == [mock_tool.name]
-        assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
+        assert [t.name for t in built_tools] == [mock_tool.name, "clarify"]
+        assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
         _no_mcp_resource_tools.assert_called_once_with(
             server_names=None, allowed_uris=None
         )
@@ -1605,8 +1617,12 @@ class TestMcpResourceToolsOnSubagents:
             load_subagents(tools=[mock_tool])
 
         built_tools = mock_create_agent.call_args.kwargs["tools"]
-        assert [t.name for t in built_tools] == [mock_tool.name, resource_tool.name]
-        assert all(isinstance(t, CapabilityToolProxy) for t in built_tools)
+        assert [t.name for t in built_tools] == [
+            mock_tool.name,
+            resource_tool.name,
+            "clarify",
+        ]
+        assert all(isinstance(t, CapabilityToolProxy) for t in built_tools[:-1])
         _no_mcp_resource_tools.assert_called_once_with(
             server_names=None, allowed_uris=None
         )

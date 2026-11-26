@@ -29,6 +29,7 @@ from deep_agent.aegra.security_middleware import (
     SecurityHeadersMiddleware,
     StreamingBodyLimitMiddleware,
 )
+from deep_agent.aegra.subagent_transcripts import router as subagent_transcripts_router
 from deep_agent.aegra.thread_cleanup import thread_cleanup_router
 from deep_agent.aegra.upload_routes import upload_router
 from deep_agent.src.agent.config import agent_config
@@ -236,6 +237,7 @@ app.add_middleware(
     max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
     path_limits=_BODY_LIMITS,
 )
+app.include_router(subagent_transcripts_router)
 app.include_router(thread_cleanup_router)
 app.include_router(personalization_router)
 app.include_router(projects_router)
@@ -284,3 +286,30 @@ async def agent_structure(request: Request) -> dict:
         "mcp_servers": mcp_servers,
         "skills": skills,
     }
+
+
+def _one_line(value: object) -> str:
+    """Collapse a config string into a single line for the slash menu."""
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split())
+
+
+@app.get("/config/subagents")
+async def list_subagents(request: Request) -> JSONResponse:
+    """Return subagent names and descriptions for the slash menu.
+
+    Reads the current config on each request so any pod can answer. The
+    payload is names and descriptions only: prompts, tools, and models stay
+    on the agent.
+    """
+    await authenticated_user_id(request)
+    items = [
+        {"name": name, "description": _one_line(cfg.get("description", ""))}
+        for name, cfg in agent_config.get_all_subagent_configs().items()
+    ]
+    items.sort(key=lambda item: item["name"])
+    return JSONResponse(
+        {"subagents": items},
+        headers={"Cache-Control": "no-store"},
+    )

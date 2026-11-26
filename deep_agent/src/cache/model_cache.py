@@ -1,7 +1,8 @@
 """LLM model instance cache.
 
 Caches ``BaseChatModel`` instances by ``(model_name, temperature,
-max_output_tokens)`` or by ``(spec_cache_key, temperature, tokens)``
+max_output_tokens, include_thoughts)`` or by ``(spec_cache_key,
+temperature, tokens, location, include_thoughts)``
 for provider-aware specs so repeated per-request calls reuse the same
 client handle.
 
@@ -26,10 +27,10 @@ from deep_agent.utils.pylogger import get_python_logger
 
 logger = get_python_logger()
 
-_LegacyCacheKey = tuple[str, float, int]
+_LegacyCacheKey = tuple[str, float, int, bool]
 _SpecCacheKey = tuple[
-    str, float, int, str | None
-]  # (cache_id, temperature, tokens, location)
+    str, float, int, str | None, bool
+]  # (cache_id, temperature, tokens, location, include_thoughts)
 
 _lock = threading.Lock()
 _legacy_cache: TTLCache[_LegacyCacheKey, object] | None = None
@@ -85,7 +86,12 @@ def get_or_create_model(
     if not cache_settings.is_enabled("model"):
         return create_model(model_name, temperature, tokens)
 
-    key: _LegacyCacheKey = (model_name, temperature, tokens)
+    key: _LegacyCacheKey = (
+        model_name,
+        temperature,
+        tokens,
+        settings.AGENT_INCLUDE_THOUGHTS,
+    )
 
     with _lock:
         cache = _get_legacy_cache()
@@ -132,7 +138,13 @@ def get_or_create_model_from_spec(
             spec, temperature=temperature, max_output_tokens=tokens, location=location
         )
 
-    key: _SpecCacheKey = (cache_id, temperature, tokens, location)
+    key: _SpecCacheKey = (
+        cache_id,
+        temperature,
+        tokens,
+        location,
+        settings.AGENT_INCLUDE_THOUGHTS,
+    )
 
     with _lock:
         cache = _get_spec_cache()

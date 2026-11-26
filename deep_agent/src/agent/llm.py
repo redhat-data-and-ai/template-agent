@@ -33,6 +33,7 @@ GEMINI_MODELS: list[str] = [
     "gemini-2.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
+    "gemini-3.5-flash",
     "gemini-3.8-flash",
 ]
 
@@ -40,6 +41,17 @@ CLAUDE_MODELS: list[str] = [
     "claude-sonnet-4",
     "claude-sonnet-4-6@default",
 ]
+
+THINKING_CAPABLE_MODELS: set[str] = {
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.1-pro-preview",
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
+    "claude-sonnet-4",
+    "claude-sonnet-4-6@default",
+}
 
 _THRESHOLD_MAP = {v.name: v for v in HarmBlockThreshold}
 
@@ -118,7 +130,25 @@ def _create_vertex_model(
             max_output_tokens=max_output_tokens,
         )
 
+        thoughts_allowed = (
+            settings.AGENT_INCLUDE_THOUGHTS and model_name in THINKING_CAPABLE_MODELS
+        )
+        if (
+            settings.AGENT_INCLUDE_THOUGHTS
+            and model_name not in THINKING_CAPABLE_MODELS
+        ):
+            logger.warning(
+                "Thoughts are enabled but this model is not asked for them",
+                model=model_name,
+            )
+
         if is_claude:
+            thinking_budget = min(4096, max_output_tokens // 2)
+            claude_kwargs: dict = {}
+            if thoughts_allowed and thinking_budget >= 1024:
+                claude_kwargs = {
+                    "thinking": {"type": "enabled", "budget_tokens": thinking_budget},
+                }
             return ChatAnthropicVertex(
                 model=model_name,
                 project=project,
@@ -128,9 +158,10 @@ def _create_vertex_model(
                 max_tokens=max_output_tokens,
                 max_retries=2,
                 streaming=True,
+                model_kwargs=claude_kwargs,
             )
         else:
-            return ChatGoogleGenerativeAI(
+            kwargs: dict = dict(
                 model=model_name,
                 temperature=temperature,
                 credentials=credentials,
@@ -143,6 +174,9 @@ def _create_vertex_model(
                 streaming=True,
                 safety_settings=safety_settings,
             )
+            if thoughts_allowed:
+                kwargs["include_thoughts"] = True
+            return ChatGoogleGenerativeAI(**kwargs)
 
     except (ValueError, LLMError):
         raise
@@ -185,6 +219,11 @@ def _create_vllm_model(
             temperature=temperature,
             max_output_tokens=max_output_tokens,
         )
+        if settings.AGENT_INCLUDE_THOUGHTS:
+            logger.warning(
+                "Thoughts are enabled but this OpenAI-compatible backend does not receive them",
+                model=model_name,
+            )
 
         return ExtraContentChatOpenAI(
             model=model_name,

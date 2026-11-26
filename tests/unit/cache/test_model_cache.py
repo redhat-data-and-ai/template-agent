@@ -147,3 +147,23 @@ class TestModelCacheFromSpec:
 
             assert r1 is model_a
             assert r2 is model_b
+
+    def test_thoughts_flag_splits_the_cache(self):
+        enabled = CacheSettings(CACHE_ENABLED=True, CACHE_MODEL_ENABLED=True)
+        settings = MagicMock()
+        settings.MAX_OUTPUT_TOKENS = 8192
+        settings.AGENT_INCLUDE_THOUGHTS = True
+
+        with (
+            patch.object(model_cache, "cache_settings", enabled),
+            patch("deep_agent.src.settings.settings", settings),
+            patch(
+                "deep_agent.src.agent.llm.create_model",
+                side_effect=lambda *a, **k: MagicMock(),
+            ) as create,
+        ):
+            model_cache.get_or_create_model("gemini-2.5-pro", 0.0, 8192)
+            settings.AGENT_INCLUDE_THOUGHTS = False
+            model_cache.get_or_create_model("gemini-2.5-pro", 0.0, 8192)
+
+        assert create.call_count == 2

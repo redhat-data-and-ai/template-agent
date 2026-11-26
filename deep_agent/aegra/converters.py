@@ -49,14 +49,40 @@ def langgraph_messages_to_dicts(messages: list) -> list[dict[str, Any]]:
     return result
 
 
+def _answer_text(content: Any) -> str:
+    """Return the visible answer, skipping thought blocks."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+            continue
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") in {"thinking", "reasoning", "redacted_thinking"}:
+            continue
+        if block.get("thought") is True:
+            continue
+        text = block.get("text")
+        if block.get("type") == "text" and isinstance(text, str):
+            parts.append(text)
+    return "".join(parts)
+
+
 def extract_final_response(state: dict[str, Any]) -> str | None:
     """Extract the final AI response text from a LangGraph state snapshot.
 
     Returns the content of the last AIMessage, or None if the conversation
-    has no AI responses yet.
+    has no AI responses yet. Thought blocks are skipped when content is a list.
     """
     messages = state.get("messages", [])
     for msg in reversed(messages):
-        if isinstance(msg, AIMessage) and isinstance(msg.content, str) and msg.content:
-            return msg.content
+        if not isinstance(msg, AIMessage):
+            continue
+        text = _answer_text(msg.content)
+        if text:
+            return text
     return None
