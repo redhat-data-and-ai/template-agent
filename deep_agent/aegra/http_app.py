@@ -29,6 +29,7 @@ from deep_agent.aegra.security_middleware import (
     SecurityHeadersMiddleware,
     StreamingBodyLimitMiddleware,
 )
+from deep_agent.aegra.subagent_transcripts import router as subagent_transcripts_router
 from deep_agent.aegra.thread_cleanup import thread_cleanup_router
 from deep_agent.aegra.upload_routes import upload_router
 from deep_agent.src.agent.config import agent_config
@@ -236,6 +237,7 @@ app.add_middleware(
     max_size_bytes=settings.REQUEST_BODY_MAX_SIZE,
     path_limits=_BODY_LIMITS,
 )
+app.include_router(subagent_transcripts_router)
 app.include_router(thread_cleanup_router)
 app.include_router(personalization_router)
 app.include_router(projects_router)
