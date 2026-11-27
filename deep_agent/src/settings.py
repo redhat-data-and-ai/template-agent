@@ -116,6 +116,23 @@ class Settings(BaseSettings):
     MAX_OUTPUT_TOKENS: int = Field(default=8192)
     CLAUDE_LOCATION: Optional[str] = Field(default=None)
     GEMINI_LOCATION: Optional[str] = Field(default=None)
+    AGENT_INCLUDE_THOUGHTS: bool = Field(
+        default=False,
+        description=(
+            "Ask capable Vertex models for a thinking trace. Off unless set. "
+            "Claude then spends up to half of MAX_OUTPUT_TOKENS on thinking, "
+            "capped by CLAUDE_THINKING_BUDGET_TOKENS, so the visible answer "
+            "can be shorter. Gemini is asked for thoughts with no separate cap."
+        ),
+    )
+    CLAUDE_THINKING_BUDGET_TOKENS: int = Field(
+        default=4096,
+        description=(
+            "Most tokens Claude may spend on a thinking trace. "
+            "The request uses the smaller of this and half of MAX_OUTPUT_TOKENS. "
+            "Below 1024, thinking is left off."
+        ),
+    )
 
     # ── Safety Settings (Gemini / Vertex AI) ─────────────────────────
     SAFETY_DANGEROUS_CONTENT: SafetyThreshold = Field(default="BLOCK_ONLY_HIGH")

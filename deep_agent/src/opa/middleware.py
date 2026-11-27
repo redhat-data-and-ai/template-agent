@@ -54,21 +54,45 @@ class _NoStreamModel:
         return getattr(self._model, name)
 
 
+def _thinking_text(message: AIMessage) -> str:
+    """Read Claude thinking text. The block and its signature stay unchanged."""
+    content = message.content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type not in {"thinking", "reasoning"}:
+            continue
+        key = "thinking" if block_type == "thinking" else "reasoning"
+        value = block.get(key)
+        if not isinstance(value, str) or not value:
+            value = block.get("text")
+        if isinstance(value, str) and value:
+            parts.append(value)
+    return "\n".join(parts)
+
+
 class OPAMiddleware(AgentMiddleware):
     """Block model and tool calls based on OPA authorization policy."""
 
     def _extract_text(self, result: ModelResponse[Any]) -> str:
-        """Return the text of the last AIMessage with non-empty text.
+        """Return answer text plus Claude thinking text from the last AIMessage.
 
-        Uses AIMessage.text which handles both str content and content-block
-        lists, and returns '' for tool-call-only turns.
+        AIMessage.text keeps type "text" blocks, including Gemini thoughts.
+        Claude thinking blocks are read separately and are not rewritten.
+        Returns '' for tool-call-only turns.
         """
         for message in reversed(result.result):
             if not isinstance(message, AIMessage):
                 continue
-            text = message.text
+            answer = str(message.text)
+            thoughts = _thinking_text(message)
+            text = "\n".join(part for part in (thoughts, answer) if part)
             if text:
-                return str(text)
+                return text
         return ""
 
     @hook_config(can_jump_to=["end"])
