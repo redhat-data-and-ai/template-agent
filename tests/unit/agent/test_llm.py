@@ -248,6 +248,44 @@ class TestCreateModel:
             kwargs = mock_chat.call_args.kwargs
             assert "thinking" not in kwargs["model_kwargs"]
 
+    def test_claude_thinking_budget_follows_the_setting(self):
+        """The setting caps thinking even when the reply limit is larger."""
+        mock_creds = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", True),
+            patch(
+                "deep_agent.src.agent.llm.settings.CLAUDE_THINKING_BUDGET_TOKENS", 2000
+            ),
+        ):
+            mock_get_creds.return_value = (mock_creds, "test-project")
+            create_model("claude-sonnet-4", temperature=0.0)
+            assert mock_chat.call_args.kwargs["model_kwargs"] == {
+                "thinking": {"type": "enabled", "budget_tokens": 2000},
+            }
+
+    def test_claude_thinking_stays_off_when_the_setting_is_too_small(self):
+        """A cap under 1024 is omitted. Claude rejects a smaller thinking budget."""
+        mock_creds = MagicMock()
+
+        with (
+            patch(
+                "deep_agent.src.agent.llm.get_service_account_credentials"
+            ) as mock_get_creds,
+            patch("deep_agent.src.agent.llm.ChatAnthropicVertex") as mock_chat,
+            patch("deep_agent.src.agent.llm.settings.AGENT_INCLUDE_THOUGHTS", True),
+            patch(
+                "deep_agent.src.agent.llm.settings.CLAUDE_THINKING_BUDGET_TOKENS", 512
+            ),
+        ):
+            mock_get_creds.return_value = (mock_creds, "test-project")
+            create_model("claude-sonnet-4", temperature=0.0)
+            assert "thinking" not in mock_chat.call_args.kwargs["model_kwargs"]
+
     def test_claude_thinking_stays_off_when_the_flag_is_off(self):
         """The switch removes Claude's thinking object."""
         mock_creds = MagicMock()
@@ -370,6 +408,7 @@ class TestCreateModel:
         mock_settings = MagicMock()
         mock_settings.CLAUDE_LOCATION = None
         mock_settings.GOOGLE_CLOUD_LOCATION = "global"
+        mock_settings.CLAUDE_THINKING_BUDGET_TOKENS = 4096
 
         with (
             patch(

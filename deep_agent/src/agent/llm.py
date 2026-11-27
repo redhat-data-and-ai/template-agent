@@ -143,7 +143,9 @@ def _create_vertex_model(
             )
 
         if is_claude:
-            thinking_budget = min(4096, max_output_tokens // 2)
+            thinking_budget = min(
+                settings.CLAUDE_THINKING_BUDGET_TOKENS, max_output_tokens // 2
+            )
             claude_kwargs: dict = {}
             if thoughts_allowed and thinking_budget >= 1024:
                 claude_kwargs = {

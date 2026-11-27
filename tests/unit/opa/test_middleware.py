@@ -187,6 +187,29 @@ class TestExtractText:
         )
         assert self.mw._extract_text(response) == "good"
 
+    def test_includes_claude_thinking_with_the_answer(self):
+        msg = AIMessage(
+            content=[
+                {"type": "thinking", "thinking": "plan the reply", "signature": "sig"},
+                {"type": "text", "text": "ok"},
+            ]
+        )
+        assert self.mw._extract_text(_model_response([msg])) == "plan the reply\nok"
+        assert msg.content[0]["signature"] == "sig"
+
+    def test_includes_thinking_when_the_answer_is_empty(self):
+        msg = AIMessage(content=[{"type": "thinking", "thinking": "only a thought"}])
+        assert self.mw._extract_text(_model_response([msg])) == "only a thought"
+
+    def test_does_not_read_a_redacted_thinking_block(self):
+        msg = AIMessage(
+            content=[
+                {"type": "redacted_thinking", "data": "secret"},
+                {"type": "text", "text": "ok"},
+            ]
+        )
+        assert self.mw._extract_text(_model_response([msg])) == "ok"
+
 
 # ===================================================================
 # abefore_model
@@ -351,6 +374,43 @@ class TestAwrapModelCall:
 
         assert result is response
         mock_eval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("deep_agent.src.opa.middleware.get_opa_max_retries", return_value=0)
+    @patch("deep_agent.src.opa.middleware.evaluate_message", new_callable=AsyncMock)
+    async def test_denial_drops_the_thinking_block(self, mock_eval, _mock_retries):
+        mock_eval.return_value = OpaResult(allowed=False, denial_reasons=["toxic"])
+        ai_msg = AIMessage(
+            content=[
+                {"type": "thinking", "thinking": "bad plan", "signature": "sig"},
+                {"type": "text", "text": "ok"},
+            ],
+            id="orig_id",
+            name="orig_name",
+        )
+        handler = AsyncMock(return_value=_model_response([ai_msg]))
+
+        result = await self.mw.awrap_model_call(_model_request(), handler)
+
+        mock_eval.assert_awaited_once_with("llm_response", agent_message="bad plan\nok")
+        assert result.result[0].content == _BLOCKED_MODEL_MESSAGE
+        assert "thinking" not in str(result.result[0].content)
+
+    @pytest.mark.asyncio
+    @patch("deep_agent.src.opa.middleware.get_opa_max_retries", return_value=0)
+    @patch("deep_agent.src.opa.middleware.evaluate_message", new_callable=AsyncMock)
+    async def test_thinking_only_message_is_checked(self, mock_eval, _mock_retries):
+        mock_eval.return_value = OpaResult(allowed=True)
+        ai_msg = AIMessage(content=[{"type": "thinking", "thinking": "only a thought"}])
+        response = _model_response([ai_msg])
+        handler = AsyncMock(return_value=response)
+
+        result = await self.mw.awrap_model_call(_model_request(), handler)
+
+        assert result is response
+        mock_eval.assert_awaited_once_with(
+            "llm_response", agent_message="only a thought"
+        )
 
     @pytest.mark.asyncio
     @patch("deep_agent.src.opa.middleware.get_opa_max_retries", return_value=2)
